@@ -14,7 +14,7 @@ pub mod root;
 use turbo_ferret::Ui;
 
 pub use map_widget::{MapCommand, MapKey, MapWidget};
-pub use minimap_widget::MiniMapWidget;
+pub use minimap_widget::{MiniMapCommand, MiniMapWidget};
 pub use root::{RootCommand, RootWindow};
 
 /// Make the game's widgets known to layout files, under the names the C++ used.

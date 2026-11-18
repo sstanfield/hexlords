@@ -8,7 +8,8 @@
 //! point and the last column its right one; in row 0 the odd columns (which sit
 //! half a hex higher) lose their top half, and in the last row the even columns
 //! lose their bottom half. A cut moves vertices; a half that is cut off collapses
-//! into the center. The tables are the C++'s, digit for digit.
+//! into the center. The positions are the C++'s tables; the texture coordinates
+//! are its tables with v turned the right way up.
 //!
 //! C++: src/render/maprender.cpp MapRenderer::MapRenderer (the `hex_*_buffer_data`
 //! tables) and MapRenderer::CTX::drawHex (the choice of a variant)
@@ -61,20 +62,20 @@ const POS_BOTTOM_LEFT: [[f32; 2]; 7] =
 const POS_BOTTOM_RIGHT: [[f32; 2]; 7] =
     [[0.0, 0.0], [-0.5, 1.0], [0.5, 1.0], [0.5, 0.0], [0.0, 0.0], [0.0, 0.0], [-1.0, 0.0]];
 
-const UV_FULL: [[f32; 2]; 7] = [[0.5, 0.5], [0.25, 1.0], [0.75, 1.0], [1.0, 0.5], [0.75, 0.0], [0.25, 0.0], [0.0, 0.5]];
+const UV_FULL: [[f32; 2]; 7] = [[0.5, 0.5], [0.25, 0.0], [0.75, 0.0], [1.0, 0.5], [0.75, 1.0], [0.25, 1.0], [0.0, 0.5]];
 const UV_LEFT: [[f32; 2]; 7] =
-    [[0.5, 0.5], [0.25, 1.0], [0.75, 1.0], [1.0, 0.5], [0.75, 0.0], [0.25, 0.0], [0.25, 0.5]];
+    [[0.5, 0.5], [0.25, 0.0], [0.75, 0.0], [1.0, 0.5], [0.75, 1.0], [0.25, 1.0], [0.25, 0.5]];
 const UV_RIGHT: [[f32; 2]; 7] =
-    [[0.5, 0.5], [0.25, 1.0], [0.75, 1.0], [0.75, 0.5], [0.75, 0.0], [0.25, 0.0], [0.0, 0.5]];
-const UV_TOP: [[f32; 2]; 7] = [[0.5, 0.5], [0.5, 0.5], [0.5, 0.5], [1.0, 0.5], [0.75, 0.0], [0.25, 0.0], [0.0, 0.5]];
+    [[0.5, 0.5], [0.25, 0.0], [0.75, 0.0], [0.75, 0.5], [0.75, 1.0], [0.25, 1.0], [0.0, 0.5]];
+const UV_TOP: [[f32; 2]; 7] = [[0.5, 0.5], [0.5, 0.5], [0.5, 0.5], [1.0, 0.5], [0.75, 1.0], [0.25, 1.0], [0.0, 0.5]];
 const UV_BOTTOM: [[f32; 2]; 7] =
-    [[0.5, 0.5], [0.25, 1.0], [0.75, 1.0], [1.0, 0.5], [0.75, 0.5], [0.25, 0.5], [0.0, 0.5]];
+    [[0.5, 0.5], [0.25, 0.0], [0.75, 0.0], [1.0, 0.5], [0.75, 0.5], [0.25, 0.5], [0.0, 0.5]];
 const UV_TOP_RIGHT: [[f32; 2]; 7] =
-    [[0.5, 0.5], [0.5, 0.5], [0.5, 0.5], [0.75, 0.5], [0.75, 0.0], [0.25, 0.0], [0.0, 0.5]];
+    [[0.5, 0.5], [0.5, 0.5], [0.5, 0.5], [0.75, 0.5], [0.75, 1.0], [0.25, 1.0], [0.0, 0.5]];
 const UV_BOTTOM_LEFT: [[f32; 2]; 7] =
-    [[0.5, 0.5], [0.25, 1.0], [0.75, 1.0], [1.0, 0.5], [0.75, 0.5], [0.25, 0.5], [0.25, 0.5]];
+    [[0.5, 0.5], [0.25, 0.0], [0.75, 0.0], [1.0, 0.5], [0.75, 0.5], [0.25, 0.5], [0.25, 0.5]];
 const UV_BOTTOM_RIGHT: [[f32; 2]; 7] =
-    [[0.5, 0.5], [0.25, 1.0], [0.75, 1.0], [0.75, 0.5], [0.75, 0.5], [0.25, 0.5], [0.0, 0.5]];
+    [[0.5, 0.5], [0.25, 0.0], [0.75, 0.0], [0.75, 0.5], [0.75, 0.5], [0.25, 0.5], [0.0, 0.5]];
 
 impl HexVariant {
     pub const ALL: [HexVariant; 8] = [
@@ -127,9 +128,9 @@ impl HexVariant {
         }
     }
 
-    /// The seven texture coordinates. (v = 1 is at the top of the hex, and the
-    /// tile images are uploaded top row first, so a tile is drawn upside down
-    /// relative to its file, as in the C++.)
+    /// The seven texture coordinates. v = 0 is at the top of the hex, like the
+    /// first row of an image file, so a tile looks the way its file does. (The
+    /// C++ tables had v the other way up and drew the images upside down.)
     pub fn uvs(self) -> &'static [[f32; 2]; HEX_VERTICES] {
         match self {
             HexVariant::Full => &UV_FULL,
@@ -241,7 +242,7 @@ mod tests {
             for i in 1..HEX_VERTICES {
                 assert!(uv[i].iter().all(|c| (0.0..=1.0).contains(c)), "{variant:?} vertex {i}");
                 if pos[i] != [0.0, 0.0] {
-                    let want = [(pos[i][0] + 1.0) / 2.0, (pos[i][1] + 1.0) / 2.0];
+                    let want = [(pos[i][0] + 1.0) / 2.0, (1.0 - pos[i][1]) / 2.0];
                     assert_eq!(uv[i], want, "{variant:?} vertex {i}");
                 }
             }
@@ -249,14 +250,14 @@ mod tests {
     }
 
     #[test]
-    fn the_full_hex_is_the_cpp_table() {
+    fn the_full_hex() {
         assert_eq!(
             HexVariant::Full.positions(),
             &[[0.0, 0.0], [-0.5, 1.0], [0.5, 1.0], [1.0, 0.0], [0.5, -1.0], [-0.5, -1.0], [-1.0, 0.0]]
         );
         assert_eq!(
             HexVariant::Full.uvs(),
-            &[[0.5, 0.5], [0.25, 1.0], [0.75, 1.0], [1.0, 0.5], [0.75, 0.0], [0.25, 0.0], [0.0, 0.5]]
+            &[[0.5, 0.5], [0.25, 0.0], [0.75, 0.0], [1.0, 0.5], [0.75, 1.0], [0.25, 1.0], [0.0, 0.5]]
         );
     }
 }

@@ -7,14 +7,15 @@ Ferret (<https://github.com/sstanfield/turbo-ferret>) and graphics go through
 miniquad. `hexgame-rust-port-plan.md` is the brief: the acceptance spec of the
 demo, the design, and the direction for the phases after it.
 
-**Fidelity to the C++ is not a goal.** The owner's word (2026-11-18): the C++
-was an in-progress demo, and the port exists to be the foundation of a new game,
-so it need not be pixel or bug perfect. Where the C++ behaviour is a bug or
-plainly worse, do the sane thing and record it in `docs/deviations.md`.
+**The C++ is history, not a specification.** The owner's word (2026-11-18):
+the port is done and the game now goes its own way, so nothing has to match the
+C++ any more. `docs/deviations.md` records how the port differed from it and
+what has changed since; it is closed, and new work does not add to it. Read the
+C++ to understand why something is the way it is, not to decide what to do.
 
 **Read before changing anything substantial:** `hexgame-rust-port-plan.md`
-(sections 2 and 3 for what exists, section 8 for what comes next) and
-`docs/deviations.md` (where the Rust differs from the C++ on purpose, numbered).
+(section 3 for the design, section 8 for what comes next; section 2 describes
+the C++ demo and is no longer binding).
 
 ## Layout
 
@@ -25,6 +26,7 @@ plainly worse, do the sane thing and record it in `docs/deviations.md`.
 | `src/view.rs`, `src/minimap_view.rs` | Pure math: zoom, scale factors, visible hexes, picking, recentering; the minimap's fit and marker |
 | `src/render/` | miniquad drawing: hex meshes, shaders, textures, the map and minimap renderers, the PNG writer |
 | `src/gui/` | Turbo Ferret widgets: `MapWidget`, `MiniMapWidget`, `RootWindow`. They record commands; they hold no game state |
+| `src/platform.rs` | What miniquad leaves out: bringing the window to the front on macOS (the crate's one `unsafe` block) |
 | `src/session.rs` | `Session`: the `Ui`, the `Game` and the views together, with no window. Tests drive it |
 | `src/script.rs` | Scripted input (`--script`), for screenshots and tests |
 | `src/app.rs`, `src/main.rs` | The miniquad window: forwards input to the session, draws the frame |
@@ -66,13 +68,15 @@ the live window for you. Look at the PNG you made.
   test really needs one. Turbo Ferret is pinned by `rev`; bump it on purpose. A
   `[patch]` to a local checkout is fine for local work, but don't commit it.
 - **Rust:** edition 2024, MSRV 1.86 (no let-chains), rustfmt width 120.
-  `#![forbid(unsafe_code)]`.
-- **Credit and licence:** ported code cites its origin in a comment,
-  `// C++: src/state/mapmove.cpp Map::selectUnit`. Keep `LICENSE` (the zlib
+- **Unsafe:** `#![deny(unsafe_code)]`, with one exception that is allowed by
+  name: `platform::bring_to_front` sends one Objective-C message on macOS,
+  because miniquad opens its window behind the terminal there. Do not add
+  another without the owner's word.
+- **Credit and licence:** code ported from the C++ cites its origin in a
+  comment, `// C++: src/state/mapmove.cpp Map::selectUnit`; keep those when you
+  change such code. New code needs none. Keep `LICENSE` (the zlib
   notice of the C++) and `NOTICE` (Turbo Badger, the skin, the DejaVu font
   licence, which must ship with binaries).
-- **Deviations:** when behaviour differs from the C++ on purpose, add a
-  numbered entry to `docs/deviations.md`.
 - **Layering:** `state` and `game` know nothing of the UI or the GPU. Widgets
   never hold game state: Turbo Ferret factories are `fn() -> Box<dyn Widget>`,
   so a widget records commands and the session applies them (the UI produces
@@ -106,5 +110,8 @@ the live window for you. Look at the PNG you made.
    Turbo Ferret's `CLAUDE.md` ("The five things that bite") before writing
    widget code.
 5. **Keys go to the focused widget only**, and bubble up from there. The map is
-   focused at start; a click on the minimap or the button moves the focus, and
-   then the arrows do nothing until the map is clicked again (as in the C++).
+   the only widget in the layout that takes the focus (the minimap, the button
+   and the root window do not), so its keys work whatever was clicked last and
+   the keys it does not use reach `RootWindow`. A widget that needs the
+   keyboard later (a text field, a dialog) has to give the focus back to the
+   map when it is done.

@@ -5,6 +5,7 @@
 //! - `1`, `2`: type that character (zoom out, zoom in);
 //! - `click:ROW:COL`, `hover:ROW:COL`: click on, or point at, the middle of that
 //!   hex of the main map (it has to be in view);
+//! - `minimap:ROW:COL`: click on that hex of the minimap (the main map goes there);
 //! - `cursor:ROW:COL`: put the cursor on that hex and center the view on it (not
 //!   something a player can do in one step; it is for getting to a far corner);
 //! - any step may end in `*N` to run it N times: `left*12`.
@@ -40,6 +41,7 @@ enum Step {
     Char(char),
     Click(Hex),
     Hover(Hex),
+    MiniMap(Hex),
     Cursor(Hex),
 }
 
@@ -64,6 +66,7 @@ fn parse_step(action: &str) -> Result<Step, String> {
         "2" => Step::Char('2'),
         "click" => Step::Click(hex()?),
         "hover" => Step::Hover(hex()?),
+        "minimap" => Step::MiniMap(hex()?),
         "cursor" => Step::Cursor(hex()?),
         _ => return Err("unknown step".to_string()),
     };
@@ -97,6 +100,15 @@ fn run_step(session: &mut Session, action: &str) -> Result<(), String> {
         }
         Step::Click(hex) => {
             let p = pixel(session, hex)?;
+            session.ui.pointer_move(p, Modifiers::NONE);
+            session.ui.pointer_down(p, 1, Modifiers::NONE);
+            session.ui.pointer_up(p, Modifiers::NONE);
+        }
+        Step::MiniMap(hex) => {
+            if !session.game.map.contains(hex) {
+                return Err(format!("{hex} is not on the map"));
+            }
+            let p = session.minimap_pixel(hex);
             session.ui.pointer_move(p, Modifiers::NONE);
             session.ui.pointer_down(p, 1, Modifiers::NONE);
             session.ui.pointer_up(p, Modifiers::NONE);

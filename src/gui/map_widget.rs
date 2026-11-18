@@ -56,8 +56,7 @@ impl Widget for MapWidget {
         "MapWidget"
     }
 
-    /// C++: MapWidget::OnEvent. It consumes what the C++ consumed, and also the
-    /// `1` and `2` presses, which the C++ acted on but let through (deviation D15).
+    /// It consumes the keys it acts on, down and up. C++: MapWidget::OnEvent
     fn on_event(&mut self, cx: &mut Ctx, ev: &Event) -> bool {
         match ev.kind {
             EventKind::PointerMove => {
@@ -92,8 +91,8 @@ impl Widget for MapWidget {
     }
 }
 
-/// The special keys the map widgets take: the arrows, Esc and Enter.
-pub(crate) fn is_map_key(key: SpecialKey) -> bool {
+/// The special keys the map takes: the arrows, Esc and Enter.
+fn is_map_key(key: SpecialKey) -> bool {
     use SpecialKey as S;
     matches!(key, S::Left | S::Up | S::Right | S::Down | S::Esc | S::Enter)
 }

@@ -3,7 +3,12 @@
 Where the Rust port behaves differently from the C++ hexGame demo
 (`reference/hexGame`, commit `99edad5`) on purpose. D1 to D11 are the ones the
 plan (`hexgame-rust-port-plan.md`, section 6) asked for; the rest were found
-while porting. Add an entry here whenever behaviour is changed on purpose.
+while porting.
+
+**This record is closed.** Since 2026-11-18 the game no longer follows the C++
+(the owner's word), so later changes are not deviations and are not listed. The
+last section names the first of them, because they undo things this document
+says were kept.
 
 There is no C++ reference build to compare against: milestone M0 (building the
 C++ under Xvfb and capturing screenshots) was skipped at the owner's word, since
@@ -57,21 +62,33 @@ checked by eye against section 2 of the plan; the pictures are in
 - The shortcut mapping in `Application::InvokeShortcut`: Turbo Ferret's
   `InputAdapter` produces `Shortcut` events itself.
 
-## Kept on purpose
+## Kept at the end of the port
 
-These look like bugs or leftovers but are what the C++ does, and phase 1 keeps
+These look like bugs or leftovers but are what the C++ does, and the port kept
 cosmetic quirks:
 
-- Picking treats a hex as the rectangle around it (`MapView::pick`), so a point
-  near a hex's slanted edge can pick the neighbour in the next column.
-- Tile images are drawn upside down relative to their files (the texture
-  coordinate v = 1 is at the top of a hex). It only shows on the unit image.
 - City, temple, ruin and desert tiles all use `citycenter_tile.png`; desert and
   city are black on the minimap. `border_tile.png` and `city1..6_tile.png` are
   in `assets/tiles` but never drawn.
 - The hexes cut off at the map's top and bottom edges have no border along the
   cut (every model uses the whole hex's rim weights).
-- The minimap takes clicks and the arrow keys and does nothing with them, and
-  the "SLS" button does nothing.
-- A click on the minimap or the button takes the keyboard away from the map
-  until the map is clicked again.
+- The "SLS" button does nothing.
+
+## Changed after the port
+
+Kept by the port, then changed once parity stopped mattering:
+
+- **Picking is exact.** The C++ formula treated a hex as the rectangle around
+  it, so a point near a slanted edge picked the neighbour in the next column.
+  `view::hex_at` tests the hex's real shape, and the cut-off halves of the
+  map's edge hexes pick nothing.
+- **The minimap navigates.** A click on it sends the main map (and the cursor)
+  to that place, and a drag scrolls. In the C++ it took clicks and did nothing.
+- **The keyboard stays with the map.** A click on the minimap or the button
+  used to take the focus, and the arrows then did nothing until the map was
+  clicked again. Now only the map takes the focus.
+- **Tile images are the right way up.** The C++ texture coordinates had v = 1 at
+  the top of a hex, which drew every image upside down relative to its file
+  (it only showed on the unit image).
+- **The window comes to the front on macOS** (`platform::bring_to_front`), where
+  miniquad opens it behind the terminal.

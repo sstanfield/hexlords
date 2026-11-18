@@ -40,6 +40,40 @@ pub fn factors(w: i32, h: i32, scale: f32) -> (f32, f32) {
     (wf, hf * HEX_HEIGHT_ADJUST)
 }
 
+/// The (row, col) of the hex that contains a point of the endless grid, in grid
+/// coordinates: model units in which hex (row, col) has its center at
+/// `(1.5 * col, -2 * row)`, one unit higher in odd columns.
+///
+/// The column nearest to the point is right unless the point is in one of the
+/// corners that a neighbouring column's hexes reach into, so the columns either
+/// side are tried too.
+pub fn hex_at(x: f32, y: f32) -> (i32, i32) {
+    let nearest = (x / 1.5).round() as i32;
+    let candidate = |col: i32| {
+        let raise = if col.rem_euclid(2) == 1 { 1.0 } else { 0.0 };
+        let row = ((raise - y) / 2.0).round() as i32;
+        let (dx, dy) = ((x - 1.5 * col as f32).abs(), (y - (raise - 2.0 * row as f32)).abs());
+        // Inside the hex: between its flat edges, and inside its slanted ones.
+        (row, col, dy <= 1.0 && dx <= 1.0 - dy / 2.0)
+    };
+    let first = candidate(nearest);
+    [first, candidate(nearest - 1), candidate(nearest + 1)]
+        .into_iter()
+        .find(|&(_, _, inside)| inside)
+        .map_or((first.0, first.1), |(row, col, _)| (row, col))
+}
+
+/// True if a point in grid coordinates (see [`hex_at`]) is inside a `rows` x
+/// `cols` map, whose edges are straight: the outer halves of the edge hexes are
+/// cut off.
+pub fn on_grid(x: f32, y: f32, rows: u16, cols: u16) -> bool {
+    if rows == 0 || cols == 0 {
+        return false;
+    }
+    let (right, bottom) = (1.5 * f32::from(cols - 1) + 0.5, -2.0 * f32::from(rows - 1));
+    (-0.5..=right).contains(&x) && (bottom..=1.0).contains(&y)
+}
+
 /// A hex in view, with the center of its model in model units relative to the
 /// middle of the widget.
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -158,16 +192,16 @@ impl MapView {
     }
 
     /// The hex under a point given in the widget's normalized device coordinates
-    /// (x right, y up, both -1..1), if it is on the map.
-    ///
-    /// The formula treats a hex as the rectangle around it, so near the slanted
-    /// edges of a hex it can answer with the neighbour in the next column.
-    /// C++: MapRenderer::setCenterMap (which, despite its name, picks a hex)
+    /// (x right, y up, both -1..1), if the point is on the map.
     pub fn pick(&self, rel_x: f32, rel_y: f32) -> Option<Hex> {
-        let half = |v: f32| if v < 0.0 { -0.5 } else { 0.5 };
-        let col = i32::from(self.center.col) + (rel_x / (1.5 * self.wf) + half(rel_x)) as i32;
-        let odd = if col % 2 != 0 { 0.5 } else { 0.0 };
-        let row = i32::from(self.center.row) - (rel_y / (2.0 * self.hf) + half(rel_y) - odd) as i32;
+        // The middle of the widget in grid coordinates: the center hex's center,
+        // less the unit an odd column is raised by.
+        let x = rel_x / self.wf + 1.5 * f32::from(self.center.col);
+        let y = rel_y / self.hf - 2.0 * f32::from(self.center.row);
+        if !on_grid(x, y, self.rows, self.cols) {
+            return None;
+        }
+        let (row, col) = hex_at(x, y);
         Hex::on_map(row, col, self.rows, self.cols)
     }
 
@@ -178,7 +212,8 @@ impl MapView {
             return None;
         }
         let (half_w, half_h) = (w as f32 / 2.0, h as f32 / 2.0);
-        self.pick((x as f32 - half_w) / half_w, -(y as f32 - half_h) / half_h)
+        // The middle of the pixel.
+        self.pick((x as f32 + 0.5 - half_w) / half_w, -(y as f32 + 0.5 - half_h) / half_h)
     }
 
     /// The number of rows the view counts as shown. C++: getMapDisplayCenter
@@ -399,33 +434,123 @@ mod tests {
         }
     }
 
-    /// The C++ formula, copied: MapRenderer::setCenterMap. Returns (row, col),
-    /// on the map or not.
-    fn cpp_pick(center_row: i32, center_col: i32, wf: f32, hf: f32, x: f32, y: f32) -> (i32, i32) {
-        let col = center_col + (x / (1.5 * wf) + (if x < 0.0 { -0.5 } else { 0.5 })) as i32;
-        let row = center_row
-            - ((y / (2.0 * hf) + (if y < 0.0 { -0.5 } else { 0.5 })) - (if col % 2 != 0 { 0.5 } else { 0.0 })) as i32;
-        (row, col)
+    /// Points inside the whole hex model, as offsets from its center: the middle,
+    /// near each corner, and near the middle of each edge.
+    fn points_inside_a_hex() -> Vec<[f32; 2]> {
+        let corners = [[-0.5, 1.0], [0.5, 1.0], [1.0, 0.0], [0.5, -1.0], [-0.5, -1.0], [-1.0, 0.0]];
+        let mut points = vec![[0.0, 0.0]];
+        for i in 0..6 {
+            let (a, b): ([f32; 2], [f32; 2]) = (corners[i], corners[(i + 1) % 6]);
+            points.push([a[0] * 0.95, a[1] * 0.95]);
+            points.push([(a[0] + b[0]) / 2.0 * 0.97, (a[1] + b[1]) / 2.0 * 0.97]);
+        }
+        points
     }
 
     #[test]
-    fn pick_matches_the_cpp_formula() {
-        for center in [Hex::new(50, 50), Hex::new(50, 51), Hex::new(1, 1), Hex::new(99, 98)] {
+    fn every_point_of_a_hex_picks_that_hex() {
+        // Inner hexes only: the ones on the map's edge are cut (see below).
+        for center in [Hex::new(50, 50), Hex::new(50, 51), Hex::new(7, 6), Hex::new(93, 90)] {
             let mut v = view();
             v.center_on(center);
             v.zoom_in();
-            for _ in 0..ZOOM_LEVELS.len() {
-                let (wf, hf) = v.factors();
-                for i in -40..=40 {
-                    for j in -40..=40 {
-                        let (x, y) = (i as f32 / 40.0, j as f32 / 40.0);
-                        let (row, col) = cpp_pick(center.row.into(), center.col.into(), wf, hf, x, y);
-                        assert_eq!(v.pick(x, y), Hex::on_map(row, col, 100, 100), "center {center} at ({x}, {y})");
+            for level in 0..ZOOM_LEVELS.len() {
+                let (hw, hh) = v.half_extent();
+                let mut picked = 0;
+                for vh in v.visible_hexes() {
+                    let inner = (1..99).contains(&vh.hex.row) && (1..99).contains(&vh.hex.col);
+                    for [dx, dy] in points_inside_a_hex() {
+                        let (x, y) = (vh.center[0] + dx, vh.center[1] + dy);
+                        if !inner || x.abs() > hw || y.abs() > hh {
+                            continue; // outside the widget
+                        }
+                        let [nx, ny] = v.to_ndc([x, y]);
+                        assert_eq!(
+                            v.pick(nx, ny),
+                            Some(vh.hex),
+                            "center {center}, level {level}, hex {} at offset ({dx}, {dy})",
+                            vh.hex
+                        );
+                        picked += 1;
                     }
                 }
+                assert!(picked > 100, "center {center}, level {level}: {picked}");
                 v.zoom_out();
             }
         }
+    }
+
+    #[test]
+    fn hex_at_follows_the_slanted_edges() {
+        // Hex (0, 0) is centered at the origin; (0, 1) is right of it and one unit
+        // up, (1, 1) right of it and one unit down. Their shared corner with (0, 0)
+        // is its right point, at (1, 0).
+        assert_eq!(hex_at(0.0, 0.0), (0, 0));
+        assert_eq!(hex_at(0.9, 0.0), (0, 0), "just inside the right point");
+        // At x = 0.9 the hex is only 0.2 high: above that is (0, 1), below (1, 1).
+        // (The rectangle around the hex, which the C++ used, says (0, 1) for both.)
+        assert_eq!(hex_at(0.9, 0.3), (0, 1));
+        assert_eq!(hex_at(0.9, -0.3), (1, 1));
+        // Left of the origin the columns are odd again, at negative indices.
+        assert_eq!(hex_at(-0.9, 0.3), (0, -1));
+        assert_eq!(hex_at(-0.9, -0.3), (1, -1));
+        assert_eq!(hex_at(-1.5, 1.0), (0, -1));
+        // Straight up and down.
+        assert_eq!(hex_at(0.0, 1.5), (-1, 0));
+        assert_eq!(hex_at(0.0, -1.5), (1, 0));
+        assert_eq!(hex_at(3.0, -4.0), (2, 2));
+        assert_eq!(hex_at(4.5, -3.0), (2, 3));
+    }
+
+    #[test]
+    fn every_point_is_in_exactly_one_hex() {
+        // Walk a fine grid over a few hexes: the hex `hex_at` names contains the
+        // point, and (away from the shared edges) no neighbour does.
+        let inside = |x: f32, y: f32, row: i32, col: i32, slack: f32| {
+            let raise = if col.rem_euclid(2) == 1 { 1.0 } else { 0.0 };
+            let (dx, dy) = ((x - 1.5 * col as f32).abs(), (y - (raise - 2.0 * row as f32)).abs());
+            dy <= 1.0 + slack && dx <= 1.0 - dy / 2.0 + slack
+        };
+        for i in -200..200 {
+            for j in -200..200 {
+                let (x, y) = (i as f32 * 0.037 + 0.011, j as f32 * 0.041 + 0.007);
+                let (row, col) = hex_at(x, y);
+                assert!(inside(x, y, row, col, 1e-4), "({x}, {y}) is not in ({row}, {col})");
+                let others = (row - 2..=row + 2)
+                    .flat_map(|r| (col - 2..=col + 2).map(move |c| (r, c)))
+                    .filter(|&(r, c)| (r, c) != (row, col) && inside(x, y, r, c, -1e-3))
+                    .count();
+                assert_eq!(others, 0, "({x}, {y}) is in ({row}, {col}) and {others} more");
+            }
+        }
+    }
+
+    #[test]
+    fn the_cut_off_parts_of_edge_hexes_pick_nothing() {
+        let mut v = view();
+        v.center_on(Hex::new(0, 0));
+        let pick = |v: &MapView, x: f32, y: f32| {
+            let [nx, ny] = v.to_ndc([x, y]);
+            v.pick(nx, ny)
+        };
+        // Column 0 loses its left point: left of x = -0.5 is off the map.
+        assert_eq!(pick(&v, -0.4, 0.0), Some(Hex::new(0, 0)));
+        assert_eq!(pick(&v, -0.6, 0.0), None);
+        // Row 0's odd columns lose their top half: above y = 1 is off the map.
+        assert_eq!(pick(&v, 1.5, 0.9), Some(Hex::new(0, 1)));
+        assert_eq!(pick(&v, 1.5, 1.1), None);
+        assert_eq!(pick(&v, 0.0, 0.9), Some(Hex::new(0, 0)));
+        assert_eq!(pick(&v, 0.0, 1.1), None);
+
+        v.center_on(Hex::new(99, 99));
+        // The view's middle is one unit below hex (99, 99)'s center (an odd column).
+        // The last column loses its right point, and the map ends at the middle of
+        // the last row's even columns, which is the bottom of its odd ones.
+        assert_eq!(pick(&v, 0.4, 0.5), Some(Hex::new(99, 99)));
+        assert_eq!(pick(&v, 0.6, 0.5), None);
+        assert_eq!(pick(&v, -1.5, 0.1), Some(Hex::new(99, 98)));
+        assert_eq!(pick(&v, -1.5, -0.1), None);
+        assert_eq!(pick(&v, 0.0, -0.1), None);
     }
 
     #[test]

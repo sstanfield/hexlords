@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::{assets, click, hover, press, session, session_at, type_char, widget};
+use common::{assets, click, hover, press, session, session_at, widget};
 use hexgame::gui::{MapCommand, MapKey, MapWidget, MiniMapWidget, RootWindow};
 use hexgame::session::Session;
 use turbo_ferret::{Modifiers, Point, Rect, Size, SpecialKey};
@@ -48,15 +48,19 @@ fn the_layout_at_1024_by_768() {
 
 #[test]
 fn the_widgets_are_the_games_own() {
-    let s = session();
+    let mut s = session();
     assert!(s.ui.get::<MapWidget>(s.map_widget()).is_some());
     assert!(s.ui.get::<MiniMapWidget>(s.minimap_widget()).is_some());
     assert!(s.ui.get::<RootWindow>(s.root_window()).is_some());
     assert_eq!(s.map_widget(), widget(&s, "main_map"));
     assert_eq!(s.minimap_widget(), widget(&s, "mini_map"));
     assert_eq!(s.root_window(), widget(&s, "RootWindow"));
-    // The map has the keyboard from the start.
+    // The map has the keyboard from the start, and nothing else can take it.
     assert_eq!(s.ui.focused(), Some(s.map_widget()));
+    for name in ["mini_map", "button", "RootWindow", "main_layout"] {
+        let id = widget(&s, name);
+        assert!(!s.ui.set_focus(id), "{name} takes the focus");
+    }
 }
 
 #[test]
@@ -183,30 +187,18 @@ fn the_wheel_does_nothing() {
 }
 
 #[test]
-fn the_minimap_takes_clicks_and_the_map_keys_and_does_nothing() {
+fn the_keyboard_stays_with_the_map() {
     let mut s = session();
-    let in_minimap = Point::new(900, 100);
-    let before = (s.view.clone(), s.game.map.cursor);
-    click(&mut s, in_minimap);
-    // The click moved the keyboard to the minimap.
-    assert_eq!(s.ui.focused(), Some(s.minimap_widget()));
-    for key in
-        [SpecialKey::Left, SpecialKey::Right, SpecialKey::Up, SpecialKey::Down, SpecialKey::Esc, SpecialKey::Enter]
+    let button = window_rect(&s, "button");
+    // The minimap, the button, the empty sidebar and the strip under the map.
+    for p in [Point::new(900, 100), Point::new(button.x + 5, button.y + 5), Point::new(900, 600), Point::new(300, 700)]
     {
-        assert!(s.ui.key(None, key, Modifiers::NONE, true), "{key:?} down");
-        assert!(s.ui.key(None, key, Modifiers::NONE, false), "{key:?} up");
+        click(&mut s, p);
+        assert_eq!(s.ui.focused(), Some(s.map_widget()), "after a click at {p:?}");
+        let before = s.game.map.cursor;
+        assert!(press(&mut s, SpecialKey::Left), "the arrows still work after a click at {p:?}");
+        assert_eq!(s.game.map.cursor.col + 1, before.col);
     }
-    assert!(!type_char(&mut s, '1'));
-    assert!(!type_char(&mut s, '2'));
-    s.pump();
-    assert_eq!(map_commands(&mut s), []);
-    assert_eq!((s.view.clone(), s.game.map.cursor), before);
-    assert!(s.game.selected().is_none());
-
-    // A click on the map gives it the keyboard back.
-    click(&mut s, Point::new(100, 100));
-    assert_eq!(s.ui.focused(), Some(s.map_widget()));
-    assert!(press(&mut s, SpecialKey::Left));
 }
 
 #[test]
@@ -220,20 +212,19 @@ fn the_button_does_nothing() {
 }
 
 #[test]
-fn ctrl_q_quits_from_wherever_the_keyboard_is() {
-    for target in ["main_map", "mini_map", "button", "RootWindow"] {
+fn ctrl_q_quits_wherever_the_last_click_was() {
+    for p in [Point::new(100, 100), Point::new(900, 100), Point::new(900, 600), Point::new(300, 700)] {
         let mut s = session();
-        let id = widget(&s, target);
-        assert!(s.ui.set_focus(id), "{target} takes the focus");
-        // A plain q is nobody's key (the C++ root swallowed it).
-        assert!(!s.ui.key(Some('q'), SpecialKey::None, Modifiers::NONE, true), "{target}");
+        click(&mut s, p);
+        // A plain q is nobody's key.
+        assert!(!s.ui.key(Some('q'), SpecialKey::None, Modifiers::NONE, true), "{p:?}");
         s.pump();
-        assert!(!s.quit_requested(), "{target}");
+        assert!(!s.quit_requested(), "{p:?}");
         // The window sends chords as the upper-case key.
-        assert!(s.ui.key(Some('Q'), SpecialKey::None, Modifiers::CTRL, true), "{target}");
+        assert!(s.ui.key(Some('Q'), SpecialKey::None, Modifiers::CTRL, true), "{p:?}");
         assert!(!s.quit_requested(), "not before the session looks");
         s.pump();
-        assert!(s.quit_requested(), "{target}");
+        assert!(s.quit_requested(), "{p:?}");
     }
 }
 

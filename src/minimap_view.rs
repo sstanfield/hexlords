@@ -9,7 +9,7 @@
 //! miniMapLocMarker)
 
 use crate::state::Hex;
-use crate::view::{MapView, factors};
+use crate::view::{MapView, factors, hex_at};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MiniMapView {
@@ -78,6 +78,25 @@ impl MiniMapView {
     /// Model units to the widget's normalized device coordinates.
     pub fn to_ndc(&self, model: [f32; 2]) -> [f32; 2] {
         [model[0] * self.wf, model[1] * self.hf]
+    }
+
+    /// The hex under a point given in the widget's normalized device coordinates
+    /// (x right, y up). A point beside the map picks the nearest hex on its edge,
+    /// so that dragging past the minimap's border keeps working.
+    pub fn pick(&self, rel_x: f32, rel_y: f32) -> Hex {
+        let [mx, my] = self.middle();
+        let (row, col) = hex_at(rel_x / self.wf + mx, rel_y / self.hf + my);
+        Hex::new(row.clamp(0, i32::from(self.rows) - 1) as u16, col.clamp(0, i32::from(self.cols) - 1) as u16)
+    }
+
+    /// The hex under a pixel of a `w` x `h` widget (x right, y down, from its top
+    /// left corner); see [`pick`](Self::pick). `None` if the widget has no size.
+    pub fn pick_pixel(&self, x: i32, y: i32, w: i32, h: i32) -> Option<Hex> {
+        if w <= 0 || h <= 0 {
+            return None;
+        }
+        let (half_w, half_h) = (w as f32 / 2.0, h as f32 / 2.0);
+        Some(self.pick((x as f32 + 0.5 - half_w) / half_w, -(y as f32 + 0.5 - half_h) / half_h))
     }
 
     /// The part of the map the main view shows, as a rectangle `[left, bottom,
@@ -237,5 +256,49 @@ mod tests {
         let m = v.marker(&far);
         assert!(m.iter().all(|c| (-1.0..=1.0).contains(c)), "{m:?}");
         assert_eq!(m[1], -1.0);
+    }
+    #[test]
+    fn picking_a_hex_on_the_minimap() {
+        let v = mini(100, 100, W, H);
+        for hex in [Hex::new(0, 0), Hex::new(50, 50), Hex::new(50, 51), Hex::new(99, 99), Hex::new(13, 86)] {
+            let [x, y] = v.to_ndc(v.hex_center(hex));
+            assert_eq!(v.pick(x, y), hex);
+        }
+        // The middle of the widget is the middle of the map.
+        let middle = v.pick(0.0, 0.0);
+        assert!((49..=50).contains(&middle.row) && (49..=50).contains(&middle.col), "{middle}");
+    }
+
+    #[test]
+    fn picking_beside_the_map_gives_the_nearest_edge_hex() {
+        let v = mini(100, 100, W, H);
+        assert_eq!(v.pick(-5.0, 5.0), Hex::new(0, 0));
+        assert_eq!(v.pick(5.0, -5.0), Hex::new(99, 99));
+        assert_eq!(v.pick(5.0, 5.0), Hex::new(0, 99));
+        let left = v.pick(-3.0, 0.0);
+        assert_eq!(left.col, 0);
+        assert!((48..=51).contains(&left.row), "{left}");
+        // A wide widget has bars left and right of the map: they pick its sides.
+        let wide = mini(100, 100, 400, 100);
+        assert_eq!(wide.pick(-0.9, 0.0).col, 0);
+        assert_eq!(wide.pick(0.9, 0.0).col, 99);
+    }
+
+    #[test]
+    fn picking_by_pixel() {
+        let v = mini(100, 100, W, H);
+        // The corners of the widget are the corners of the map.
+        assert_eq!(v.pick_pixel(0, 0, W, H), Some(Hex::new(0, 0)));
+        assert_eq!(v.pick_pixel(W - 1, H - 1, W, H), Some(Hex::new(99, 99)));
+        // A hex is 2 pixels wide here: its own pixel picks it or a neighbour.
+        let hex = Hex::new(30, 70);
+        let [x, y] = v.to_ndc(v.hex_center(hex));
+        let (px, py) = (((x + 1.0) / 2.0 * W as f32) as i32, ((1.0 - y) / 2.0 * H as f32) as i32);
+        let got = v.pick_pixel(px, py, W, H).unwrap();
+        assert!(got.row.abs_diff(hex.row) <= 1 && got.col.abs_diff(hex.col) <= 1, "{got}");
+        // Pixels outside the widget (a drag that left it) still pick.
+        assert_eq!(v.pick_pixel(-50, -50, W, H), Some(Hex::new(0, 0)));
+        assert_eq!(v.pick_pixel(W + 50, H + 50, W, H), Some(Hex::new(99, 99)));
+        assert_eq!(v.pick_pixel(10, 10, 0, 0), None);
     }
 }

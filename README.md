@@ -9,9 +9,9 @@ through [miniquad](https://github.com/not-fl3/miniquad).
 
 ![The start view](docs/screenshots/start.png)
 
-This is phase 1: the demo, ported, with its crashes and rule bugs fixed
-(`docs/deviations.md` lists every difference). The game itself comes in the
-later phases; `hexgame-rust-port-plan.md` has the direction.
+The port is done (`docs/deviations.md` records how it differs from the C++),
+and from here the game goes its own way. `hexgame-rust-port-plan.md` has the
+direction.
 
 ## Build and run
 
@@ -35,14 +35,13 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 |---|---|
 | Move the pointer over the map | The hex under it becomes the cursor (red border) |
 | Click a hex, or Enter at the cursor | With nothing selected: select the unit on the hex, which shows where it can go (red tint). With a unit selected: move it to the hex if it can reach it, or deselect it if this is its own hex |
+| Click or drag on the minimap | The main map goes to that part of the map (and the cursor with it) |
 | Arrow keys | Move the cursor; the view follows when the cursor leaves it |
 | `1` / `2` | Zoom out / in, centered on the cursor |
 | F11 | Fullscreen on and off |
 | Ctrl+Q (or Cmd+Q) | Quit |
 
-The keys go to the map while it has the keyboard, which it has at the start. A
-click on the minimap or on the "SLS" button (neither does anything yet) takes
-the keyboard away; click the map to get it back.
+The "SLS" button does nothing yet.
 
 ## Options
 
@@ -57,8 +56,8 @@ hexgame [--assets <dir>] [--frames <n>] [--screenshot <file.png>] [--script <ste
 - `--screenshot <file.png>`: draw one frame into a PNG file and quit.
 - `--script <steps>`: play some input before the first frame. Steps are
   separated by commas: `left`, `right`, `up`, `down`, `enter`, `esc`, `1`, `2`,
-  `click:ROW:COL`, `hover:ROW:COL`, `cursor:ROW:COL` (jump there), and `*N`
-  repeats a step.
+  `click:ROW:COL`, `hover:ROW:COL`, `minimap:ROW:COL` (click the minimap
+  there), `cursor:ROW:COL` (jump there), and `*N` repeats a step.
 
 ```sh
 cargo run -- --screenshot shot.png --script "enter,1,1"     # the unit's range, zoomed out
@@ -87,8 +86,8 @@ directory is gitignored).
 ### What has been run where
 
 Everything was built, tested and looked at (through screenshots, and a window
-resize) on **macOS, Apple Silicon, at 2x**. The live window has not been clicked
-and typed in by a person yet. **Linux and Windows have not been run**: CI
+resize) on **macOS 15, Apple Silicon, at 2x**, and the owner has run the live
+window there. **Linux and Windows have not been run**: CI
 (`.github/workflows/ci.yml`) builds and tests on all three, and has itself not
 run yet. Things to try by hand on each: the mouse (hover, click to select and
 move), the keys above, resizing the window, a HiDPI and a plain screen, F11.

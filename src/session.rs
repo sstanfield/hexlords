@@ -14,7 +14,7 @@ use turbo_ferret::{
 };
 
 use crate::game::Game;
-use crate::gui::{self, MapCommand, MapKey, MapWidget, RootCommand, RootWindow};
+use crate::gui::{self, MapCommand, MapKey, MapWidget, MiniMapCommand, MiniMapWidget, RootCommand, RootWindow};
 use crate::minimap_view::MiniMapView;
 use crate::state::{Direction, Hex};
 use crate::view::MapView;
@@ -64,7 +64,6 @@ impl Session {
         ui.set_id(root_window, tbid!("RootWindow"));
         ui.set_gravity(root_window, Gravity::ALL);
         ui.set_rect(root_window, Rect::from_size(viewport));
-        ui.set_focusable(root_window, true);
 
         // The layout fills the root window (layouts follow their parent's size).
         ui.inflate_file(root_window, LAYOUT).map_err(|e| in_assets(LAYOUT, &e))?;
@@ -77,12 +76,16 @@ impl Session {
         if ui.get::<MapWidget>(map).is_none() {
             return Err(format!("{LAYOUT}: main_map is not a MapWidget"));
         }
+        if ui.get::<MiniMapWidget>(minimap).is_none() {
+            return Err(format!("{LAYOUT}: mini_map is not a MiniMapWidget"));
+        }
         ui.set_rect(main_layout, ui.padding_rect(root_window));
 
-        // The C++ left the focus on the root, so the arrows did nothing until the
-        // map was clicked. Start on the map instead (deviation D11).
+        // The map has the keyboard, and keeps it: nothing else in the layout takes
+        // the focus, so the map's keys work whatever was clicked last. Keys the
+        // map does not use bubble up to the root window.
         if !ui.set_focus(map) {
-            ui.set_focus(root_window);
+            return Err(format!("{LAYOUT}: main_map cannot take the keyboard focus"));
         }
 
         let game = Game::demo();
@@ -108,10 +111,8 @@ impl Session {
     }
 
     /// Size the map and the minimap from the window's size: the map is 80% of the
-    /// width and 70% of the height, the minimap what is left of each.
-    ///
-    /// C++: assets/layouts/main.lua, which did this once at startup; here the
-    /// sizes follow the window (deviation D14).
+    /// width and 70% of the height, the minimap what is left of each. Called again
+    /// whenever the window's size changes. C++: assets/layouts/main.lua
     fn apply_layout_sizes(&mut self) {
         let Size { w, h } = self.ui.viewport();
         let spacing = self.ui.dimension_converter().dp_to_px(SPACING_DP);
@@ -173,12 +174,29 @@ impl Session {
         (x.abs() < 1.0 && y.abs() < 1.0 && r.contains(p)).then_some(p)
     }
 
+    /// The window pixel of a hex on the minimap.
+    pub fn minimap_pixel(&self, hex: Hex) -> Point {
+        let [x, y] = self.mini_view.to_ndc(self.mini_view.hex_center(hex));
+        let r = self.minimap_rect();
+        Point::new(r.x + ((x + 1.0) / 2.0 * r.w as f32) as i32, r.y + ((1.0 - y) / 2.0 * r.h as f32) as i32)
+    }
+
     /// Apply what the widgets recorded since the last call. The host calls this
     /// after every input event it forwards to the UI.
     pub fn pump(&mut self) {
         let commands = self.ui.with_widget::<MapWidget, _>(self.map, |w, _| w.take_commands()).unwrap_or_default();
         for command in commands {
             self.apply(command);
+        }
+        let commands =
+            self.ui.with_widget::<MiniMapWidget, _>(self.minimap, |w, _| w.take_commands()).unwrap_or_default();
+        for MiniMapCommand::Goto(p, size) in commands {
+            // The main map looks at the hex that was pointed at, and the cursor
+            // goes there too, so that the keys carry on from it.
+            if let Some(hex) = self.mini_view.pick_pixel(p.x, p.y, size.w, size.h) {
+                self.game.set_cursor(hex);
+                self.view.center_on(hex);
+            }
         }
         let commands =
             self.ui.with_widget::<RootWindow, _>(self.root_window, |w, _| w.take_commands()).unwrap_or_default();
