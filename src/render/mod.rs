@@ -17,7 +17,7 @@ pub mod shaders;
 pub mod textures;
 
 pub use hex_mesh::HexVariant;
-pub use map_renderer::{MapGeometry, MapRenderer, TileTexture};
+pub use map_renderer::{MapGeometry, MapRenderer, Marks, RANGE_OVERLAY, TileTexture};
 pub use minimap_renderer::MiniMapRenderer;
 pub use shaders::Pipelines;
 

@@ -1,0 +1,6 @@
+# HexGame's changes to the default skin. This file is loaded on top of
+# skin.tb.txt, which stays as Turbo Badger made it.
+elements
+	# The chosen button of a group (a terrain, a tool) says so in color.
+	TBButton.pressed
+		text-color #ffd24a

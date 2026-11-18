@@ -1,11 +1,12 @@
-//! The window: a miniquad `EventHandler` that feeds input to the session and
-//! draws the frame.
+//! The window: a miniquad `EventHandler` that feeds input to a scene (the game,
+//! or a tool) and draws the frame.
 //!
 //! C++: src/main.cpp (the GLFW window, callbacks and main loop)
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use miniquad::conf::Conf;
 use miniquad::{
     Backend, EventHandler, KeyCode, KeyMods, MouseButton, PassAction, RenderPass, RenderingBackend, TouchPhase, window,
 };
@@ -15,18 +16,17 @@ use turbo_ferret_miniquad::{InputAdapter, MiniquadClipboard, MiniquadRenderer, w
 use crate::paths::asset_root;
 use crate::platform;
 use crate::render::textures::texture_params;
-use crate::render::{MapRenderer, MiniMapRenderer, Pipelines, gl_rect, png_out};
-use crate::script;
-use crate::session::Session;
+use crate::render::{MapRenderer, Marks, MiniMapRenderer, Pipelines, gl_rect, png_out};
+use crate::screen::Scene;
 
-/// The window's size at start, in logical pixels. C++: main.cpp
+/// The game window's size at start, in logical pixels. C++: main.cpp
 pub const WINDOW_SIZE: (i32, i32) = (1024, 768);
 pub const WINDOW_TITLE: &str = "HEX Game!";
 /// The color behind everything. C++: main.cpp glClearColor
 pub const CLEAR_COLOR: (f32, f32, f32, f32) = (0.5, 0.5, 0.5, 1.0);
 
-/// The command line.
-#[derive(Clone, Debug, Default)]
+/// The part of the command line every window of this project understands.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Options {
     /// `--assets <dir>`: where the assets are (see `paths::asset_root`).
     pub assets: Option<PathBuf>,
@@ -35,16 +35,73 @@ pub struct Options {
     /// `--screenshot <file>`: draw a frame into this PNG file and quit. It is the
     /// last frame of `--frames`, or the second without it.
     pub screenshot: Option<PathBuf>,
-    /// `--script <steps>`: input to play before the first frame (see `script`).
-    pub script: Option<String>,
+}
+
+/// The usage text of the options [`Options::take`] reads.
+pub const OPTIONS_USAGE: &str = "[--assets <dir>] [--frames <n>] [--screenshot <file.png>]";
+
+impl Options {
+    /// Read `arg` if it is one of these options, taking its value from `rest`.
+    /// `Ok(false)`: it is something else, and nothing was taken.
+    pub fn take(&mut self, arg: &str, rest: &mut dyn Iterator<Item = String>) -> Result<bool, String> {
+        let mut value = |what: &str| rest.next().ok_or(format!("{arg} needs {what}"));
+        match arg {
+            "--assets" => self.assets = Some(PathBuf::from(value("a directory")?)),
+            "--frames" => {
+                let n = value("a number")?;
+                let frames: u64 = n.parse().map_err(|_| format!("--frames: \"{n}\" is not a number"))?;
+                if frames == 0 {
+                    return Err("--frames: at least 1".to_string());
+                }
+                self.frames = Some(frames);
+            }
+            "--screenshot" => self.screenshot = Some(PathBuf::from(value("a file")?)),
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+}
+
+/// What is different from one window of this project to the next.
+#[derive(Copy, Clone, Debug)]
+pub struct WindowSpec {
+    /// The program's name, in front of its error messages.
+    pub program: &'static str,
+    pub title: &'static str,
+    /// The window's size at start, in logical pixels.
+    pub size: (i32, i32),
+}
+
+/// Open the window and run the scene `build` makes until the player quits.
+/// `build` gets the asset directory, the window's size in pixels and its DPI.
+/// An error from it ends the program with status 1.
+pub fn run<S, B>(spec: WindowSpec, options: Options, build: B)
+where
+    S: Scene + 'static,
+    B: FnOnce(&Path, Size, i32) -> Result<S, String> + 'static,
+{
+    let conf = Conf {
+        window_title: spec.title.to_string(),
+        window_width: spec.size.0,
+        window_height: spec.size.1,
+        high_dpi: true,
+        ..Default::default()
+    };
+    miniquad::start(conf, move || match App::new(spec.program, options, build) {
+        Ok(app) => Box::new(app),
+        Err(e) => {
+            eprintln!("{}: {e}", spec.program);
+            std::process::exit(1);
+        }
+    });
 }
 
 /// The earliest frame a screenshot is taken of: the second, when the layout has
 /// settled.
 const SCREENSHOT_FRAME: u64 = 2;
 
-pub struct App {
-    session: Session,
+pub struct App<S: Scene> {
+    scene: S,
     /// Turbo Ferret's renderer. It owns the miniquad context, which the game's
     /// own renderers borrow from it.
     renderer: MiniquadRenderer,
@@ -55,12 +112,17 @@ pub struct App {
     start: Instant,
     frames: u64,
     fullscreen: bool,
+    program: &'static str,
     options: Options,
 }
 
-impl App {
+impl<S: Scene> App<S> {
     /// Call inside `miniquad::start`'s closure (it needs the window).
-    pub fn new(options: Options) -> Result<App, String> {
+    pub fn new(
+        program: &'static str,
+        options: Options,
+        build: impl FnOnce(&Path, Size, i32) -> Result<S, String>,
+    ) -> Result<App<S>, String> {
         let mut renderer =
             MiniquadRenderer::new(window::new_rendering_backend()).map_err(|e| format!("shader: {e}"))?;
         if renderer.context().info().backend == Backend::Metal {
@@ -68,20 +130,18 @@ impl App {
         }
         let (w, h) = window::screen_size();
         let assets = asset_root(options.assets.as_deref());
-        let mut session = Session::new(&assets, Size::new(w as i32, h as i32), window_dpi())?;
+        let mut scene = build(&assets, Size::new(w as i32, h as i32), window_dpi())?;
         // Copy and paste with the rest of the system.
-        session.ui.services_mut().clipboard = Box::new(MiniquadClipboard::new());
-        if let Some(steps) = &options.script {
-            script::run(&mut session, steps).map_err(|e| format!("--script: {e}"))?;
-        }
+        let ui = &mut scene.screen_mut().ui;
+        ui.services_mut().clipboard = Box::new(MiniquadClipboard::new());
 
         // The game's own pipelines and textures live on the renderer's context.
         let ctx = renderer.context_mut();
         let pipelines = Pipelines::new(ctx).map_err(|e| format!("shader: {e}"))?;
-        let map_renderer = MapRenderer::new(ctx, &mut *session.ui.services_mut().loader)
+        let map_renderer = MapRenderer::new(ctx, &mut *ui.services_mut().loader)
             .map_err(|e| format!("{e} (assets: {})", assets.display()))?;
         Ok(App {
-            session,
+            scene,
             renderer,
             pipelines,
             map_renderer,
@@ -90,6 +150,7 @@ impl App {
             start: Instant::now(),
             frames: 0,
             fullscreen: false,
+            program,
             options,
         })
     }
@@ -101,16 +162,20 @@ impl App {
     /// The UI's clock is data: keep it current before input (click counting reads it).
     fn tick(&mut self) {
         let t = self.now();
-        self.session.ui.set_time(t);
+        self.scene.screen_mut().ui.set_time(t);
     }
 
     /// After input: apply what the widgets recorded.
     fn after_input(&mut self) {
-        self.session.pump();
-        if self.session.quit_requested() {
-            window::order_quit();
+        self.scene.pump();
+        if self.scene.screen().quit_requested() {
+            if self.scene.confirm_quit() {
+                window::order_quit();
+            } else {
+                self.scene.screen_mut().cancel_quit();
+            }
         }
-        if self.session.take_fullscreen_toggles() % 2 == 1 {
+        if self.scene.screen_mut().take_fullscreen_toggles() % 2 == 1 {
             self.fullscreen = !self.fullscreen;
             window::set_fullscreen(self.fullscreen);
         }
@@ -122,33 +187,35 @@ impl App {
     /// the host does it here (plan, section 3.3).
     /// C++: Application::processFrame, GLWidget::OnPaint
     fn render(&mut self, target: Option<RenderPass>) {
-        let framebuffer = self.session.ui.viewport();
-        let dirty = self.session.take_minimap_dirty();
-        let session = &self.session;
+        let framebuffer = self.scene.screen().ui.viewport();
+        let dirty = self.scene.screen_mut().take_minimap_dirty();
+        let scene = &self.scene;
+        let screen = scene.screen();
         let ctx = self.renderer.context_mut();
 
         // The minimap's picture is drawn into its own target, before the frame's
         // pass begins.
-        self.minimap_renderer.update(ctx, &self.pipelines, &session.game.map, &session.mini_view, dirty);
+        self.minimap_renderer.update(ctx, &self.pipelines, &screen.game.map, &screen.mini_view, dirty);
 
         let (r, g, b, a) = CLEAR_COLOR;
         ctx.begin_pass(target, PassAction::clear_color(r, g, b, a));
-        if set_viewport(ctx, session.map_rect(), framebuffer) {
-            self.map_renderer.draw(ctx, &self.pipelines, &session.game, &session.view);
+        if set_viewport(ctx, screen.map_rect(), framebuffer) {
+            let marks = Marks { color: scene.mark_color(), marked: &|hex| scene.marked(hex) };
+            self.map_renderer.draw(ctx, &self.pipelines, &screen.game.map, &screen.view, &marks);
         }
-        if set_viewport(ctx, session.minimap_rect(), framebuffer) {
-            self.minimap_renderer.draw(ctx, &self.pipelines, session.mini_view.marker(&session.view));
+        if set_viewport(ctx, screen.minimap_rect(), framebuffer) {
+            self.minimap_renderer.draw(ctx, &self.pipelines, screen.mini_view.marker(&screen.view));
         }
         // Back to the whole framebuffer for the UI, which draws on top.
         set_viewport(ctx, Rect::from_size(framebuffer), framebuffer);
-        self.session.ui.paint(&mut self.renderer);
+        self.scene.screen_mut().ui.paint(&mut self.renderer);
         self.renderer.context_mut().end_render_pass();
     }
 
     /// Draw a frame into a texture of the window's size and write it as a PNG.
     fn screenshot(&mut self) -> Result<(), String> {
         let Some(path) = self.options.screenshot.clone() else { return Ok(()) };
-        let Size { w, h } = self.session.ui.viewport();
+        let Size { w, h } = self.scene.screen().ui.viewport();
         if w <= 0 || h <= 0 {
             return Err("the window has no size".to_string());
         }
@@ -185,10 +252,10 @@ fn set_viewport(ctx: &mut dyn RenderingBackend, rect: Rect, framebuffer: Size) -
     true
 }
 
-impl EventHandler for App {
+impl<S: Scene> EventHandler for App<S> {
     fn update(&mut self) {
         let t = self.now();
-        self.session.frame(t);
+        self.scene.frame(t);
     }
 
     fn draw(&mut self) {
@@ -210,7 +277,7 @@ impl EventHandler for App {
             if let Err(e) = self.screenshot() {
                 // A scripted run that did not make its picture must not look like
                 // one that did.
-                eprintln!("hexgame: --screenshot: {e}");
+                eprintln!("{}: --screenshot: {e}", self.program);
                 std::process::exit(1);
             }
         } else {
@@ -218,43 +285,43 @@ impl EventHandler for App {
         }
         self.renderer.context_mut().commit_frame();
         if done {
-            let vp = self.session.ui.viewport();
+            let vp = self.scene.screen().ui.viewport();
             println!("{} frames drawn at {}x{}, {} dpi; quitting", self.frames, vp.w, vp.h, window_dpi());
             window::order_quit();
         }
     }
 
     fn resize_event(&mut self, width: f32, height: f32) {
-        self.session.resize(Size::new(width.round().max(0.0) as i32, height.round().max(0.0) as i32));
+        self.scene.resize(Size::new(width.round().max(0.0) as i32, height.round().max(0.0) as i32));
     }
 
     fn mouse_motion_event(&mut self, x: f32, y: f32) {
         self.tick();
-        self.input.mouse_motion_event(&mut self.session.ui, x, y);
+        self.input.mouse_motion_event(&mut self.scene.screen_mut().ui, x, y);
         self.after_input();
     }
 
     fn mouse_wheel_event(&mut self, x: f32, y: f32) {
         self.tick();
-        self.input.mouse_wheel_event(&mut self.session.ui, x, y);
+        self.input.mouse_wheel_event(&mut self.scene.screen_mut().ui, x, y);
         self.after_input();
     }
 
     fn mouse_button_down_event(&mut self, button: MouseButton, x: f32, y: f32) {
         self.tick();
-        self.input.mouse_button_down_event(&mut self.session.ui, button, x, y);
+        self.input.mouse_button_down_event(&mut self.scene.screen_mut().ui, button, x, y);
         self.after_input();
     }
 
     fn mouse_button_up_event(&mut self, button: MouseButton, x: f32, y: f32) {
         self.tick();
-        self.input.mouse_button_up_event(&mut self.session.ui, button, x, y);
+        self.input.mouse_button_up_event(&mut self.scene.screen_mut().ui, button, x, y);
         self.after_input();
     }
 
     fn char_event(&mut self, character: char, keymods: KeyMods, repeat: bool) {
         self.tick();
-        self.input.char_event(&mut self.session.ui, character, keymods, repeat);
+        self.input.char_event(&mut self.scene.screen_mut().ui, character, keymods, repeat);
         self.after_input();
     }
 
@@ -264,23 +331,30 @@ impl EventHandler for App {
             return;
         }
         self.tick();
-        self.input.key_down_event(&mut self.session.ui, keycode, keymods, repeat);
+        self.input.key_down_event(&mut self.scene.screen_mut().ui, keycode, keymods, repeat);
         self.after_input();
     }
 
     fn key_up_event(&mut self, keycode: KeyCode, keymods: KeyMods) {
         self.tick();
-        self.input.key_up_event(&mut self.session.ui, keycode, keymods);
+        self.input.key_up_event(&mut self.scene.screen_mut().ui, keycode, keymods);
         self.after_input();
     }
 
     fn touch_event(&mut self, phase: TouchPhase, id: u64, x: f32, y: f32) {
         self.tick();
-        self.input.touch_event(&mut self.session.ui, phase, id, x, y);
+        self.input.touch_event(&mut self.scene.screen_mut().ui, phase, id, x, y);
         self.after_input();
     }
 
     fn window_minimized_event(&mut self) {
-        self.input.focus_lost(&mut self.session.ui);
+        self.input.focus_lost(&mut self.scene.screen_mut().ui);
+    }
+
+    /// The window's close button.
+    fn quit_requested_event(&mut self) {
+        if !self.scene.confirm_quit() {
+            window::cancel_quit();
+        }
     }
 }

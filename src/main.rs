@@ -12,59 +12,74 @@
 
 use std::path::PathBuf;
 
-use hexgame::app::{App, Options, WINDOW_SIZE, WINDOW_TITLE};
-use miniquad::conf::Conf;
+use hexgame::app::{self, OPTIONS_USAGE, Options, WINDOW_SIZE, WINDOW_TITLE, WindowSpec};
+use hexgame::game::Game;
+use hexgame::script;
+use hexgame::session::Session;
+use hexgame::state::Map;
 
-const USAGE: &str = "usage: hexgame [--assets <dir>] [--frames <n>] [--screenshot <file.png>] [--script <steps>]";
+/// The command line.
+#[derive(Clone, Debug, Default)]
+struct Args {
+    window: Options,
+    /// `--map <file>`: play on this map instead of the demo's.
+    map: Option<PathBuf>,
+    /// `--script <steps>`: input to play before the first frame (see `script`).
+    script: Option<String>,
+}
 
-fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
-    let mut options = Options::default();
+fn usage() -> String {
+    format!("usage: hexgame [--map <file.map>] [--script <steps>] {OPTIONS_USAGE}")
+}
+
+fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
+    let mut parsed = Args::default();
     let mut args = args;
     while let Some(arg) = args.next() {
+        if parsed.window.take(&arg, &mut args)? {
+            continue;
+        }
         let mut value = |what: &str| args.next().ok_or(format!("{arg} needs {what}"));
         match arg.as_str() {
-            "--assets" => options.assets = Some(PathBuf::from(value("a directory")?)),
-            "--frames" => {
-                let n = value("a number")?;
-                let frames: u64 = n.parse().map_err(|_| format!("--frames: \"{n}\" is not a number"))?;
-                if frames == 0 {
-                    return Err("--frames: at least 1".to_string());
-                }
-                options.frames = Some(frames);
-            }
-            "--screenshot" => options.screenshot = Some(PathBuf::from(value("a file")?)),
-            "--script" => options.script = Some(value("steps")?),
+            "--map" => parsed.map = Some(PathBuf::from(value("a file")?)),
+            "--script" => parsed.script = Some(value("steps")?),
             "-h" | "--help" => return Err(String::new()),
             _ => return Err(format!("unknown option {arg}")),
         }
     }
-    Ok(options)
+    Ok(parsed)
 }
 
 fn main() {
-    let options = match parse_args(std::env::args().skip(1)) {
-        Ok(options) => options,
+    let args = match parse_args(std::env::args().skip(1)) {
+        Ok(args) => args,
         Err(message) => {
             if !message.is_empty() {
                 eprintln!("hexgame: {message}");
             }
-            eprintln!("{USAGE}");
+            eprintln!("{}", usage());
             std::process::exit(2);
         }
     };
-    let conf = Conf {
-        window_title: WINDOW_TITLE.to_string(),
-        window_width: WINDOW_SIZE.0,
-        window_height: WINDOW_SIZE.1,
-        high_dpi: true,
-        ..Default::default()
+    let Args { window, map, script } = args;
+    // A map file that cannot be read ends the run before a window opens.
+    let game = match map {
+        Some(path) => match Map::load(&path) {
+            Ok(map) => Game::on_map(map),
+            Err(e) => {
+                eprintln!("hexgame: --map: {e}");
+                std::process::exit(1);
+            }
+        },
+        None => Game::demo(),
     };
-    miniquad::start(conf, move || match App::new(options) {
-        Ok(app) => Box::new(app),
-        Err(e) => {
-            eprintln!("hexgame: {e}");
-            std::process::exit(1);
+    let spec = WindowSpec { program: "hexgame", title: WINDOW_TITLE, size: WINDOW_SIZE };
+    app::run(spec, window, move |assets, viewport, dpi| {
+        let mut session = Session::with_game(assets, viewport, dpi, game)?;
+        if let Some(steps) = &script {
+            script::run(&mut session, steps).map_err(|e| format!("--script: {e}"))?;
         }
+        Ok(session)
     });
 }
 
@@ -72,24 +87,26 @@ fn main() {
 mod tests {
     use super::*;
 
-    fn parse(args: &[&str]) -> Result<Options, String> {
+    fn parse(args: &[&str]) -> Result<Args, String> {
         parse_args(args.iter().map(|s| s.to_string()))
     }
 
     #[test]
     fn no_arguments_are_the_defaults() {
         let o = parse(&[]).unwrap();
-        assert!(o.assets.is_none() && o.frames.is_none() && o.screenshot.is_none() && o.script.is_none());
+        assert!(o.window.assets.is_none() && o.window.frames.is_none() && o.window.screenshot.is_none());
+        assert!(o.map.is_none() && o.script.is_none());
     }
 
     #[test]
     fn every_option() {
-        let o =
-            parse(&["--assets", "a dir", "--frames", "30", "--screenshot", "shot.png", "--script", "enter,1"]).unwrap();
-        assert_eq!(o.assets, Some(PathBuf::from("a dir")));
-        assert_eq!(o.frames, Some(30));
-        assert_eq!(o.screenshot, Some(PathBuf::from("shot.png")));
+        let all = ["--assets", "a dir", "--frames", "30", "--screenshot", "shot.png", "--script", "enter,1"];
+        let o = parse(&[&all[..], &["--map", "maps/one.map"]].concat()).unwrap();
+        assert_eq!(o.window.assets, Some(PathBuf::from("a dir")));
+        assert_eq!(o.window.frames, Some(30));
+        assert_eq!(o.window.screenshot, Some(PathBuf::from("shot.png")));
         assert_eq!(o.script.as_deref(), Some("enter,1"));
+        assert_eq!(o.map, Some(PathBuf::from("maps/one.map")));
     }
 
     #[test]
@@ -99,6 +116,7 @@ mod tests {
         assert_eq!(parse(&["--frames", "many"]).unwrap_err(), "--frames: \"many\" is not a number");
         assert_eq!(parse(&["--frames", "0"]).unwrap_err(), "--frames: at least 1");
         assert_eq!(parse(&["--assets"]).unwrap_err(), "--assets needs a directory");
+        assert_eq!(parse(&["--map"]).unwrap_err(), "--map needs a file");
         // Help is the usage alone.
         assert_eq!(parse(&["--help"]).unwrap_err(), "");
     }

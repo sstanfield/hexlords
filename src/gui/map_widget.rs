@@ -26,9 +26,14 @@ pub enum MapKey {
 /// along, so that the receiver can turn them into hexes.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum MapCommand {
-    /// The pointer moved over the map.
+    /// The pointer moved over the map, or anywhere while the button that went
+    /// down on the map is held (the point may then be outside the area).
     Hover(Point, Size),
-    /// A click (press and release) on the map.
+    /// The button went down on the map. Until `Release`, the `Hover`s are a drag.
+    Press(Point, Size),
+    /// The button came up again, or the press ended some other way.
+    Release,
+    /// A click (press and release) on the map. It comes after its `Release`.
     Click(Point, Size),
     Key(MapKey),
 }
@@ -36,6 +41,8 @@ pub enum MapCommand {
 #[derive(Default)]
 pub struct MapWidget {
     commands: Vec<MapCommand>,
+    /// The button is down on the map.
+    pressed: bool,
 }
 
 impl MapWidget {
@@ -45,6 +52,12 @@ impl MapWidget {
     }
 
     /// An event's position relative to the map area, and that area's size.
+    fn release(&mut self) {
+        if std::mem::take(&mut self.pressed) {
+            self.commands.push(MapCommand::Release);
+        }
+    }
+
     fn map_point(cx: &Ctx, ev: &Event) -> (Point, Size) {
         let area = cx.padding_rect(cx.this());
         (ev.pos - area.origin(), area.size())
@@ -62,6 +75,16 @@ impl Widget for MapWidget {
             EventKind::PointerMove => {
                 let (p, size) = Self::map_point(cx, ev);
                 self.commands.push(MapCommand::Hover(p, size));
+                false
+            }
+            EventKind::PointerDown => {
+                let (p, size) = Self::map_point(cx, ev);
+                self.pressed = true;
+                self.commands.push(MapCommand::Press(p, size));
+                false
+            }
+            EventKind::PointerUp => {
+                self.release();
                 false
             }
             EventKind::Click => {
@@ -87,6 +110,13 @@ impl Widget for MapWidget {
             // The releases of the keys used on the way down.
             EventKind::KeyUp => is_map_key(ev.special),
             _ => false,
+        }
+    }
+
+    /// The press ended some other way (the window lost the focus, say).
+    fn on_capture_changed(&mut self, _cx: &mut Ctx, captured: bool) {
+        if !captured {
+            self.release();
         }
     }
 }

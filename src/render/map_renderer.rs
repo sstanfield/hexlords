@@ -1,6 +1,6 @@
 //! The main map: the visible hexes with their terrain textures and borders, the
-//! unit image on hexes that hold units, and the overlay on hexes the selected
-//! unit can move to.
+//! unit image on hexes that hold units, and the overlay on the hexes the caller
+//! marks (in the game: where the selected unit can move to).
 //!
 //! The geometry is built on the CPU each frame (`MapGeometry`, which needs no
 //! GPU and is tested without one) and drawn in three layers: the terrain, one
@@ -17,18 +17,24 @@ use super::hex_mesh::{HEX_BARY, HEX_INDICES, HEX_VERTICES, HexVariant};
 use super::mesh::{BufferPool, MeshList};
 use super::shaders::{FlatVertex, HexVertex, Pipelines};
 use super::textures::load_texture;
-use crate::game::Game;
-use crate::state::TileType;
+use crate::state::{Hex, Map, TileType};
 use crate::view::MapView;
 
 /// The border of the hex under the cursor. C++: drawHex (`isSelected`)
 pub const CURSOR_BORDER: [f32; 3] = [1.0, 0.0, 0.0];
 /// The border of every other hex.
 pub const HEX_BORDER: [f32; 3] = [0.0, 0.0, 0.0];
-/// Laid over the hexes the selected unit can move to. C++: HexOverlayFragment.glsl
+/// Laid over the hexes a selected unit can move to. C++: HexOverlayFragment.glsl
 pub const RANGE_OVERLAY: [f32; 4] = [1.0, 0.0, 0.0, 0.3];
 /// Drawn over a hex that holds units.
 pub const UNIT_IMAGE: &str = "units/default_unit.png";
+
+/// The hexes of the map that get a tint laid over them.
+pub struct Marks<'a> {
+    /// The tint: red, green, blue and how much of it.
+    pub color: [f32; 4],
+    pub marked: &'a dyn Fn(Hex) -> bool,
+}
 
 /// The texture a terrain is drawn with.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -93,7 +99,7 @@ pub struct MapGeometry {
     terrain: [MeshList<HexVertex>; 7],
     /// The hexes that hold units, to be drawn with the unit image.
     units: MeshList<HexVertex>,
-    /// The hexes the selected unit can move to.
+    /// The marked hexes.
     overlay: MeshList<FlatVertex>,
 }
 
@@ -102,15 +108,16 @@ impl MapGeometry {
         MapGeometry::default()
     }
 
-    /// Rebuild for the current state and view. C++: MapRenderer::renderMap, drawHex
-    pub fn build(&mut self, game: &Game, view: &MapView) {
+    /// Rebuild for the current map and view. `marks` says which hexes get a
+    /// tint, and which: where the selected unit can go, in the game.
+    /// C++: MapRenderer::renderMap, drawHex
+    pub fn build(&mut self, map: &Map, view: &MapView, marks: &Marks) {
         for list in &mut self.terrain {
             list.clear();
         }
         self.units.clear();
         self.overlay.clear();
 
-        let map = &game.map;
         let (rows, cols) = (map.rows(), map.cols());
         for visible in view.visible_hexes() {
             let hex = visible.hex;
@@ -129,9 +136,9 @@ impl MapGeometry {
             if !tile.units().is_empty() {
                 self.units.push(&vertices, &HEX_INDICES);
             }
-            if game.can_move_to(hex) {
+            if (marks.marked)(hex) {
                 let flat: [FlatVertex; HEX_VERTICES] =
-                    std::array::from_fn(|i| FlatVertex { pos: corner(i), color: RANGE_OVERLAY });
+                    std::array::from_fn(|i| FlatVertex { pos: corner(i), color: marks.color });
                 self.overlay.push(&flat, &HEX_INDICES);
             }
         }
@@ -174,8 +181,15 @@ impl MapRenderer {
 
     /// Draw the map. The caller has set the viewport (and the scissor) to the map
     /// widget's rectangle. C++: MapRenderer::renderMap
-    pub fn draw(&mut self, ctx: &mut dyn RenderingBackend, pipelines: &Pipelines, game: &Game, view: &MapView) {
-        self.geometry.build(game, view);
+    pub fn draw(
+        &mut self,
+        ctx: &mut dyn RenderingBackend,
+        pipelines: &Pipelines,
+        map: &Map,
+        view: &MapView,
+        marks: &Marks,
+    ) {
+        self.geometry.build(map, view, marks);
         self.buffers.rewind();
 
         // All the terrain, then the units, then the overlay.
@@ -213,7 +227,7 @@ impl MapRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::Hex;
+    use crate::game::Game;
 
     const START: Hex = Hex::new(50, 50);
 
@@ -225,7 +239,7 @@ mod tests {
 
     fn geometry(game: &Game, view: &MapView) -> MapGeometry {
         let mut g = MapGeometry::new();
-        g.build(game, view);
+        g.build(&game.map, view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex) });
         g
     }
 
@@ -408,9 +422,9 @@ mod tests {
         let game = Game::demo();
         let view = view_at(START);
         let mut g = MapGeometry::new();
-        g.build(&game, &view);
+        g.build(&game.map, &view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex) });
         let first = g.terrain(TileTexture::Grass).vertex_count();
-        g.build(&game, &view);
+        g.build(&game.map, &view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex) });
         assert_eq!(g.terrain(TileTexture::Grass).vertex_count(), first);
         assert_eq!(hexes(g.units()).len(), 1);
     }

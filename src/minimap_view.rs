@@ -9,7 +9,7 @@
 //! miniMapLocMarker)
 
 use crate::state::Hex;
-use crate::view::{MapView, factors, hex_at};
+use crate::view::{HEX_HEIGHT_ADJUST, MapView, factors, hex_at};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MiniMapView {
@@ -34,6 +34,14 @@ impl MiniMapView {
     /// the bottom.
     fn extent(&self) -> (f32, f32) {
         (1.5 * f32::from(self.cols - 1) + 1.0, 2.0 * f32::from(self.rows - 1) + 1.0)
+    }
+
+    /// How high the map is on screen for its width: the height of a rectangle
+    /// that fits it exactly, divided by that rectangle's width. A minimap of
+    /// this shape has no empty margins.
+    pub fn shape(&self) -> f32 {
+        let (w, h) = self.extent();
+        h * HEX_HEIGHT_ADJUST / w
     }
 
     /// The middle of the map, in model units measured from the center of hex (0, 0).
@@ -141,6 +149,19 @@ mod tests {
         // The last row: an even column's hex is cut off at its center.
         let [_, bottom] = v.to_ndc([0.0, v.hex_center(Hex::new(rows - 1, 0))[1]]);
         [left, bottom, right, top]
+    }
+
+    #[test]
+    fn a_widget_of_the_maps_shape_is_filled_to_its_edges() {
+        for (rows, cols) in [(100u16, 100u16), (20, 80), (300, 40)] {
+            let mut v = MiniMapView::new(rows, cols);
+            v.resize(400, (400.0 * v.shape()).round() as i32);
+            // The map spans the widget (2 in normalized coordinates) both ways.
+            let (wf, hf) = v.factors();
+            let (map_w, map_h) = v.extent();
+            assert!((map_w * wf - 2.0).abs() < 0.02, "{rows}x{cols}: {}", map_w * wf);
+            assert!((map_h * hf - 2.0).abs() < 0.02, "{rows}x{cols}: {}", map_h * hf);
+        }
     }
 
     #[test]

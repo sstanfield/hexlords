@@ -42,21 +42,38 @@ impl Game {
                 tile.kind = TileType::Mountain;
             }
         }
-        let cost = map.acquire_move_cost(MoveCost {
-            grass: 2,
-            forest: 4,
-            swamp: 5,
-            desert: 3,
-            hill: 4,
-            mountain: 0,
-            water: 0,
-            shore: 0,
-            bridge: 1,
-            road: 2,
-            city: 1,
-        });
-        let cav = map.new_unit(Side::Black, "Test Cav", 3, 5, 20, cost);
-        map.place_unit(cav, Hex::new(50, 50)).expect("the middle of the map is free");
+        add_demo_unit(&mut map, Hex::new(50, 50));
+        Game::new(map)
+    }
+
+    /// The demo on a map of your own (`--map`): the same cavalry unit, on the
+    /// hex nearest the middle of the map that it can stand on, with the cursor
+    /// on it. A map that is all water and mountains gets no unit.
+    pub fn on_map(mut map: Map) -> Game {
+        let middle = Hex::new(map.rows() / 2, map.cols() / 2);
+        let costs = demo_costs();
+        let can_stand = |map: &Map, hex: Hex| map.tile(hex).is_some_and(|t| costs.entry(t.kind).is_some());
+        // Breadth first from the middle: the first hex found is a nearest one.
+        let mut seen = vec![false; usize::from(map.rows()) * usize::from(map.cols())];
+        let index = |hex: Hex| usize::from(hex.row) * usize::from(map.cols()) + usize::from(hex.col);
+        let mut queue = std::collections::VecDeque::from([middle]);
+        seen[index(middle)] = true;
+        let mut start = None;
+        while let Some(hex) = queue.pop_front() {
+            if can_stand(&map, hex) {
+                start = Some(hex);
+                break;
+            }
+            for next in map.neighbours(hex) {
+                if !std::mem::replace(&mut seen[index(next)], true) {
+                    queue.push_back(next);
+                }
+            }
+        }
+        if let Some(hex) = start {
+            add_demo_unit(&mut map, hex);
+            map.cursor = hex;
+        }
         Game::new(map)
     }
 
@@ -164,12 +181,69 @@ impl Game {
     }
 }
 
+/// What the demo's cavalry pays to enter each terrain. C++: Application::Application
+fn demo_costs() -> MoveCost {
+    MoveCost {
+        grass: 2,
+        forest: 4,
+        swamp: 5,
+        desert: 3,
+        hill: 4,
+        mountain: 0,
+        water: 0,
+        shore: 0,
+        bridge: 1,
+        road: 2,
+        city: 1,
+    }
+}
+
+/// C++: Application::Application
+fn add_demo_unit(map: &mut Map, hex: Hex) {
+    let cost = map.acquire_move_cost(demo_costs());
+    let cav = map.new_unit(Side::Black, "Test Cav", 3, 5, 20, cost);
+    map.place_unit(cav, hex).expect("a hex of a new map is free");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::state::MAX_STACK;
 
     const START: Hex = Hex::new(50, 50);
+
+    #[test]
+    fn a_map_of_your_own_gets_the_demo_unit_near_its_middle() {
+        // Grass: the unit is in the middle, and the cursor on it.
+        let game = Game::on_map(Map::new(30, 50, TileType::Grass).unwrap());
+        let middle = Hex::new(15, 25);
+        assert_eq!(game.map.cursor, middle);
+        let &[id] = game.map.units_at(middle) else { panic!("one unit in the middle") };
+        assert_eq!(game.map.units().get(id).unwrap().name, "Test Cav");
+
+        // A lake in the middle: the unit stands on its shore, as near as can be.
+        let mut map = Map::new(30, 50, TileType::Grass).unwrap();
+        let mut lake = vec![middle];
+        for _ in 0..3 {
+            for hex in lake.clone() {
+                lake.extend(map.neighbours(hex));
+            }
+        }
+        for hex in &lake {
+            map.tile_mut(*hex).unwrap().kind = TileType::Water;
+        }
+        let game = Game::on_map(map);
+        let start = game.map.cursor;
+        assert_eq!(game.map.units_at(start).len(), 1);
+        assert_eq!(game.map.tile(start).unwrap().kind, TileType::Grass);
+        assert!(game.map.neighbours(start).any(|n| lake.contains(&n)), "{start} is on the shore");
+        assert_eq!(game.map.units().iter().count(), 1);
+
+        // Nowhere to stand: no unit, and the cursor stays in the middle.
+        let game = Game::on_map(Map::new(20, 20, TileType::Water).unwrap());
+        assert_eq!(game.map.units().iter().count(), 0);
+        assert_eq!(game.map.cursor, Hex::new(10, 10));
+    }
 
     #[test]
     fn the_demo_state() {

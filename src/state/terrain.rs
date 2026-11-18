@@ -33,6 +33,22 @@ impl TileType {
         TileType::City,
     ];
 
+    /// The terrain's name, in lower case.
+    pub fn name(self) -> &'static str {
+        match self {
+            TileType::Grass => "grass",
+            TileType::Forest => "forest",
+            TileType::Swamp => "swamp",
+            TileType::Desert => "desert",
+            TileType::Hill => "hill",
+            TileType::Mountain => "mountain",
+            TileType::Water => "water",
+            TileType::Temple => "temple",
+            TileType::Ruin => "ruin",
+            TileType::City => "city",
+        }
+    }
+
     /// The terrain for a map file letter. C++: Map::Map(std::string file)
     pub fn from_char(c: char) -> Option<TileType> {
         Some(match c {

@@ -23,20 +23,20 @@ pub const BACKING: (f32, f32, f32, f32) = (0.0, 0.0, 0.0, 1.0);
 /// The marker over the main view's part of the map. C++: miniMapLocMarker
 pub const MARKER: [f32; 4] = [0.0, 0.0, 0.0, 0.3];
 
-/// A terrain's color on the minimap. Deserts and cities are black, as in the C++
-/// (which marked them "XXX Fixme"). C++: getTileColor
+/// A terrain's color on the minimap. Deserts and cities, which the C++ left
+/// black ("XXX Fixme"), have colors of their own. C++: getTileColor
 pub fn terrain_color(kind: TileType) -> [f32; 3] {
     match kind {
         TileType::Grass => [0.0, 0.76, 0.0],
         TileType::Forest => [0.22, 0.416, 0.122],
         TileType::Swamp => [0.0, 0.76, 0.522],
-        TileType::Desert => [0.0, 0.0, 0.0],
+        TileType::Desert => [0.87, 0.78, 0.5],
         TileType::Hill => [0.863, 0.667, 0.208],
         TileType::Mountain => [0.475, 0.467, 0.443],
         TileType::Water => [0.09, 0.886, 0.902],
         TileType::Temple => [0.5, 0.5, 0.5],
         TileType::Ruin => [0.6, 0.6, 0.6],
-        TileType::City => [0.0, 0.0, 0.0],
+        TileType::City => [0.75, 0.1, 0.1],
     }
 }
 
@@ -223,9 +223,13 @@ mod tests {
         assert_eq!(terrain_color(TileType::Water), [0.09, 0.886, 0.902]);
         assert_eq!(terrain_color(TileType::Temple), [0.5, 0.5, 0.5]);
         assert_eq!(terrain_color(TileType::Ruin), [0.6, 0.6, 0.6]);
-        // Not chosen yet in the C++: black.
-        assert_eq!(terrain_color(TileType::Desert), [0.0; 3]);
-        assert_eq!(terrain_color(TileType::City), [0.0; 3]);
+        // Every terrain has a color of its own (the C++ left desert and city
+        // black), so that a map can be read off the minimap.
+        for (i, a) in TileType::ALL.into_iter().enumerate() {
+            for b in &TileType::ALL[i + 1..] {
+                assert_ne!(terrain_color(a), terrain_color(*b), "{a:?} and {b:?}");
+            }
+        }
     }
 
     #[test]
