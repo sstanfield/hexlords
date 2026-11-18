@@ -57,7 +57,7 @@ impl Widget for MapWidget {
     }
 
     /// C++: MapWidget::OnEvent. It consumes what the C++ consumed, and also the
-    /// `1` and `2` presses, which the C++ acted on but let through (deviation D10).
+    /// `1` and `2` presses, which the C++ acted on but let through (deviation D15).
     fn on_event(&mut self, cx: &mut Ctx, ev: &Event) -> bool {
         match ev.kind {
             EventKind::PointerMove => {

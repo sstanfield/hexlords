@@ -6,11 +6,16 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use miniquad::{Backend, EventHandler, KeyCode, KeyMods, MouseButton, PassAction, TouchPhase, window};
-use turbo_ferret::Size;
+use miniquad::{
+    Backend, EventHandler, KeyCode, KeyMods, MouseButton, PassAction, RenderPass, RenderingBackend, TouchPhase, window,
+};
+use turbo_ferret::{Rect, Size};
 use turbo_ferret_miniquad::{InputAdapter, MiniquadClipboard, MiniquadRenderer, window_dpi};
 
 use crate::paths::asset_root;
+use crate::render::textures::texture_params;
+use crate::render::{MapRenderer, MiniMapRenderer, Pipelines, gl_rect, png_out};
+use crate::script;
 use crate::session::Session;
 
 /// The window's size at start, in logical pixels. C++: main.cpp
@@ -26,11 +31,23 @@ pub struct Options {
     pub assets: Option<PathBuf>,
     /// `--frames <n>`: quit after drawing this many frames.
     pub frames: Option<u64>,
+    /// `--screenshot <file>`: draw one frame into this PNG file and quit.
+    pub screenshot: Option<PathBuf>,
+    /// `--script <steps>`: input to play before the first frame (see `script`).
+    pub script: Option<String>,
 }
+
+/// The frame a screenshot is taken of: the second, when the layout has settled.
+const SCREENSHOT_FRAME: u64 = 2;
 
 pub struct App {
     session: Session,
+    /// Turbo Ferret's renderer. It owns the miniquad context, which the game's
+    /// own renderers borrow from it.
     renderer: MiniquadRenderer,
+    pipelines: Pipelines,
+    map_renderer: MapRenderer,
+    minimap_renderer: MiniMapRenderer,
     input: InputAdapter,
     start: Instant,
     frames: u64,
@@ -41,7 +58,8 @@ pub struct App {
 impl App {
     /// Call inside `miniquad::start`'s closure (it needs the window).
     pub fn new(options: Options) -> Result<App, String> {
-        let renderer = MiniquadRenderer::new(window::new_rendering_backend()).map_err(|e| format!("shader: {e}"))?;
+        let mut renderer =
+            MiniquadRenderer::new(window::new_rendering_backend()).map_err(|e| format!("shader: {e}"))?;
         if renderer.context().info().backend == Backend::Metal {
             return Err("the Metal backend is not supported: start miniquad with OpenGL (its default)".to_string());
         }
@@ -50,9 +68,21 @@ impl App {
         let mut session = Session::new(&assets, Size::new(w as i32, h as i32), window_dpi())?;
         // Copy and paste with the rest of the system.
         session.ui.services_mut().clipboard = Box::new(MiniquadClipboard::new());
+        if let Some(steps) = &options.script {
+            script::run(&mut session, steps).map_err(|e| format!("--script: {e}"))?;
+        }
+
+        // The game's own pipelines and textures live on the renderer's context.
+        let ctx = renderer.context_mut();
+        let pipelines = Pipelines::new(ctx).map_err(|e| format!("shader: {e}"))?;
+        let map_renderer = MapRenderer::new(ctx, &mut *session.ui.services_mut().loader)
+            .map_err(|e| format!("{e} (assets: {})", assets.display()))?;
         Ok(App {
             session,
             renderer,
+            pipelines,
+            map_renderer,
+            minimap_renderer: MiniMapRenderer::new(),
             input: InputAdapter::new(),
             start: Instant::now(),
             frames: 0,
@@ -82,6 +112,78 @@ impl App {
             window::set_fullscreen(self.fullscreen);
         }
     }
+
+    /// Draw a frame into `target` (`None`: the window): the map and the minimap
+    /// into their widgets' rectangles, then the UI on top. Turbo Ferret widgets
+    /// cannot draw with the GPU themselves, so the map widgets paint nothing and
+    /// the host does it here (plan, section 3.3).
+    /// C++: Application::processFrame, GLWidget::OnPaint
+    fn render(&mut self, target: Option<RenderPass>) {
+        let framebuffer = self.session.ui.viewport();
+        let dirty = self.session.take_minimap_dirty();
+        let session = &self.session;
+        let ctx = self.renderer.context_mut();
+
+        // The minimap's picture is drawn into its own target, before the frame's
+        // pass begins.
+        self.minimap_renderer.update(ctx, &self.pipelines, &session.game.map, &session.mini_view, dirty);
+
+        let (r, g, b, a) = CLEAR_COLOR;
+        ctx.begin_pass(target, PassAction::clear_color(r, g, b, a));
+        if set_viewport(ctx, session.map_rect(), framebuffer) {
+            self.map_renderer.draw(ctx, &self.pipelines, &session.game, &session.view);
+        }
+        if set_viewport(ctx, session.minimap_rect(), framebuffer) {
+            self.minimap_renderer.draw(ctx, &self.pipelines, session.mini_view.marker(&session.view));
+        }
+        // Back to the whole framebuffer for the UI, which draws on top.
+        set_viewport(ctx, Rect::from_size(framebuffer), framebuffer);
+        self.session.ui.paint(&mut self.renderer);
+        self.renderer.context_mut().end_render_pass();
+    }
+
+    /// Draw a frame into a texture of the window's size and write it as a PNG.
+    fn screenshot(&mut self) {
+        let Some(path) = self.options.screenshot.clone() else { return };
+        let Size { w, h } = self.session.ui.viewport();
+        if w <= 0 || h <= 0 {
+            eprintln!("hexgame: --screenshot: the window has no size");
+            return;
+        }
+        let ctx = self.renderer.context_mut();
+        let texture = ctx.new_render_texture(texture_params(w as u32, h as u32));
+        let pass = ctx.new_render_pass(texture, None);
+        self.render(Some(pass));
+
+        let ctx = self.renderer.context_mut();
+        let row = w as usize * 4;
+        let mut pixels = vec![0u8; row * h as usize];
+        ctx.texture_read_pixels(texture, &mut pixels);
+        ctx.delete_render_pass(pass); // and its texture
+        // The rows come bottom first.
+        let top_down: Vec<u8> = pixels.chunks_exact(row).rev().flatten().copied().collect();
+        let written = png_out::encode_rgb(w as u32, h as u32, &top_down)
+            .ok_or("could not encode the picture".to_string())
+            .and_then(|png| std::fs::write(&path, png).map_err(|e| e.to_string()));
+        match written {
+            Ok(()) => println!("wrote {} ({w}x{h})", path.display()),
+            Err(e) => eprintln!("hexgame: --screenshot: {}: {e}", path.display()),
+        }
+    }
+}
+
+/// Point the viewport and the scissor at a rectangle of the window (top left
+/// origin). False, and nothing is set, if none of it is inside the framebuffer.
+fn set_viewport(ctx: &mut dyn RenderingBackend, rect: Rect, framebuffer: Size) -> bool {
+    let visible = rect.clip(&Rect::from_size(framebuffer));
+    if visible.is_empty() {
+        return false;
+    }
+    let (x, y, w, h) = gl_rect(rect, framebuffer.h);
+    ctx.apply_viewport(x, y, w, h);
+    let (x, y, w, h) = gl_rect(visible, framebuffer.h);
+    ctx.apply_scissor_rect(x, y, w, h);
+    true
 }
 
 impl EventHandler for App {
@@ -91,14 +193,15 @@ impl EventHandler for App {
     }
 
     fn draw(&mut self) {
-        let (r, g, b, a) = CLEAR_COLOR;
-        self.renderer.context_mut().begin_default_pass(PassAction::clear_color(r, g, b, a));
-        self.session.ui.paint(&mut self.renderer);
-        let ctx = self.renderer.context_mut();
-        ctx.end_render_pass();
-        ctx.commit_frame();
-
         self.frames += 1;
+        if self.options.screenshot.is_some() && self.frames == SCREENSHOT_FRAME {
+            self.screenshot();
+            window::order_quit();
+        } else {
+            self.render(None);
+        }
+        self.renderer.context_mut().commit_frame();
+
         if self.options.frames == Some(self.frames) {
             let vp = self.session.ui.viewport();
             println!("{} frames drawn at {}x{}, {} dpi; quitting", self.frames, vp.w, vp.h, window_dpi());

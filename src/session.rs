@@ -16,7 +16,7 @@ use turbo_ferret::{
 use crate::game::Game;
 use crate::gui::{self, MapCommand, MapKey, MapWidget, RootCommand, RootWindow};
 use crate::minimap_view::MiniMapView;
-use crate::state::Direction;
+use crate::state::{Direction, Hex};
 use crate::view::MapView;
 
 /// The layout, relative to the asset directory.
@@ -162,6 +162,15 @@ impl Session {
     /// Where the minimap is drawn, in window pixels (top left origin).
     pub fn minimap_rect(&self) -> Rect {
         self.area(self.minimap)
+    }
+
+    /// The window pixel in the middle of a hex of the main map, if that is inside
+    /// the map's rectangle.
+    pub fn hex_pixel(&self, hex: Hex) -> Option<Point> {
+        let [x, y] = self.view.to_ndc(self.view.hex_center(hex));
+        let r = self.map_rect();
+        let p = Point::new(r.x + ((x + 1.0) / 2.0 * r.w as f32) as i32, r.y + ((1.0 - y) / 2.0 * r.h as f32) as i32);
+        (x.abs() < 1.0 && y.abs() < 1.0 && r.contains(p)).then_some(p)
     }
 
     /// Apply what the widgets recorded since the last call. The host calls this

@@ -9,7 +9,9 @@
 //! - [`game`]: the state plus what the player has selected.
 //! - [`view`], [`minimap_view`]: the pure math of what the map widgets show.
 //! - [`gui`]: the game's Turbo Ferret widgets.
+//! - [`render`]: drawing with miniquad; the geometry is built without a GPU.
 //! - [`session`]: the UI and the game together, without a window (tests drive it).
+//! - [`script`]: scripted input, for screenshots and tests.
 //! - [`app`]: the window (a miniquad `EventHandler`).
 
 #![forbid(unsafe_code)]
@@ -19,6 +21,8 @@ pub mod game;
 pub mod gui;
 pub mod minimap_view;
 pub mod paths;
+pub mod render;
+pub mod script;
 pub mod session;
 pub mod state;
 pub mod view;
