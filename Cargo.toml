@@ -16,6 +16,15 @@ path = "src/main.rs"
 
 # Runtime dependencies are these three and nothing else (see CLAUDE.md).
 [dependencies]
+miniquad = { workspace = true }
+turbo-ferret = { workspace = true }
+turbo-ferret-miniquad = { workspace = true }
+
+# The game is the root package; the tools are members (`cargo run -p mapeditor`).
+[workspace]
+members = ["tools/mapeditor"]
+
+[workspace.dependencies]
 miniquad = "=0.4.11" # the version turbo-ferret-miniquad is built against
 turbo-ferret = { git = "https://github.com/sstanfield/turbo-ferret", rev = "a37cb83" }
 turbo-ferret-miniquad = { git = "https://github.com/sstanfield/turbo-ferret", rev = "a37cb83" }

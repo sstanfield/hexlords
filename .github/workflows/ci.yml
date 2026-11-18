@@ -12,16 +12,16 @@ jobs:
           components: rustfmt, clippy
       - name: Install miniquad system deps
         run: sudo apt-get update && sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
   macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build
-      - run: cargo test
+      - run: cargo build --workspace
+      - run: cargo test --workspace
   # Best effort: nobody tests on Windows by hand. A failure here is worth fixing
   # but does not block a change.
   windows:
@@ -30,8 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build
-      - run: cargo test
+      - run: cargo build --workspace
+      - run: cargo test --workspace
   msrv:
     runs-on: ubuntu-latest
     steps:
@@ -39,4 +39,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.86
       - name: Install miniquad system deps
         run: sudo apt-get update && sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
-      - run: cargo check --all-targets
+      - run: cargo check --workspace --all-targets

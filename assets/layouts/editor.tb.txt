@@ -1,0 +1,66 @@
+TBLayout: id: main_layout, axis: y, distribution: gravity, distribution-position: top, position: left, spacing: 5
+	TBLayout: id: main_row, axis: x, distribution-position: left, position: top, spacing: 5
+		MapWidget: id: main_map, is-focusable: 1
+		TBLayout: id: sidebar, axis: y, distribution-position: top, position: left, spacing: 4
+			MiniMapWidget: id: mini_map
+			TBTextField: text: "Terrain (or press its letter)", text-align: left
+			TBLayout: distribution: gravity, gravity: left right, spacing: 4
+				TBButton: id: terrain_g, group-id: terrain, text: "Grass  g", gravity: left right, is-focusable: 0, value: 1
+					lp: width: 133
+				TBButton: id: terrain_f, group-id: terrain, text: "Forest  f", gravity: left right, is-focusable: 0
+					lp: width: 133
+			TBLayout: distribution: gravity, gravity: left right, spacing: 4
+				TBButton: id: terrain_h, group-id: terrain, text: "Hill  h", gravity: left right, is-focusable: 0
+					lp: width: 133
+				TBButton: id: terrain_m, group-id: terrain, text: "Mountain  m", gravity: left right, is-focusable: 0
+					lp: width: 133
+			TBLayout: distribution: gravity, gravity: left right, spacing: 4
+				TBButton: id: terrain_w, group-id: terrain, text: "Water  w", gravity: left right, is-focusable: 0
+					lp: width: 133
+				TBButton: id: terrain_s, group-id: terrain, text: "Swamp  s", gravity: left right, is-focusable: 0
+					lp: width: 133
+			TBLayout: distribution: gravity, gravity: left right, spacing: 4
+				TBButton: id: terrain_d, group-id: terrain, text: "Desert  d", gravity: left right, is-focusable: 0
+					lp: width: 133
+				TBButton: id: terrain_c, group-id: terrain, text: "City  c", gravity: left right, is-focusable: 0
+					lp: width: 133
+			TBLayout: distribution: gravity, gravity: left right, spacing: 4
+				TBButton: id: terrain_t, group-id: terrain, text: "Temple  t", gravity: left right, is-focusable: 0
+					lp: width: 133
+				TBButton: id: terrain_r, group-id: terrain, text: "Ruin  r", gravity: left right, is-focusable: 0
+					lp: width: 133
+			TBTextField: text: "Tool (Enter or Space applies it)", text-align: left
+			TBLayout: distribution: gravity, gravity: left right, spacing: 4
+				TBButton: id: tool_paint, group-id: tool, text: "Paint", gravity: left right, is-focusable: 0, value: 1
+					lp: width: 133
+				TBButton: id: tool_fill, group-id: tool, text: "Fill", gravity: left right, is-focusable: 0
+					lp: width: 133
+			TBTextField: text: "Brush size in hexes ( [ and ] keys)", text-align: left
+			TBLayout: distribution: gravity, gravity: left right, spacing: 4
+				TBButton: id: brush_1, group-id: brush, text: "1", gravity: left right, is-focusable: 0, value: 1
+					lp: width: 87
+				TBButton: id: brush_7, group-id: brush, text: "7", gravity: left right, is-focusable: 0
+					lp: width: 87
+				TBButton: id: brush_19, group-id: brush, text: "19", gravity: left right, is-focusable: 0
+					lp: width: 87
+			TBLayout: distribution: gravity, gravity: left right, spacing: 4
+				TBButton: id: undo, text: "Undo", gravity: left right, is-focusable: 0
+					lp: width: 133
+				TBButton: id: redo, text: "Redo", gravity: left right, is-focusable: 0
+					lp: width: 133
+			TBTextField: text: "File", text-align: left
+			TBEditField: id: file_name, placeholder: "maps/name.map", gravity: left right
+			TBLayout: distribution: gravity, gravity: left right, spacing: 4
+				TBButton: id: save, text: "Save", gravity: left right, is-focusable: 0
+					lp: width: 133
+				TBButton: id: open, text: "Open", gravity: left right, is-focusable: 0
+					lp: width: 133
+			TBTextField: text: "New map: rows, columns (20 to 600)", text-align: left
+			TBLayout: distribution: gravity, gravity: left right, spacing: 4
+				TBEditField: id: new_rows, text: "100", type: number, gravity: left right
+					lp: width: 87
+				TBEditField: id: new_cols, text: "100", type: number, gravity: left right
+					lp: width: 87
+				TBButton: id: new, text: "New", gravity: left right, is-focusable: 0
+					lp: width: 87
+	TBTextField: id: status, text-align: left

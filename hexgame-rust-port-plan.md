@@ -570,9 +570,13 @@ simultaneous turns and our own unit set and numbers.
   road markers. All of it is generated, so the licensing is clean and it can be
   regenerated.
 - Show a stack-size indicator on hexes with units (a count, or pips).
-- Restore the map editor hotkeys that are commented out in `main.cpp` (G/F/W/H/M/S
+- ~~Restore the map editor hotkeys that are commented out in `main.cpp` (G/F/W/H/M/S
   paint terrain, C places a city, Ctrl+S saves, Ctrl+T ends the turn), behind a
-  `--edit` flag. The minimap marks itself dirty on edits.
+  `--edit` flag. The minimap marks itself dirty on edits.~~ **Done differently
+  (2026-11-18, the owner's word):** the editor is its own program,
+  `tools/mapeditor`, on the game's library. The letter keys paint, Ctrl+S saves;
+  ending the turn belongs to the game, and is still to do. The map file format
+  is in `docs/map-format.md`, and the game plays a map file with `--map`.
 - A sidebar info panel built from Turbo Ferret widgets: the cursor hex's terrain and
   its units.
 
