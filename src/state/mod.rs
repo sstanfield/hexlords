@@ -11,7 +11,7 @@ pub mod terrain;
 pub mod units;
 
 pub use cities::{Cities, City, CityId, UnitProd};
-pub use hex::Hex;
+pub use hex::{Direction, Hex};
 pub use map::{MAX_COLS, MAX_ROWS, MAX_STACK, MIN_COLS, MIN_ROWS, Map, MapError, PlaceError, Tile};
 pub use movement::{MoveRange, compute_range};
 pub use terrain::{MoveCost, TileType};

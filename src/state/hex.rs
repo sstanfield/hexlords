@@ -48,6 +48,17 @@ impl Hex {
     }
 }
 
+/// A step on the grid, as the arrow keys make them. Up and down change the row,
+/// left and right the column (which, between an odd and an even column, also
+/// moves half a hex up or down on screen).
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum Direction {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
 impl core::fmt::Display for Hex {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "({}, {})", self.row, self.col)

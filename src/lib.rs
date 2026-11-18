@@ -7,6 +7,7 @@
 //!
 //! - [`state`]: the map, units, cities and movement. No UI, no graphics.
 //! - [`game`]: the state plus what the player has selected.
+//! - [`view`], [`minimap_view`]: the pure math of what the map widgets show.
 //! - [`gui`]: the game's Turbo Ferret widgets.
 //! - [`session`]: the UI and the game together, without a window (tests drive it).
 //! - [`app`]: the window (a miniquad `EventHandler`).
@@ -16,6 +17,8 @@
 pub mod app;
 pub mod game;
 pub mod gui;
+pub mod minimap_view;
 pub mod paths;
 pub mod session;
 pub mod state;
+pub mod view;

@@ -4,7 +4,7 @@
 //! src/render/maprender.cpp MapRenderer::selectHex, moveUp, moveDown, and the
 //! cursor keys of src/gui/mapwidget.cpp MapWidget::OnEvent
 
-use crate::state::{Hex, Map, MoveCost, MoveRange, Side, TileType, UnitId, compute_range};
+use crate::state::{Direction, Hex, Map, MoveCost, MoveRange, Side, TileType, UnitId, compute_range};
 
 /// What `Game::select_hex` did.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -17,15 +17,6 @@ pub enum SelectOutcome {
     Moved { unit: UnitId, cost: u32 },
     /// Nothing changed: no unit here to select, or the selected unit cannot go here.
     Nothing,
-}
-
-/// A step of the cursor.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Direction {
-    Left,
-    Right,
-    Up,
-    Down,
 }
 
 pub struct Game {
