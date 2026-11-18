@@ -167,7 +167,7 @@ fn a_selected_unit_stays_selected_while_the_minimap_scrolls() {
     click(&mut s, p);
     assert_eq!(s.game.selected(), Some(cav));
     assert_eq!(s.game.map.units_at(Hex::new(50, 50)), [cav], "going somewhere moves no unit");
-    assert_eq!(s.game.map.units.get(cav).unwrap().movement, 20);
+    assert_eq!(s.game.map.units().get(cav).unwrap().movement, 20);
 }
 
 #[test]

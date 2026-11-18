@@ -53,10 +53,10 @@ impl MoveRange {
 /// The unit may stand on terrain it could not enter (the demo's unit starts on a
 /// mountain): only the hexes it moves into are paid for.
 pub fn compute_range(map: &Map, unit: &Unit) -> MoveRange {
-    match map.units.move_cost(unit.move_cost) {
-        Some(costs) => reach(map, unit.pos, costs, unit.movement),
+    match map.units().move_cost(unit.move_cost) {
+        Some(costs) => reach(map, unit.pos(), costs, unit.movement),
         None => MoveRange {
-            origin: unit.pos,
+            origin: unit.pos(),
             cols: map.cols(),
             cost: vec![None; usize::from(map.rows()) * usize::from(map.cols())],
         },
@@ -256,11 +256,11 @@ mod tests {
     #[test]
     fn compute_range_uses_the_units_costs_and_movement() {
         let mut map = grass();
-        let mc = map.units.acquire_move_cost(cav());
-        let id = map.units.new_unit(Side::Black, "Cav", 3, 5, 4, mc);
+        let mc = map.acquire_move_cost(cav());
+        let id = map.new_unit(Side::Black, "Cav", 3, 5, 4, mc);
         let origin = Hex::new(10, 10);
         map.place_unit(id, origin).unwrap();
-        let range = compute_range(&map, map.units.get(id).unwrap());
+        let range = compute_range(&map, map.units().get(id).unwrap());
         assert_eq!(range, reach(&map, origin, &cav(), 4));
         assert_eq!(range.reachable().count(), 18);
         // Selecting does not change the map: the costs are in the range.

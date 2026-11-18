@@ -23,11 +23,13 @@ pub struct Game {
     pub map: Map,
     selected: Option<UnitId>,
     range: Option<MoveRange>,
+    /// The map's revision when `range` was computed.
+    range_revision: u64,
 }
 
 impl Game {
     pub fn new(map: Map) -> Game {
-        Game { map, selected: None, range: None }
+        Game { map, selected: None, range: None, range_revision: 0 }
     }
 
     /// The demo: a 100 x 100 grass map with a mountain diagonal and one cavalry
@@ -40,7 +42,7 @@ impl Game {
                 tile.kind = TileType::Mountain;
             }
         }
-        let cost = map.units.acquire_move_cost(MoveCost {
+        let cost = map.acquire_move_cost(MoveCost {
             grass: 2,
             forest: 4,
             swamp: 5,
@@ -53,7 +55,7 @@ impl Game {
             road: 2,
             city: 1,
         });
-        let cav = map.units.new_unit(Side::Black, "Test Cav", 3, 5, 20, cost);
+        let cav = map.new_unit(Side::Black, "Test Cav", 3, 5, 20, cost);
         map.place_unit(cav, Hex::new(50, 50)).expect("the middle of the map is free");
         Game::new(map)
     }
@@ -79,10 +81,28 @@ impl Game {
     }
 
     fn select(&mut self, id: UnitId) -> bool {
-        let Some(unit) = self.map.units.get(id) else { return false };
+        let Some(unit) = self.map.units().get(id) else { return false };
         self.range = Some(compute_range(&self.map, unit));
+        self.range_revision = self.map.revision();
         self.selected = Some(id);
         true
+    }
+
+    /// Bring the selection up to date with the map, which is public and may have
+    /// changed since the unit was selected: a unit that is gone is no longer
+    /// selected, and a range computed from an older map is computed again.
+    /// `select_hex` does this itself; whoever draws the range calls it first.
+    /// Returns true if anything changed.
+    pub fn refresh(&mut self) -> bool {
+        let Some(id) = self.selected else { return false };
+        if self.map.units().get(id).is_none() {
+            self.deselect();
+            return true;
+        }
+        if self.range.is_some() && self.range_revision == self.map.revision() {
+            return false;
+        }
+        self.select(id)
     }
 
     /// The player chose a hex (a click, or Enter at the cursor).
@@ -93,21 +113,18 @@ impl Game {
     /// - Nothing is selected and the hex has units: select the first.
     ///
     /// C++: MapRenderer::selectHex. There a selected unit could go to any hex that
-    /// the flood fill had not reached, mountains included, for free (deviation D2);
-    /// here it stays selected and nothing happens.
+    /// the flood fill had not reached, mountains included, for free; here it stays
+    /// selected and nothing happens.
     pub fn select_hex(&mut self, hex: Hex) -> SelectOutcome {
+        self.refresh();
         let Some(id) = self.selected else {
             return match self.map.units_at(hex).first().copied() {
                 Some(first) if self.select(first) => SelectOutcome::Selected(first),
                 _ => SelectOutcome::Nothing,
             };
         };
-        let Some(unit) = self.map.units.get(id) else {
-            // The unit is gone (killed while selected).
-            self.deselect();
-            return SelectOutcome::Nothing;
-        };
-        if unit.pos == hex {
+        let Some(unit) = self.map.units().get(id) else { return SelectOutcome::Nothing };
+        if unit.pos() == hex {
             self.deselect();
             return SelectOutcome::Deselected;
         }
@@ -115,7 +132,7 @@ impl Game {
         if cost > unit.movement || self.map.move_unit(id, hex).is_err() {
             return SelectOutcome::Nothing; // a full stack, for one
         }
-        if let Some(unit) = self.map.units.get_mut(id) {
+        if let Some(unit) = self.map.unit_mut(id) {
             unit.movement -= cost;
         }
         self.deselect();
@@ -167,12 +184,12 @@ mod tests {
         assert_eq!(map.to_text().matches('m').count(), 100);
         assert_eq!(map.to_text().matches('g').count(), 9900);
 
-        assert_eq!(map.units.iter().count(), 1);
+        assert_eq!(map.units().iter().count(), 1);
         let &[id] = map.units_at(START) else { panic!("one unit in the middle") };
-        let cav = map.units.get(id).unwrap();
+        let cav = map.units().get(id).unwrap();
         assert_eq!((cav.side(), cav.name.as_str()), (Side::Black, "Test Cav"));
         assert_eq!((cav.upkeep, cav.strength, cav.movement, cav.base_move_points), (3, 5, 20, 20));
-        let costs = map.units.move_cost(cav.move_cost).unwrap();
+        let costs = map.units().move_cost(cav.move_cost).unwrap();
         assert_eq!(costs.entry(TileType::Grass), Some(2));
         assert_eq!(costs.entry(TileType::Mountain), None);
         assert!(game.selected().is_none() && game.range().is_none());
@@ -194,8 +211,8 @@ mod tests {
 
         let target = Hex::new(50, 53);
         assert_eq!(game.select_hex(target), SelectOutcome::Moved { unit: id, cost: 6 });
-        assert_eq!(game.map.units.get(id).unwrap().movement, 14);
-        assert_eq!(game.map.units.get(id).unwrap().pos, target);
+        assert_eq!(game.map.units().get(id).unwrap().movement, 14);
+        assert_eq!(game.map.units().get(id).unwrap().pos(), target);
         assert_eq!(game.map.units_at(target), [id]);
         assert!(game.map.units_at(START).is_empty());
         assert!(game.selected().is_none() && game.range().is_none());
@@ -206,7 +223,7 @@ mod tests {
         assert!(game.range().unwrap().reachable().all(|(_, c)| c <= 14));
         assert_eq!(game.select_hex(target), SelectOutcome::Deselected);
         assert!(game.selected().is_none());
-        assert_eq!(game.map.units.get(id).unwrap().movement, 14);
+        assert_eq!(game.map.units().get(id).unwrap().movement, 14);
     }
 
     #[test]
@@ -218,8 +235,8 @@ mod tests {
         for hex in [Hex::new(0, 0), Hex::new(51, 51), Hex::new(50, 70)] {
             assert_eq!(game.select_hex(hex), SelectOutcome::Nothing, "{hex}");
             assert_eq!(game.selected(), Some(id), "still selected");
-            assert_eq!(game.map.units.get(id).unwrap().pos, START);
-            assert_eq!(game.map.units.get(id).unwrap().movement, 20);
+            assert_eq!(game.map.units().get(id).unwrap().pos(), START);
+            assert_eq!(game.map.units().get(id).unwrap().movement, 20);
         }
         // Off the map.
         assert_eq!(game.select_hex(Hex::new(100, 100)), SelectOutcome::Nothing);
@@ -252,25 +269,25 @@ mod tests {
     fn a_full_stack_refuses_the_move_and_keeps_the_selection() {
         let mut game = Game::demo();
         let &[cav] = game.map.units_at(START) else { panic!() };
-        let cost = game.map.units.get(cav).unwrap().move_cost;
+        let cost = game.map.units().get(cav).unwrap().move_cost;
         let target = Hex::new(50, 51);
         for i in 0..MAX_STACK {
-            let id = game.map.units.new_unit(Side::Black, &format!("Guard {i}"), 1, 1, 0, cost);
+            let id = game.map.new_unit(Side::Black, &format!("Guard {i}"), 1, 1, 0, cost);
             game.map.place_unit(id, target).unwrap();
         }
         game.select_hex(START);
         assert_eq!(game.select_hex(target), SelectOutcome::Nothing);
         assert_eq!(game.selected(), Some(cav));
-        assert_eq!(game.map.units.get(cav).unwrap().movement, 20);
-        assert_eq!(game.map.units.get(cav).unwrap().pos, START);
+        assert_eq!(game.map.units().get(cav).unwrap().movement, 20);
+        assert_eq!(game.map.units().get(cav).unwrap().pos(), START);
     }
 
     #[test]
     fn the_first_unit_of_a_stack_is_selected() {
         let mut game = Game::demo();
         let &[cav] = game.map.units_at(START) else { panic!() };
-        let cost = game.map.units.get(cav).unwrap().move_cost;
-        let second = game.map.units.new_unit(Side::Black, "Second", 1, 1, 8, cost);
+        let cost = game.map.units().get(cav).unwrap().move_cost;
+        let second = game.map.new_unit(Side::Black, "Second", 1, 1, 8, cost);
         game.map.place_unit(second, START).unwrap();
         assert_eq!(game.select_hex(START), SelectOutcome::Selected(cav));
         game.deselect();
@@ -288,6 +305,63 @@ mod tests {
         game.map.kill_unit(cav);
         assert_eq!(game.select_hex(Hex::new(50, 51)), SelectOutcome::Nothing);
         assert!(game.selected().is_none() && game.range().is_none());
+    }
+
+    #[test]
+    fn a_new_unit_in_a_dead_units_slot_does_not_inherit_the_selection() {
+        let mut game = Game::demo();
+        let &[cav] = game.map.units_at(START) else { panic!() };
+        let cost = game.map.units().get(cav).unwrap().move_cost;
+        game.select_hex(START);
+        // The selected unit dies and another takes its slot, far away.
+        game.map.kill_unit(cav);
+        let other = game.map.new_unit(Side::Black, "Other", 1, 1, 20, cost);
+        assert_eq!((other.side, other.index), (cav.side, cav.index));
+        let far = Hex::new(10, 10);
+        game.map.place_unit(other, far).unwrap();
+        // A hex the dead unit could have reached: the new one must not jump there.
+        assert_eq!(game.select_hex(Hex::new(50, 53)), SelectOutcome::Nothing);
+        assert!(game.selected().is_none());
+        assert_eq!(game.map.units().get(other).unwrap().pos(), far);
+        assert_eq!(game.map.units().get(other).unwrap().movement, 20);
+        assert_eq!(game.map.units_at(far), [other]);
+        assert!(game.map.units_at(Hex::new(50, 53)).is_empty());
+    }
+
+    #[test]
+    fn the_range_follows_changes_made_behind_the_games_back() {
+        let mut game = Game::demo();
+        let &[cav] = game.map.units_at(START) else { panic!() };
+        game.select_hex(START);
+        assert!(game.can_move_to(Hex::new(50, 51)));
+        assert!(!game.refresh(), "nothing changed yet");
+
+        // The unit is moved by something else: the range is from where it is now.
+        let there = Hex::new(20, 20 + 1);
+        game.map.move_unit(cav, there).unwrap();
+        assert!(game.refresh());
+        assert_eq!(game.selected(), Some(cav));
+        assert_eq!(game.range().unwrap().origin(), there);
+        assert!(!game.can_move_to(Hex::new(50, 51)));
+        assert!(game.can_move_to(Hex::new(20, 22)));
+
+        // The terrain changes: water next door is out of reach at once.
+        let next_door = Hex::new(20, 22);
+        game.map.tile_mut(next_door).unwrap().kind = TileType::Water;
+        assert_eq!(game.select_hex(next_door), SelectOutcome::Nothing, "select_hex refreshes by itself");
+        assert!(!game.can_move_to(next_door));
+
+        // The unit has fewer points: the range shrinks.
+        game.map.unit_mut(cav).unwrap().movement = 2;
+        assert!(game.refresh());
+        assert!(game.range().unwrap().reachable().all(|(_, c)| c == 2));
+        assert!(!game.refresh());
+
+        // The unit dies: refresh forgets it.
+        game.map.kill_unit(cav);
+        assert!(game.refresh());
+        assert!(game.selected().is_none() && game.range().is_none());
+        assert!(!game.refresh());
     }
 
     #[test]

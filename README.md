@@ -53,7 +53,9 @@ hexgame [--assets <dir>] [--frames <n>] [--screenshot <file.png>] [--script <ste
   executable if that exists, else `assets` in the source tree (so `cargo run`
   works).
 - `--frames <n>`: draw `n` frames and quit (a smoke test).
-- `--screenshot <file.png>`: draw one frame into a PNG file and quit.
+- `--screenshot <file.png>`: draw a frame into a PNG file and quit (the last
+  frame of `--frames`, or the second). The exit status is 1 if the file could
+  not be written.
 - `--script <steps>`: play some input before the first frame. Steps are
   separated by commas: `left`, `right`, `up`, `down`, `enter`, `esc`, `1`, `2`,
   `click:ROW:COL`, `hover:ROW:COL`, `minimap:ROW:COL` (click the minimap

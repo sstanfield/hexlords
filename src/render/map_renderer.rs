@@ -260,8 +260,8 @@ mod tests {
         let grass = hexes(g.terrain(TileTexture::Grass)).len();
         let mountain = hexes(g.terrain(TileTexture::Mountain)).len();
         assert_eq!(grass + mountain, visible);
-        // Rows 44..=56 are drawn: one mountain in each.
-        assert_eq!(mountain, 13);
+        // Rows 43..=57 are drawn: one mountain in each.
+        assert_eq!(mountain, 15);
         for t in [TileTexture::Forest, TileTexture::Swamp, TileTexture::Hill, TileTexture::Water, TileTexture::City] {
             assert!(g.terrain(t).is_empty(), "{t:?}");
         }

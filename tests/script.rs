@@ -28,7 +28,7 @@ fn the_plans_flow_as_a_script() {
     let &[cav] = s.game.map.units_at(Hex::new(50, 50)) else { panic!() };
     script::run(&mut s, "enter,right*3,enter").unwrap();
     assert_eq!(s.game.map.units_at(Hex::new(50, 53)), [cav]);
-    assert_eq!(s.game.map.units.get(cav).unwrap().movement, 14);
+    assert_eq!(s.game.map.units().get(cav).unwrap().movement, 14);
     assert!(s.game.selected().is_none());
 }
 

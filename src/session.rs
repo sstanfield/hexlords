@@ -42,6 +42,8 @@ pub struct Session {
     fullscreen_toggles: u32,
     /// The minimap's picture is out of date (its size or the terrain changed).
     minimap_dirty: bool,
+    /// The map's terrain revision the minimap's picture was last asked for.
+    terrain_seen: u64,
 }
 
 impl Session {
@@ -103,7 +105,9 @@ impl Session {
             quit: false,
             fullscreen_toggles: 0,
             minimap_dirty: true,
+            terrain_seen: 0,
         };
+        session.terrain_seen = session.game.map.terrain_revision();
         session.apply_layout_sizes();
         session.ui.update();
         session.sync_views();
@@ -129,12 +133,25 @@ impl Session {
         self.apply_layout_sizes();
     }
 
-    /// One frame of host work before drawing: the time, the UI's own update, and
-    /// the views' sizes. C++: Application::processFrame
+    /// One frame of host work before drawing: the time, the UI's own update, the
+    /// views' sizes, and whatever depends on a map that may have changed.
+    /// C++: Application::processFrame
     pub fn frame(&mut self, now_ms: u64) {
         self.ui.set_time(now_ms);
         self.ui.update();
         self.sync_views();
+        self.sync_game();
+    }
+
+    /// The map may have changed since the last look: bring the selected unit's
+    /// range up to date, and ask for a new minimap picture if the terrain did.
+    fn sync_game(&mut self) {
+        self.game.refresh();
+        let terrain = self.game.map.terrain_revision();
+        if terrain != self.terrain_seen {
+            self.terrain_seen = terrain;
+            self.minimap_dirty = true;
+        }
     }
 
     /// Give the views the sizes the layout gave their widgets.
@@ -206,6 +223,7 @@ impl Session {
                 RootCommand::ToggleFullscreen => self.fullscreen_toggles += 1,
             }
         }
+        self.sync_game();
     }
 
     /// C++: MapWidget::OnEvent
@@ -231,13 +249,17 @@ impl Session {
                 MapKey::Enter => {
                     self.game.select_hex(self.game.map.cursor);
                 }
+                // A zoom centers on the cursor. At the last level nothing zooms,
+                // and the view stays where it is.
                 MapKey::ZoomOut => {
-                    self.view.zoom_out();
-                    self.view.center_on(self.game.map.cursor);
+                    if self.view.zoom_out() {
+                        self.view.center_on(self.game.map.cursor);
+                    }
                 }
                 MapKey::ZoomIn => {
-                    self.view.zoom_in();
-                    self.view.center_on(self.game.map.cursor);
+                    if self.view.zoom_in() {
+                        self.view.center_on(self.game.map.cursor);
+                    }
                 }
             },
         }
@@ -259,11 +281,6 @@ impl Session {
     /// last call.
     pub fn take_fullscreen_toggles(&mut self) -> u32 {
         std::mem::take(&mut self.fullscreen_toggles)
-    }
-
-    /// The terrain changed: the minimap has to be drawn again.
-    pub fn mark_minimap_dirty(&mut self) {
-        self.minimap_dirty = true;
     }
 
     /// True if the minimap's picture is out of date; the caller redraws it.

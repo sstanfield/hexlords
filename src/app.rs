@@ -30,15 +30,17 @@ pub const CLEAR_COLOR: (f32, f32, f32, f32) = (0.5, 0.5, 0.5, 1.0);
 pub struct Options {
     /// `--assets <dir>`: where the assets are (see `paths::asset_root`).
     pub assets: Option<PathBuf>,
-    /// `--frames <n>`: quit after drawing this many frames.
+    /// `--frames <n>`: quit after drawing this many frames (at least 1).
     pub frames: Option<u64>,
-    /// `--screenshot <file>`: draw one frame into this PNG file and quit.
+    /// `--screenshot <file>`: draw a frame into this PNG file and quit. It is the
+    /// last frame of `--frames`, or the second without it.
     pub screenshot: Option<PathBuf>,
     /// `--script <steps>`: input to play before the first frame (see `script`).
     pub script: Option<String>,
 }
 
-/// The frame a screenshot is taken of: the second, when the layout has settled.
+/// The earliest frame a screenshot is taken of: the second, when the layout has
+/// settled.
 const SCREENSHOT_FRAME: u64 = 2;
 
 pub struct App {
@@ -144,12 +146,11 @@ impl App {
     }
 
     /// Draw a frame into a texture of the window's size and write it as a PNG.
-    fn screenshot(&mut self) {
-        let Some(path) = self.options.screenshot.clone() else { return };
+    fn screenshot(&mut self) -> Result<(), String> {
+        let Some(path) = self.options.screenshot.clone() else { return Ok(()) };
         let Size { w, h } = self.session.ui.viewport();
         if w <= 0 || h <= 0 {
-            eprintln!("hexgame: --screenshot: the window has no size");
-            return;
+            return Err("the window has no size".to_string());
         }
         let ctx = self.renderer.context_mut();
         let texture = ctx.new_render_texture(texture_params(w as u32, h as u32));
@@ -163,13 +164,10 @@ impl App {
         ctx.delete_render_pass(pass); // and its texture
         // The rows come bottom first.
         let top_down: Vec<u8> = pixels.chunks_exact(row).rev().flatten().copied().collect();
-        let written = png_out::encode_rgb(w as u32, h as u32, &top_down)
-            .ok_or("could not encode the picture".to_string())
-            .and_then(|png| std::fs::write(&path, png).map_err(|e| e.to_string()));
-        match written {
-            Ok(()) => println!("wrote {} ({w}x{h})", path.display()),
-            Err(e) => eprintln!("hexgame: --screenshot: {}: {e}", path.display()),
-        }
+        let png = png_out::encode_rgb(w as u32, h as u32, &top_down).ok_or("could not encode the picture")?;
+        std::fs::write(&path, png).map_err(|e| format!("{}: {e}", path.display()))?;
+        println!("wrote {} ({w}x{h})", path.display());
+        Ok(())
     }
 }
 
@@ -200,15 +198,26 @@ impl EventHandler for App {
         if self.frames == 1 && self.options.screenshot.is_none() && self.options.frames.is_none() {
             platform::bring_to_front();
         }
-        if self.options.screenshot.is_some() && self.frames == SCREENSHOT_FRAME {
-            self.screenshot();
-            window::order_quit();
+
+        // With `--screenshot` the run ends with the picture: of the frame
+        // `--frames` names, or of the second (when the layout has settled).
+        let last = match (&self.options.screenshot, self.options.frames) {
+            (Some(_), frames) => Some(frames.unwrap_or(SCREENSHOT_FRAME).max(SCREENSHOT_FRAME)),
+            (None, frames) => frames,
+        };
+        let done = last.is_some_and(|last| self.frames >= last);
+        if done && self.options.screenshot.is_some() {
+            if let Err(e) = self.screenshot() {
+                // A scripted run that did not make its picture must not look like
+                // one that did.
+                eprintln!("hexgame: --screenshot: {e}");
+                std::process::exit(1);
+            }
         } else {
             self.render(None);
         }
         self.renderer.context_mut().commit_frame();
-
-        if self.options.frames == Some(self.frames) {
+        if done {
             let vp = self.session.ui.viewport();
             println!("{} frames drawn at {}x{}, {} dpi; quitting", self.frames, vp.w, vp.h, window_dpi());
             window::order_quit();
@@ -250,6 +259,10 @@ impl EventHandler for App {
     }
 
     fn key_down_event(&mut self, keycode: KeyCode, keymods: KeyMods, repeat: bool) {
+        // A held F11 must not flip fullscreen on every repeat of the key.
+        if repeat && keycode == KeyCode::F11 {
+            return;
+        }
         self.tick();
         self.input.key_down_event(&mut self.session.ui, keycode, keymods, repeat);
         self.after_input();

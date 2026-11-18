@@ -100,16 +100,27 @@ fn the_layout_follows_the_window() {
 }
 
 #[test]
-fn a_tiny_window_does_not_break_the_layout() {
-    for (w, h) in [(1, 1), (0, 0), (40, 3000)] {
+fn odd_window_sizes_do_not_break_the_layout() {
+    for (w, h) in [(1, 1), (0, 0), (40, 3000), (5000, 60), (2560, 1080)] {
         let mut s = session_at(w, h, 96);
         s.frame(16);
         let (map, mini) = (s.map_rect(), s.minimap_rect());
+        // Nothing has a negative size, and the map is its share of the window.
         assert!(map.w >= 0 && map.h >= 0 && mini.w >= 0 && mini.h >= 0, "{w}x{h}: {map:?} {mini:?}");
-        // The views cope with any size.
-        assert!(s.view.visible_hexes().count() > 0);
-        let (wf, hf) = s.mini_view.factors();
-        assert!(wf.is_finite() && hf.is_finite());
+        assert_eq!((map.w, map.h), ((w as f32 * 0.8) as i32, (h as f32 * 0.7) as i32), "{w}x{h}");
+        assert_eq!(s.view.size(), (map.w, map.h));
+        assert_eq!(s.mini_view.size(), (mini.w, mini.h));
+        // The views give finite numbers at any size, the center hex is drawn,
+        // and input does not panic.
+        let (wf, hf) = s.view.factors();
+        let (mwf, mhf) = s.mini_view.factors();
+        assert!([wf, hf, mwf, mhf].iter().all(|f| f.is_finite() && *f > 0.0), "{w}x{h}");
+        assert!(s.view.visible_hexes().any(|v| v.hex == s.view.center()), "{w}x{h}");
+        assert!(s.mini_view.marker(&s.view).iter().all(|c| (-1.0..=1.0).contains(c)), "{w}x{h}");
+        click(&mut s, Point::new(0, 0));
+        click(&mut s, Point::new(w - 1, 0));
+        press(&mut s, SpecialKey::Left);
+        s.frame(32);
     }
 }
 

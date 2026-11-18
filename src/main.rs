@@ -3,7 +3,8 @@
 //! Options:
 //! - `--assets <dir>`: use this asset directory;
 //! - `--frames <n>`: quit after drawing `n` frames (a smoke test);
-//! - `--screenshot <file>`: draw one frame into a PNG file and quit;
+//! - `--screenshot <file>`: draw a frame into a PNG file and quit (the last frame
+//!   of `--frames`, or the second);
 //! - `--script <steps>`: play some input first (see `hexgame::script`), for
 //!   example `--script "enter,right*3,enter"`.
 
@@ -25,7 +26,11 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Options, String> {
             "--assets" => options.assets = Some(PathBuf::from(value("a directory")?)),
             "--frames" => {
                 let n = value("a number")?;
-                options.frames = Some(n.parse().map_err(|_| format!("--frames: \"{n}\" is not a number"))?);
+                let frames: u64 = n.parse().map_err(|_| format!("--frames: \"{n}\" is not a number"))?;
+                if frames == 0 {
+                    return Err("--frames: at least 1".to_string());
+                }
+                options.frames = Some(frames);
             }
             "--screenshot" => options.screenshot = Some(PathBuf::from(value("a file")?)),
             "--script" => options.script = Some(value("steps")?),
@@ -92,6 +97,7 @@ mod tests {
         assert_eq!(parse(&["--bogus"]).unwrap_err(), "unknown option --bogus");
         assert_eq!(parse(&["--frames"]).unwrap_err(), "--frames needs a number");
         assert_eq!(parse(&["--frames", "many"]).unwrap_err(), "--frames: \"many\" is not a number");
+        assert_eq!(parse(&["--frames", "0"]).unwrap_err(), "--frames: at least 1");
         assert_eq!(parse(&["--assets"]).unwrap_err(), "--assets needs a directory");
         // Help is the usage alone.
         assert_eq!(parse(&["--help"]).unwrap_err(), "");

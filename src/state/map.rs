@@ -9,10 +9,10 @@
 use std::fmt;
 use std::path::Path;
 
-use super::cities::{Cities, City, CityId};
+use super::cities::{Cities, City, CityId, UnitProd};
 use super::hex::Hex;
-use super::terrain::TileType;
-use super::units::{Unit, UnitId, Units};
+use super::terrain::{MoveCost, TileType};
+use super::units::{MoveCostId, Side, Unit, UnitId, Units};
 
 /// The most units that can stand on one tile.
 pub const MAX_STACK: usize = 8;
@@ -98,6 +98,9 @@ impl fmt::Display for PlaceError {
 
 impl std::error::Error for PlaceError {}
 
+/// The map owns its units and cities, and everything that changes them goes
+/// through its methods, which keep the tiles' unit lists, the units' positions
+/// and the revision counters in step.
 #[derive(Clone, Debug)]
 pub struct Map {
     rows: u16,
@@ -106,8 +109,12 @@ pub struct Map {
     tiles: Vec<Tile>,
     /// The hex the player points at. C++: Map::row, Map::col
     pub cursor: Hex,
-    pub units: Units,
-    pub cities: Cities,
+    units: Units,
+    cities: Cities,
+    /// Counts the changes to anything but the cursor.
+    revision: u64,
+    /// Counts the changes to the terrain.
+    terrain_revision: u64,
 }
 
 impl Map {
@@ -123,6 +130,8 @@ impl Map {
             cursor: Hex::new(rows / 2, cols / 2),
             units: Units::new(),
             cities: Cities::new(),
+            revision: 0,
+            terrain_revision: 0,
         })
     }
 
@@ -209,9 +218,78 @@ impl Map {
     }
 
     /// The tile, to change its terrain or flags (its units change through
-    /// `place_unit`, `move_unit` and the kill methods).
+    /// `place_unit`, `move_unit` and the kill methods). This counts as a change
+    /// to the terrain.
     pub fn tile_mut(&mut self, hex: Hex) -> Option<&mut Tile> {
-        self.index(hex).map(|i| &mut self.tiles[i])
+        let i = self.index(hex)?;
+        self.terrain_changed();
+        Some(&mut self.tiles[i])
+    }
+
+    /// A number that goes up whenever the map changes (its terrain, its units,
+    /// its cities; not the cursor). What is computed from the map, like a unit's
+    /// movement range, is out of date when this has moved on.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// A number that goes up whenever the terrain changes. The minimap's picture
+    /// is out of date when this has moved on.
+    pub fn terrain_revision(&self) -> u64 {
+        self.terrain_revision
+    }
+
+    fn changed(&mut self) {
+        self.revision += 1;
+    }
+
+    fn terrain_changed(&mut self) {
+        self.revision += 1;
+        self.terrain_revision += 1;
+    }
+
+    /// Every unit in the game. They change through the map's methods.
+    pub fn units(&self) -> &Units {
+        &self.units
+    }
+
+    pub fn cities(&self) -> &Cities {
+        &self.cities
+    }
+
+    /// Create a unit. It is not on the map until `place_unit` puts it there.
+    /// C++: UnitManager::newUnit
+    pub fn new_unit(
+        &mut self,
+        side: Side,
+        name: &str,
+        upkeep: u32,
+        strength: u32,
+        movement: u32,
+        move_cost: MoveCostId,
+    ) -> UnitId {
+        self.changed();
+        self.units.new_unit(side, name, upkeep, strength, movement, move_cost)
+    }
+
+    /// The id of the movement cost table with these costs (see
+    /// `Units::acquire_move_cost`).
+    pub fn acquire_move_cost(&mut self, cost: MoveCost) -> MoveCostId {
+        self.units.acquire_move_cost(cost)
+    }
+
+    /// A unit, to change what it can do (its movement points, strength, name).
+    /// Where it is changes through `move_unit`.
+    pub fn unit_mut(&mut self, id: UnitId) -> Option<&mut Unit> {
+        self.units.get(id)?;
+        self.changed();
+        self.units.get_mut(id)
+    }
+
+    /// Start a side's turn (see `Units::reset_move_points`).
+    pub fn reset_move_points(&mut self, side: Side) {
+        self.changed();
+        self.units.reset_move_points(side);
     }
 
     /// The neighbours of `hex` that are on the map.
@@ -225,7 +303,7 @@ impl Map {
     }
 
     fn is_on_map(&self, unit: &Unit) -> bool {
-        self.units_at(unit.pos).contains(&unit.id)
+        self.units_at(unit.pos()).contains(&unit.id())
     }
 
     /// Put a new unit on the map. C++: Map::placeUnit (which ignored a full stack)
@@ -244,14 +322,15 @@ impl Map {
         }
         self.tiles[i].units.push(id);
         if let Some(unit) = self.units.get_mut(id) {
-            unit.pos = hex;
+            unit.set_pos(hex);
         }
+        self.changed();
         Ok(())
     }
 
     fn remove_from_tile(&mut self, id: UnitId, hex: Hex) {
-        if let Some(tile) = self.tile_mut(hex) {
-            tile.units.retain(|u| *u != id);
+        if let Some(i) = self.index(hex) {
+            self.tiles[i].units.retain(|u| *u != id);
         }
     }
 
@@ -259,7 +338,7 @@ impl Map {
     /// go there. C++: Map::moveUnit (which lost the unit if the stack was full)
     pub fn move_unit(&mut self, id: UnitId, to: Hex) -> Result<(), PlaceError> {
         let unit = self.units.get(id).ok_or(PlaceError::NoSuchUnit)?;
-        let from = unit.pos;
+        let from = unit.pos();
         if !self.is_on_map(unit) {
             return Err(PlaceError::NotOnMap);
         }
@@ -274,25 +353,40 @@ impl Map {
     /// Remove a unit from the map and the game. C++: Map::killUnit
     pub fn kill_unit(&mut self, id: UnitId) -> Option<Unit> {
         let unit = self.units.delete(id)?;
-        self.remove_from_tile(id, unit.pos);
+        self.remove_from_tile(id, unit.pos());
+        self.changed();
         Some(unit)
     }
 
     /// Remove every unit on a hex. Returns how many there were. C++: Map::killTile
     pub fn kill_tile(&mut self, hex: Hex) -> usize {
-        let Some(tile) = self.tile_mut(hex) else { return 0 };
-        let ids = std::mem::take(&mut tile.units);
+        let Some(i) = self.index(hex) else { return 0 };
+        let ids = std::mem::take(&mut self.tiles[i].units);
         for id in &ids {
             self.units.delete(*id);
+        }
+        if !ids.is_empty() {
+            self.changed();
         }
         ids.len()
     }
 
     /// Found a neutral city: the tile becomes a city tile. `None` if the hex is off
-    /// the map. C++: Map::addCity
+    /// the map or has a city already. C++: Map::addCity (which allowed a second
+    /// city on a hex, where `getCity` could never find it)
     pub fn add_city(&mut self, name: &str, hex: Hex, walls: u32) -> Option<CityId> {
+        if self.cities.at(hex).is_some() {
+            return None;
+        }
         self.tile_mut(hex)?.kind = TileType::City;
         Some(self.cities.new_city(name, hex, walls))
+    }
+
+    /// Add a kind of unit to what a city can build. False if there is no such
+    /// city. C++: CityManager::addCityProd
+    pub fn add_city_prod(&mut self, id: CityId, prod: UnitProd) -> bool {
+        self.changed();
+        self.cities.add_city_prod(id, prod)
     }
 
     /// C++: Map::getCity
@@ -304,16 +398,14 @@ impl Map {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::terrain::MoveCost;
-    use crate::state::units::Side;
 
     fn map() -> Map {
         Map::new(20, 30, TileType::Grass).unwrap()
     }
 
     fn add_unit(map: &mut Map, name: &str) -> UnitId {
-        let mc = map.units.acquire_move_cost(MoveCost { grass: 2, ..MoveCost::default() });
-        map.units.new_unit(Side::Black, name, 1, 1, 10, mc)
+        let mc = map.acquire_move_cost(MoveCost { grass: 2, ..MoveCost::default() });
+        map.new_unit(Side::Black, name, 1, 1, 10, mc)
     }
 
     #[test]
@@ -420,20 +512,20 @@ mod tests {
         assert_eq!(m.move_unit(a, to), Err(PlaceError::NotOnMap));
         m.place_unit(a, from).unwrap();
         assert_eq!(m.units_at(from), [a]);
-        assert_eq!(m.units.get(a).unwrap().pos, from);
+        assert_eq!(m.units().get(a).unwrap().pos(), from);
         assert_eq!(m.place_unit(a, to), Err(PlaceError::AlreadyOnMap));
 
         m.move_unit(a, to).unwrap();
         assert!(m.units_at(from).is_empty());
         assert_eq!(m.units_at(to), [a]);
-        assert_eq!(m.units.get(a).unwrap().pos, to);
+        assert_eq!(m.units().get(a).unwrap().pos(), to);
         // Moving to where it is changes nothing.
         m.move_unit(a, to).unwrap();
         assert_eq!(m.units_at(to), [a]);
 
         assert_eq!(m.move_unit(a, Hex::new(20, 0)), Err(PlaceError::OffMap));
         assert_eq!(m.units_at(to), [a]);
-        let ghost = UnitId { side: Side::Red, index: 3 };
+        let ghost = UnitId { side: Side::Red, index: 3, generation: 0 };
         assert_eq!(m.place_unit(ghost, from), Err(PlaceError::NoSuchUnit));
         assert_eq!(m.move_unit(ghost, from), Err(PlaceError::NoSuchUnit));
     }
@@ -455,7 +547,7 @@ mod tests {
         m.place_unit(ninth, next_door).unwrap();
         assert_eq!(m.move_unit(ninth, hex), Err(PlaceError::StackFull));
         assert_eq!(m.units_at(next_door), [ninth]);
-        assert_eq!(m.units.get(ninth).unwrap().pos, next_door);
+        assert_eq!(m.units().get(ninth).unwrap().pos(), next_door);
         assert_eq!(m.units_at(hex).len(), MAX_STACK);
 
         // One leaves and there is room again.
@@ -476,19 +568,31 @@ mod tests {
         }
         assert_eq!(m.kill_unit(b).map(|u| u.name), Some("B".to_string()));
         assert_eq!(m.units_at(hex), [a, c]);
-        assert!(m.units.get(b).is_none());
+        assert!(m.units().get(b).is_none());
         assert!(m.kill_unit(b).is_none());
-        // The freed slot is reused, and the new unit is not on the map.
+        // The freed slot is reused by a unit with a new id, which is not on the map.
         let d = add_unit(&mut m, "D");
-        assert_eq!(d, b);
+        assert_eq!((d.index, d.generation), (b.index, b.generation + 1));
         assert_eq!(m.units_at(hex), [a, c]);
+        // The dead unit's id does nothing to the new one.
+        assert!(m.kill_unit(b).is_none());
+        assert_eq!(m.move_unit(b, Hex::new(1, 1)), Err(PlaceError::NoSuchUnit));
+        assert_eq!(m.place_unit(b, Hex::new(1, 1)), Err(PlaceError::NoSuchUnit));
+        assert!(m.unit_mut(b).is_none());
+        assert_eq!(m.units().get(d).unwrap().name, "D");
+        m.place_unit(d, Hex::new(9, 9)).unwrap();
+        assert_eq!(m.units_at(Hex::new(9, 9)), [d]);
 
         assert_eq!(m.kill_tile(hex), 2);
         assert!(m.units_at(hex).is_empty());
-        assert!(m.units.get(a).is_none() && m.units.get(c).is_none());
+        assert!(m.units().get(a).is_none() && m.units().get(c).is_none());
         assert_eq!(m.kill_tile(hex), 0);
         assert_eq!(m.kill_tile(Hex::new(99, 99)), 0);
-        assert_eq!(m.units.iter().count(), 1);
+        assert_eq!(m.units().iter().count(), 1);
+        // Every unit the map still knows is on the tile it says it is on.
+        for unit in m.units().iter() {
+            assert!(m.units_at(unit.pos()).contains(&unit.id()));
+        }
     }
 
     #[test]
@@ -500,6 +604,52 @@ mod tests {
         assert_eq!(m.city_at(hex).map(|c| c.id), Some(id));
         assert!(m.city_at(Hex::new(2, 4)).is_none());
         assert!(m.add_city("Nowhere", Hex::new(50, 50), 0).is_none());
-        assert_eq!(m.cities.len(), 1);
+        // One city to a hex.
+        assert!(m.add_city("Again", hex, 3).is_none());
+        assert_eq!(m.cities().len(), 1);
+        let prod = UnitProd { basename: "Militia".into(), time: 1, cost: 4, upkeep: 2, strength: 1, movement: 8 };
+        assert!(m.add_city_prod(id, prod.clone()));
+        assert_eq!(m.city_at(hex).unwrap().units, [prod]);
+    }
+
+    #[test]
+    fn revisions_count_changes() {
+        let mut m = map();
+        let (r0, t0) = (m.revision(), m.terrain_revision());
+        // Looking changes nothing, and neither does the cursor.
+        let _ = (m.tile(Hex::new(1, 1)), m.units_at(Hex::new(1, 1)), m.to_text());
+        m.cursor = Hex::new(3, 3);
+        assert_eq!((m.revision(), m.terrain_revision()), (r0, t0));
+
+        // Units change the map but not its terrain.
+        let a = add_unit(&mut m, "A");
+        m.place_unit(a, Hex::new(5, 5)).unwrap();
+        let r1 = m.revision();
+        assert!(r1 > r0);
+        m.move_unit(a, Hex::new(5, 6)).unwrap();
+        let r2 = m.revision();
+        assert!(r2 > r1);
+        m.unit_mut(a).unwrap().movement = 3;
+        let r3 = m.revision();
+        assert!(r3 > r2);
+        m.reset_move_points(Side::Black);
+        let r4 = m.revision();
+        assert!(r4 > r3);
+        m.kill_unit(a);
+        let r5 = m.revision();
+        assert!(r5 > r4);
+        assert_eq!(m.terrain_revision(), t0);
+        // What fails changes nothing.
+        assert!(m.move_unit(a, Hex::new(1, 1)).is_err() && m.unit_mut(a).is_none() && m.kill_unit(a).is_none());
+        assert_eq!(m.kill_tile(Hex::new(5, 6)), 0);
+        assert!(m.tile_mut(Hex::new(99, 99)).is_none());
+        assert_eq!((m.revision(), m.terrain_revision()), (r5, t0));
+
+        // Terrain changes both.
+        m.tile_mut(Hex::new(2, 2)).unwrap().kind = TileType::Water;
+        assert!(m.revision() > r5 && m.terrain_revision() > t0);
+        let t1 = m.terrain_revision();
+        m.add_city("Alder", Hex::new(4, 4), 0).unwrap();
+        assert!(m.terrain_revision() > t1);
     }
 }

@@ -81,6 +81,17 @@ the live window for you. Look at the PNG you made.
   never hold game state: Turbo Ferret factories are `fn() -> Box<dyn Widget>`,
   so a widget records commands and the session applies them (the UI produces
   orders, the game consumes them). Keep it that way; phase 3 builds on it.
+- **One way to change the map:** `Map` owns its units and cities, and they
+  change only through its methods (`new_unit`, `place_unit`, `move_unit`,
+  `kill_unit`, `unit_mut`, `tile_mut`, `add_city` ...), which keep the tiles'
+  unit lists and the units' positions in step and count revisions. What is
+  derived from the map checks a revision instead of being told: `Game::refresh`
+  recomputes the selected unit's range, and the session asks for a new minimap
+  picture when `terrain_revision` moves. Add new mutations as `Map` methods
+  that call `changed()` or `terrain_changed()`; do not make the fields public.
+- **Unit ids are generational.** A deleted unit's `UnitId` names nothing, even
+  after its slot is reused: every lookup gives `None`. Orders and selections
+  may hold ids across turns; they must cope with `None`.
 - **Platforms:** macOS and Linux are the test targets; Windows is best effort.
   Use `std::path`, no Unix-only APIs, no `#[cfg(unix)]`-only features. Only
   miniquad's OpenGL backend is supported (the game's shaders are GLSL 100).

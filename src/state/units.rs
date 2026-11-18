@@ -34,12 +34,15 @@ impl Side {
     }
 }
 
-/// Names a unit: its side and its slot in that side's list. A slot is reused after
-/// its unit is deleted, so an id held across a deletion may name a different unit.
+/// Names a unit: its side, its slot in that side's list, and which of the units
+/// that have used that slot it is. A slot is reused after its unit is deleted,
+/// but with the next generation, so an id held across a deletion names nothing:
+/// every lookup with it gives `None`, never the slot's new unit.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct UnitId {
     pub side: Side,
     pub index: u32,
+    pub generation: u32,
 }
 
 /// Names a movement cost table in [`Units`].
@@ -48,7 +51,7 @@ pub struct MoveCostId(pub u32);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Unit {
-    pub id: UnitId,
+    id: UnitId,
     pub name: String,
     pub upkeep: u32,
     pub strength: u32,
@@ -57,23 +60,44 @@ pub struct Unit {
     pub move_cost: MoveCostId,
     /// Movement points at the start of a turn, before any carry-over.
     pub base_move_points: u32,
-    /// Where the unit is. Only meaningful once the map has placed it.
-    pub pos: Hex,
+    pos: Hex,
 }
 
 impl Unit {
+    pub fn id(&self) -> UnitId {
+        self.id
+    }
+
     pub fn side(&self) -> Side {
         self.id.side
     }
+
+    /// Where the unit is. Only meaningful once the map has placed it; only the
+    /// map changes it (`Map::place_unit`, `Map::move_unit`).
+    pub fn pos(&self) -> Hex {
+        self.pos
+    }
+
+    pub(super) fn set_pos(&mut self, pos: Hex) {
+        self.pos = pos;
+    }
+}
+
+/// A place in a side's list: the unit in it, if any, and how many units have
+/// been in it before.
+#[derive(Clone, Debug, Default)]
+struct Slot {
+    generation: u32,
+    unit: Option<Unit>,
 }
 
 /// Every unit in the game, by side, and the movement cost tables they share.
 ///
-/// Deviation D12: the C++ kept lists for the eight player sides only, so a grey
-/// unit indexed past the end of its array. Here grey has a list too.
+/// The C++ kept lists for the eight player sides only, so a grey unit indexed
+/// past the end of its array. Here grey has a list too.
 #[derive(Clone, Debug, Default)]
 pub struct Units {
-    per_side: [Vec<Option<Unit>>; NUM_SIDES + 1],
+    per_side: [Vec<Slot>; NUM_SIDES + 1],
     move_costs: Vec<MoveCost>,
 }
 
@@ -94,15 +118,16 @@ impl Units {
         move_cost: MoveCostId,
     ) -> UnitId {
         let list = &mut self.per_side[side.index()];
-        let index = match list.iter().position(Option::is_none) {
+        let index = match list.iter().position(|slot| slot.unit.is_none()) {
             Some(i) => i,
             None => {
-                list.push(None);
+                list.push(Slot::default());
                 list.len() - 1
             }
         };
-        let id = UnitId { side, index: index as u32 };
-        list[index] = Some(Unit {
+        let slot = &mut list[index];
+        let id = UnitId { side, index: index as u32, generation: slot.generation };
+        slot.unit = Some(Unit {
             id,
             name: name.to_string(),
             upkeep,
@@ -115,28 +140,39 @@ impl Units {
         id
     }
 
-    /// Remove a unit, freeing its slot for reuse. Returns it if it existed.
-    /// C++: UnitManager::deleteUnit
+    fn slot(&self, id: UnitId) -> Option<&Slot> {
+        self.per_side[id.side.index()].get(id.index as usize).filter(|slot| slot.generation == id.generation)
+    }
+
+    fn slot_mut(&mut self, id: UnitId) -> Option<&mut Slot> {
+        self.per_side[id.side.index()].get_mut(id.index as usize).filter(|slot| slot.generation == id.generation)
+    }
+
+    /// Remove a unit, freeing its slot for the next unit of its side (which gets
+    /// a new id). Returns the unit if it existed. C++: UnitManager::deleteUnit
     pub fn delete(&mut self, id: UnitId) -> Option<Unit> {
-        self.per_side[id.side.index()].get_mut(id.index as usize)?.take()
+        let slot = self.slot_mut(id)?;
+        let unit = slot.unit.take()?;
+        slot.generation = slot.generation.wrapping_add(1);
+        Some(unit)
     }
 
     pub fn get(&self, id: UnitId) -> Option<&Unit> {
-        self.per_side[id.side.index()].get(id.index as usize)?.as_ref()
+        self.slot(id)?.unit.as_ref()
     }
 
     pub fn get_mut(&mut self, id: UnitId) -> Option<&mut Unit> {
-        self.per_side[id.side.index()].get_mut(id.index as usize)?.as_mut()
+        self.slot_mut(id)?.unit.as_mut()
     }
 
     /// The units of one side.
     pub fn of_side(&self, side: Side) -> impl Iterator<Item = &Unit> {
-        self.per_side[side.index()].iter().flatten()
+        self.per_side[side.index()].iter().filter_map(|slot| slot.unit.as_ref())
     }
 
     /// Every unit.
     pub fn iter(&self) -> impl Iterator<Item = &Unit> {
-        self.per_side.iter().flat_map(|list| list.iter().flatten())
+        self.per_side.iter().flat_map(|list| list.iter().filter_map(|slot| slot.unit.as_ref()))
     }
 
     /// The id of the table with these costs, adding it if no unit kind uses it
@@ -160,9 +196,9 @@ impl Units {
     /// Start a side's turn: every unit gets its base movement plus what it carries
     /// over from the last turn, which is 0 if it had none left, 1 if it had 1 left
     /// and 2 otherwise. C++: UnitManager::resetMovePoints (which dereferenced empty
-    /// slots; deviation D7)
+    /// slots)
     pub fn reset_move_points(&mut self, side: Side) {
-        for u in self.per_side[side.index()].iter_mut().flatten() {
+        for u in self.per_side[side.index()].iter_mut().filter_map(|slot| slot.unit.as_mut()) {
             u.movement = u.base_move_points + u.movement.min(2);
         }
     }
@@ -193,9 +229,9 @@ mod tests {
         let a = units.new_unit(Side::Black, "A", 1, 2, 10, mc);
         let b = units.new_unit(Side::Black, "B", 1, 2, 10, mc);
         let c = units.new_unit(Side::Red, "C", 1, 2, 10, mc);
-        assert_eq!(a, UnitId { side: Side::Black, index: 0 });
-        assert_eq!(b, UnitId { side: Side::Black, index: 1 });
-        assert_eq!(c, UnitId { side: Side::Red, index: 0 });
+        assert_eq!(a, UnitId { side: Side::Black, index: 0, generation: 0 });
+        assert_eq!(b, UnitId { side: Side::Black, index: 1, generation: 0 });
+        assert_eq!(c, UnitId { side: Side::Red, index: 0, generation: 0 });
         let u = units.get(b).unwrap();
         assert_eq!((u.name.as_str(), u.side(), u.movement, u.base_move_points), ("B", Side::Black, 10, 10));
         assert_eq!(units.iter().count(), 3);
@@ -212,9 +248,15 @@ mod tests {
         assert_eq!(units.delete(b).map(|u| u.name), Some("B".to_string()));
         assert!(units.get(b).is_none());
         assert!(units.delete(b).is_none());
-        // The hole is filled before the list grows.
+        // The hole is filled before the list grows, by a unit with a new id: the
+        // old id names nothing, however it is used.
         let d = units.new_unit(Side::Black, "D", 1, 2, 10, mc);
-        assert_eq!(d, b);
+        assert_eq!((d.side, d.index, d.generation), (b.side, b.index, b.generation + 1));
+        assert_ne!(d, b);
+        assert_eq!(units.get(d).unwrap().name, "D");
+        assert_eq!(units.get(d).unwrap().id(), d);
+        assert!(units.get(b).is_none() && units.get_mut(b).is_none());
+        assert!(units.delete(b).is_none(), "a stale id must not delete the slot's new unit");
         assert_eq!(units.get(d).unwrap().name, "D");
         let e = units.new_unit(Side::Black, "E", 1, 2, 10, mc);
         assert_eq!(e.index, 3);
@@ -225,7 +267,7 @@ mod tests {
     #[test]
     fn unknown_ids_are_none() {
         let mut units = Units::new();
-        let ghost = UnitId { side: Side::Blue, index: 7 };
+        let ghost = UnitId { side: Side::Blue, index: 7, generation: 0 };
         assert!(units.get(ghost).is_none());
         assert!(units.get_mut(ghost).is_none());
         assert!(units.delete(ghost).is_none());
@@ -266,9 +308,6 @@ mod tests {
         }
         units.get_mut(other).unwrap().movement = 5;
         // An empty slot in the list must not matter (the C++ crashed on one).
-        units.delete(ids[1]);
-        let refill = units.new_unit(Side::Black, "U1", 1, 1, 20, mc);
-        units.get_mut(refill).unwrap().movement = 1;
         let gone = units.new_unit(Side::Black, "gone", 1, 1, 20, mc);
         units.delete(gone);
 

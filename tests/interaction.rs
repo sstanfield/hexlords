@@ -60,7 +60,7 @@ fn click_to_select_click_to_move() {
     click(&mut s, p);
     assert_eq!(s.game.map.cursor, target);
     assert_eq!(s.game.map.units_at(target), [cav]);
-    assert_eq!(s.game.map.units.get(cav).unwrap().movement, 14);
+    assert_eq!(s.game.map.units().get(cav).unwrap().movement, 14);
     assert!(s.game.selected().is_none(), "a move deselects");
     assert!(!s.game.can_move_to(Hex::new(50, 54)));
 }
@@ -92,13 +92,13 @@ fn clicking_out_of_range_changes_nothing() {
         assert_eq!(s.game.map.cursor, hex, "the click still moves the cursor");
         assert_eq!(s.game.selected(), Some(cav), "{hex}");
         assert_eq!(s.game.map.units_at(START), [cav]);
-        assert_eq!(s.game.map.units.get(cav).unwrap().movement, 20);
+        assert_eq!(s.game.map.units().get(cav).unwrap().movement, 20);
     }
     // The edge of the range is still a move: ten grass steps up.
     let p = pixel_of(&s, Hex::new(40, 50));
     click(&mut s, p);
     assert_eq!(s.game.map.units_at(Hex::new(40, 50)), [cav]);
-    assert_eq!(s.game.map.units.get(cav).unwrap().movement, 0);
+    assert_eq!(s.game.map.units().get(cav).unwrap().movement, 0);
 }
 
 /// The plan's flow, by keyboard: select the unit, go three hexes east, move.
@@ -115,7 +115,7 @@ fn enter_selects_and_moves_at_the_cursor() {
     assert!(s.game.can_move_to(s.game.map.cursor));
     press(&mut s, SpecialKey::Enter);
     assert_eq!(s.game.map.units_at(Hex::new(50, 53)), [cav]);
-    assert_eq!(s.game.map.units.get(cav).unwrap().movement, 14);
+    assert_eq!(s.game.map.units().get(cav).unwrap().movement, 14);
     assert!(s.game.selected().is_none());
     // Enter again selects it where it stands now, and once more deselects.
     press(&mut s, SpecialKey::Enter);
@@ -199,6 +199,15 @@ fn one_and_two_zoom_and_center_on_the_cursor() {
         type_char(&mut s, '1');
     }
     assert_eq!(s.view.zoom_level(), 4, "the widest level");
+    // At the last level the key does nothing at all: with the cursor somewhere
+    // else, the view does not jump to it.
+    let other = Hex::new(40, 62);
+    let p = pixel_of(&s, other);
+    hover(&mut s, p);
+    assert!(type_char(&mut s, '1'));
+    assert_eq!((s.view.zoom_level(), s.view.center()), (4, hex));
+    let p = pixel_of(&s, hex);
+    hover(&mut s, p);
     for _ in 0..10 {
         type_char(&mut s, '2');
     }
@@ -221,4 +230,55 @@ fn picking_follows_the_zoom_and_the_center() {
         hover(&mut s, p);
         assert_eq!(s.game.map.cursor, hex);
     }
+}
+
+#[test]
+fn a_press_dragged_off_the_map_leaves_the_cursor_on_it() {
+    use turbo_ferret::Modifiers;
+    let mut s = session();
+    let on_map = pixel_of(&s, Hex::new(48, 52));
+    s.ui.pointer_move(on_map, Modifiers::NONE);
+    s.ui.pointer_down(on_map, 1, Modifiers::NONE);
+    s.pump();
+    assert_eq!(s.game.map.cursor, Hex::new(48, 52));
+    // The map widget holds the pointer while the button is down, wherever it
+    // goes: below the map, and off to the right over the minimap.
+    for p in [Point::new(400, 700), Point::new(950, 100), Point::new(-20, 300)] {
+        s.ui.pointer_move(p, Modifiers::NONE);
+        s.pump();
+        assert_eq!(s.game.map.cursor, Hex::new(48, 52), "after a drag to {p:?}");
+    }
+    // Released out there, it is no click: nothing was selected or moved.
+    s.ui.pointer_up(Point::new(400, 700), Modifiers::NONE);
+    s.pump();
+    assert!(s.game.selected().is_none());
+    assert_eq!(s.view.center(), START);
+}
+
+#[test]
+fn the_overlay_and_the_minimap_follow_changes_to_the_map() {
+    use hexgame::state::TileType;
+    let mut s = session();
+    assert!(s.take_minimap_dirty());
+    press(&mut s, SpecialKey::Enter);
+    let next_door = Hex::new(50, 51);
+    assert!(s.game.can_move_to(next_door));
+    s.frame(16);
+    assert!(!s.take_minimap_dirty(), "selecting and moving units is not a terrain change");
+
+    // Something changes the terrain (an editor, say): by the next frame the
+    // range is right and the minimap is asked to redraw, with nobody told.
+    s.game.map.tile_mut(next_door).unwrap().kind = TileType::Water;
+    s.frame(32);
+    assert!(!s.game.can_move_to(next_door));
+    assert!(s.take_minimap_dirty());
+    s.frame(48);
+    assert!(!s.take_minimap_dirty());
+
+    // The selected unit dies: it is no longer selected.
+    let cav = s.game.selected().unwrap();
+    s.game.map.kill_unit(cav);
+    s.frame(64);
+    assert!(s.game.selected().is_none() && s.game.range().is_none());
+    assert!(!s.take_minimap_dirty());
 }

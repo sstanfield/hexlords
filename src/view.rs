@@ -174,13 +174,18 @@ impl MapView {
         (1.0 / self.wf, 1.0 / self.hf)
     }
 
-    /// The hexes to draw: every hex of the map that may show in the widget (with
-    /// some to spare around the edges), column by column. C++: MapRenderer::renderMap
+    /// The hexes to draw: every hex of the map whose model touches the widget,
+    /// column by column.
+    ///
+    /// A hex reaches 1 unit from its center each way, so the columns go out to
+    /// where `1.5 * col - 1` passes the widget's half width, and the rows to where
+    /// `2 * row - 1` passes its half height, with one more row for the unit an odd
+    /// column is raised by. C++: MapRenderer::renderMap, which padded the columns
+    /// by a quarter plus six: too few once the widget is wider than about 2:1.
     pub fn visible_hexes(&self) -> impl Iterator<Item = VisibleHex> + '_ {
-        let mut num_x = (1.0 / self.wf) as i32 + 1;
-        num_x += num_x / 4 + 6; // columns interleave, so they need some padding
-        let num_y = (1.0 / self.hf) as i32 + 2;
-        let (half_x, half_y) = (num_x / 2, num_y / 2);
+        let (half_w, half_h) = self.half_extent();
+        let half_x = ((half_w + 1.0) / 1.5).ceil() as i32;
+        let half_y = ((half_h + 2.0) / 2.0).ceil() as i32;
         let (center_row, center_col) = (i32::from(self.center.row), i32::from(self.center.col));
         (-half_x..=half_x).flat_map(move |col| {
             let map_col = center_col + col;
@@ -208,7 +213,9 @@ impl MapView {
     /// The hex under a pixel of a `w` x `h` widget (x right, y down, from its top
     /// left corner). C++: MapWidget::OnEvent (the pointer cases)
     pub fn pick_pixel(&self, x: i32, y: i32, w: i32, h: i32) -> Option<Hex> {
-        if w <= 0 || h <= 0 {
+        // Outside the widget is not on the map, even where the map goes on: the
+        // pointer can be there while the widget holds it (a press dragged out).
+        if !(0..w).contains(&x) || !(0..h).contains(&y) {
             return None;
         }
         let (half_w, half_h) = (w as f32 / 2.0, h as f32 / 2.0);
@@ -358,34 +365,44 @@ mod tests {
 
     #[test]
     fn visible_hexes_cover_the_widget_and_stay_on_the_map() {
-        for level in 0..ZOOM_LEVELS.len() {
-            let mut v = view();
-            while v.zoom_level() < level {
-                v.zoom_out();
-            }
-            while v.zoom_level() > level {
+        // The demo's widget, a tall one, a square, and wide ones (an ultrawide
+        // screen's map is 2048 x 756): the C++ padding lost columns on those.
+        for (w, h) in [(W, H), (300, 900), (640, 640), (2048, 756), (2048, 600), (3000, 200), (40, 2000)] {
+            for center in [Hex::new(50, 50), Hex::new(50, 51), Hex::new(30, 30), Hex::new(2, 97)] {
+                let mut v = view();
+                v.resize(w, h);
+                v.center_on(center);
                 v.zoom_in();
-            }
-            let visible: Vec<VisibleHex> = v.visible_hexes().collect();
-            // No hex twice.
-            let mut hexes: Vec<Hex> = visible.iter().map(|vh| vh.hex).collect();
-            hexes.sort();
-            hexes.dedup();
-            assert_eq!(hexes.len(), visible.len(), "level {level}");
-            // Every hex whose model touches the widget is in the list.
-            let (hw, hh) = v.half_extent();
-            for row in 0..100 {
-                for col in 0..100 {
-                    let hex = Hex::new(row, col);
-                    let [x, y] = v.hex_center(hex);
-                    let touches = x.abs() - 1.0 < hw && y.abs() - 1.0 < hh;
-                    if touches {
-                        assert!(hexes.binary_search(&hex).is_ok(), "level {level}: {hex} is missing");
+                for level in 0..ZOOM_LEVELS.len() {
+                    let visible: Vec<VisibleHex> = v.visible_hexes().collect();
+                    // No hex twice.
+                    let mut hexes: Vec<Hex> = visible.iter().map(|vh| vh.hex).collect();
+                    hexes.sort();
+                    hexes.dedup();
+                    assert_eq!(hexes.len(), visible.len(), "{w}x{h}, level {level}");
+                    // Every hex whose model touches the widget is in the list, and
+                    // the list is not much longer than that.
+                    let (hw, hh) = v.half_extent();
+                    let mut touching = 0;
+                    for row in 0..100 {
+                        for col in 0..100 {
+                            let hex = Hex::new(row, col);
+                            let [x, y] = v.hex_center(hex);
+                            if x.abs() - 1.0 < hw && y.abs() - 1.0 < hh {
+                                touching += 1;
+                                assert!(
+                                    hexes.binary_search(&hex).is_ok(),
+                                    "{w}x{h}, center {center}, level {level}: {hex} is missing"
+                                );
+                            }
+                        }
                     }
+                    assert!(touching > 0 && visible.len() <= touching + touching / 2 + 80, "{w}x{h}: {touching}");
+                    for vh in &visible {
+                        assert_eq!(vh.center, v.hex_center(vh.hex));
+                    }
+                    v.zoom_out();
                 }
-            }
-            for vh in &visible {
-                assert_eq!(vh.center, v.hex_center(vh.hex));
             }
         }
     }
@@ -404,9 +421,10 @@ mod tests {
 
     #[test]
     fn the_start_view_draws_about_three_hundred_hexes() {
-        // 1/wf = 15.25, so 16 + 4 + 6 = 26 columns give -13..=13; 1/hf = 11.58, so
-        // 13 rows give -6..=6.
-        assert_eq!(view().visible_hexes().count(), 27 * 13);
+        // Half the widget is 15.25 units wide: (15.25 + 1) / 1.5 rounds up to 11
+        // columns each side. It is 11.58 units high: (11.58 + 2) / 2 rounds up to
+        // 7 rows each side.
+        assert_eq!(view().visible_hexes().count(), 23 * 15);
     }
 
     #[test]
@@ -576,8 +594,13 @@ mod tests {
         // Columns are 1.5 * wf * W / 2 = 40.3 pixels apart.
         assert_eq!(v.pick_pixel(W / 2 + 80, H / 2, W, H), Some(Hex::new(50, 52)));
         assert_eq!(v.pick_pixel(W / 2 - 80, H / 2, W, H), Some(Hex::new(50, 48)));
-        // A widget without a size picks nothing.
+        // A widget without a size picks nothing, and neither does a pixel outside
+        // the widget (the map goes on there, but it is not what is shown).
         assert_eq!(v.pick_pixel(0, 0, 0, 0), None);
+        assert_eq!(v.pick_pixel(0, 0, W, H), Some(Hex::new(44, 40)));
+        for (x, y) in [(-1, 10), (10, -1), (W, 10), (10, H), (W / 2, H + 160)] {
+            assert_eq!(v.pick_pixel(x, y, W, H), None, "({x}, {y})");
+        }
     }
 
     #[test]
