@@ -1,0 +1,13 @@
+# The main screen: the map, a sidebar with the minimap, and a strip below them.
+#
+# C++: assets/layouts/main.lua, which built this tree from Lua. The map and the
+# minimap get their sizes from the window (Session::apply_layout_sizes): the map
+# 80% of its width and 70% of its height, the minimap the rest of each.
+TBLayout: id: main_layout, axis: y, distribution: gravity, distribution-position: top, position: left, spacing: 5
+	TBLayout: id: main_layout1, axis: x, distribution-position: left, position: top, spacing: 5
+		MapWidget: id: main_map, is-focusable: 1
+		TBLayout: id: main_sidebar, axis: y, distribution-position: top, spacing: 5
+			MiniMapWidget: id: mini_map, is-focusable: 1
+			TBButton: id: button, text: SLS, is-focusable: 1
+	# Nothing yet: the room under the map.
+	TBLayout: id: main_layout2, axis: x, spacing: 5
