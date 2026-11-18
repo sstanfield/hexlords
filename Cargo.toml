@@ -1,0 +1,21 @@
+[package]
+name = "hexgame"
+description = "A hex map strategy game foundation: the Rust port of the hexGame engine demo, on Turbo Ferret and miniquad."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+license = "Zlib"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "hexgame"
+path = "src/main.rs"
+
+# Runtime dependencies are these three and nothing else (see CLAUDE.md).
+[dependencies]
+miniquad = "=0.4.11" # the version turbo-ferret-miniquad is built against
+turbo-ferret = { git = "https://github.com/sstanfield/turbo-ferret", rev = "a37cb83" }
+turbo-ferret-miniquad = { git = "https://github.com/sstanfield/turbo-ferret", rev = "a37cb83" }
