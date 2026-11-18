@@ -13,6 +13,7 @@ use turbo_ferret::{Rect, Size};
 use turbo_ferret_miniquad::{InputAdapter, MiniquadClipboard, MiniquadRenderer, window_dpi};
 
 use crate::paths::asset_root;
+use crate::platform;
 use crate::render::textures::texture_params;
 use crate::render::{MapRenderer, MiniMapRenderer, Pipelines, gl_rect, png_out};
 use crate::script;
@@ -194,6 +195,11 @@ impl EventHandler for App {
 
     fn draw(&mut self) {
         self.frames += 1;
+        // A window someone is going to play in comes to the front; the scripted
+        // runs (a screenshot, a count of frames) leave the desktop alone.
+        if self.frames == 1 && self.options.screenshot.is_none() && self.options.frames.is_none() {
+            platform::bring_to_front();
+        }
         if self.options.screenshot.is_some() && self.frames == SCREENSHOT_FRAME {
             self.screenshot();
             window::order_quit();

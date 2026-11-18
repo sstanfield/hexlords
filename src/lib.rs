@@ -14,13 +14,15 @@
 //! - [`script`]: scripted input, for screenshots and tests.
 //! - [`app`]: the window (a miniquad `EventHandler`).
 
-#![forbid(unsafe_code)]
+// One `unsafe` block is allowed, by name: `platform::bring_to_front` on macOS.
+#![deny(unsafe_code)]
 
 pub mod app;
 pub mod game;
 pub mod gui;
 pub mod minimap_view;
 pub mod paths;
+pub mod platform;
 pub mod render;
 pub mod script;
 pub mod session;
