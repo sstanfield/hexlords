@@ -31,8 +31,9 @@ impl Widget for RootWindow {
         "RootWindow"
     }
 
-    /// C++: RootWidget::OnEvent. Two changes: plain `f` and `q` are not swallowed
-    /// (deviation D9), and Cmd+Q quits as well as Ctrl+Q (the usual key on macOS).
+    /// C++: RootWidget::OnEvent. Three changes: plain `f` and `q` are not swallowed
+    /// (deviation D9), Cmd+Q quits as well as Ctrl+Q (D16), and F11 asks for a
+    /// real fullscreen switch where the C++ called a stub (D17).
     fn on_event(&mut self, _cx: &mut Ctx, ev: &Event) -> bool {
         if ev.kind != EventKind::KeyDown {
             return false;

@@ -7,6 +7,11 @@ Ferret (<https://github.com/sstanfield/turbo-ferret>) and graphics go through
 miniquad. `hexgame-rust-port-plan.md` is the brief: the acceptance spec of the
 demo, the design, and the direction for the phases after it.
 
+**Fidelity to the C++ is not a goal.** The owner's word (2026-11-18): the C++
+was an in-progress demo, and the port exists to be the foundation of a new game,
+so it need not be pixel or bug perfect. Where the C++ behaviour is a bug or
+plainly worse, do the sane thing and record it in `docs/deviations.md`.
+
 **Read before changing anything substantial:** `hexgame-rust-port-plan.md`
 (sections 2 and 3 for what exists, section 8 for what comes next) and
 `docs/deviations.md` (where the Rust differs from the C++ on purpose, numbered).
@@ -21,10 +26,11 @@ demo, the design, and the direction for the phases after it.
 | `src/render/` | miniquad drawing: hex meshes, shaders, textures, the map and minimap renderers, the PNG writer |
 | `src/gui/` | Turbo Ferret widgets: `MapWidget`, `MiniMapWidget`, `RootWindow`. They record commands; they hold no game state |
 | `src/session.rs` | `Session`: the `Ui`, the `Game` and the views together, with no window. Tests drive it |
+| `src/script.rs` | Scripted input (`--script`), for screenshots and tests |
 | `src/app.rs`, `src/main.rs` | The miniquad window: forwards input to the session, draws the frame |
 | `assets/` | `layouts/main.tb.txt`, Turbo Badger's default skin, tiles, the unit image |
 | `tests/` | Headless tests of the layout, the widgets and the interaction |
-| `docs/` | `deviations.md`, screenshots |
+| `docs/` | `deviations.md`; `screenshots/` (what the game looked like when phase 1 was done) |
 | `reference/hexGame/` | The C++ original, for reference. **Read-only, never edit it.** Gitignored: if it is missing, `git clone https://github.com/sstanfield/hexGame reference/hexGame` |
 
 ## Commands
