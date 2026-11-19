@@ -16,20 +16,19 @@ use hexgame::app::{self, OPTIONS_USAGE, Options, WINDOW_SIZE, WINDOW_TITLE, Wind
 use hexgame::game::Game;
 use hexgame::script;
 use hexgame::session::Session;
-use hexgame::state::Map;
 
 /// The command line.
 #[derive(Clone, Debug, Default)]
 struct Args {
     window: Options,
-    /// `--map <file>`: play on this map instead of the demo's.
+    /// `--map <file or directory>`: play on this map instead of the demo's.
     map: Option<PathBuf>,
     /// `--script <steps>`: input to play before the first frame (see `script`).
     script: Option<String>,
 }
 
 fn usage() -> String {
-    format!("usage: hexgame [--map <file.map>] [--script <steps>] {OPTIONS_USAGE}")
+    format!("usage: hexgame [--map <file.map or map directory>] [--script <steps>] {OPTIONS_USAGE}")
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -41,7 +40,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
         }
         let mut value = |what: &str| args.next().ok_or(format!("{arg} needs {what}"));
         match arg.as_str() {
-            "--map" => parsed.map = Some(PathBuf::from(value("a file")?)),
+            "--map" => parsed.map = Some(PathBuf::from(value("a map")?)),
             "--script" => parsed.script = Some(value("steps")?),
             "-h" | "--help" => return Err(String::new()),
             _ => return Err(format!("unknown option {arg}")),
@@ -62,10 +61,15 @@ fn main() {
         }
     };
     let Args { window, map, script } = args;
-    // A map file that cannot be read ends the run before a window opens.
+    // A map that cannot be read ends the run before a window opens.
     let game = match map {
-        Some(path) => match Map::load(&path) {
-            Ok(map) => Game::on_map(map),
+        Some(path) => match Game::load(&path) {
+            Ok((game, warnings)) => {
+                for warning in warnings {
+                    eprintln!("hexgame: --map: {}: {warning}", path.display());
+                }
+                game
+            }
             Err(e) => {
                 eprintln!("hexgame: --map: {e}");
                 std::process::exit(1);
@@ -116,7 +120,7 @@ mod tests {
         assert_eq!(parse(&["--frames", "many"]).unwrap_err(), "--frames: \"many\" is not a number");
         assert_eq!(parse(&["--frames", "0"]).unwrap_err(), "--frames: at least 1");
         assert_eq!(parse(&["--assets"]).unwrap_err(), "--assets needs a directory");
-        assert_eq!(parse(&["--map"]).unwrap_err(), "--map needs a file");
+        assert_eq!(parse(&["--map"]).unwrap_err(), "--map needs a map");
         // Help is the usage alone.
         assert_eq!(parse(&["--help"]).unwrap_err(), "");
     }

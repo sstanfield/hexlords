@@ -10,9 +10,9 @@ use std::fmt;
 use std::path::Path;
 
 use super::cities::{Cities, City, CityId, UnitProd};
-use super::hex::Hex;
+use super::hex::{Hex, HexSide};
 use super::terrain::{MoveCost, TileType};
-use super::units::{MoveCostId, Side, Unit, UnitId, Units};
+use super::units::{MoveCostId, Side, Unit, UnitId, UnitKind, UnitKindId, Units};
 
 /// The most units that can stand on one tile.
 pub const MAX_STACK: usize = 8;
@@ -25,6 +25,8 @@ pub const MAX_COLS: u16 = 600;
 pub struct Tile {
     pub kind: TileType,
     pub frozen: bool,
+    /// A road runs through the tile: over water it is a bridge, over a
+    /// mountain a pass. It joins the roads and the cities on the tiles around.
     pub road: bool,
     /// At most [`MAX_STACK`], in the order they arrived.
     units: Vec<UnitId>,
@@ -136,9 +138,9 @@ impl Map {
     }
 
     /// Read a map file: the number of rows, the number of columns, then one line
-    /// per row with one letter per tile (see `TileType::from_char`). Tiles a short
-    /// or missing line leaves out are grass, as in the C++; a letter that is not a
-    /// terrain is an error. Both `\n` and `\r\n` end a line.
+    /// per row with one letter per tile (see `TileType::from_char`); a capital
+    /// letter is that terrain with a road. Tiles a short or missing line leaves
+    /// out are grass, as in the C++; a letter that is not a terrain is an error. Both `\n` and `\r\n` end a line.
     /// C++: Map::Map(std::string file), which wrote through a null pointer
     /// (deviation D1)
     pub fn parse(text: &str) -> Result<Map, MapError> {
@@ -163,9 +165,10 @@ impl Map {
                 if c >= width {
                     return Err(parse_error(format!("more than {width} tiles")));
                 }
-                let kind = TileType::from_char(ch)
+                let kind = TileType::from_char(ch.to_ascii_lowercase())
                     .ok_or_else(|| parse_error(format!("unknown terrain '{ch}' at column {}", c + 1)))?;
-                map.tiles[r * width + c].kind = kind;
+                let tile = &mut map.tiles[r * width + c];
+                (tile.kind, tile.road) = (kind, ch.is_ascii_uppercase());
                 count += 1;
             }
             debug_assert!(count <= width);
@@ -173,11 +176,13 @@ impl Map {
         Ok(map)
     }
 
-    /// The map as a map file (terrain only), with `\n` line ends. C++: Map::write
+    /// The map as a map file (the terrain and the roads), with `\n` line ends.
+    /// C++: Map::write
     pub fn to_text(&self) -> String {
         let mut out = format!("{}\n{}\n", self.rows, self.cols);
         for row in self.tiles.chunks(usize::from(self.cols)) {
-            out.extend(row.iter().map(|t| t.kind.to_char()));
+            let letter = |t: &Tile| if t.road { t.kind.to_char().to_ascii_uppercase() } else { t.kind.to_char() };
+            out.extend(row.iter().map(letter));
             out.push('\n');
         }
         out
@@ -272,6 +277,19 @@ impl Map {
         self.units.new_unit(side, name, upkeep, strength, movement, move_cost)
     }
 
+    /// Add a kind of unit to the map. `None` if it has one with that id.
+    pub fn add_unit_kind(&mut self, kind: UnitKind) -> Option<UnitKindId> {
+        self.changed();
+        self.units.add_kind(kind)
+    }
+
+    /// Create a unit of one of the map's kinds (see `Units::new_unit_of`). It
+    /// is not on the map until `place_unit` puts it there.
+    pub fn new_unit_of(&mut self, side: Side, kind: UnitKindId) -> Option<UnitId> {
+        self.changed();
+        self.units.new_unit_of(side, kind)
+    }
+
     /// The id of the movement cost table with these costs (see
     /// `Units::acquire_move_cost`).
     pub fn acquire_move_cost(&mut self, cost: MoveCost) -> MoveCostId {
@@ -295,6 +313,26 @@ impl Map {
     /// The neighbours of `hex` that are on the map.
     pub fn neighbours(&self, hex: Hex) -> impl Iterator<Item = Hex> {
         hex.neighbours(self.rows, self.cols)
+    }
+
+    /// True if a road ends or goes on at this hex: it has a road, or it is a
+    /// city (roads run up to a city's gates without being asked).
+    pub fn joins_roads(&self, hex: Hex) -> bool {
+        self.tile(hex).is_some_and(|t| t.road || t.kind == TileType::City)
+    }
+
+    /// The sides of a hex across which a road goes on: a bit for each
+    /// `HexSide` whose neighbour joins roads. (Whether the hex itself has a
+    /// road is another question: `Tile::road`.)
+    pub fn road_links(&self, hex: Hex) -> u8 {
+        let mut links = 0;
+        for side in HexSide::ALL {
+            let (row, col) = hex.toward(side);
+            if self.hex_at(row, col).is_some_and(|next| self.joins_roads(next)) {
+                links |= 1 << side.index();
+            }
+        }
+        links
     }
 
     /// The units on a hex (none if it is off the map).
@@ -387,6 +425,14 @@ impl Map {
     pub fn add_city_prod(&mut self, id: CityId, prod: UnitProd) -> bool {
         self.changed();
         self.cities.add_city_prod(id, prod)
+    }
+
+    /// A city, to change who holds it, its name or its walls. Where it is
+    /// does not change.
+    pub fn city_mut(&mut self, id: CityId) -> Option<&mut City> {
+        self.cities.get(id)?;
+        self.changed();
+        self.cities.get_mut(id)
     }
 
     /// C++: Map::getCity
@@ -651,5 +697,59 @@ mod tests {
         let t1 = m.terrain_revision();
         m.add_city("Alder", Hex::new(4, 4), 0).unwrap();
         assert!(m.terrain_revision() > t1);
+    }
+
+    #[test]
+    fn a_capital_letter_is_a_road() {
+        let mut rows = vec!["gggggggggggggggggggg".to_string(); 20];
+        rows[3] = "ggGFHSDMWTRCgggggggg".to_string();
+        let text = format!("20\n20\n{}\n", rows.join("\n"));
+        let map = Map::parse(&text).unwrap();
+        let at = |col: u16| map.tile(Hex::new(3, col)).unwrap();
+        assert!(!at(1).road && at(1).kind == TileType::Grass);
+        let kinds: Vec<TileType> = (2..12).map(|c| at(c).kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                TileType::Grass,
+                TileType::Forest,
+                TileType::Hill,
+                TileType::Swamp,
+                TileType::Desert,
+                TileType::Mountain,
+                TileType::Water,
+                TileType::Temple,
+                TileType::Ruin,
+                TileType::City
+            ]
+        );
+        assert!((2..12).all(|c| at(c).road));
+        // And it is written back as it was read.
+        assert_eq!(map.to_text(), text);
+        // A letter that is no terrain is none in capitals either.
+        assert!(Map::parse(&text.replacen('G', "X", 1)).is_err());
+    }
+
+    #[test]
+    fn roads_join_roads_and_cities() {
+        let mut map = Map::new(20, 20, TileType::Grass).unwrap();
+        // An even column: its neighbours east and west are in its row and the next.
+        let hex = Hex::new(10, 10);
+        assert_eq!(map.road_links(hex), 0);
+        assert!(!map.joins_roads(hex));
+        map.tile_mut(Hex::new(9, 10)).unwrap().road = true; // north
+        map.tile_mut(Hex::new(11, 11)).unwrap().road = true; // south-east
+        map.tile_mut(Hex::new(10, 9)).unwrap().kind = TileType::City; // north-west
+        map.tile_mut(Hex::new(12, 10)).unwrap().road = true; // two away: no neighbour
+        assert_eq!(map.road_links(hex), 0b100101);
+        assert!(map.joins_roads(Hex::new(9, 10)) && map.joins_roads(Hex::new(10, 9)));
+        // At the map's edge there is nothing across the edge.
+        map.tile_mut(Hex::new(0, 1)).unwrap().road = true;
+        assert_eq!(map.road_links(Hex::new(0, 0)), 1 << HexSide::NorthEast.index());
+        assert_eq!(map.road_links(Hex::new(25, 25)), 0);
+        // A road is terrain: the minimap's picture is out of date.
+        let before = map.terrain_revision();
+        map.tile_mut(hex).unwrap().road = true;
+        assert!(map.terrain_revision() > before);
     }
 }

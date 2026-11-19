@@ -4,6 +4,9 @@
 //! src/render/maprender.cpp MapRenderer::selectHex, moveUp, moveDown, and the
 //! cursor keys of src/gui/mapwidget.cpp MapWidget::OnEvent
 
+use std::path::{Path, PathBuf};
+
+use crate::state::scenario::{self, Scenario, side_name};
 use crate::state::{Direction, Hex, Map, MoveCost, MoveRange, Side, TileType, UnitId, compute_range};
 
 /// What `Game::select_hex` did.
@@ -25,11 +28,70 @@ pub struct Game {
     range: Option<MoveRange>,
     /// The map's revision when `range` was computed.
     range_revision: u64,
+    /// The map's own asset directory, if it brought one: a picture found
+    /// there is drawn instead of the game's of the same path.
+    pub assets: Option<PathBuf>,
+    turn: u32,
 }
 
 impl Game {
     pub fn new(map: Map) -> Game {
-        Game { map, selected: None, range: None, range_revision: 0 }
+        Game { map, selected: None, range: None, range_revision: 0, assets: None, turn: 1 }
+    }
+
+    /// The game on a map that was read from its files, with its cities and
+    /// its units. The cursor starts on the first city that has a garrison (or
+    /// the first city, or the middle of the map).
+    pub fn from_scenario(scenario: Scenario) -> Game {
+        let Scenario { mut map, assets, .. } = scenario;
+        let start = map
+            .cities()
+            .iter()
+            .find(|c| !map.units_at(c.pos).is_empty())
+            .or_else(|| map.cities().iter().next())
+            .map(|c| c.pos);
+        if let Some(hex) = start {
+            map.cursor = hex;
+        }
+        Game { assets, ..Game::new(map) }
+    }
+
+    /// Read a map (a `.map` file or a map directory, `docs/map-format.md`)
+    /// and start the game on it. A map that brings no units gets the demo's
+    /// one (see [`Game::on_map`]). Also returns what the reader warns of.
+    pub fn load(path: &Path) -> Result<(Game, Vec<String>), String> {
+        let scenario = scenario::load(path).map_err(|e| e.to_string())?;
+        let warnings = scenario.warnings.clone();
+        let game = if scenario.map.units().iter().next().is_some() {
+            Game::from_scenario(scenario)
+        } else {
+            let assets = scenario.assets.clone();
+            Game { assets, ..Game::on_map(scenario.map) }
+        };
+        Ok((game, warnings))
+    }
+
+    /// The turn that is being played: 1 at the start.
+    pub fn turn(&self) -> u32 {
+        self.turn
+    }
+
+    /// The turn is over: every unit of every side gets its movement points
+    /// back for the next (see `Units::reset_move_points`), and nothing is
+    /// selected. (There are no rules for whose turn it is yet: this is the
+    /// least a turn can be.)
+    pub fn end_turn(&mut self) {
+        for side in Side::PLAYERS.into_iter().chain([Side::Grey]) {
+            self.map.reset_move_points(side);
+        }
+        self.deselect();
+        self.turn += 1;
+    }
+
+    /// What is on a hex, in words: its terrain and road, its city, its
+    /// units. Empty for a hex off the map.
+    pub fn describe(&self, hex: Hex) -> String {
+        describe_hex(&self.map, hex)
     }
 
     /// The demo: a 100 x 100 grass map with a mountain diagonal and one cavalry
@@ -179,6 +241,45 @@ impl Game {
         }
         on_map
     }
+}
+
+/// A hex's terrain in words, with its road: "grass, road", "water, bridge",
+/// "mountain, pass".
+pub fn describe_terrain(kind: TileType, road: bool) -> String {
+    let road = match (road, kind) {
+        (false, _) => "",
+        (true, TileType::Water) => ", bridge",
+        (true, TileType::Mountain) => ", pass",
+        (true, _) => ", road",
+    };
+    format!("{}{road}", kind.name())
+}
+
+/// What is on a hex of a map, in words (see [`Game::describe`]).
+pub fn describe_hex(map: &Map, hex: Hex) -> String {
+    let Some(tile) = map.tile(hex) else { return String::new() };
+    let mut parts = vec![format!("row {}, column {}: {}", hex.row, hex.col, describe_terrain(tile.kind, tile.road))];
+    if let Some(city) = map.city_at(hex) {
+        let mut text = format!("{} ({})", city.name, side_name(city.side));
+        if city.walls > 0 {
+            text.push_str(&format!(", walls {}", city.walls));
+        }
+        if !city.units.is_empty() {
+            let builds: Vec<String> = city.units.iter().map(|p| format!("{} ({})", p.basename, p.time)).collect();
+            text.push_str(&format!(", builds {}", builds.join(", ")));
+        }
+        parts.push(text);
+    }
+    let units: Vec<String> = tile
+        .units()
+        .iter()
+        .filter_map(|id| map.units().get(*id))
+        .map(|u| format!("{} ({}) {}/{}", u.name, side_name(u.side()), u.movement, u.base_move_points))
+        .collect();
+    if !units.is_empty() {
+        parts.push(units.join(", "));
+    }
+    parts.join("  |  ")
 }
 
 /// What the demo's cavalry pays to enter each terrain. C++: Application::Application
@@ -458,5 +559,78 @@ mod tests {
         assert_eq!(game.map.cursor, Hex::new(99, 99));
         assert!(!game.set_cursor(Hex::new(100, 0)));
         assert_eq!(game.map.cursor, Hex::new(99, 99));
+    }
+
+    /// A map with a city, a road out of it and two units in it.
+    fn scenario() -> Scenario {
+        let mut rows = vec!["g".repeat(20); 20];
+        rows[5] = "gggggcGGWMgggggggggg".to_string();
+        let terrain = format!("20\n20\n{}\n", rows.join("\n"));
+        let units = "unit riders\nname Riders\nmoves 10\nenter grass 2, city 1, road 1, bridge 1\n";
+        let cities = "city 5 5\nname Wrenfold\nside blue\nwalls 1\nproduce riders 3\ngarrison riders 2\n";
+        let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+        Scenario { map, assets: None, warnings }
+    }
+
+    #[test]
+    fn a_map_with_its_own_units_starts_at_its_first_garrison() {
+        let mut game = Game::from_scenario(scenario());
+        let city = Hex::new(5, 5);
+        assert_eq!(game.map.cursor, city);
+        assert_eq!((game.turn(), game.selected()), (1, None));
+        assert_eq!(game.map.units_at(city).len(), 2);
+
+        // A rider goes down the road and over the bridge: 1 a step.
+        assert!(matches!(game.select_hex(city), SelectOutcome::Selected(_)));
+        assert!(game.can_move_to(Hex::new(5, 8)));
+        assert_eq!(game.range().unwrap().cost(Hex::new(5, 8)), Some(3));
+        assert_eq!(game.range().unwrap().cost(Hex::new(5, 9)), Some(4), "the pass");
+        assert!(matches!(game.select_hex(Hex::new(5, 9)), SelectOutcome::Moved { cost: 4, .. }));
+        let rider = game.map.units_at(Hex::new(5, 9))[0];
+        assert_eq!(game.map.units().get(rider).unwrap().movement, 6);
+
+        // The turn ends: it has its points back (and the two it may carry over).
+        game.select_hex(Hex::new(5, 9));
+        game.end_turn();
+        assert_eq!((game.turn(), game.selected()), (2, None));
+        assert_eq!(game.map.units().get(rider).unwrap().movement, 12);
+        let other = game.map.units_at(city)[0];
+        assert_eq!(game.map.units().get(other).unwrap().movement, 12);
+    }
+
+    #[test]
+    fn a_hex_in_words() {
+        let game = Game::from_scenario(scenario());
+        assert_eq!(game.describe(Hex::new(0, 0)), "row 0, column 0: grass");
+        assert_eq!(game.describe(Hex::new(5, 6)), "row 5, column 6: grass, road");
+        assert_eq!(game.describe(Hex::new(5, 8)), "row 5, column 8: water, bridge");
+        assert_eq!(game.describe(Hex::new(5, 9)), "row 5, column 9: mountain, pass");
+        assert_eq!(
+            game.describe(Hex::new(5, 5)),
+            "row 5, column 5: city  |  Wrenfold (blue), walls 1, builds riders (3)  |  Riders (blue) 10/10, Riders (blue) 10/10"
+        );
+        assert_eq!(game.describe(Hex::new(40, 0)), "");
+    }
+
+    #[test]
+    fn a_map_without_units_gets_the_demos() {
+        let dir = std::env::temp_dir().join(format!("hexgame-game-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("bare/assets")).unwrap();
+        let terrain = format!("20\n20\n{}", "gggggggggggggggggggg\n".repeat(20));
+        std::fs::write(dir.join("bare/terrain.map"), &terrain).unwrap();
+        std::fs::write(dir.join("plain.map"), terrain.replacen("gg", "cg", 1)).unwrap();
+
+        let (game, warnings) = Game::load(&dir.join("bare")).unwrap();
+        assert_eq!(game.map.units().iter().count(), 1);
+        assert_eq!(game.assets, Some(dir.join("bare/assets")));
+        assert!(warnings.is_empty());
+        let (game, warnings) = Game::load(&dir.join("plain.map")).unwrap();
+        assert_eq!(game.map.units().iter().count(), 1);
+        assert_eq!(warnings, ["the city tile at (0, 0) has no entry in cities.txt".to_string()]);
+        assert!(game.assets.is_none());
+        let e = Game::load(&dir.join("none.map")).err().unwrap();
+        assert!(e.contains("none.map"), "{e}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

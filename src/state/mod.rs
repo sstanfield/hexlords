@@ -7,12 +7,14 @@ pub mod cities;
 pub mod hex;
 pub mod map;
 pub mod movement;
+pub mod scenario;
 pub mod terrain;
 pub mod units;
 
 pub use cities::{Cities, City, CityId, UnitProd};
-pub use hex::{Direction, Hex};
+pub use hex::{Direction, Hex, HexSide};
 pub use map::{MAX_COLS, MAX_ROWS, MAX_STACK, MIN_COLS, MIN_ROWS, Map, MapError, PlaceError, Tile};
-pub use movement::{MoveRange, compute_range};
+pub use movement::{MoveRange, compute_range, step_cost};
+pub use scenario::{Scenario, ScenarioError};
 pub use terrain::{MoveCost, TileType};
-pub use units::{MoveCostId, NUM_SIDES, Side, Unit, UnitId, Units};
+pub use units::{DEFAULT_UNIT_IMAGE, MoveCostId, NUM_SIDES, Side, Unit, UnitId, UnitKind, UnitKindId, Units};

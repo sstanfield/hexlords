@@ -92,8 +92,8 @@ impl TileType {
 /// The movement points a kind of unit pays to enter each terrain. **0 means it
 /// cannot enter.** Units share these tables (see `Units::acquire_move_cost`).
 ///
-/// `shore`, `bridge` and `road` have no tiles yet; the fields are kept for the
-/// phases that add them.
+/// `road` and `bridge` are what a step along a road costs, on land and over
+/// water (see `movement::step_cost`). `shore` has no tiles yet.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
 pub struct MoveCost {
     pub grass: u16,

@@ -49,6 +49,33 @@ pub struct UnitId {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct MoveCostId(pub u32);
 
+/// The picture of a unit whose kind names none, relative to an asset directory.
+pub const DEFAULT_UNIT_IMAGE: &str = "units/default_unit.png";
+
+/// Names a kind of unit in [`Units`].
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub struct UnitKindId(pub u32);
+
+/// A kind of unit a map has: what every unit of the kind starts with. A map
+/// brings its own (`docs/map-format.md`, `units.txt`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnitKind {
+    /// The word files use for it: lower-case letters, digits and `_`.
+    pub id: String,
+    /// What the player reads.
+    pub name: String,
+    /// Its picture, relative to an asset directory.
+    pub image: String,
+    pub strength: u32,
+    /// The movement points it has each turn.
+    pub moves: u32,
+    pub upkeep: u32,
+    /// What it costs a city to build one.
+    pub price: u32,
+    /// What it pays to enter each terrain.
+    pub cost: MoveCost,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Unit {
     id: UnitId,
@@ -60,6 +87,8 @@ pub struct Unit {
     pub move_cost: MoveCostId,
     /// Movement points at the start of a turn, before any carry-over.
     pub base_move_points: u32,
+    /// The kind it was made as, if it was made from one.
+    pub kind: Option<UnitKindId>,
     pos: Hex,
 }
 
@@ -99,6 +128,7 @@ struct Slot {
 pub struct Units {
     per_side: [Vec<Slot>; NUM_SIDES + 1],
     move_costs: Vec<MoveCost>,
+    kinds: Vec<UnitKind>,
 }
 
 impl Units {
@@ -135,9 +165,50 @@ impl Units {
             movement,
             move_cost,
             base_move_points: movement,
+            kind: None,
             pos: Hex::default(),
         });
         id
+    }
+
+    /// Add a kind of unit. `None` if there is one with that id already.
+    pub fn add_kind(&mut self, kind: UnitKind) -> Option<UnitKindId> {
+        if self.kind_named(&kind.id).is_some() {
+            return None;
+        }
+        self.kinds.push(kind);
+        Some(UnitKindId(self.kinds.len() as u32 - 1))
+    }
+
+    pub fn kind(&self, id: UnitKindId) -> Option<&UnitKind> {
+        self.kinds.get(id.0 as usize)
+    }
+
+    /// The kind files call `id`.
+    pub fn kind_named(&self, id: &str) -> Option<UnitKindId> {
+        self.kinds.iter().position(|k| k.id == id).map(|i| UnitKindId(i as u32))
+    }
+
+    /// Every kind, in the order they were added (a `UnitKindId` is the place).
+    pub fn kinds(&self) -> &[UnitKind] {
+        &self.kinds
+    }
+
+    /// The kind a unit was made as.
+    pub fn kind_of(&self, unit: &Unit) -> Option<&UnitKind> {
+        self.kind(unit.kind?)
+    }
+
+    /// Create a unit of a kind, with the kind's name and numbers. `None` if
+    /// there is no such kind.
+    pub fn new_unit_of(&mut self, side: Side, kind: UnitKindId) -> Option<UnitId> {
+        let k = self.kind(kind)?.clone();
+        let cost = self.acquire_move_cost(k.cost);
+        let id = self.new_unit(side, &k.name, k.upkeep, k.strength, k.moves, cost);
+        if let Some(unit) = self.get_mut(id) {
+            unit.kind = Some(kind);
+        }
+        Some(id)
     }
 
     fn slot(&self, id: UnitId) -> Option<&Slot> {
@@ -316,5 +387,37 @@ mod tests {
         assert_eq!(got, [20, 21, 22, 22]);
         // Other sides are untouched.
         assert_eq!(units.get(other).unwrap().movement, 5);
+    }
+
+    #[test]
+    fn a_unit_of_a_kind_has_the_kinds_numbers() {
+        let mut units = Units::new();
+        let lancers = UnitKind {
+            id: "lancers".to_string(),
+            name: "Lancers".to_string(),
+            image: "units/lancers.png".to_string(),
+            strength: 4,
+            moves: 18,
+            upkeep: 2,
+            price: 9,
+            cost: cav_costs(),
+        };
+        let kind = units.add_kind(lancers.clone()).unwrap();
+        assert_eq!(units.add_kind(lancers.clone()), None, "an id is used once");
+        assert_eq!(units.kind_named("lancers"), Some(kind));
+        assert_eq!(units.kind_named("pikes"), None);
+        assert_eq!(units.kinds(), std::slice::from_ref(&lancers));
+
+        let id = units.new_unit_of(Side::Blue, kind).unwrap();
+        let unit = units.get(id).unwrap();
+        assert_eq!((unit.name.as_str(), unit.side(), unit.kind), ("Lancers", Side::Blue, Some(kind)));
+        assert_eq!((unit.strength, unit.movement, unit.base_move_points, unit.upkeep), (4, 18, 18, 2));
+        assert_eq!(units.move_cost(unit.move_cost), Some(&cav_costs()));
+        assert_eq!(units.kind_of(unit), Some(&lancers));
+        assert_eq!(units.new_unit_of(Side::Blue, UnitKindId(7)), None);
+        // A unit made by hand has no kind.
+        let mc = units.acquire_move_cost(cav_costs());
+        let plain = units.new_unit(Side::Red, "Plain", 1, 1, 5, mc);
+        assert!(units.kind_of(units.get(plain).unwrap()).is_none());
     }
 }

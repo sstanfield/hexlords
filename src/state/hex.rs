@@ -48,6 +48,61 @@ impl Hex {
     }
 }
 
+/// A side of a hex, and so the neighbour across it: clockwise from the top.
+/// The hexes are flat-topped, so there is one straight up and one straight
+/// down, and two on either hand.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub enum HexSide {
+    North,
+    NorthEast,
+    SouthEast,
+    South,
+    SouthWest,
+    NorthWest,
+}
+
+impl HexSide {
+    /// Clockwise from the top.
+    pub const ALL: [HexSide; 6] = [
+        HexSide::North,
+        HexSide::NorthEast,
+        HexSide::SouthEast,
+        HexSide::South,
+        HexSide::SouthWest,
+        HexSide::NorthWest,
+    ];
+
+    /// Its place in [`HexSide::ALL`], and its bit in a mask of sides.
+    pub const fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The side a neighbour sees this one from.
+    pub const fn opposite(self) -> HexSide {
+        HexSide::ALL[(self.index() + 3) % 6]
+    }
+}
+
+impl Hex {
+    /// The position across a side, as signed (row, col), on the map or not.
+    /// An odd column sits half a hex higher, so its neighbours to the east
+    /// and west are in its own row and the row above; an even column's are in
+    /// its own row and the row below.
+    pub fn toward(self, side: HexSide) -> (i32, i32) {
+        let (r, c) = (i32::from(self.row), i32::from(self.col));
+        // The row of the upper neighbour in the columns beside this one.
+        let upper = if self.col % 2 == 1 { r - 1 } else { r };
+        match side {
+            HexSide::North => (r - 1, c),
+            HexSide::NorthEast => (upper, c + 1),
+            HexSide::SouthEast => (upper + 1, c + 1),
+            HexSide::South => (r + 1, c),
+            HexSide::SouthWest => (upper + 1, c - 1),
+            HexSide::NorthWest => (upper, c - 1),
+        }
+    }
+}
+
 /// A step on the grid, as the arrow keys make them. Up and down change the row,
 /// left and right the column (which, between an odd and an even column, also
 /// moves half a hex up or down on screen).
@@ -126,5 +181,32 @@ mod tests {
         assert_eq!(Hex::on_map(0, 30, 20, 30), None);
         assert_eq!(Hex::on_map(-1, 0, 20, 30), None);
         assert_eq!(Hex::on_map(0, -1, 20, 30), None);
+    }
+
+    #[test]
+    fn the_six_sides_are_the_six_neighbours() {
+        for hex in [Hex::new(5, 4), Hex::new(5, 5)] {
+            let across: Vec<(i32, i32)> = HexSide::ALL.iter().map(|s| hex.toward(*s)).collect();
+            let mut a = across.clone();
+            let mut b = hex.neighbour_coords().to_vec();
+            a.sort();
+            b.sort();
+            assert_eq!(a, b, "{hex}");
+            // Going across a side and back across the opposite one is home.
+            for side in HexSide::ALL {
+                let (r, c) = hex.toward(side);
+                let there = Hex::new(r as u16, c as u16);
+                assert_eq!(there.toward(side.opposite()), (i32::from(hex.row), i32::from(hex.col)), "{hex} {side:?}");
+            }
+        }
+        // An even column's eastern neighbours are in its row and the one below;
+        // an odd column's in its row and the one above.
+        assert_eq!(Hex::new(5, 4).toward(HexSide::NorthEast), (5, 5));
+        assert_eq!(Hex::new(5, 4).toward(HexSide::SouthEast), (6, 5));
+        assert_eq!(Hex::new(5, 5).toward(HexSide::NorthEast), (4, 6));
+        assert_eq!(Hex::new(5, 5).toward(HexSide::SouthWest), (5, 4));
+        assert_eq!(Hex::new(5, 5).toward(HexSide::North), (4, 5));
+        assert_eq!(HexSide::NorthWest.opposite(), HexSide::SouthEast);
+        assert_eq!(HexSide::ALL.map(HexSide::index), [0, 1, 2, 3, 4, 5]);
     }
 }

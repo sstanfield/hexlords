@@ -11,7 +11,7 @@ use std::collections::BinaryHeap;
 
 use super::hex::Hex;
 use super::map::Map;
-use super::terrain::MoveCost;
+use super::terrain::{MoveCost, TileType};
 use super::units::Unit;
 
 /// The cheapest movement cost from an origin to each hex within a limit.
@@ -63,8 +63,30 @@ pub fn compute_range(map: &Map, unit: &Unit) -> MoveRange {
     }
 }
 
+/// What a step from `from` to the neighbouring hex `to` costs, or `None` if it
+/// cannot be made.
+///
+/// A step is paid for by the terrain it enters. A step *along a road*, from a
+/// hex that joins roads (it has a road, or it is a city) onto a hex with a
+/// road, costs the unit's road price instead, or its bridge price over water,
+/// if that is cheaper or the terrain cannot be entered at all. So a bridge
+/// and a mountain pass can only be entered along the road, and a road is no
+/// help to a unit that crosses it. A unit without a road price pays for the
+/// terrain as if no road were there.
+pub fn step_cost(map: &Map, costs: &MoveCost, from: Hex, to: Hex) -> Option<u16> {
+    let tile = map.tile(to)?;
+    let terrain = costs.entry(tile.kind);
+    if tile.road && map.joins_roads(from) {
+        let along = if tile.kind == TileType::Water { costs.bridge } else { costs.road };
+        if along > 0 {
+            return Some(terrain.map_or(along, |t| t.min(along)));
+        }
+    }
+    terrain
+}
+
 /// The cheapest cost from `origin` to every hex that costs at most `limit` to
-/// reach, entering terrain at the prices in `costs`.
+/// reach, at the prices in `costs` (see [`step_cost`]).
 pub fn reach(map: &Map, origin: Hex, costs: &MoveCost, limit: u32) -> MoveRange {
     let cols = usize::from(map.cols());
     let index = |h: Hex| usize::from(h.row) * cols + usize::from(h.col);
@@ -81,7 +103,7 @@ pub fn reach(map: &Map, origin: Hex, costs: &MoveCost, limit: u32) -> MoveRange 
             continue; // a cheaper way here was found after this entry was queued
         }
         for next in map.neighbours(hex) {
-            let Some(step) = map.tile(next).and_then(|t| costs.entry(t.kind)) else { continue };
+            let Some(step) = step_cost(map, costs, hex, next) else { continue };
             let total = spent + u32::from(step);
             if total <= limit && best[index(next)].is_none_or(|old| total < old) {
                 best[index(next)] = Some(total);
@@ -97,7 +119,6 @@ pub fn reach(map: &Map, origin: Hex, costs: &MoveCost, limit: u32) -> MoveRange 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::terrain::TileType;
     use crate::state::units::Side;
 
     fn cav() -> MoveCost {
@@ -134,8 +155,8 @@ mod tests {
             for row in 0..rows {
                 for col in 0..cols {
                     let hex = Hex::new(row, col);
-                    let Some(step) = costs.entry(map.tile(hex).unwrap().kind) else { continue };
                     for from in hex.neighbours(rows, cols) {
+                        let Some(step) = step_cost(map, costs, from, hex) else { continue };
                         let Some(spent) = best[at(from)] else { continue };
                         let total = spent + u32::from(step);
                         if total <= limit && best[at(hex)].is_none_or(|old| total < old) {
@@ -303,5 +324,93 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A unit that walks: roads are cheap, and it can cross bridges.
+    fn foot() -> MoveCost {
+        MoveCost { grass: 3, forest: 5, hill: 6, city: 2, road: 1, bridge: 2, ..MoveCost::default() }
+    }
+
+    fn road(map: &mut Map, row: u16, col: u16) {
+        map.tile_mut(Hex::new(row, col)).unwrap().road = true;
+    }
+
+    #[test]
+    fn a_step_along_a_road_costs_the_roads_price() {
+        let mut map = grass();
+        // A road along row 10 from column 5 to 9, through a forest at column 7.
+        for col in 5..=9 {
+            road(&mut map, 10, col);
+        }
+        set(&mut map, 10, 7, TileType::Forest);
+        let (a, b, forest) = (Hex::new(10, 5), Hex::new(10, 6), Hex::new(10, 7));
+        assert_eq!(step_cost(&map, &foot(), a, b), Some(1));
+        assert_eq!(step_cost(&map, &foot(), b, forest), Some(1), "the road goes through the forest");
+        // Onto the road from beside it, and off it again: the terrain's price.
+        let beside = Hex::new(11, 6);
+        assert!(beside.is_adjacent(b) && !map.tile(beside).unwrap().road);
+        assert_eq!(step_cost(&map, &foot(), beside, b), Some(3));
+        assert_eq!(step_cost(&map, &foot(), b, beside), Some(3));
+        assert_eq!(step_cost(&map, &foot(), Hex::new(9, 7), forest), Some(5), "into the forest from beside the road");
+        // A unit with no price for roads walks on them as on the ground under them.
+        let no_roads = MoveCost { road: 0, ..foot() };
+        assert_eq!(step_cost(&map, &no_roads, a, b), Some(3));
+        // And a road is never dearer than the ground.
+        let slow_roads = MoveCost { road: 9, ..foot() };
+        assert_eq!(step_cost(&map, &slow_roads, a, b), Some(3));
+        // Off the map is no step.
+        assert_eq!(step_cost(&map, &foot(), a, Hex::new(40, 40)), None);
+    }
+
+    #[test]
+    fn a_bridge_and_a_pass_are_entered_only_along_the_road() {
+        let mut map = grass();
+        // Column 10 is a river with a bridge at row 10, and column 14 a
+        // mountain range with a pass at row 10; a road runs along row 10.
+        for row in 0..20 {
+            set(&mut map, row, 10, TileType::Water);
+            set(&mut map, row, 14, TileType::Mountain);
+        }
+        for col in 8..=16 {
+            road(&mut map, 10, col);
+        }
+        let (bridge, pass) = (Hex::new(10, 10), Hex::new(10, 14));
+        assert_eq!(step_cost(&map, &foot(), Hex::new(10, 9), bridge), Some(2));
+        assert_eq!(step_cost(&map, &foot(), Hex::new(10, 13), pass), Some(1));
+        // From the bank beside the road's end, the water is water.
+        let bank = Hex::new(11, 9);
+        assert!(bank.is_adjacent(bridge));
+        assert_eq!(step_cost(&map, &foot(), bank, bridge), None);
+        assert_eq!(step_cost(&map, &foot(), Hex::new(9, 10), bridge), None, "nor from the water beside it");
+        // Without a price for bridges there is no crossing.
+        assert_eq!(step_cost(&map, &MoveCost { bridge: 0, ..foot() }, Hex::new(10, 9), bridge), None);
+
+        // The range of a unit west of the river goes over the bridge and on.
+        let range = reach(&map, Hex::new(10, 8), &foot(), 12);
+        assert_eq!(range.cost(Hex::new(10, 9)), Some(1));
+        assert_eq!(range.cost(bridge), Some(3));
+        assert_eq!(range.cost(Hex::new(10, 11)), Some(4));
+        assert_eq!(range.cost(pass), Some(7));
+        assert_eq!(range.cost(Hex::new(10, 16)), Some(9));
+        assert_eq!(range.cost(Hex::new(9, 10)), None, "the river beside the bridge");
+        assert_eq!(range.cost(Hex::new(9, 14)), None, "the mountains beside the pass");
+        assert_eq!(range.cost, brute_force(&map, Hex::new(10, 8), &foot(), 12));
+        // Take the bridge away and the far bank is out of reach.
+        map.tile_mut(bridge).unwrap().road = false;
+        assert_eq!(reach(&map, Hex::new(10, 8), &foot(), 12).cost(Hex::new(10, 11)), None);
+    }
+
+    #[test]
+    fn roads_run_up_to_a_city() {
+        let mut map = grass();
+        let city = Hex::new(10, 10);
+        set(&mut map, 10, 10, TileType::City);
+        road(&mut map, 10, 11);
+        road(&mut map, 10, 12);
+        // Out of the gate onto the road is a step along the road, though the
+        // city has no road of its own; into the city costs what a city costs.
+        assert!(map.joins_roads(city) && !map.tile(city).unwrap().road);
+        assert_eq!(step_cost(&map, &foot(), city, Hex::new(10, 11)), Some(1));
+        assert_eq!(step_cost(&map, &foot(), Hex::new(10, 11), city), Some(2));
     }
 }
