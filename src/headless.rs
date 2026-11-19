@@ -96,6 +96,7 @@ pub fn event_line(game: &Game, event: &Event) -> String {
                  {d} {defenders_lost}; {winner} wins"
             )
         }
+        Event::Undone => "the last order is taken back".to_string(),
         Event::Out { side } => format!("{} is out", side_name(*side)),
         Event::Won { side } => format!("{} wins", side_name(*side)),
     }
@@ -116,6 +117,7 @@ pub fn order_line(game: &Game, order: &Order) -> String {
             let what = what.map_or("none".to_string(), |i| i.to_string());
             format!("build {} {} {what}", at.0, at.1)
         }
+        Order::Undo => "undo".to_string(),
         Order::EndTurn => "end".to_string(),
     }
 }

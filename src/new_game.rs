@@ -97,10 +97,13 @@ impl NewGame {
     pub fn new(assets: &Path, viewport: Size, dpi: i32, chosen: Option<&Path>) -> Result<NewGame, String> {
         let blank = Game::new(Map::new(20, 20, TileType::Water).map_err(|e| format!("{e:?}"))?);
         let mut screen = MapScreen::new(assets, viewport, dpi, LAYOUT, blank)?;
+        // The map is there to be looked over: a drag moves it.
+        screen.set_drag_pans(true);
         screen.set_help(vec![HelpSection::new(
             "A new game",
             &[
                 ("A map's name", "Choose it: it shows beside the settings"),
+                ("Drag on the map", "Move it"),
                 ("Turns, Rounds", "How to play: one side after the other (rounds are to come)"),
                 ("Order of turns", "The same each round, or drawn anew"),
                 ("Battles", "Lines of duels, or strength against strength; how much chance, 0 to 10"),

@@ -44,6 +44,10 @@ pub const HELP_CLOSE_ID: &str = "help_close";
 /// The space between the help's columns, and between its sections, in dp.
 const HELP_COLUMN_DP: i32 = 16;
 const HELP_SECTION_DP: i32 = 8;
+/// How far, in dp, the pointer goes with the button held on the main map
+/// before it is a drag that moves the map rather than a click (in a scene
+/// that wants that, [`MapScreen::set_drag_pans`]).
+pub const DRAG_DP: i32 = 6;
 
 pub struct MapScreen {
     pub ui: Ui,
@@ -65,10 +69,25 @@ pub struct MapScreen {
     terrain_seen: u64,
     /// Where the pointer holds the main map (see [`MapScreen::grab`]).
     grab: Option<Point>,
+    /// A drag with the (left) button on the main map moves it (see
+    /// [`MapScreen::set_drag_pans`]); the press, while the button is down;
+    /// and whether the last press was such a drag, whose click is no click.
+    drag_pans: bool,
+    press: Option<Press>,
+    panned: bool,
     /// The scene's own sections of the help, between the map's and the window's.
     help_sections: Vec<HelpSection>,
     /// The help window, while it is open.
     help: Option<WidgetId>,
+}
+
+/// The button held down on the main map: where it went down, where the
+/// pointer was last, and whether it has moved far enough to move the map.
+#[derive(Copy, Clone, Debug)]
+struct Press {
+    at: Point,
+    last: Point,
+    panning: bool,
 }
 
 /// One of the screen's two maps.
@@ -143,6 +162,9 @@ impl MapScreen {
             minimap_dirty: true,
             terrain_seen,
             grab: None,
+            drag_pans: false,
+            press: None,
+            panned: false,
             help_sections: Vec::new(),
             help: None,
         })
@@ -323,8 +345,49 @@ impl MapScreen {
     }
 
     /// What the map widget recorded since the last call, oldest first.
+    ///
+    /// In a scene where a drag moves the map ([`MapScreen::set_drag_pans`]),
+    /// the button held down on the main map and moved more than [`DRAG_DP`]
+    /// takes the map along with the pointer: those moves come as
+    /// `MapCommand::Pan` (which [`MapScreen::navigate`] carries out, in their
+    /// turn), and the click its release would make is not handed on.
     pub fn take_map_commands(&mut self) -> Vec<MapCommand> {
-        self.ui.with_widget::<MapWidget, _>(self.map, |w, _| w.take_commands()).unwrap_or_default()
+        let commands = self.ui.with_widget::<MapWidget, _>(self.map, |w, _| w.take_commands()).unwrap_or_default();
+        if !self.drag_pans {
+            return commands;
+        }
+        let far = self.ui.dimension_converter().dp_to_px(DRAG_DP);
+        let mut out = Vec::with_capacity(commands.len());
+        for command in commands {
+            match command {
+                MapCommand::Press(p, _) => {
+                    self.press = Some(Press { at: p, last: p, panning: false });
+                    self.panned = false;
+                }
+                MapCommand::Hover(p, _) => {
+                    if let Some(press) = self.press.as_mut() {
+                        if press.panning || (p.x - press.at.x).abs().max((p.y - press.at.y).abs()) > far {
+                            press.panning = true;
+                            out.push(MapCommand::Pan(p.x - press.last.x, p.y - press.last.y));
+                            press.last = p;
+                            continue;
+                        }
+                    }
+                }
+                MapCommand::Release => self.panned = self.press.take().is_some_and(|p| p.panning),
+                MapCommand::Click(..) if std::mem::take(&mut self.panned) => continue,
+                _ => {}
+            }
+            out.push(command);
+        }
+        out
+    }
+
+    /// Whether a drag with the button on the main map moves the map (the
+    /// game, the new game screen) or is the scene's (the editor paints with
+    /// it). Off at first.
+    pub fn set_drag_pans(&mut self, on: bool) {
+        self.drag_pans = on;
     }
 
     /// The hex of the main map under a point a map command carries.
@@ -363,6 +426,9 @@ impl MapScreen {
                 MapKey::Enter => {}
                 MapKey::Esc => self.close_help(),
             },
+            MapCommand::Pan(dx, dy) => {
+                self.view.pan_pixels(dx as f32, dy as f32);
+            }
             MapCommand::Release => {}
         }
     }

@@ -47,7 +47,12 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | Input | What it does |
 |---|---|
 | Move the pointer over the map | The hex under it becomes the cursor (red border) |
-| Click a hex, or Enter at the cursor | The hex is the selected one: the panels are about it. With no unit selected: select your stack on the hex (those of its units with moves left), which shows where all of them can go (red tint). With units selected: they move to the hex together if all of them can reach it (into another side's units: an attack), or are deselected if this is their own hex |
+| Click a hex, or Enter at the cursor | The hex is the selected one: the panels are about it. With no unit selected: select your stack on the hex (those of its units with moves left), which shows where all of them can go (red tint). With units selected: they move to the hex together if all of them can reach it (into another side's units: an attack); any other hex drops the selection (and selects your stack there, if it has one) |
+| Drag on the map with the left button | Moves the map with the pointer (a press that hardly moves is still a click) |
+| Esc | Close the window on top (the help first); with none open, drop the selection |
+| Undo, or Ctrl+Z (Cmd+Z) | Take back the last move or city order, unless it was a battle (chance had a say) or put a side out: the units are back where they were, with their points, selected |
+| Next stack, or N (Shift+N: back) | Select the next of your stacks that can still move, and look at it |
+| Next city, or C (Shift+C: back) | Look at your next city (and drop the selection) |
 | Point at a unit under the map | A box over it says all about the unit: its side, numbers, and what each terrain costs it to enter |
 | Click a unit under the map | Take that unit into the selection, or leave it out (a unit of another hex starts a new one): the reach of those selected shows on the map, and the line under the units is about them |
 | Two fingers on a trackpad, or the mouse wheel, over the map | The map moves with the fingers (a wheel moves it up and down, and sideways with Shift) |
@@ -60,7 +65,6 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | The End turn button ("End red's turn"), or Ctrl+T (Cmd+T) | The side's turn is over: the next side's, the computer's played at once; a turn begins with the side's units' points back and its cities' work |
 | City details, beside the map | The selected hex's city in a window: all about it, and buttons for what it builds (only its holder's work) |
 | All cities, My cities | A list of the cities, or of yours, with a minimap that rings the one you choose; open it in full, or go to it |
-| Esc | Close the window on top (the help first) |
 | F1, or `?` | The help: every key and what the mouse does (Esc closes it) |
 | Ctrl+Cmd+F, or F11 | Fullscreen on and off (macOS keeps F11 for itself) |
 | Ctrl+Q (or Cmd+Q) | Quit |

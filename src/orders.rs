@@ -16,6 +16,9 @@ pub enum Order {
     Toward { units: Vec<UnitId>, to: Hex },
     /// Set what a city builds: an index into what it can build, or nothing.
     Build { city: CityId, what: Option<usize> },
+    /// Take back the side's last order this turn, if it had no chance in it
+    /// (a move that was no battle and put nobody out, a city's work set).
+    Undo,
     /// The side has done all it means to this turn.
     EndTurn,
 }
@@ -54,6 +57,8 @@ pub enum Event {
         city: CityId,
         unit: UnitId,
     },
+    /// The side's last order was taken back: all is as it was before it.
+    Undone,
     /// A side's turn began.
     Began {
         side: Side,

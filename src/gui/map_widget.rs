@@ -38,6 +38,10 @@ pub enum MapCommand {
     /// A click (press and release) on the map. It comes after its `Release`.
     Click(Point, Size),
     Key(MapKey),
+    /// Move the main map by so many pixels, with the pointer: a drag, made
+    /// of the `Hover`s by `MapScreen` where a drag moves the map
+    /// (`MapScreen::set_drag_pans`). The widget never records one.
+    Pan(i32, i32),
 }
 
 #[derive(Default)]

@@ -84,17 +84,19 @@ fn characters_drags_and_buttons() {
     script::run(&mut s, "key:shift+cmd+Q").unwrap();
     assert!(s.screen.quit_requested());
 
-    // A drag: the button goes down on the first hex and comes up on the
-    // second, where the cursor then is. (To the game that is a click on the
-    // second hex, and there is nothing on it to select.)
+    // A drag: the button goes down on the first hex and comes up where the
+    // second was. In the game that moves the map: the first hex is under the
+    // pointer now, with the cursor on it, and nothing was clicked.
+    let middle = s.screen.view.center();
     script::run(&mut s, "drag:50:48:50:53").unwrap();
-    assert_eq!(s.screen.game.map.cursor, Hex::new(50, 53));
+    assert_eq!(s.screen.game.map.cursor, Hex::new(50, 48));
+    assert_ne!(s.screen.view.center(), middle);
 
     // `press:` clicks a widget by its id.
     assert_eq!(s.screen.game.turn(), 1);
     script::run(&mut s, "press:end_turn").unwrap();
     assert_eq!(s.screen.game.turn(), 2, "the button ends the turn");
-    assert_eq!(s.screen.game.map.cursor, Hex::new(50, 53));
+    assert_eq!(s.screen.game.map.cursor, Hex::new(50, 48));
     // A count goes with the last `*` only, so that `*` itself can be typed.
     script::run(&mut s, "key:**2").unwrap();
 }

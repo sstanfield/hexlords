@@ -334,20 +334,19 @@ fn the_selected_unit_goes_where_it_is_sent_and_the_panels_follow() {
 }
 
 #[test]
-fn a_hex_out_of_reach_is_looked_at_while_the_unit_stays_selected() {
+fn a_hex_out_of_reach_is_looked_at_and_the_selection_dropped() {
     let mut s = session();
     let ids = s.screen.game.map.units_at(CITY).to_vec();
     push(&mut s, "unit_0");
-    // Row 5 is too far for a militia: the click shows the hex, no more.
+    // Row 5 is too far for a militia: the click shows the hex, and the
+    // militia is no longer selected (no move is waiting for a click).
     click_hex(&mut s, Hex::new(5, 8));
-    click_hex(&mut s, Hex::new(5, 8));
-    assert_eq!(s.screen.game.selected(), Some(ids[0]), "still selected");
-    assert_eq!(s.screen.game.map.units_at(CITY).len(), 3, "and where it was");
+    assert_eq!(s.screen.game.selected(), None);
+    assert_eq!(s.screen.game.map.units_at(CITY), ids, "and nothing moved");
     assert_eq!(s.shown(), Hex::new(5, 8));
     assert_eq!(s.hex_title(), "Row 5, column 8: grass, no units");
-    // The line is about the selected unit, wherever the panels look.
-    assert!(s.unit_line().starts_with("Militia (green)"));
-    assert!(s.stack().is_empty());
+    assert!(s.unit_line().is_empty() && s.stack().is_empty());
+    assert!(!s.marked(Hex::new(10, 9)), "no range shows");
 }
 
 #[test]

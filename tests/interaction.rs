@@ -76,7 +76,7 @@ fn clicking_the_selected_unit_again_deselects_it() {
 }
 
 #[test]
-fn clicking_out_of_range_changes_nothing() {
+fn clicking_out_of_range_drops_the_selection() {
     let mut s = session();
     let &[cav] = s.screen.game.map.units_at(START) else { panic!() };
     // Zoom out twice: at the start zoom everything in view is within reach.
@@ -85,14 +85,18 @@ fn clicking_out_of_range_changes_nothing() {
     let p = pixel_of(&s, START);
     click(&mut s, p);
     assert_eq!(s.screen.game.selected(), Some(cav));
-    // A mountain next door, and grass too far away (the C++ teleported to both).
+    // A mountain next door, and grass too far away (the C++ teleported to
+    // both): the click drops the selection, and nothing moves.
     for hex in [Hex::new(51, 51), Hex::new(50, 68), Hex::new(39, 50)] {
         let p = pixel_of(&s, hex);
         click(&mut s, p);
         assert_eq!(s.screen.game.map.cursor, hex, "the click still moves the cursor");
-        assert_eq!(s.screen.game.selected(), Some(cav), "{hex}");
+        assert_eq!(s.screen.game.selected(), None, "{hex}");
         assert_eq!(s.screen.game.map.units_at(START), [cav]);
         assert_eq!(s.screen.game.map.units().get(cav).unwrap().movement, 20);
+        let p = pixel_of(&s, START);
+        click(&mut s, p);
+        assert_eq!(s.screen.game.selected(), Some(cav));
     }
     // The edge of the range is still a move: ten grass steps up.
     let p = pixel_of(&s, Hex::new(40, 50));
@@ -240,27 +244,64 @@ fn picking_follows_the_zoom_and_the_center() {
     }
 }
 
-#[test]
-fn a_press_dragged_off_the_map_leaves_the_cursor_on_it() {
+/// The button pressed on the map, the pointer moved through `path`, and the
+/// button let go at its end; the session hears of each step.
+fn drag_through(s: &mut hexgame::session::Session, from: Point, path: &[Point]) {
     use turbo_ferret::Modifiers;
+    s.screen.ui.pointer_move(from, Modifiers::NONE);
+    s.screen.ui.pointer_down(from, 1, Modifiers::NONE);
+    s.pump();
+    for p in path {
+        s.screen.ui.pointer_move(*p, Modifiers::NONE);
+        s.pump();
+    }
+    s.screen.ui.pointer_up(*path.last().unwrap_or(&from), Modifiers::NONE);
+    s.pump();
+}
+
+#[test]
+fn a_drag_on_the_map_moves_it_and_is_no_click() {
+    let mut s = session();
+    let &[cav] = s.screen.game.map.units_at(START) else { panic!() };
+    let held = Hex::new(48, 52);
+    let at = pixel_of(&s, held);
+    // Left and up, in steps: the map goes with the pointer, the hex that was
+    // pressed stays under it, and the cursor stays on it.
+    let path: Vec<Point> = (1..=8).map(|i| Point::new(at.x - 20 * i, at.y - 10 * i)).collect();
+    drag_through(&mut s, at, &path);
+    assert_ne!(s.screen.view.center(), START);
+    let now = pixel_of(&s, held);
+    let end = path[path.len() - 1];
+    assert!((now.x - end.x).abs() <= 2 && (now.y - end.y).abs() <= 2, "{now:?} {end:?}");
+    assert_eq!(s.screen.game.map.cursor, held);
+    // Its release was no click: nothing was chosen.
+    assert!(s.screen.game.selected().is_none());
+    assert_eq!(s.shown(), START);
+
+    // With the unit selected, a drag does not send it anywhere.
+    let p = pixel_of(&s, START);
+    click(&mut s, p);
+    assert_eq!(s.screen.game.selected(), Some(cav));
+    let from = pixel_of(&s, Hex::new(50, 53));
+    drag_through(&mut s, from, &[Point::new(from.x + 60, from.y)]);
+    assert_eq!(s.screen.game.selected(), Some(cav));
+    assert_eq!(s.screen.game.map.units_at(START), [cav]);
+    // A hand that shakes a little still clicks: the unit goes.
+    let to = pixel_of(&s, Hex::new(50, 53));
+    drag_through(&mut s, to, &[Point::new(to.x + 2, to.y + 1)]);
+    assert_eq!(s.screen.game.map.units_at(Hex::new(50, 53)), [cav]);
+}
+
+#[test]
+fn a_drag_off_the_map_takes_the_map_along_and_clicks_nothing() {
     let mut s = session();
     let on_map = pixel_of(&s, Hex::new(48, 52));
-    s.screen.ui.pointer_move(on_map, Modifiers::NONE);
-    s.screen.ui.pointer_down(on_map, 1, Modifiers::NONE);
-    s.pump();
-    assert_eq!(s.screen.game.map.cursor, Hex::new(48, 52));
     // The map widget holds the pointer while the button is down, wherever it
     // goes: below the map, and off to the right over the minimap.
-    for p in [Point::new(400, 700), Point::new(950, 100), Point::new(-20, 300)] {
-        s.screen.ui.pointer_move(p, Modifiers::NONE);
-        s.pump();
-        assert_eq!(s.screen.game.map.cursor, Hex::new(48, 52), "after a drag to {p:?}");
-    }
-    // Released out there, it is no click: nothing was selected or moved.
-    s.screen.ui.pointer_up(Point::new(400, 700), Modifiers::NONE);
-    s.pump();
+    drag_through(&mut s, on_map, &[Point::new(400, 700), Point::new(950, 100), Point::new(-20, 300)]);
     assert!(s.screen.game.selected().is_none());
-    assert_eq!(s.screen.view.center(), START);
+    assert_eq!(s.shown(), START);
+    assert_ne!(s.screen.view.center(), START, "the map went with it");
 }
 
 #[test]

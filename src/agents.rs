@@ -351,7 +351,7 @@ pub fn describe(game: &Game, side: Side) -> String {
 
 /// An order in a line of text (`docs/agents.md`): `move <units> <row> <col>`,
 /// `toward <units> <row> <col>` (units: names with commas between),
-/// `build <row> <col> <index or none>`, `end`.
+/// `build <row> <col> <index or none>`, `undo`, `end`.
 /// `None` for an empty line or a comment (`#`).
 pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
     let words: Vec<&str> = line.split_whitespace().collect();
@@ -366,6 +366,7 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
     Ok(Some(match words[..] {
         [] => return Ok(None),
         [first, ..] if first.starts_with('#') => return Ok(None),
+        ["undo"] => Order::Undo,
         ["end"] => Order::EndTurn,
         ["move", u, row, col] => Order::Move { units: units(u)?, to: hex(row, col)? },
         ["toward", u, row, col] => Order::Toward { units: units(u)?, to: hex(row, col)? },

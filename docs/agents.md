@@ -109,6 +109,7 @@ A line each, in the order they are to be carried out:
 | `move <units> <row> <col>` | Move to a hex every one of the units can reach this turn; into another side's units, an attack |
 | `toward <units> <row> <col>` | Move together as far as the slowest gets this turn on its cheapest way to that hex |
 | `build <row> <col> <index or none>` | Set what a city of its side builds |
+| `undo` | Take back the order before, if it can be (not a battle, nor one that put a side out) |
 | `end` | The turn is over (the end of the output says so too) |
 
 `<units>` is one unit's name or several, with commas between and no spaces

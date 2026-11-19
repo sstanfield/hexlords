@@ -27,7 +27,7 @@ use crate::gui::build::{self, WindowParts};
 use crate::gui::{MapCommand, MapKey, RootCommand};
 use crate::help::{HelpSection, command_key};
 use crate::info;
-use crate::orders::Event;
+use crate::orders::{Event, Order};
 use crate::render::{AssetDirs, unit_icon};
 use crate::screen::{MapScreen, Scene};
 use crate::setup::Controller;
@@ -58,6 +58,11 @@ pub const STACK_SLOTS: usize = MAX_STACK + 1;
 pub const END_TURN_ID: &str = "end_turn";
 /// The buttons for the lists of cities, and the one for the selected city.
 pub const ALL_CITIES_ID: &str = "all_cities";
+/// Take back the last order; go to the next stack that can move, the next
+/// city.
+pub const UNDO_ID: &str = "undo";
+pub const NEXT_STACK_ID: &str = "next_stack";
+pub const NEXT_CITY_ID: &str = "next_city";
 pub const MY_CITIES_ID: &str = "my_cities";
 pub const CITY_DETAILS_ID: &str = "city_details";
 /// The cover between two people's turns, and its button.
@@ -151,17 +156,23 @@ impl Slot {
 /// The game's keys and clicks, for the help window (F1).
 fn help_section() -> HelpSection {
     let end_turn = format!("End turn,  or  {}+T", command_key());
+    let undo = format!("{}+Z,  or  Undo", command_key());
     HelpSection::new(
         "The game",
         &[
             ("Click a hex,  or  Enter", "Choose it: select its stack, or send the selected units there"),
+            ("Click a hex they cannot reach", "Drop the selection (and select the stack there, if it is yours)"),
             ("A hex with another side's units", "Sending units there attacks them: the line below says the odds"),
+            ("Drag on the map", "Move it (a press that does not move is a click)"),
             ("Point at a unit below", "All about it"),
             ("Click a unit below", "Take it into the selection, or leave it out"),
+            ("Esc", "Close the window on top; with none open, drop the selection"),
+            (&undo, "Take back the last move or city order (not a battle)"),
+            ("N,  or  Next stack", "Select the next stack that can still move (Shift+N: the one before)"),
+            ("C,  or  Next city", "Go to your next city (Shift+C: the one before)"),
             (&end_turn, "End the turn: units get their moves back, cities work on what they build"),
             ("City details", "All about the selected city; set what it builds"),
             ("All cities, My cities", "A list of cities: see where one is, go to it, open it"),
-            ("Esc", "Close the window on top"),
         ],
     )
 }
@@ -186,6 +197,13 @@ pub struct Session {
     city_details: WidgetId,
     sidebar: WidgetId,
     city_lists: WidgetId,
+    turn_row: WidgetId,
+    next_row: WidgetId,
+    undo: WidgetId,
+    /// How many lines of news the last order made (an undo takes them back).
+    last_news: usize,
+    /// The hex of the stack Next stack went to last.
+    cycled: Option<Hex>,
     /// The windows about cities, while they are open.
     city_window: Option<CityWindow>,
     city_list: Option<CityList>,
@@ -213,6 +231,7 @@ impl Session {
         let dirs = AssetDirs::new(assets, game.assets.as_deref());
         let mut screen = MapScreen::new(assets, viewport, dpi, LAYOUT, game)?;
         screen.set_help(vec![help_section()]);
+        screen.set_drag_pans(true);
         let stack_row = find(&screen, STACK_ID)?;
         let mut slots = Vec::with_capacity(STACK_SLOTS);
         for i in 0..STACK_SLOTS {
@@ -244,6 +263,11 @@ impl Session {
             city_details: find(&screen, CITY_DETAILS_ID)?,
             sidebar: find(&screen, "main_sidebar")?,
             city_lists: find(&screen, "city_lists")?,
+            turn_row: find(&screen, "turn_row")?,
+            next_row: find(&screen, "next_row")?,
+            undo: find(&screen, UNDO_ID)?,
+            last_news: 0,
+            cycled: None,
             city_window: None,
             city_list: None,
             end_turn: Line::find(&screen, END_TURN_ID)?,
@@ -398,8 +422,12 @@ impl Session {
         // Nor do the sidebar's buttons push it wider than its share (their
         // text is cut short instead).
         let narrow = LayoutParams { min_w: Some(0), max_w: Some(side_w), ..LayoutParams::default() };
-        ui.set_layout_params(self.sidebar, Some(narrow));
+        // The sidebar is as tall as the window (its rows of buttons alone
+        // would make it only as tall as they are).
+        ui.set_layout_params(self.sidebar, Some(LayoutParams { max_h: Some(h), ..narrow }));
         ui.set_layout_params(self.city_lists, Some(narrow));
+        ui.set_layout_params(self.turn_row, Some(narrow));
+        ui.set_layout_params(self.next_row, Some(narrow));
         // The panel is as tall as its lines and its slots (an empty slot keeps
         // its room), and the map has the rest.
         let panel_h = ui.preferred_size_free(self.panel).pref.h;
@@ -559,6 +587,9 @@ impl Session {
             side => format!("End {}'s turn", side_name(side)),
         };
         self.end_turn.set(&mut self.screen, &label);
+        // Undo is there while there is something to take back.
+        let undo = self.screen.game.can_undo();
+        self.screen.ui.set_disabled(self.undo, !undo);
         if let (Some(winner), None) = (self.screen.game.winner(), self.game_over) {
             self.open_game_over(winner);
         }
@@ -655,10 +686,9 @@ impl Session {
     fn obey(&mut self, order: CityOrder) {
         match order {
             CityOrder::SetProduction(id, what) => {
-                // Only the city's holder, if that is the player.
-                let player = self.screen.game.player();
-                if self.screen.game.map.cities().get(id).is_some_and(|city| city.side == player) {
-                    self.screen.game.map.set_production(id, what);
+                // An order: only the city's holder, if that is the player.
+                if self.screen.game.apply(Order::Build { city: id, what }).is_ok() {
+                    self.last_news = 0;
                 }
             }
             CityOrder::Details(id) => self.open_city(id),
@@ -768,11 +798,61 @@ impl Session {
     /// from now on.
     fn choose(&mut self, hex: Hex) {
         let side = self.screen.game.player();
-        if let SelectOutcome::Fought(events) = self.screen.game.select_hex(hex) {
-            let lines = info::battle_lines(&self.screen.game.map, &events);
-            self.open_notice("Battle", &lines);
-            self.record(&events, side);
+        match self.screen.game.select_hex(hex) {
+            SelectOutcome::Fought(events) => {
+                let lines = info::battle_lines(&self.screen.game.map, &events);
+                self.open_notice("Battle", &lines);
+                self.record(&events, side);
+            }
+            SelectOutcome::Moved { events, .. } => self.record(&events, side),
+            _ => {}
         }
+        self.shown = hex;
+    }
+
+    /// Take back the last order (the Undo button, Ctrl+Z): the units go back
+    /// where they were, selected, and the panels are about them.
+    pub fn undo(&mut self) {
+        if self.covered() || self.screen.game.apply(Order::Undo).is_err() {
+            return;
+        }
+        // What it told the others is untold.
+        let kept = self.news.len().saturating_sub(std::mem::take(&mut self.last_news));
+        self.news.truncate(kept);
+        let game = &mut self.screen.game;
+        if let Some(pos) = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos()) {
+            game.set_cursor(pos);
+            self.shown = pos;
+        }
+    }
+
+    /// Select the next stack of the player's that can still move (or the one
+    /// before, `back`), and look at it: the one after the selected stack, or
+    /// else after the last one this went to (at first, the first).
+    pub fn next_stack(&mut self, back: bool) {
+        let game = &self.screen.game;
+        let selected = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos());
+        let Some(hex) = game.next_stack(selected.or(self.cycled), back) else { return };
+        let game = &mut self.screen.game;
+        game.deselect();
+        game.select_hex(hex);
+        self.cycled = Some(hex);
+        self.look_at(hex);
+    }
+
+    /// Go to the next city of the player's (or the one before), and look at
+    /// it; nothing stays selected.
+    pub fn next_city(&mut self, back: bool) {
+        let Some(hex) = self.screen.game.next_city(self.shown, back) else { return };
+        self.screen.game.deselect();
+        self.look_at(hex);
+    }
+
+    /// The cursor goes to a hex, the view to the middle of it, and the panels
+    /// are about it.
+    fn look_at(&mut self, hex: Hex) {
+        self.screen.game.set_cursor(hex);
+        self.screen.view.center_on(hex);
         self.shown = hex;
     }
 
@@ -780,6 +860,7 @@ impl Session {
     /// screen: a battle they fought, a city they lost.
     fn record(&mut self, events: &[Event], actor: Side) {
         let game = &self.screen.game;
+        let before = self.news.len();
         for seat in game.setup().seats.iter().filter(|s| s.controller == Controller::Person && s.side != actor) {
             for event in events {
                 if let Some(line) = info::news_line(&game.map, event, seat.side) {
@@ -787,6 +868,7 @@ impl Session {
                 }
             }
         }
+        self.last_news = self.news.len() - before;
     }
 
     /// A person's turn begins (they are at the screen): what happened to
@@ -852,9 +934,10 @@ impl Session {
             return;
         }
         for command in self.screen.take_map_commands() {
-            // Esc closes the help if it is open, and else the window on top.
-            if command == MapCommand::Key(MapKey::Esc) && !self.screen.help_open() {
-                self.close_top_window();
+            // Esc closes the help if it is open, else the window on top, and
+            // with none open it drops the selection.
+            if command == MapCommand::Key(MapKey::Esc) && !self.screen.help_open() && !self.close_top_window() {
+                self.screen.game.deselect();
             }
             self.screen.navigate(command);
             // A click, or Enter at the cursor, chooses a hex.
@@ -878,6 +961,23 @@ impl Session {
                     if ch.eq_ignore_ascii_case(&'t') && mods.intersects(Modifiers::CTRL | Modifiers::SUPER) =>
                 {
                     self.end_turn();
+                }
+                RootCommand::Click(id) if id == TbId::new(UNDO_ID) => self.undo(),
+                RootCommand::Key(ch, mods)
+                    if ch.eq_ignore_ascii_case(&'z') && mods.intersects(Modifiers::CTRL | Modifiers::SUPER) =>
+                {
+                    self.undo();
+                }
+                RootCommand::Click(id) if id == TbId::new(NEXT_STACK_ID) => self.next_stack(false),
+                RootCommand::Click(id) if id == TbId::new(NEXT_CITY_ID) => self.next_city(false),
+                RootCommand::Key(ch, mods) if !mods.intersects(Modifiers::CTRL | Modifiers::SUPER | Modifiers::ALT) => {
+                    match ch {
+                        'n' => self.next_stack(false),
+                        'N' => self.next_stack(true),
+                        'c' => self.next_city(false),
+                        'C' => self.next_city(true),
+                        _ => {}
+                    }
                 }
                 RootCommand::Click(id) if id == TbId::new(NEW_GAME_ID) => self.wants_new_game = true,
                 RootCommand::Click(id) if id == TbId::new(NOTICE_CLOSE_ID) => {

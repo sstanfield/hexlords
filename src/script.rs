@@ -9,7 +9,8 @@
 //! - `click:ROW:COL`, `hover:ROW:COL`: click on, or point at, the middle of that
 //!   hex of the main map (it has to be in view);
 //! - `drag:ROW:COL:ROW:COL`: press the button on the first hex, move to the
-//!   second and let go (both have to be in view);
+//!   second and let go (both have to be in view). In the game and on the new
+//!   game screen that moves the map; in the editor it paints;
 //! - `minimap:ROW:COL`: click on that hex of the minimap (the main map goes there);
 //! - `press:ID`: click the middle of the widget with that id (a button);
 //! - `point:ID`: point at the middle of that widget (what is shown while the

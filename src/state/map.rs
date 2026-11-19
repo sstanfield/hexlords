@@ -414,6 +414,19 @@ impl Map {
         Some(unit)
     }
 
+    /// Put the units on a hex in this order (a stack's order, as it was).
+    /// False, and nothing changes, unless `order` is the units that are there.
+    pub fn set_stack_order(&mut self, hex: Hex, order: &[UnitId]) -> bool {
+        let Some(i) = self.index(hex) else { return false };
+        let here = &self.tiles[i].units;
+        if here.len() != order.len() || !order.iter().all(|u| here.contains(u)) {
+            return false;
+        }
+        self.tiles[i].units = order.to_vec();
+        self.changed();
+        true
+    }
+
     /// Remove every unit on a hex. Returns how many there were. C++: Map::killTile
     pub fn kill_tile(&mut self, hex: Hex) -> usize {
         let Some(i) = self.index(hex) else { return 0 };

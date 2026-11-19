@@ -212,8 +212,13 @@ thing to happen. Ideas to try, as the rules grow:
   said.
 - **Production that repeats** until told otherwise (it does), and the lists
   of cities to see and change all of it in one place (they do).
-- **The next stack with points left**, a key away; End turn warns of stacks
-  that have done nothing.
+- **The next stack with points left**, a key away (built: N, and the Next
+  stack button; C and Next city for the cities); End turn could warn of
+  stacks that have done nothing.
+- **Mistakes cost little** (built): a click that is not a move drops the
+  selection, Esc drops it too, a drag moves the map rather than a unit, and
+  the last order can be taken back (`Order::Undo`), unless chance had a say
+  in it (a battle) or it put a side out.
 - **Sub-orders** (decided: wanted, can wait): what a stack does when
   something happens in the turn (an enemy comes in sight, it is attacked,
   a city it passes is empty): attack, stop, go round, carry on; with a
