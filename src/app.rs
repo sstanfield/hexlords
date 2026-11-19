@@ -10,7 +10,7 @@ use miniquad::conf::Conf;
 use miniquad::{
     Backend, EventHandler, KeyCode, KeyMods, MouseButton, PassAction, RenderPass, RenderingBackend, TouchPhase, window,
 };
-use turbo_ferret::{Rect, Size};
+use turbo_ferret::{Modifiers, Rect, Size};
 use turbo_ferret_miniquad::{InputAdapter, MiniquadClipboard, MiniquadRenderer, window_dpi};
 
 use crate::paths::asset_root;
@@ -96,6 +96,72 @@ where
     });
 }
 
+/// What miniquad's wheel numbers mean on this system, and what the window
+/// makes of them: the map moves with a trackpad's two fingers or the wheel, and
+/// zooms when Ctrl or Cmd is held.
+///
+/// miniquad passes the system's own units. macOS: points for a trackpad (the
+/// fingers' way on the screen, with the system's momentum after them), 10 for
+/// a line of a wheel. Windows: 120 for a notch. X11: 1 for a notch. A positive
+/// y is a turn away from the player, which moves the content down; a positive
+/// x moves it right, except on Windows, where it is a tilt to the right.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Wheel {
+    /// How many points (logical pixels) the map moves for one unit.
+    points_per_unit: f32,
+    /// 1 if a positive x moves the content right, -1 if left.
+    x_sign: f32,
+    /// Shift turns the wheel sideways. (macOS does that itself.)
+    shift_turns: bool,
+    /// How many points make one zoom level.
+    zoom_points: f32,
+    /// The points turned toward the next zoom level; positive is closer.
+    zoom: f32,
+}
+
+/// How far a notch of a wheel moves the map, in points.
+const NOTCH_POINTS: f32 = 60.0;
+
+impl Wheel {
+    pub fn new(points_per_unit: f32, x_sign: f32, shift_turns: bool, zoom_points: f32) -> Wheel {
+        Wheel { points_per_unit, x_sign, shift_turns, zoom_points, zoom: 0.0 }
+    }
+
+    pub fn for_platform() -> Wheel {
+        if cfg!(target_os = "macos") {
+            // The map follows the fingers exactly; a zoom level is a short stroke.
+            Wheel::new(1.0, 1.0, false, 40.0)
+        } else if cfg!(target_os = "windows") {
+            Wheel::new(NOTCH_POINTS / 120.0, -1.0, true, NOTCH_POINTS)
+        } else {
+            Wheel::new(NOTCH_POINTS, 1.0, true, NOTCH_POINTS)
+        }
+    }
+
+    /// How far the content moves for a wheel event, in pixels: x to the right,
+    /// y downward. `scale` is pixels per point.
+    pub fn pan(&self, x: f32, y: f32, shift: bool, scale: f32) -> (f32, f32) {
+        let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
+        let k = self.points_per_unit * scale;
+        let (dx, dy) = (finite(x) * self.x_sign * k, finite(y) * k);
+        if self.shift_turns && shift && dx == 0.0 { (dy, 0.0) } else { (dx, dy) }
+    }
+
+    /// How many zoom levels a wheel event makes: positive is closer (a turn
+    /// away from the player), and mostly zero, until enough has been turned.
+    pub fn zoom(&mut self, y: f32) -> i32 {
+        let points = if y.is_finite() { y * self.points_per_unit } else { 0.0 };
+        // A turn the other way starts from nothing.
+        if points * self.zoom < 0.0 {
+            self.zoom = 0.0;
+        }
+        self.zoom += points;
+        let levels = (self.zoom / self.zoom_points).trunc();
+        self.zoom -= levels * self.zoom_points;
+        levels as i32
+    }
+}
+
 /// The earliest frame a screenshot is taken of: the second, when the layout has
 /// settled.
 const SCREENSHOT_FRAME: u64 = 2;
@@ -109,6 +175,9 @@ pub struct App<S: Scene> {
     map_renderer: MapRenderer,
     minimap_renderer: MiniMapRenderer,
     input: InputAdapter,
+    wheel: Wheel,
+    /// The button that holds the map (the right or the middle one drags it).
+    holding: Option<MouseButton>,
     start: Instant,
     frames: u64,
     fullscreen: bool,
@@ -147,6 +216,8 @@ impl<S: Scene> App<S> {
             map_renderer,
             minimap_renderer: MiniMapRenderer::new(),
             input: InputAdapter::new(),
+            wheel: Wheel::for_platform(),
+            holding: None,
             start: Instant::now(),
             frames: 0,
             fullscreen: false,
@@ -298,24 +369,55 @@ impl<S: Scene> EventHandler for App<S> {
     fn mouse_motion_event(&mut self, x: f32, y: f32) {
         self.tick();
         self.input.mouse_motion_event(&mut self.scene.screen_mut().ui, x, y);
+        // A map that is held goes with the pointer.
+        self.scene.screen_mut().drag(self.input.pointer());
         self.after_input();
     }
 
+    /// Over a map the wheel (or two fingers on a trackpad) moves it, and zooms
+    /// with Ctrl or Cmd held; anywhere else it is the UI's.
     fn mouse_wheel_event(&mut self, x: f32, y: f32) {
         self.tick();
-        self.input.mouse_wheel_event(&mut self.scene.screen_mut().ui, x, y);
+        let (at, mods) = (self.input.pointer(), self.input.modifiers());
+        let screen = self.scene.screen_mut();
+        let used = if !mods.intersects(Modifiers::CTRL | Modifiers::SUPER) {
+            let (dx, dy) = self.wheel.pan(x, y, mods.contains(Modifiers::SHIFT), window::dpi_scale());
+            screen.scroll(at, dx, dy)
+        } else if screen.zoom_target(at) {
+            // Most turns are only a part of a level.
+            let levels = self.wheel.zoom(y);
+            for _ in 0..levels.abs() {
+                screen.zoom_at(at, levels > 0);
+            }
+            true
+        } else {
+            false
+        };
+        if !used {
+            self.input.mouse_wheel_event(&mut screen.ui, x, y);
+        }
         self.after_input();
     }
 
     fn mouse_button_down_event(&mut self, button: MouseButton, x: f32, y: f32) {
         self.tick();
         self.input.mouse_button_down_event(&mut self.scene.screen_mut().ui, button, x, y);
+        // The right and the middle button take hold of the map, to drag it.
+        if button != MouseButton::Left && self.holding.is_none() && self.scene.screen_mut().grab(self.input.pointer()) {
+            self.holding = Some(button);
+        }
         self.after_input();
     }
 
     fn mouse_button_up_event(&mut self, button: MouseButton, x: f32, y: f32) {
         self.tick();
-        self.input.mouse_button_up_event(&mut self.scene.screen_mut().ui, button, x, y);
+        if self.holding == Some(button) {
+            // The end of a drag, not a click of that button.
+            self.holding = None;
+            self.scene.screen_mut().let_go();
+        } else {
+            self.input.mouse_button_up_event(&mut self.scene.screen_mut().ui, button, x, y);
+        }
         self.after_input();
     }
 
@@ -349,6 +451,8 @@ impl<S: Scene> EventHandler for App<S> {
 
     fn window_minimized_event(&mut self) {
         self.input.focus_lost(&mut self.scene.screen_mut().ui);
+        self.holding = None;
+        self.scene.screen_mut().let_go();
     }
 
     /// The window's close button.
@@ -356,5 +460,56 @@ impl<S: Scene> EventHandler for App<S> {
         if !self.scene.confirm_quit() {
             window::cancel_quit();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_trackpad_moves_the_map_as_far_as_the_fingers() {
+        // macOS: a unit is a point, and at two pixels a point the map goes twice
+        // as many pixels. Up (positive y) moves the content down.
+        let mac = Wheel::new(1.0, 1.0, false, 40.0);
+        assert_eq!(mac.pan(3.0, -7.5, false, 2.0), (6.0, -15.0));
+        // Shift is the system's business there.
+        assert_eq!(mac.pan(0.0, 4.0, true, 1.0), (0.0, 4.0));
+        assert_eq!(mac.pan(f32::NAN, f32::INFINITY, false, 1.0), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_notch_of_a_wheel_is_sixty_points_everywhere_else() {
+        let x11 = Wheel::new(NOTCH_POINTS, 1.0, true, NOTCH_POINTS);
+        assert_eq!(x11.pan(0.0, -1.0, false, 1.0), (0.0, -60.0));
+        // Shift turns the wheel sideways: down is to the right (the content goes left).
+        assert_eq!(x11.pan(0.0, -1.0, true, 1.0), (-60.0, 0.0));
+        assert_eq!(x11.pan(1.0, 0.0, true, 1.0), (60.0, 0.0));
+        // Windows: 120 a notch, and a positive x is a tilt to the right.
+        let windows = Wheel::new(NOTCH_POINTS / 120.0, -1.0, true, NOTCH_POINTS);
+        assert_eq!(windows.pan(120.0, -120.0, false, 1.5), (-90.0, -90.0));
+    }
+
+    #[test]
+    fn a_zoom_level_takes_a_stroke_and_a_turn_back_starts_over() {
+        let mut mac = Wheel::new(1.0, 1.0, false, 40.0);
+        assert_eq!([mac.zoom(15.0), mac.zoom(15.0), mac.zoom(15.0)], [0, 0, 1]);
+        assert_eq!(mac.zoom(100.0), 2, "5 + 100 points: two levels and 25 over");
+        // The 25 points toward a third level are forgotten when the turn reverses.
+        assert_eq!(mac.zoom(-30.0), 0);
+        assert_eq!(mac.zoom(-10.0), -1);
+        assert_eq!(mac.zoom(f32::NAN), 0);
+        // One level for every notch of a wheel.
+        let mut x11 = Wheel::new(NOTCH_POINTS, 1.0, true, NOTCH_POINTS);
+        assert_eq!([x11.zoom(1.0), x11.zoom(1.0), x11.zoom(-1.0)], [1, 1, -1]);
+    }
+
+    #[test]
+    fn this_systems_wheel() {
+        let wheel = Wheel::for_platform();
+        // A turn away from the player moves the content down and zooms in.
+        assert!(wheel.pan(0.0, 1.0, false, 1.0).1 > 0.0);
+        let mut wheel = wheel;
+        assert!(wheel.zoom(1000.0) > 0);
     }
 }

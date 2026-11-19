@@ -25,7 +25,7 @@ the C++ demo and is no longer binding).
 |---|---|
 | `src/state/` | Map, tiles, units, cities, movement range. No UI, no graphics |
 | `src/game.rs` | `Game`: the map plus the selected unit and its range; the demo setup; `select_hex` |
-| `src/view.rs`, `src/minimap_view.rs` | Pure math: zoom, scale factors, visible hexes, picking, recentering; the minimap's fit and marker |
+| `src/view.rs`, `src/minimap_view.rs` | Pure math: zoom, scale factors, visible hexes, picking, panning, recentering; the minimap's fit and marker |
 | `src/render/` | miniquad drawing: hex meshes, shaders, textures, the map and minimap renderers, the PNG writer |
 | `src/gui/` | Turbo Ferret widgets: `MapWidget`, `MiniMapWidget`, `RootWindow`. They record commands; they hold no game state |
 | `src/platform.rs` | What miniquad leaves out: bringing the window to the front on macOS (the crate's one `unsafe` block) |
@@ -81,10 +81,13 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
   test really needs one. Turbo Ferret is pinned by `rev`; bump it on purpose. A
   `[patch]` to a local checkout is fine for local work, but don't commit it.
 - **Rust:** edition 2024, MSRV 1.86 (no let-chains), rustfmt width 120.
-- **Unsafe:** `#![deny(unsafe_code)]`, with one exception that is allowed by
-  name: `platform::bring_to_front` sends one Objective-C message on macOS,
-  because miniquad opens its window behind the terminal there. Do not add
-  another without the owner's word.
+- **Unsafe:** `#![deny(unsafe_code)]`, and the one kind that is allowed (the
+  owner's word, 2026-11-18): a block that calls C or Objective-C for
+  something miniquad leaves out. Such a block lives in `src/platform.rs`
+  behind a safe function, is as small as the call, and has a `SAFETY` comment.
+  Today there is one: `platform::bring_to_front` sends one Objective-C
+  message on macOS, because miniquad opens its window behind the terminal
+  there. No `unsafe` for anything else (speed, a cast, a shortcut).
 - **Credit and licence:** code ported from the C++ cites its origin in a
   comment, `// C++: src/state/mapmove.cpp Map::selectUnit`; keep those when you
   change such code. New code needs none. Keep `LICENSE` (the zlib
@@ -103,6 +106,14 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
   screenshot mode, scripts) goes into `MapScreen`, `App` or `script`, not into
   one scene. A layout file for a map screen has widgets with the ids
   `main_layout`, `main_map` and `mini_map`.
+- **Moving the map is the screen's business:** the wheel, a trackpad's two
+  fingers and a drag with the right or the middle button never reach a
+  widget. `App` turns miniquad's numbers into pixels (`app::Wheel`, which
+  knows each system's units) and calls `MapScreen::scroll`, `zoom_at`, `grab`,
+  `drag` and `let_go`; those say false when the pointer is on neither map,
+  and then the wheel is the UI's. Tests and scripts call the same methods.
+  What is under the pointer follows the fingers: the map on the main map, the
+  view's marker on the minimap.
 - **The map file format is a promise** (`docs/map-format.md`): files written
   today must stay readable. New kinds of data go after the last row, where the
   reader ignores lines today. Change the page and `assets/maps/example.map`
@@ -155,7 +166,12 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
    when it is done: the editor's fields do on Enter and Esc, its buttons are
    `is-focusable: 0`, and it takes letters for terrain keys only while the map
    has the focus.
-6. **A press on the map is three commands and a click is a fourth.**
+6. **The view's middle is a point, not a hex.** `MapView` keeps the nearest
+   hex (`center()`) and how far the middle is from it; a scroll leaves part of
+   a hex there. Ask `middle()`, `hex_center`, `shows` or `pick`, and do not
+   compute a place on screen from `center()` alone. The cursor can be out of
+   view after a scroll; an arrow key brings the view back to it.
+7. **A press on the map is three commands and a click is a fourth.**
    `MapCommand::Press`, `Hover`s while the button is held (a drag, which may
    leave the map), `Release`, and then `Click` if the release was on the map.
    The game acts on `Click`, the editor on `Press` and the drag: do not act on

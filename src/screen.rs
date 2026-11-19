@@ -5,6 +5,12 @@
 //! runs anything that is a [`Scene`]. None of it needs a graphics context, so
 //! tests drive it the way the window does.
 //!
+//! Moving the map about is done here for every window: the keys and the
+//! minimap through the widgets, and what the widgets never see (the wheel, a
+//! trackpad's two fingers, a drag with the right button) through
+//! [`MapScreen::scroll`], [`MapScreen::zoom_at`] and [`MapScreen::grab`],
+//! which the window calls.
+//!
 //! C++: src/Application.cpp Application (the Turbo Badger setup and the frame),
 //! src/gui/mapwidget.cpp MapWidget::OnEvent (the cursor and zoom keys)
 
@@ -47,6 +53,15 @@ pub struct MapScreen {
     minimap_dirty: bool,
     /// The map's terrain revision the minimap's picture was last asked for.
     terrain_seen: u64,
+    /// Where the pointer holds the main map (see [`MapScreen::grab`]).
+    grab: Option<Point>,
+}
+
+/// One of the screen's two maps.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum Which {
+    Map,
+    MiniMap,
 }
 
 impl MapScreen {
@@ -112,6 +127,7 @@ impl MapScreen {
             fullscreen_toggles: 0,
             minimap_dirty: true,
             terrain_seen,
+            grab: None,
         })
     }
 
@@ -123,6 +139,7 @@ impl MapScreen {
         self.terrain_seen = game.map.terrain_revision();
         self.game = game;
         self.minimap_dirty = true;
+        self.grab = None;
         self.sync_views();
     }
 
@@ -249,10 +266,118 @@ impl MapScreen {
     }
 
     /// An arrow key: the cursor takes a step, and the view follows if that took
-    /// the cursor out of it.
+    /// the cursor out of it. If the view was moved away from the cursor (the
+    /// minimap, a scroll), it comes back to it.
     fn step(&mut self, dir: Direction) {
         self.game.move_cursor(dir);
-        self.view.keep_cursor_visible(self.game.map.cursor, dir);
+        let cursor = self.game.map.cursor;
+        if self.view.shows(cursor) {
+            self.view.keep_cursor_visible(cursor, dir);
+        } else {
+            self.view.center_on(cursor);
+        }
+    }
+
+    /// Which map a window pixel is on, if a pointer there reaches it (nothing
+    /// of the UI lies over it).
+    fn map_at(&self, at: Point) -> Option<Which> {
+        let top = self.ui.widget_at(self.ui.root(), at)?;
+        if top == self.map {
+            Some(Which::Map)
+        } else if top == self.minimap {
+            Some(Which::MiniMap)
+        } else {
+            None
+        }
+    }
+
+    /// A point of the window in a rectangle's normalized device coordinates (x
+    /// right, y up, -1..1 inside it).
+    fn ndc_in(r: Rect, at: Point) -> (f32, f32) {
+        let (half_w, half_h) = (r.w.max(1) as f32 / 2.0, r.h.max(1) as f32 / 2.0);
+        (((at.x - r.x) as f32 + 0.5 - half_w) / half_w, -((at.y - r.y) as f32 + 0.5 - half_h) / half_h)
+    }
+
+    /// The cursor goes to the hex of the main map under a window pixel, if
+    /// there is one.
+    fn cursor_to_pointer(&mut self, at: Point) {
+        let r = self.map_rect();
+        if let Some(hex) = self.view.pick_pixel(at.x - r.x, at.y - r.y, r.w, r.h) {
+            self.game.set_cursor(hex);
+        }
+    }
+
+    /// The wheel turned, or two fingers moved on a trackpad, by `(dx, dy)`
+    /// pixels (x right, y down) with the pointer at the window pixel `at`.
+    /// What is under the pointer follows the fingers: on the main map the map
+    /// moves that far, on the minimap the marker of the view does. False, and
+    /// nothing happens, if the pointer is on neither.
+    pub fn scroll(&mut self, at: Point, dx: f32, dy: f32) -> bool {
+        match self.map_at(at) {
+            Some(Which::Map) => {
+                self.view.pan_pixels(dx, dy);
+                // Another hex is under the pointer now.
+                self.cursor_to_pointer(at);
+            }
+            Some(Which::MiniMap) => {
+                let (w, h) = self.mini_view.size();
+                let (wf, hf) = self.mini_view.factors();
+                if w > 0 && h > 0 {
+                    self.view.pan(dx * 2.0 / w as f32 / wf, -dy * 2.0 / h as f32 / hf);
+                    // As with a press on the minimap: the keys carry on from here.
+                    self.game.set_cursor(self.view.center());
+                }
+            }
+            None => return false,
+        }
+        true
+    }
+
+    /// Zoom one level in (`closer`) or out with the pointer at the window pixel
+    /// `at`: on the main map what is under the pointer stays there, on the
+    /// minimap the middle of the view does. False, and nothing happens, if the
+    /// pointer is on neither.
+    pub fn zoom_at(&mut self, at: Point, closer: bool) -> bool {
+        match self.map_at(at) {
+            Some(Which::Map) => {
+                let (x, y) = Self::ndc_in(self.map_rect(), at);
+                self.view.zoom_about(x, y, closer);
+                self.cursor_to_pointer(at);
+            }
+            Some(Which::MiniMap) => {
+                self.view.zoom_about(0.0, 0.0, closer);
+            }
+            None => return false,
+        }
+        true
+    }
+
+    /// True if a zoom with the pointer at this window pixel is the maps'
+    /// business (see [`MapScreen::zoom_at`]).
+    pub fn zoom_target(&self, at: Point) -> bool {
+        self.map_at(at).is_some()
+    }
+
+    /// Take hold of the main map at a window pixel, to move it with
+    /// [`MapScreen::drag`] (the window does this with the right and the middle
+    /// button). False if the pixel is not on the main map.
+    pub fn grab(&mut self, at: Point) -> bool {
+        self.grab = (self.map_at(at) == Some(Which::Map)).then_some(at);
+        self.grab.is_some()
+    }
+
+    /// The pointer moved to a window pixel: a map that is held goes with it.
+    /// False if none is.
+    pub fn drag(&mut self, to: Point) -> bool {
+        let Some(from) = self.grab else { return false };
+        self.view.pan_pixels((to.x - from.x) as f32, (to.y - from.y) as f32);
+        self.grab = Some(to);
+        true
+    }
+
+    /// Let go of the map. False if it was not held.
+    pub fn let_go(&mut self) -> bool {
+        self.grab.take().is_some()
     }
 
     /// Apply what the minimap and the root window recorded since the last call,

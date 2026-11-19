@@ -526,6 +526,52 @@ fn scripts_drive_the_editor() {
 }
 
 #[test]
+fn scrolling_and_pulling_the_map_move_it_and_paint_nothing() {
+    let mut e = editor();
+    let p = pixel(&e, 20, 20);
+    e.screen.ui.pointer_move(p, Modifiers::NONE);
+    e.pump();
+    let start = e.screen.view.middle();
+
+    // Two fingers, the wheel with Ctrl, and the right button: the window's calls.
+    assert!(e.screen.scroll(p, -90.0, 60.0));
+    e.pump();
+    assert_ne!(e.screen.view.middle(), start);
+    assert!(e.screen.zoom_at(p, false));
+    assert!(e.screen.grab(p));
+    e.screen.drag(Point::new(p.x + 40, p.y + 40));
+    e.screen.let_go();
+    e.pump();
+    assert_eq!(count(&e, TileType::Grass), 40 * 40, "nothing was painted");
+    assert!(!e.modified());
+    // A wide brush's outline is around the hex under the pointer, the cursor.
+    push(&mut e, "brush_7");
+    assert!(e.screen.scroll(p, 30.0, 0.0));
+    e.pump();
+    let cursor = e.map().cursor;
+    assert_eq!(e.screen.hex_pixel(cursor).map(|at| (at.x - p.x).abs() < 30 && (at.y - p.y).abs() < 30), Some(true));
+    assert!(e.marked(cursor) && e.marked(Hex::new(cursor.row + 1, cursor.col)));
+    push(&mut e, "brush_1");
+
+    // On the sidebar's minimap the marker follows, and the wheel is not the
+    // map's over the buttons.
+    let mini = middle(e.screen.minimap_rect());
+    let before = e.screen.view.middle();
+    assert!(e.screen.scroll(mini, 15.0, 0.0));
+    assert!(e.screen.view.middle()[0] > before[0]);
+    assert!(!e.screen.scroll(middle(rect(&e, "save")), 15.0, 0.0));
+    assert!(!e.screen.scroll(middle(rect(&e, "file_name")), 15.0, 0.0));
+
+    // A click paints where the map now is.
+    push(&mut e, "terrain_w");
+    script::run(&mut e, "scroll:-300:0").unwrap();
+    let p = middle(e.screen.map_rect());
+    click(&mut e, p);
+    assert_eq!(count(&e, TileType::Grass), 40 * 40 - 1);
+    assert_eq!(kind(&e, e.map().cursor.row, e.map().cursor.col), TileType::Water);
+}
+
+#[test]
 fn the_maps_in_the_repository_are_good() {
     let dir = assets().join("maps");
     let mut maps = 0;

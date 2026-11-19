@@ -12,6 +12,13 @@
 //!   second and let go (both have to be in view);
 //! - `minimap:ROW:COL`: click on that hex of the minimap (the main map goes there);
 //! - `press:ID`: click the middle of the widget with that id (a button);
+//! - `scroll:DX:DY`: two fingers on a trackpad (or the wheel) with the pointer
+//!   in the middle of the main map: the map moves DX pixels right and DY down
+//!   (`scroll:-200:0` shows what is to the right);
+//! - `miniscroll:DX:DY`: the same on the minimap: the marker of the view moves;
+//! - `zoomin:ROW:COL`, `zoomout:ROW:COL`: Ctrl and the wheel with the pointer on
+//!   that hex of the main map (it has to be in view; it stays under the pointer);
+//! - `pull:DX:DY`: drag the main map by its middle with the right button;
 //! - `cursor:ROW:COL`: put the cursor on that hex and center the view on it (not
 //!   something a player can do in one step; it is for getting to a far corner);
 //! - any step may end in `*N` to run it N times: `left*12`.
@@ -51,6 +58,10 @@ enum Step {
     MiniMap(Hex),
     Press(String),
     Cursor(Hex),
+    Scroll(i32, i32),
+    MiniScroll(i32, i32),
+    Zoom(Hex, bool),
+    Pull(i32, i32),
 }
 
 /// `X`, or modifiers and X joined by `+`: `ctrl+s`.
@@ -98,6 +109,22 @@ fn parse_step(action: &str) -> Result<Step, String> {
         };
         Ok(Hex::new(number("row")?, number("column")?))
     };
+    // Steps that take pixels, which may be negative.
+    if matches!(name, "scroll" | "miniscroll" | "pull") {
+        let mut pixels = || -> Result<i32, String> {
+            let s = parts.next().ok_or("needs DX:DY, in pixels")?;
+            s.parse().map_err(|_| format!("\"{s}\" is not a number of pixels"))
+        };
+        let (dx, dy) = (pixels()?, pixels()?);
+        if parts.next().is_some() {
+            return Err("too many parts".to_string());
+        }
+        return Ok(match name {
+            "scroll" => Step::Scroll(dx, dy),
+            "miniscroll" => Step::MiniScroll(dx, dy),
+            _ => Step::Pull(dx, dy),
+        });
+    }
     let step = match name {
         "left" => Step::Key(SpecialKey::Left),
         "right" => Step::Key(SpecialKey::Right),
@@ -113,6 +140,8 @@ fn parse_step(action: &str) -> Result<Step, String> {
         "drag" => Step::Drag(hex()?, hex()?),
         "minimap" => Step::MiniMap(hex()?),
         "cursor" => Step::Cursor(hex()?),
+        "zoomin" => Step::Zoom(hex()?, true),
+        "zoomout" => Step::Zoom(hex()?, false),
         _ => return Err("unknown step".to_string()),
     };
     if parts.next().is_some() {
@@ -127,6 +156,11 @@ fn pixel(screen: &MapScreen, hex: Hex) -> Result<Point, String> {
         return Err(format!("{hex} is not on the map"));
     }
     screen.hex_pixel(hex).ok_or(format!("{hex} is not in view"))
+}
+
+/// The window pixel in the middle of a rectangle.
+fn middle(r: turbo_ferret::Rect) -> Point {
+    Point::new(r.x + r.w / 2, r.y + r.h / 2)
 }
 
 fn click(screen: &mut MapScreen, p: Point) {
@@ -172,9 +206,40 @@ fn run_step<S: Scene>(scene: &mut S, action: &str) -> Result<(), String> {
         }
         Step::Press(id) => {
             let widget = screen.ui.find(screen.ui.root(), TbId::new(&id)).ok_or(format!("no widget with id {id}"))?;
-            let r = screen.area(widget);
-            let p = Point::new(r.x + r.w / 2, r.y + r.h / 2);
+            let p = middle(screen.area(widget));
             click(screen, p);
+        }
+        Step::Scroll(dx, dy) => {
+            let p = middle(screen.map_rect());
+            screen.ui.pointer_move(p, Modifiers::NONE);
+            if !screen.scroll(p, dx as f32, dy as f32) {
+                return Err("something lies over the middle of the map".to_string());
+            }
+        }
+        Step::MiniScroll(dx, dy) => {
+            let p = middle(screen.minimap_rect());
+            screen.ui.pointer_move(p, Modifiers::NONE);
+            if !screen.scroll(p, dx as f32, dy as f32) {
+                return Err("something lies over the middle of the minimap".to_string());
+            }
+        }
+        Step::Zoom(hex, closer) => {
+            let p = pixel(screen, hex)?;
+            screen.ui.pointer_move(p, Modifiers::NONE);
+            if !screen.zoom_at(p, closer) {
+                return Err(format!("something lies over {hex}"));
+            }
+        }
+        Step::Pull(dx, dy) => {
+            let p = middle(screen.map_rect());
+            screen.ui.pointer_move(p, Modifiers::NONE);
+            if !screen.grab(p) {
+                return Err("something lies over the middle of the map".to_string());
+            }
+            let to = Point::new(p.x + dx, p.y + dy);
+            screen.ui.pointer_move(to, Modifiers::NONE);
+            screen.drag(to);
+            screen.let_go();
         }
         Step::Cursor(hex) => {
             if !screen.game.set_cursor(hex) {

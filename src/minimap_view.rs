@@ -114,10 +114,9 @@ impl MiniMapView {
     /// C++: MiniMapRenderer::miniMapLocMarker, which drew a quad as large as the
     /// whole minimap at a center that never changed (deviation D5).
     pub fn marker(&self, main: &MapView) -> [f32; 4] {
-        // The middle of the main widget is the center of its center hex, less the
-        // unit an odd column is raised by.
-        let [cx, cy] = self.hex_center(main.center());
-        let cy = cy - if main.center().col % 2 == 1 { 1.0 } else { 0.0 };
+        // The middle of the main widget, measured from the middle of the map.
+        let ([x, y], [mx, my]) = (main.middle(), self.middle());
+        let (cx, cy) = (x - mx, y - my);
         let (half_w, half_h) = main.half_extent();
         let [left, bottom] = self.to_ndc([cx - half_w, cy - half_h]);
         let [right, top] = self.to_ndc([cx + half_w, cy + half_h]);
@@ -254,6 +253,18 @@ mod tests {
         // An odd center column does not move it up: the view's middle is the same.
         let [_, b2, _, t2] = v.marker(&main_view(Hex::new(50, 51)));
         assert!((b2 - b0).abs() < 1e-6 && (t2 - t0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_marker_moves_with_a_pan_of_part_of_a_hex() {
+        let v = mini(100, 100, W, H);
+        let mut main = main_view(Hex::new(50, 50));
+        let [l0, b0, r0, t0] = v.marker(&main);
+        main.pan(0.5, -0.25);
+        let [l1, b1, r1, t1] = v.marker(&main);
+        let (wf, hf) = v.factors();
+        assert!((l1 - l0 - 0.5 * wf).abs() < 1e-6 && (r1 - r0 - 0.5 * wf).abs() < 1e-6);
+        assert!((b1 - b0 + 0.25 * hf).abs() < 1e-6 && (t1 - t0 + 0.25 * hf).abs() < 1e-6);
     }
 
     #[test]

@@ -1,4 +1,8 @@
 //! What the window needs from the operating system that miniquad does not do.
+//!
+//! This is the one module that may hold `unsafe`: a call into C or
+//! Objective-C, behind a safe function, as small as the call, with a `SAFETY`
+//! comment that says why it is sound.
 
 /// Bring the game's window in front of the other applications' windows. Call it
 /// from one of miniquad's callbacks (they run on the main thread, once the

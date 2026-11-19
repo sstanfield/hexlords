@@ -37,8 +37,12 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 |---|---|
 | Move the pointer over the map | The hex under it becomes the cursor (red border) |
 | Click a hex, or Enter at the cursor | With nothing selected: select the unit on the hex, which shows where it can go (red tint). With a unit selected: move it to the hex if it can reach it, or deselect it if this is its own hex |
+| Two fingers on a trackpad, or the mouse wheel, over the map | The map moves with the fingers (a wheel moves it up and down, and sideways with Shift) |
+| Drag with the right or the middle button | Pulls the map along with the pointer |
+| Ctrl (or Cmd) and the wheel or two fingers | Zoom in and out; what is under the pointer stays under it |
 | Click or drag on the minimap | The main map goes to that part of the map (and the cursor with it) |
-| Arrow keys | Move the cursor; the view follows when the cursor leaves it |
+| Two fingers or the wheel over the minimap | The marker of the view moves with the fingers, and the main map with it |
+| Arrow keys | Move the cursor; the view follows when the cursor leaves it, and comes back to it if it was moved away |
 | `1` / `2` | Zoom out / in, centered on the cursor |
 | F11 | Fullscreen on and off |
 | Ctrl+Q (or Cmd+Q) | Quit |
@@ -66,7 +70,11 @@ hexgame [--map <file.map>] [--script <steps>] [--assets <dir>] [--frames <n>] [-
   `1`, `2`, `key:X` (any character; `key:ctrl+s` with modifiers),
   `click:ROW:COL`, `hover:ROW:COL`, `drag:ROW:COL:ROW:COL`, `minimap:ROW:COL`
   (click the minimap there), `press:ID` (click the widget with that id),
-  `cursor:ROW:COL` (jump there), and `*N` repeats a step.
+  `scroll:DX:DY` (two fingers on the map: it moves that many pixels right and
+  down), `miniscroll:DX:DY` (the same on the minimap), `zoomin:ROW:COL` and
+  `zoomout:ROW:COL` (Ctrl and the wheel over that hex), `pull:DX:DY` (a drag
+  with the right button), `cursor:ROW:COL` (jump there), and `*N` repeats a
+  step.
 
 ```sh
 cargo run -- --screenshot shot.png --script "enter,1,1"     # the unit's range, zoomed out
@@ -85,7 +93,8 @@ cargo run -p mapeditor -- --check assets/maps/*.map # what is in these files, an
 ![The map editor](docs/screenshots/editor.png)
 
 The main map and the minimap work as in the game (the pointer, the arrows, `1`
-and `2`, a click or a drag on the minimap). The sidebar chooses what a press on
+and `2`, two fingers or the wheel, a drag with the right button, a click or a
+drag on the minimap). The sidebar chooses what a press on
 the map does:
 
 | Input | What it does |

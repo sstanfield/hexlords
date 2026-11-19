@@ -16,7 +16,8 @@
 //! - [`script`]: scripted input, for screenshots and tests.
 //! - [`app`]: the window (a miniquad `EventHandler`) that runs a scene.
 
-// One `unsafe` block is allowed, by name: `platform::bring_to_front` on macOS.
+// `unsafe` is for calling C or Objective-C where miniquad leaves something out,
+// and only in `platform` (today: `platform::bring_to_front` on macOS).
 #![deny(unsafe_code)]
 
 pub mod app;
