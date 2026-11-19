@@ -110,6 +110,36 @@ pub struct MoveCost {
 }
 
 impl MoveCost {
+    /// The words for what a unit pays to enter, in the order files and panels
+    /// list them: the terrains, then a step along a road over land and over
+    /// water. (`shore` has no tiles and no word yet.)
+    pub const WORDS: [&'static str; 10] =
+        ["grass", "forest", "swamp", "desert", "hill", "mountain", "water", "city", "road", "bridge"];
+
+    /// The price one of [`MoveCost::WORDS`] names, to set it.
+    pub fn price_mut(&mut self, word: &str) -> Option<&mut u16> {
+        Some(match word {
+            "grass" => &mut self.grass,
+            "forest" => &mut self.forest,
+            "swamp" => &mut self.swamp,
+            "desert" => &mut self.desert,
+            "hill" => &mut self.hill,
+            "mountain" => &mut self.mountain,
+            "water" => &mut self.water,
+            "city" => &mut self.city,
+            "road" => &mut self.road,
+            "bridge" => &mut self.bridge,
+            _ => return None,
+        })
+    }
+
+    /// Every word with its price (0: cannot be entered), in the order of
+    /// [`MoveCost::WORDS`].
+    pub fn prices(&self) -> [(&'static str, u16); 10] {
+        let mut copy = *self;
+        MoveCost::WORDS.map(|word| (word, copy.price_mut(word).map_or(0, |price| *price)))
+    }
+
     /// The cost to enter a tile of terrain `t`, or `None` if the unit cannot.
     /// Temples and ruins cost what grass costs. C++: tileEntryCost
     pub fn entry(&self, t: TileType) -> Option<u16> {
@@ -167,5 +197,32 @@ mod tests {
         // 0 is impassable.
         assert_eq!(mc.entry(TileType::Mountain), None);
         assert_eq!(mc.entry(TileType::Water), None);
+    }
+
+    #[test]
+    fn every_price_has_a_word() {
+        let mut cost = MoveCost::default();
+        for (i, word) in MoveCost::WORDS.into_iter().enumerate() {
+            *cost.price_mut(word).unwrap() = i as u16 + 1;
+        }
+        assert!(cost.price_mut("lava").is_none() && cost.price_mut("shore").is_none());
+        // Each word set its own field, and all of them but the shore's.
+        let expected = MoveCost {
+            grass: 1,
+            forest: 2,
+            swamp: 3,
+            desert: 4,
+            hill: 5,
+            mountain: 6,
+            water: 7,
+            shore: 0,
+            city: 8,
+            road: 9,
+            bridge: 10,
+        };
+        assert_eq!(cost, expected);
+        let prices = cost.prices();
+        assert_eq!(prices.map(|(word, _)| word), MoveCost::WORDS);
+        assert_eq!(prices.map(|(_, price)| price), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     }
 }

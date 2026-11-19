@@ -175,6 +175,9 @@ pub struct App<S: Scene> {
     renderer: MiniquadRenderer,
     pipelines: Pipelines,
     map_renderer: MapRenderer,
+    /// The asset directories the map renderer could not take its pictures
+    /// from: not tried again while the scene asks for the same ones.
+    refused: Option<AssetDirs>,
     minimap_renderer: MiniMapRenderer,
     input: InputAdapter,
     wheel: Wheel,
@@ -217,6 +220,7 @@ impl<S: Scene> App<S> {
             renderer,
             pipelines,
             map_renderer,
+            refused: None,
             minimap_renderer: MiniMapRenderer::new(),
             input: InputAdapter::new(),
             wheel: Wheel::for_platform(),
@@ -269,9 +273,14 @@ impl<S: Scene> App<S> {
 
         // Another map may have been opened, with pictures of its own.
         let dirs = AssetDirs::new(&self.assets, screen.game.assets.as_deref());
-        if dirs != *self.map_renderer.dirs() {
-            if let Err(e) = self.map_renderer.set_dirs(ctx, dirs) {
-                eprintln!("{}: the map's assets: {e}", self.program);
+        if dirs != *self.map_renderer.dirs() && self.refused.as_ref() != Some(&dirs) {
+            match self.map_renderer.set_dirs(ctx, dirs.clone()) {
+                Ok(()) => self.refused = None,
+                Err(e) => {
+                    // Said once; the pictures that were there stay.
+                    eprintln!("{}: the map's assets: {e}", self.program);
+                    self.refused = Some(dirs);
+                }
             }
         }
 

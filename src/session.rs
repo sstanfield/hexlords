@@ -97,11 +97,13 @@ impl Session {
         let lines = |screen: &MapScreen, name: &str, n: usize| -> Result<Vec<Line>, String> {
             (0..n).map(|i| Line::find(screen, &format!("{name}_{i}"))).collect()
         };
+        let buttons: Result<Vec<Line>, String> =
+            (0..MAX_STACK).map(|i| Line::find(&screen, &unit_button_id(i))).collect();
         let mut session = Session {
             shown: screen.game.map.cursor,
             status: Line::find(&screen, STATUS_ID)?,
             hex_title: Line::find(&screen, HEX_TITLE_ID)?,
-            unit_buttons: lines(&screen, "unit", MAX_STACK)?,
+            unit_buttons: buttons?,
             detail: lines(&screen, "detail", DETAIL_LINES)?,
             city: lines(&screen, "city", CITY_LINES)?,
             screen,
@@ -156,9 +158,15 @@ impl Session {
         &self.hex_title.text
     }
 
+    /// The units of the selected hex, in the order of their buttons.
+    fn stack_units(&self) -> Vec<UnitId> {
+        let map = &self.screen.game.map;
+        map.units_at(self.shown).iter().copied().filter(|id| map.units().get(*id).is_some()).collect()
+    }
+
     /// What the buttons of the selected hex's units say, the first unit first.
     pub fn stack(&self) -> Vec<&str> {
-        let units = self.screen.game.map.units_at(self.shown).len();
+        let units = self.stack_units().len();
         self.unit_buttons.iter().take(units).map(|line| line.text.as_str()).collect()
     }
 
@@ -179,7 +187,7 @@ impl Session {
         let status = info::cursor_line(game);
         let title = info::hex_title(map, self.shown);
         // The units of the selected hex, and which of them is the selected one.
-        let ids: Vec<UnitId> = map.units_at(self.shown).to_vec();
+        let ids = self.stack_units();
         let briefs: Vec<String> = ids.iter().filter_map(|id| map.units().get(*id)).map(info::unit_brief).collect();
         let chosen = game.selected().and_then(|id| ids.iter().position(|unit| *unit == id));
         // All about the selected unit, wherever it stands.
@@ -265,7 +273,7 @@ impl Session {
                 // A unit's button: that unit is the selected one.
                 RootCommand::Click(id) => {
                     let unit = (0..MAX_STACK).find(|i| id == TbId::new(&unit_button_id(*i)));
-                    let unit = unit.and_then(|i| self.screen.game.map.units_at(self.shown).get(i).copied());
+                    let unit = unit.and_then(|i| self.stack_units().get(i).copied());
                     if let Some(unit) = unit {
                         self.screen.game.select_unit(unit);
                     }

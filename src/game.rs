@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::state::scenario::{self, Scenario, side_name};
+use crate::state::scenario::{self, Scenario};
 use crate::state::{Direction, Hex, Map, MoveCost, MoveRange, Side, TileType, UnitId, compute_range};
 
 /// What `Game::select_hex` did.
@@ -86,12 +86,6 @@ impl Game {
         }
         self.deselect();
         self.turn += 1;
-    }
-
-    /// What is on a hex, in words: its terrain and road, its city, its
-    /// units. Empty for a hex off the map.
-    pub fn describe(&self, hex: Hex) -> String {
-        describe_hex(&self.map, hex)
     }
 
     /// The demo: a 100 x 100 grass map with a mountain diagonal and one cavalry
@@ -260,33 +254,6 @@ pub fn describe_terrain(kind: TileType, road: bool) -> String {
         (true, _) => ", road",
     };
     format!("{}{road}", kind.name())
-}
-
-/// What is on a hex of a map, in words (see [`Game::describe`]).
-pub fn describe_hex(map: &Map, hex: Hex) -> String {
-    let Some(tile) = map.tile(hex) else { return String::new() };
-    let mut parts = vec![format!("row {}, column {}: {}", hex.row, hex.col, describe_terrain(tile.kind, tile.road))];
-    if let Some(city) = map.city_at(hex) {
-        let mut text = format!("{} ({})", city.name, side_name(city.side));
-        if city.walls > 0 {
-            text.push_str(&format!(", walls {}", city.walls));
-        }
-        if !city.units.is_empty() {
-            let builds: Vec<String> = city.units.iter().map(|p| format!("{} ({})", p.basename, p.time)).collect();
-            text.push_str(&format!(", builds {}", builds.join(", ")));
-        }
-        parts.push(text);
-    }
-    let units: Vec<String> = tile
-        .units()
-        .iter()
-        .filter_map(|id| map.units().get(*id))
-        .map(|u| format!("{} ({}) {}/{}", u.name, side_name(u.side()), u.movement, u.base_move_points))
-        .collect();
-    if !units.is_empty() {
-        parts.push(units.join(", "));
-    }
-    parts.join("  |  ")
 }
 
 /// What the demo's cavalry pays to enter each terrain. C++: Application::Application
@@ -606,17 +573,12 @@ mod tests {
     }
 
     #[test]
-    fn a_hex_in_words() {
-        let game = Game::from_scenario(scenario());
-        assert_eq!(game.describe(Hex::new(0, 0)), "row 0, column 0: grass");
-        assert_eq!(game.describe(Hex::new(5, 6)), "row 5, column 6: grass, road");
-        assert_eq!(game.describe(Hex::new(5, 8)), "row 5, column 8: water, bridge");
-        assert_eq!(game.describe(Hex::new(5, 9)), "row 5, column 9: mountain, pass");
-        assert_eq!(
-            game.describe(Hex::new(5, 5)),
-            "row 5, column 5: city  |  Wrenfold (blue), walls 1, builds riders (3)  |  Riders (blue) 10/10, Riders (blue) 10/10"
-        );
-        assert_eq!(game.describe(Hex::new(40, 0)), "");
+    fn terrain_in_words() {
+        assert_eq!(describe_terrain(TileType::Grass, false), "grass");
+        assert_eq!(describe_terrain(TileType::Forest, true), "forest, road");
+        assert_eq!(describe_terrain(TileType::Water, true), "water, bridge");
+        assert_eq!(describe_terrain(TileType::Mountain, true), "mountain, pass");
+        assert_eq!(describe_terrain(TileType::Water, false), "water");
     }
 
     #[test]

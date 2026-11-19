@@ -270,7 +270,8 @@ impl Units {
     /// slots)
     pub fn reset_move_points(&mut self, side: Side) {
         for u in self.per_side[side.index()].iter_mut().filter_map(|slot| slot.unit.as_mut()) {
-            u.movement = u.base_move_points + u.movement.min(2);
+            // A map may give a kind any number of moves: the most there is stays the most.
+            u.movement = u.base_move_points.saturating_add(u.movement.min(2));
         }
     }
 }
@@ -387,6 +388,11 @@ mod tests {
         assert_eq!(got, [20, 21, 22, 22]);
         // Other sides are untouched.
         assert_eq!(units.get(other).unwrap().movement, 5);
+
+        // The most movement there is does not wrap around with what is carried over.
+        let tireless = units.new_unit(Side::Red, "Tireless", 1, 1, u32::MAX, mc);
+        units.reset_move_points(Side::Red);
+        assert_eq!(units.get(tireless).unwrap().movement, u32::MAX);
     }
 
     #[test]

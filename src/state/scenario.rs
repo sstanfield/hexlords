@@ -112,25 +112,6 @@ fn number(file: &str, line: usize, what: &str, text: &str, least: u32) -> Result
     }
 }
 
-/// The words `enter` takes, and the price each sets.
-const ENTER_WORDS: &str = "grass, forest, swamp, desert, hill, mountain, water, city, road, bridge";
-
-fn price_of<'a>(cost: &'a mut MoveCost, word: &str) -> Option<&'a mut u16> {
-    Some(match word {
-        "grass" => &mut cost.grass,
-        "forest" => &mut cost.forest,
-        "swamp" => &mut cost.swamp,
-        "desert" => &mut cost.desert,
-        "hill" => &mut cost.hill,
-        "mountain" => &mut cost.mountain,
-        "water" => &mut cost.water,
-        "city" => &mut cost.city,
-        "road" => &mut cost.road,
-        "bridge" => &mut cost.bridge,
-        _ => return None,
-    })
-}
-
 /// A side's name in a file.
 pub fn side_named(word: &str) -> Option<Side> {
     Some(match word {
@@ -218,8 +199,9 @@ pub fn parse_units(text: &str) -> Result<Vec<UnitKind>, ScenarioError> {
                         let (Some(word), Some(points), None) = (words.next(), words.next(), words.next()) else {
                             return error(file, line, format!("expected \"<terrain> <points>\", found \"{part}\""));
                         };
-                        let Some(price) = price_of(&mut kind.cost, word) else {
-                            return error(file, line, format!("\"{word}\" is not one of {ENTER_WORDS}"));
+                        let Some(price) = kind.cost.price_mut(word) else {
+                            let words = MoveCost::WORDS.join(", ");
+                            return error(file, line, format!("\"{word}\" is not one of {words}"));
                         };
                         if *price != 0 {
                             return error(file, line, format!("{word} is given twice for {id}"));
@@ -337,8 +319,9 @@ pub fn parse_cities(text: &str) -> Result<Vec<CityEntry>, ScenarioError> {
         if let Some(other) = cities.iter().find(|c| c.name == city.name) {
             return error(file, record.line, format!("there is a {} at {} already", other.name, other.hex));
         }
-        let standing: u32 = city.garrison.iter().map(|(_, n)| n).sum();
-        if standing as usize > MAX_STACK {
+        // Summed wider than a count is read: two large counts must not wrap.
+        let standing: u64 = city.garrison.iter().map(|(_, n)| u64::from(*n)).sum();
+        if standing > MAX_STACK as u64 {
             return error(file, record.line, format!("{standing} units in {}: a hex holds {MAX_STACK}", city.name));
         }
         cities.push(city);
@@ -639,6 +622,10 @@ city 12 14
             (
                 city("name A\ngarrison scouts 5\ngarrison spearmen 4\n"),
                 "cities.txt line 1: 9 units in A: a hex holds 8",
+            ),
+            (
+                city("name A\ngarrison scouts 4294967295\ngarrison spearmen 4294967295\n"),
+                "cities.txt line 1: 8589934590 units in A: a hex holds 8",
             ),
             (city("name A\ncity 5 5\nname B\n"), "cities.txt line 3: A is at (5, 5) already"),
             (city("name A\ncity 12 14\nname A\n"), "cities.txt line 3: there is a A at (5, 5) already"),

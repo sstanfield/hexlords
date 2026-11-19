@@ -69,6 +69,8 @@ enum Step {
 fn parse_chord(chord: &str) -> Result<(char, Modifiers), String> {
     let (names, key) = match chord.rsplit_once('+') {
         Some((names, key)) if !key.is_empty() => (names, key),
+        // The plus key with modifiers: `ctrl++`.
+        Some((names, _)) if names.ends_with('+') => (names, "+"),
         _ => ("", chord), // no modifiers (and "+" is the plus key)
     };
     let mut mods = Modifiers::NONE;
@@ -251,4 +253,23 @@ fn run_step<S: Scene>(scene: &mut S, action: &str) -> Result<(), String> {
     }
     scene.pump();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_chord_is_a_key_with_its_modifiers() {
+        assert_eq!(parse_chord("s"), Ok(('s', Modifiers::NONE)));
+        assert_eq!(parse_chord("ctrl+s"), Ok(('s', Modifiers::CTRL)));
+        assert_eq!(parse_chord("shift+cmd+z"), Ok(('z', Modifiers::SHIFT | Modifiers::SUPER)));
+        // The plus key, alone and with modifiers.
+        assert_eq!(parse_chord("+"), Ok(('+', Modifiers::NONE)));
+        assert_eq!(parse_chord("ctrl++"), Ok(('+', Modifiers::CTRL)));
+        assert_eq!(parse_chord("ctrl+shift++"), Ok(('+', Modifiers::CTRL | Modifiers::SHIFT)));
+        assert!(parse_chord("hyper+s").is_err());
+        assert!(parse_chord("ctrl+").is_err());
+        assert!(parse_chord("ctrl+ab").is_err());
+    }
 }

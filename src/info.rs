@@ -39,12 +39,13 @@ pub fn hex_title(map: &Map, hex: Hex) -> String {
     if let Some(city) = map.city_at(hex) {
         title.push_str(&format!(" ({})", city.name));
     }
-    let sides: Vec<&str> = {
-        let mut sides: Vec<&str> =
-            tile.units().iter().filter_map(|id| map.units().get(*id)).map(|u| side_name(u.side())).collect();
-        sides.dedup();
-        sides
-    };
+    // Each side once, in the order its first unit arrived.
+    let mut sides: Vec<&str> = Vec::new();
+    for side in tile.units().iter().filter_map(|id| map.units().get(*id)).map(|u| side_name(u.side())) {
+        if !sides.contains(&side) {
+            sides.push(side);
+        }
+    }
     match tile.units().len() {
         0 => title.push_str(", no units"),
         1 => title.push_str(&format!(", 1 unit ({})", sides.join(", "))),
@@ -62,20 +63,12 @@ pub fn unit_brief(unit: &Unit) -> String {
 /// What each terrain costs to enter, in words, a few to a line: "grass 2,
 /// forest 3". What cannot be entered is left out.
 fn enters(cost: &MoveCost, per_line: usize) -> Vec<String> {
-    let prices = [
-        ("grass", cost.grass),
-        ("forest", cost.forest),
-        ("hill", cost.hill),
-        ("swamp", cost.swamp),
-        ("desert", cost.desert),
-        ("mountain", cost.mountain),
-        ("water", cost.water),
-        ("city", cost.city),
-        ("road", cost.road),
-        ("bridge", cost.bridge),
-    ];
-    let words: Vec<String> =
-        prices.iter().filter(|(_, points)| *points > 0).map(|(name, points)| format!("{name} {points}")).collect();
+    let words: Vec<String> = cost
+        .prices()
+        .iter()
+        .filter(|(_, points)| *points > 0)
+        .map(|(name, points)| format!("{name} {points}"))
+        .collect();
     if words.is_empty() {
         return vec!["Enters nothing".to_string()];
     }
@@ -193,6 +186,10 @@ mod tests {
         let other = game.map.new_unit(Side::Red, "Raider", 0, 1, 5, cost);
         game.map.place_unit(other, Hex::new(5, 7)).unwrap();
         assert_eq!(hex_title(&game.map, Hex::new(5, 7)), "Row 5, column 7: grass, road, 2 units (blue, red)");
+        // And once each, however the units of the sides came to stand there.
+        let third = game.map.new_unit(Side::Blue, "Scout", 0, 1, 5, cost);
+        game.map.place_unit(third, Hex::new(5, 7)).unwrap();
+        assert_eq!(hex_title(&game.map, Hex::new(5, 7)), "Row 5, column 7: grass, road, 3 units (blue, red)");
     }
 
     #[test]
@@ -217,7 +214,7 @@ mod tests {
             [
                 "Militia (blue)",
                 "Strength 2   Moves 8/8   Upkeep 0   Price 0",
-                "Enters: grass 2, forest 3, hill 4, swamp 5, desert 3",
+                "Enters: grass 2, forest 3, swamp 5, desert 3, hill 4",
                 "city 1, road 1",
             ]
         );
