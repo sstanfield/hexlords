@@ -553,11 +553,11 @@ fn scrolling_and_pulling_the_map_move_it_and_paint_nothing() {
     assert!(e.marked(cursor) && e.marked(Hex::new(cursor.row + 1, cursor.col)));
     push(&mut e, "brush_1");
 
-    // On the sidebar's minimap the marker follows, and the wheel is not the
-    // map's over the buttons.
+    // On the sidebar's minimap the view goes the same way as on the map, and
+    // the wheel is not the map's over the buttons.
     let mini = middle(e.screen.minimap_rect());
     let before = e.screen.view.middle();
-    assert!(e.screen.scroll(mini, 15.0, 0.0));
+    assert!(e.screen.scroll(mini, -15.0, 0.0));
     assert!(e.screen.view.middle()[0] > before[0]);
     assert!(!e.screen.scroll(middle(rect(&e, "save")), 15.0, 0.0));
     assert!(!e.screen.scroll(middle(rect(&e, "file_name")), 15.0, 0.0));

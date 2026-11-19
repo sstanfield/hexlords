@@ -68,13 +68,15 @@ fn the_map_stops_at_its_edges() {
 }
 
 #[test]
-fn two_fingers_on_the_minimap_move_the_marker_with_them() {
+fn two_fingers_on_the_minimap_move_the_view_the_way_they_do_on_the_map() {
     let mut s = session();
     let p = middle(s.screen.minimap_rect());
     let marker = |s: &hexgame::session::Session| s.screen.mini_view.marker(&s.screen.view);
     let [l0, b0, r0, t0] = marker(&s);
-    // 20 pixels right and 10 down.
-    assert!(s.screen.scroll(p, 20.0, 10.0));
+    // The fingers go 20 pixels left and 10 up: on the main map that shows what
+    // is to the right and below, and so it does here. The marker goes there,
+    // against the fingers, by as many pixels of the minimap.
+    assert!(s.screen.scroll(p, -20.0, -10.0));
     let [l1, b1, r1, t1] = marker(&s);
     let (w, h) = s.screen.mini_view.size();
     // A pixel is 2 / w of the minimap's width.
@@ -85,6 +87,14 @@ fn two_fingers_on_the_minimap_move_the_marker_with_them() {
     let center = s.screen.view.center();
     assert!(center.col > 55 && center.row > 52, "{center}");
     assert_eq!(s.screen.game.map.cursor, center);
+
+    // The same stroke on the main map goes the same way, only not as far.
+    let mut on_map = session();
+    let (start, p) = (on_map.screen.view.middle(), middle(on_map.screen.map_rect()));
+    assert!(on_map.screen.scroll(p, -20.0, -10.0));
+    let (near, far) = (on_map.screen.view.middle(), s.screen.view.middle());
+    assert!(near[0] > start[0] && far[0] > near[0], "{start:?} {near:?} {far:?}");
+    assert!(near[1] < start[1] && far[1] < near[1], "{start:?} {near:?} {far:?}");
 }
 
 #[test]
@@ -212,7 +222,7 @@ fn the_scripts_steps() {
     let down = s.screen.view.middle();
     assert!(down[1] < right[1] - 6.0 && down[0] == right[0]);
 
-    script::run(&mut s, "cursor:50:50,miniscroll:10:0").unwrap();
+    script::run(&mut s, "cursor:50:50,miniscroll:-10:0").unwrap();
     assert!(s.screen.view.center().col > 52);
 
     script::run(&mut s, "cursor:50:50,zoomin:48:53").unwrap();

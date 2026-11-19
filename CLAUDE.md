@@ -112,8 +112,9 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
   knows each system's units) and calls `MapScreen::scroll`, `zoom_at`, `grab`,
   `drag` and `let_go`; those say false when the pointer is on neither map,
   and then the wheel is the UI's. Tests and scripts call the same methods.
-  What is under the pointer follows the fingers: the map on the main map, the
-  view's marker on the minimap.
+  The view goes the same way on both maps (the owner tried the other and
+  found it backwards): the map follows the fingers on the main map, and on
+  the minimap the view's marker goes against them, at the minimap's scale.
 - **The map file format is a promise** (`docs/map-format.md`): files written
   today must stay readable. New kinds of data go after the last row, where the
   reader ignores lines today. Change the page and `assets/maps/example.map`

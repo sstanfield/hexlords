@@ -15,7 +15,8 @@
 //! - `scroll:DX:DY`: two fingers on a trackpad (or the wheel) with the pointer
 //!   in the middle of the main map: the map moves DX pixels right and DY down
 //!   (`scroll:-200:0` shows what is to the right);
-//! - `miniscroll:DX:DY`: the same on the minimap: the marker of the view moves;
+//! - `miniscroll:DX:DY`: the same on the minimap: the view goes the same way,
+//!   by that many pixels of the minimap (`miniscroll:-10:0` goes far right);
 //! - `zoomin:ROW:COL`, `zoomout:ROW:COL`: Ctrl and the wheel with the pointer on
 //!   that hex of the main map (it has to be in view; it stays under the pointer);
 //! - `pull:DX:DY`: drag the main map by its middle with the right button;

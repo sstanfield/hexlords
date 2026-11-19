@@ -41,7 +41,7 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | Drag with the right or the middle button | Pulls the map along with the pointer |
 | Ctrl (or Cmd) and the wheel or two fingers | Zoom in and out; what is under the pointer stays under it |
 | Click or drag on the minimap | The main map goes to that part of the map (and the cursor with it) |
-| Two fingers or the wheel over the minimap | The marker of the view moves with the fingers, and the main map with it |
+| Two fingers or the wheel over the minimap | The view goes the same way as over the main map, but much farther: a pixel of the minimap for a pixel of the fingers |
 | Arrow keys | Move the cursor; the view follows when the cursor leaves it, and comes back to it if it was moved away |
 | `1` / `2` | Zoom out / in, centered on the cursor |
 | F11 | Fullscreen on and off |

@@ -309,9 +309,11 @@ impl MapScreen {
 
     /// The wheel turned, or two fingers moved on a trackpad, by `(dx, dy)`
     /// pixels (x right, y down) with the pointer at the window pixel `at`.
-    /// What is under the pointer follows the fingers: on the main map the map
-    /// moves that far, on the minimap the marker of the view does. False, and
-    /// nothing happens, if the pointer is on neither.
+    /// The view goes the same way on both maps, against the fingers: on the
+    /// main map the map moves with them by that many pixels, and on the
+    /// minimap, whose picture stays, the view's marker goes that far the other
+    /// way (so a short stroke there crosses the map). False, and nothing
+    /// happens, if the pointer is on neither.
     pub fn scroll(&mut self, at: Point, dx: f32, dy: f32) -> bool {
         match self.map_at(at) {
             Some(Which::Map) => {
@@ -323,7 +325,7 @@ impl MapScreen {
                 let (w, h) = self.mini_view.size();
                 let (wf, hf) = self.mini_view.factors();
                 if w > 0 && h > 0 {
-                    self.view.pan(dx * 2.0 / w as f32 / wf, -dy * 2.0 / h as f32 / hf);
+                    self.view.pan(-dx * 2.0 / w as f32 / wf, dy * 2.0 / h as f32 / hf);
                     // As with a press on the minimap: the keys carry on from here.
                     self.game.set_cursor(self.view.center());
                 }
