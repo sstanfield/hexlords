@@ -30,6 +30,18 @@ pub struct City {
     pub units: Vec<UnitProd>,
     pub pos: Hex,
     pub walls: u32,
+    /// What it is building: an index into `units`, or nothing. Set it with
+    /// `Map::set_production`.
+    pub building: Option<usize>,
+    /// The turns it has worked on what it is building, toward that's `time`.
+    pub progress: u32,
+}
+
+impl City {
+    /// What it is building, if anything.
+    pub fn production(&self) -> Option<&UnitProd> {
+        self.building.and_then(|i| self.units.get(i))
+    }
 }
 
 /// Every city on the map.
@@ -46,7 +58,17 @@ impl Cities {
     /// Add a neutral city. C++: CityManager::newCity
     pub fn new_city(&mut self, name: &str, pos: Hex, walls: u32) -> CityId {
         let id = CityId(self.cities.len() as u32);
-        self.cities.push(City { id, side: Side::Grey, name: name.to_string(), units: Vec::new(), pos, walls });
+        let city = City {
+            id,
+            side: Side::Grey,
+            name: name.to_string(),
+            units: Vec::new(),
+            pos,
+            walls,
+            building: None,
+            progress: 0,
+        };
+        self.cities.push(city);
         id
     }
 

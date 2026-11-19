@@ -7,7 +7,7 @@
 
 use crate::game::{Game, describe_terrain};
 use crate::state::scenario::side_name;
-use crate::state::{City, Hex, Map, MoveCost, Unit};
+use crate::state::{City, Hex, Map, MoveCost, Side, Unit, UnitProd};
 
 /// The line about the hex under the cursor: the turn, the hex's terrain and
 /// road, its city's name, how many units stand there, and what it costs the
@@ -114,15 +114,90 @@ pub fn unit_details(map: &Map, unit: &Unit) -> Vec<String> {
     lines
 }
 
-/// A city, a line at a time, in at most `room` lines: its name, who holds it,
-/// its walls and garrison, and what it builds (the unit, the turns one takes,
-/// its price).
-pub fn city_lines(map: &Map, city: &City, room: usize) -> Vec<String> {
-    let mut lines = vec![city.name.clone()];
-    lines.push(match side_name(city.side) {
+/// Who holds a city: "Held by red", or "Nobody's".
+pub fn holder(side: Side) -> String {
+    match side_name(side) {
         "neutral" => "Nobody's".to_string(),
         side => format!("Held by {side}"),
-    });
+    }
+}
+
+/// The name of the kind a city builds, if the map has the kind (else its id).
+fn kind_name<'a>(map: &'a Map, prod: &'a UnitProd) -> &'a str {
+    let kinds = map.units();
+    kinds.kind_named(&prod.basename).and_then(|k| kinds.kind(k)).map_or(&prod.basename, |k| &k.name)
+}
+
+fn turns(n: u32) -> String {
+    if n == 1 { "1 turn".to_string() } else { format!("{n} turns") }
+}
+
+/// One of what a city can build: "Riders: 3 turns, price 10".
+pub fn production_option(map: &Map, prod: &UnitProd) -> String {
+    format!("{}: {}, price {}", kind_name(map, prod), turns(prod.time), prod.cost)
+}
+
+/// What a city is building and how far it has got: "Building Riders, 1 of 3
+/// turns done", or "Building nothing".
+pub fn progress_line(map: &Map, city: &City) -> String {
+    match city.production() {
+        Some(prod) => format!("Building {}, {} of {} done", kind_name(map, prod), city.progress, turns(prod.time)),
+        None => "Building nothing".to_string(),
+    }
+}
+
+/// What a city is building, short, for the sidebar: "Building Riders, 1/3".
+pub fn progress_short(map: &Map, city: &City) -> String {
+    match city.production() {
+        Some(prod) => format!("Building {}, {}/{}", kind_name(map, prod), city.progress, prod.time),
+        None => "Building nothing".to_string(),
+    }
+}
+
+/// A city's holder, walls and place in a line: "Held by red, walls 2, at row
+/// 13, column 7".
+pub fn city_summary(city: &City) -> String {
+    format!("{}, walls {}, at row {}, column {}", holder(city.side), city.walls, city.pos.row, city.pos.col)
+}
+
+/// Who stands in a city, kind by kind in the order they stand: "Garrison: 2
+/// Militia, 1 Riders", or "No garrison".
+pub fn garrison_line(map: &Map, city: &City) -> String {
+    let mut kinds: Vec<(&str, usize)> = Vec::new();
+    for unit in map.units_at(city.pos).iter().filter_map(|id| map.units().get(*id)) {
+        match kinds.iter_mut().find(|(name, _)| *name == unit.name) {
+            Some((_, n)) => *n += 1,
+            None => kinds.push((&unit.name, 1)),
+        }
+    }
+    if kinds.is_empty() {
+        return "No garrison".to_string();
+    }
+    let kinds: Vec<String> = kinds.iter().map(|(name, n)| format!("{n} {name}")).collect();
+    format!("Garrison: {}", kinds.join(", "))
+}
+
+/// A city's row in a list of cities: its name and who holds it, or, in a list
+/// of one's own, what it is building ("Brindlewick: Riders, 1 of 3").
+pub fn city_row(map: &Map, city: &City, own: bool) -> String {
+    if !own {
+        return match side_name(city.side) {
+            "neutral" => format!("{} (nobody's)", city.name),
+            side => format!("{} ({side})", city.name),
+        };
+    }
+    match city.production() {
+        Some(prod) => format!("{}: {}, {} of {}", city.name, kind_name(map, prod), city.progress, prod.time),
+        None => format!("{}: building nothing", city.name),
+    }
+}
+
+/// A city, a line at a time, in at most `room` lines: its name, who holds it,
+/// its walls and garrison, what it is building, and what it can build (the
+/// unit, the turns one takes, its price).
+pub fn city_lines(map: &Map, city: &City, room: usize) -> Vec<String> {
+    let mut lines = vec![city.name.clone()];
+    lines.push(holder(city.side));
     lines.push(format!("Walls {}", city.walls));
     lines.push(match map.units_at(city.pos).len() {
         0 => "No garrison".to_string(),
@@ -132,13 +207,10 @@ pub fn city_lines(map: &Map, city: &City, room: usize) -> Vec<String> {
     if city.units.is_empty() {
         lines.push("Builds nothing".to_string());
     } else {
-        lines.push("Builds:".to_string());
+        lines.push(progress_short(map, city));
+        lines.push("Can build:".to_string());
         for prod in &city.units {
-            // The kind's name, if the map still has the kind.
-            let kinds = map.units();
-            let name = kinds.kind_named(&prod.basename).and_then(|k| kinds.kind(k)).map_or(&prod.basename, |k| &k.name);
-            let turns = if prod.time == 1 { "1 turn".to_string() } else { format!("{} turns", prod.time) };
-            lines.push(format!("  {name}: {turns}, price {}", prod.cost));
+            lines.push(format!("  {}", production_option(map, prod)));
         }
     }
     if lines.len() > room && room > 0 {
@@ -265,7 +337,8 @@ mod tests {
                 "Held by blue",
                 "Walls 2",
                 "Garrison: 3 units",
-                "Builds:",
+                "Building nothing",
+                "Can build:",
                 "  Riders: 3 turns, price 9",
                 "  Militia: 1 turn, price 0",
             ]
@@ -278,7 +351,32 @@ mod tests {
         // Less room than lines: the last says how many are left out.
         assert_eq!(
             city_lines(&game.map, wrenfold, 6),
-            ["Wrenfold", "Held by blue", "Walls 2", "Garrison: 3 units", "Builds:", "  ... and 2 more"]
+            ["Wrenfold", "Held by blue", "Walls 2", "Garrison: 3 units", "Building nothing", "  ... and 3 more"]
         );
+    }
+
+    #[test]
+    fn a_city_in_full_and_in_a_row_of_a_list() {
+        let mut game = game();
+        let id = game.map.city_at(Hex::new(5, 5)).unwrap().id;
+        let city = |game: &Game| game.map.cities().get(id).unwrap().clone();
+        assert_eq!(city_summary(&city(&game)), "Held by blue, walls 2, at row 5, column 5");
+        assert_eq!(garrison_line(&game.map, &city(&game)), "Garrison: 2 Riders, 1 Militia");
+        assert_eq!(production_option(&game.map, &city(&game).units[0]), "Riders: 3 turns, price 9");
+        assert_eq!(production_option(&game.map, &city(&game).units[1]), "Militia: 1 turn, price 0");
+        assert_eq!(progress_line(&game.map, &city(&game)), "Building nothing");
+        assert_eq!(city_row(&game.map, &city(&game), false), "Wrenfold (blue)");
+        assert_eq!(city_row(&game.map, &city(&game), true), "Wrenfold: building nothing");
+        // Building riders, a turn done.
+        game.map.set_production(id, Some(0));
+        game.map.produce(Side::Blue);
+        assert_eq!(progress_line(&game.map, &city(&game)), "Building Riders, 1 of 3 turns done");
+        assert_eq!(city_row(&game.map, &city(&game), true), "Wrenfold: Riders, 1 of 3");
+        assert_eq!(city_lines(&game.map, &city(&game), 9)[4], "Building Riders, 1/3");
+        // Nobody's, and empty.
+        let tarn = game.map.city_at(Hex::new(5, 15)).unwrap().clone();
+        assert_eq!(city_summary(&tarn), "Nobody's, walls 0, at row 5, column 15");
+        assert_eq!(garrison_line(&game.map, &tarn), "No garrison");
+        assert_eq!(city_row(&game.map, &tarn, false), "Low Tarn (nobody's)");
     }
 }

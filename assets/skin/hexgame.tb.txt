@@ -29,6 +29,24 @@ elements
 		cut 16
 		expand 12
 		padding 8 10
-	# The headings of the help window's sections.
-	HelpHeading
+	# The headings in windows (the help's sections, a city's).
+	Heading
 		text-color #ffd24a
+	# A row of a list (the cities): flat, lit under the pointer, the chosen
+	# one marked and in color.
+	ListRow
+		text-color #fefefe
+		padding 3 8
+		children
+			element ListRow.hovered
+				state hovered
+		overrides
+			element ListRow.pressed
+				state pressed
+	ListRow.hovered
+		cut 7
+		bitmap item_hover.png
+	ListRow.pressed
+		text-color #ffd24a
+		cut 7
+		bitmap item_selected.png

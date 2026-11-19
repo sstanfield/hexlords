@@ -6,9 +6,10 @@
 //! the *selected* hex (the one last clicked), a slot for each unit it can hold
 //! (the unit's icon and its strength and moves; a click selects the unit, and
 //! the pointer on it opens a box with all about it), and a line about the
-//! selected unit. Beside the map, under the minimap, is the selected hex's
-//! city. The map takes all the height the panel leaves. `info` has the words;
-//! this module puts them into the widgets.
+//! selected unit. Beside the map, under the minimap, are the buttons for the
+//! lists of cities and the selected hex's city, which opens in full in a
+//! window of its own (`city_windows`). The map takes all the height the panel
+//! leaves. `info` has the words; this module puts them into the widgets.
 //!
 //! C++: assets/layouts/main.lua (the layout), src/gui/mapwidget.cpp
 //! MapWidget::OnEvent (what input does to the map)
@@ -19,13 +20,14 @@ use std::path::Path;
 use turbo_ferret::widgets::ImageWidget;
 use turbo_ferret::{ImageHandle, LayoutParams, Modifiers, Point, Rect, Size, TbId, Visibility, WidgetId};
 
+use crate::city_windows::{self, CityList, CityOrder, CityWindow};
 use crate::game::Game;
 use crate::gui::{MapCommand, MapKey, RootCommand};
 use crate::help::{HelpSection, command_key};
 use crate::info;
 use crate::render::{AssetDirs, unit_icon};
 use crate::screen::{MapScreen, Scene};
-use crate::state::{DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Side, UnitId};
+use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Side, UnitId};
 
 /// The layout, relative to the asset directory.
 pub const LAYOUT: &str = "layouts/main.tb.txt";
@@ -49,6 +51,14 @@ const ICON_DP: i32 = 40;
 pub const STACK_SLOTS: usize = MAX_STACK + 1;
 /// The button that ends the turn, and the line about the cursor.
 pub const END_TURN_ID: &str = "end_turn";
+/// The buttons for the lists of cities, and the one for the selected city.
+pub const ALL_CITIES_ID: &str = "all_cities";
+pub const MY_CITIES_ID: &str = "my_cities";
+pub const CITY_DETAILS_ID: &str = "city_details";
+/// Where the windows go on the map: the list in its left part, a city in its
+/// right, a third of the way down (see `gui::build::place`).
+const LIST_ALIGN: (f32, f32) = (0.0, 0.33);
+const CITY_ALIGN: (f32, f32) = (1.0, 0.33);
 pub const STATUS_ID: &str = "status";
 /// The selected hex's heading, and the line about the selected unit.
 pub const HEX_TITLE_ID: &str = "hex_title";
@@ -132,7 +142,10 @@ fn help_section() -> HelpSection {
             ("Click a hex,  or  Enter", "Choose it: select its first unit, or send the selected one there"),
             ("Point at a unit below", "All about it"),
             ("Click a unit below", "Select it"),
-            (&end_turn, "End the turn: every unit gets its moves back"),
+            (&end_turn, "End the turn: units get their moves back, cities work on what they build"),
+            ("City details", "All about the selected city; set what it builds"),
+            ("All cities, My cities", "A list of cities: see where one is, go to it, open it"),
+            ("Esc", "Close the window on top"),
         ],
     )
 }
@@ -154,6 +167,12 @@ pub struct Session {
     tip: WidgetId,
     tip_lines: Vec<Line>,
     city: Vec<Line>,
+    city_details: WidgetId,
+    sidebar: WidgetId,
+    city_lists: WidgetId,
+    /// The windows about cities, while they are open.
+    city_window: Option<CityWindow>,
+    city_list: Option<CityList>,
 }
 
 impl Session {
@@ -195,6 +214,11 @@ impl Session {
             tip,
             tip_lines: lines(&screen, "tip", TIP_LINES)?,
             city: lines(&screen, "city", CITY_LINES)?,
+            city_details: find(&screen, CITY_DETAILS_ID)?,
+            sidebar: find(&screen, "main_sidebar")?,
+            city_lists: find(&screen, "city_lists")?,
+            city_window: None,
+            city_list: None,
             screen,
         };
         session.apply_layout_sizes();
@@ -234,6 +258,11 @@ impl Session {
         for line in &self.city {
             ui.set_layout_params(line.widget, Some(LayoutParams::fixed(side_w, line_h)));
         }
+        // Nor do the sidebar's buttons push it wider than its share (their
+        // text is cut short instead).
+        let narrow = LayoutParams { min_w: Some(0), max_w: Some(side_w), ..LayoutParams::default() };
+        ui.set_layout_params(self.sidebar, Some(narrow));
+        ui.set_layout_params(self.city_lists, Some(narrow));
         // The panel is as tall as its lines and its slots (an empty slot keeps
         // its room), and the map has the rest.
         let panel_h = ui.preferred_size_free(self.panel).pref.h;
@@ -381,6 +410,157 @@ impl Session {
         for (i, line) in self.city.iter_mut().enumerate() {
             line.set(&mut self.screen, city.get(i).map_or("", String::as_str));
         }
+        let details = if city.is_empty() { Visibility::Gone } else { Visibility::Visible };
+        set_visibility(&mut self.screen, self.city_details, details);
+        self.refresh_windows();
+    }
+
+    /// The windows about cities: forget those that were closed, and bring the
+    /// others up to date.
+    fn refresh_windows(&mut self) {
+        let (ui, game) = (&mut self.screen.ui, &self.screen.game);
+        if let Some(window) = &mut self.city_window {
+            if !window.is_open(ui) || !window.refresh(ui, &game.map, game.player()) {
+                window.close(ui);
+                self.city_window = None;
+            }
+        }
+        if let Some(list) = &mut self.city_list {
+            if list.is_open(ui) {
+                list.refresh(ui, &game.map);
+            } else {
+                self.city_list = None;
+            }
+        }
+    }
+
+    /// The window of a city: its own, replacing another city's.
+    fn open_city(&mut self, id: CityId) {
+        if let Some(window) = self.city_window.take() {
+            window.close(&mut self.screen.ui);
+        }
+        let (root, area) = (self.screen.root_window(), self.window_area());
+        let (ui, game) = (&mut self.screen.ui, &self.screen.game);
+        self.city_window = CityWindow::open(ui, root, &game.map, id, game.player(), (area, CITY_ALIGN));
+    }
+
+    /// The list of cities, every one or the player's (`own`); the same list
+    /// again closes it.
+    fn toggle_list(&mut self, own: bool) {
+        if let Some(list) = self.city_list.take() {
+            list.close(&mut self.screen.ui);
+            if list.own() == own {
+                return;
+            }
+        }
+        let (root, area) = (self.screen.root_window(), self.window_area());
+        let (ui, game) = (&mut self.screen.ui, &self.screen.game);
+        let mut list = CityList::open(ui, root, &game.map, own, game.player(), (area, LIST_ALIGN));
+        // The selected hex's city, if it is in the list, is the chosen one.
+        if let Some(city) = game.map.city_at(self.shown) {
+            list.choose(ui, &game.map, city.id);
+        }
+        self.city_list = Some(list);
+    }
+
+    /// Where the windows go: over the map, a little in from its edges.
+    fn window_area(&self) -> Rect {
+        let margin = self.screen.ui.dimension_converter().dp_to_px(SPACING_DP * 2);
+        let map = self.screen.map_rect();
+        Rect::new(map.x + margin, map.y + margin, (map.w - 2 * margin).max(0), (map.h - 2 * margin).max(0))
+    }
+
+    /// The window of a city, if one is open.
+    pub fn city_window(&self) -> Option<&CityWindow> {
+        self.city_window.as_ref()
+    }
+
+    /// The list of cities, if one is open.
+    pub fn city_list(&self) -> Option<&CityList> {
+        self.city_list.as_ref()
+    }
+
+    /// Close the window on top (a city's over the list). False if none was open.
+    fn close_top_window(&mut self) -> bool {
+        let ui = &mut self.screen.ui;
+        if let Some(window) = self.city_window.take() {
+            window.close(ui);
+            return true;
+        }
+        if let Some(list) = self.city_list.take() {
+            list.close(ui);
+            return true;
+        }
+        false
+    }
+
+    /// Do what a window asked.
+    fn obey(&mut self, order: CityOrder) {
+        match order {
+            CityOrder::SetProduction(id, what) => {
+                // Only the city's holder, if that is the player.
+                let player = self.screen.game.player();
+                if self.screen.game.map.cities().get(id).is_some_and(|city| city.side == player) {
+                    self.screen.game.map.set_production(id, what);
+                }
+            }
+            CityOrder::Details(id) => self.open_city(id),
+            CityOrder::GoTo(id) => {
+                if let Some(pos) = self.screen.game.map.cities().get(id).map(|city| city.pos) {
+                    self.screen.game.set_cursor(pos);
+                    self.screen.view.center_on(pos);
+                    self.shown = pos;
+                }
+            }
+        }
+    }
+
+    /// A click on a button of a window about cities, or on one that opens
+    /// one. False if it was none of those.
+    fn window_click(&mut self, id: TbId) -> bool {
+        if id == TbId::new(ALL_CITIES_ID) || id == TbId::new(MY_CITIES_ID) {
+            self.toggle_list(id == TbId::new(MY_CITIES_ID));
+            return true;
+        }
+        if id == TbId::new(CITY_DETAILS_ID) {
+            if let Some(city) = self.screen.game.map.city_at(self.shown).map(|c| c.id) {
+                self.open_city(city);
+            }
+            return true;
+        }
+        if id == TbId::new(city_windows::CITY_CLOSE_ID) {
+            if let Some(window) = self.city_window.take() {
+                window.close(&mut self.screen.ui);
+            }
+            return true;
+        }
+        if id == TbId::new(city_windows::LIST_CLOSE_ID) {
+            if let Some(list) = self.city_list.take() {
+                list.close(&mut self.screen.ui);
+            }
+            return true;
+        }
+        if let Some(order) = self.city_window.as_ref().and_then(|w| w.click(id)) {
+            self.obey(order);
+            return true;
+        }
+        let (ui, map) = (&mut self.screen.ui, &self.screen.game.map);
+        let mut handled = false;
+        let mut order = None;
+        if let Some(list) = &mut self.city_list {
+            let rows = list.cities().len();
+            let is_list_button = (0..rows).any(|i| id == TbId::new(&city_windows::row_id(i)))
+                || id == TbId::new(city_windows::LIST_DETAILS_ID)
+                || id == TbId::new(city_windows::LIST_GOTO_ID);
+            if is_list_button {
+                order = list.click(ui, map, id);
+                handled = true;
+            }
+        }
+        if let Some(order) = order {
+            self.obey(order);
+        }
+        handled
     }
 
     /// Show the box about a unit over its slot (under it if there is no room
@@ -429,6 +609,10 @@ impl Session {
     /// after every input event it forwards to the UI.
     pub fn pump(&mut self) {
         for command in self.screen.take_map_commands() {
+            // Esc closes the help if it is open, and else the window on top.
+            if command == MapCommand::Key(MapKey::Esc) && !self.screen.help_open() {
+                self.close_top_window();
+            }
             self.screen.navigate(command);
             // A click, or Enter at the cursor, chooses a hex.
             // C++: MapWidget::OnEvent
@@ -452,6 +636,7 @@ impl Session {
                 {
                     self.screen.game.end_turn();
                 }
+                RootCommand::Click(id) if self.window_click(id) => {}
                 // A unit's slot: that unit is the selected one.
                 RootCommand::Click(id) => {
                     let unit = (0..STACK_SLOTS).find(|i| id == TbId::new(&unit_button_id(*i)));

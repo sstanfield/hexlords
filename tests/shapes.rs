@@ -6,7 +6,7 @@ mod common;
 
 use common::{assets, click, press};
 use hexgame::game::Game;
-use hexgame::render::{HexVariant, MapGeometry, Marks, RANGE_OVERLAY};
+use hexgame::render::{CITY_SIDES, HexVariant, MapGeometry, Marks, RANGE_OVERLAY};
 use hexgame::script;
 use hexgame::session::Session;
 use hexgame::state::{Hex, Map, TileType};
@@ -227,7 +227,13 @@ fn the_maps_edges_are_cut_straight_on_all_four_sides() {
         view.resize(819, 537);
         let mut geometry = MapGeometry::new();
         geometry.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
-        let drawn: usize = TileType::ALL.into_iter().map(|kind| geometry.terrain(kind).vertex_count()).sum();
+        // Every hex once: its terrain's, or its city's.
+        let layers: Vec<_> = TileType::ALL
+            .into_iter()
+            .map(|kind| geometry.terrain(kind))
+            .chain(CITY_SIDES.into_iter().map(|side| geometry.cities(side)))
+            .collect();
+        let drawn: usize = layers.iter().map(|layer| layer.vertex_count()).sum();
         assert_eq!(drawn, view.visible_hexes().count() * 7, "{rows} x {cols}");
         // Nothing is drawn right of the last column's cut or below the last
         // row's: half a unit right of the last column's middle, and through the
@@ -235,8 +241,8 @@ fn the_maps_edges_are_cut_straight_on_all_four_sides() {
         let right = view.hex_center(Hex::new(last_row, last_col))[0] + 0.5;
         let bottom = view.hex_center(Hex::new(last_row, 0))[1];
         let [right, bottom] = view.to_ndc([right, bottom]);
-        for kind in TileType::ALL {
-            for mesh in geometry.terrain(kind).meshes() {
+        for layer in &layers {
+            for mesh in layer.meshes() {
                 for v in &mesh.vertices {
                     assert!(v.pos[0] <= right + 1e-5 && v.pos[1] >= bottom - 1e-5, "{rows} x {cols}: {:?}", v.pos);
                 }

@@ -1,5 +1,6 @@
 # The main screen: the map with the panel under it, and beside both the
-# sidebar (the minimap, the End turn button and the selected city).
+# sidebar (the minimap, the End turn button, the lists of cities and the
+# selected city).
 #
 # C++: assets/layouts/main.lua, which built the map, the minimap and a button
 # from Lua. Session sizes the map and the minimap from the window
@@ -24,7 +25,12 @@ TBLayout: id: main_layout, axis: x, distribution: gravity, distribution-position
 	TBLayout: id: main_sidebar, axis: y, distribution-position: top, spacing: 5
 		MiniMapWidget: id: mini_map
 		TBButton: id: end_turn, text: End turn, is-focusable: 0
-		# The city on the selected hex, a line at a time.
+		# The lists of cities: every one, and the player's.
+		TBLayout: id: city_lists, axis: x, spacing: 5
+			TBButton: id: all_cities, text: All cities, is-focusable: 0, squeezable: 1
+			TBButton: id: my_cities, text: My cities, is-focusable: 0, squeezable: 1
+		# The city on the selected hex, a line at a time, and a button that
+		# opens it in full (Session shows it when there is a city).
 		TBLayout: id: city_panel, axis: y, distribution-position: top, position: left, spacing: 0
 			TBTextField: id: city_0, text-align: left
 			TBTextField: id: city_1, text-align: left
@@ -35,6 +41,7 @@ TBLayout: id: main_layout, axis: x, distribution: gravity, distribution-position
 			TBTextField: id: city_6, text-align: left
 			TBTextField: id: city_7, text-align: left
 			TBTextField: id: city_8, text-align: left
+		TBButton: id: city_details, text: City details, is-focusable: 0, visibility: gone
 # All about the unit under the pointer, in a box over its slot: Session fills
 # it, places it and shows it while the pointer is on a unit. It takes no
 # input, so it never comes between the pointer and what is under it.

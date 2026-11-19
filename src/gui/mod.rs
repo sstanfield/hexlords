@@ -3,10 +3,12 @@
 //! None of them holds game state or draws the map. Turbo Ferret creates widgets
 //! from layout files through factories that are plain `fn() -> Box<dyn Widget>`,
 //! so a widget cannot be handed the game: instead it records commands, and the
-//! session takes them after each input event and applies them.
+//! session takes them after each input event and applies them. Windows that
+//! are built from code (the help, the cities') are made by `build`.
 //!
 //! C++: src/gui/
 
+pub mod build;
 pub mod map_widget;
 pub mod minimap_widget;
 pub mod root;

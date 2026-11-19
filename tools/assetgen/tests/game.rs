@@ -11,10 +11,12 @@ use assetgen::png::encode_rgba;
 use assetgen::preview::{FAR, continent, map_text};
 use assetgen::road;
 use assetgen::scatter::Features;
+use assetgen::sides;
 use assetgen::terrain::Terrain;
-use assetgen::tile::{Edge, hex_distance, render, render_all};
-use hexgame::render::{HexVariant, roads, tile_image};
-use hexgame::state::{Map, TileType};
+use assetgen::tile::{Edge, hex_distance, render, render_all, render_city};
+use hexgame::render::{CITY_SIDES, HexVariant, city_image, roads, side_color, tile_image};
+use hexgame::state::scenario::side_name;
+use hexgame::state::{Map, Side, TileType};
 use turbo_ferret::image::{Limits, png};
 
 fn assets() -> PathBuf {
@@ -90,15 +92,46 @@ fn the_games_tiles_are_what_the_generator_makes() {
             path.display()
         );
     }
-    // No stray pictures: the directory holds the ten tiles.
+    // And a city for each side.
+    for side in &sides::PLAYERS {
+        same_as_file(
+            &format!("tiles/{}", sides::city_file(side)),
+            256,
+            &render_city(side, 256, Edge::Filled, &features),
+        );
+    }
+    // No stray pictures: the directory holds the ten tiles and the sides' cities.
     let mut files: Vec<String> = std::fs::read_dir(assets().join("tiles"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     files.sort();
     let mut expected: Vec<String> = Terrain::ALL.iter().map(|t| format!("{}_tile.png", t.name())).collect();
+    expected.extend(sides::PLAYERS.iter().map(sides::city_file));
     expected.sort();
     assert_eq!(files, expected);
+}
+
+#[test]
+fn the_sides_are_the_games() {
+    // The same sides, in the same order, with the same names and colors; a
+    // city's file is where the game looks for it.
+    let players: Vec<Side> = CITY_SIDES.into_iter().filter(|side| *side != Side::Grey).collect();
+    assert_eq!(players.len(), sides::PLAYERS.len());
+    for (side, ours) in players.into_iter().zip(&sides::PLAYERS) {
+        assert_eq!(side_name(side), ours.name);
+        assert_eq!(side_color(side), ours.color, "{}", ours.name);
+        assert_eq!(city_image(side), format!("tiles/{}", sides::city_file(ours)));
+    }
+    assert_eq!(side_name(Side::Grey), sides::NEUTRAL.name);
+    assert_eq!(side_color(Side::Grey), sides::NEUTRAL.color);
+    assert_eq!(city_image(Side::Grey), format!("tiles/{}", sides::city_file(&sides::NEUTRAL)));
+    // And the nobody's city is the terrain's own tile.
+    let features = Features::new();
+    assert_eq!(
+        render_city(&sides::NEUTRAL, 32, Edge::Filled, &features),
+        render(Terrain::City, 32, Edge::Filled, &features)
+    );
 }
 
 #[test]

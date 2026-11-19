@@ -18,14 +18,13 @@
 use std::path::Path;
 
 use turbo_ferret::font::DEFAULT_FONT;
-use turbo_ferret::layout::stack::{LayoutDistributionPosition, LayoutPosition};
-use turbo_ferret::widgets::{Button, Layout, ResizeFit, TextAlign, TextField, Window, WindowSettings};
 use turbo_ferret::{
-    Axis, Config, FontDesc, FsLoader, Gravity, LayoutParams, Point, Rect, Services, Size, SpecialKey, TbId, Ui,
-    WidgetId, tbid,
+    Config, FontDesc, FsLoader, Gravity, LayoutParams, Point, Rect, Services, Size, SpecialKey, TbId, Ui, WidgetId,
+    tbid,
 };
 
 use crate::game::Game;
+use crate::gui::build;
 use crate::gui::{self, MapCommand, MapKey, MapWidget, MiniMapCommand, MiniMapWidget, RootCommand, RootWindow};
 use crate::help::{self, HelpSection};
 use crate::minimap_view::MiniMapView;
@@ -42,8 +41,6 @@ pub const MINIMAP_ID: &str = "mini_map";
 /// The help window, and its button that closes it.
 pub const HELP_ID: &str = "help_window";
 pub const HELP_CLOSE_ID: &str = "help_close";
-/// The help's headings are drawn with this skin element (a color of their own).
-const HELP_HEADING_SKIN: &str = "HelpHeading";
 /// The space between the help's columns, and between its sections, in dp.
 const HELP_COLUMN_DP: i32 = 16;
 const HELP_SECTION_DP: i32 = 8;
@@ -192,59 +189,34 @@ impl MapScreen {
     /// there, and a click beside the window goes to whatever is under it.
     fn open_help(&mut self) {
         let dp = |ui: &Ui, dp: i32| ui.dimension_converter().dp_to_px(dp);
-        let mut window = Window::new("Help").with_settings(WindowSettings::TITLEBAR | WindowSettings::CLOSE_BUTTON);
-        window.animate = false;
         let ui = &mut self.ui;
-        let win = ui.add(self.root_window, window);
-        ui.set_id(win, TbId::new(HELP_ID));
-        let mut column = Layout::new(Axis::Y);
-        column.position = LayoutPosition::LeftTop;
-        column.distribution_position = LayoutDistributionPosition::LeftTop;
-        column.spacing = Some(0);
-        let content = ui.add(win, column);
-        ui.set_gravity(content, Gravity::ALL);
-        let text = |ui: &mut Ui, parent: WidgetId, text: &str| {
-            let mut field = TextField::new(text);
-            field.align = TextAlign::Left;
-            ui.add(parent, field)
-        };
+        let parts = build::window(ui, self.root_window, HELP_ID, "Help");
+        let content = parts.content;
         let mut keys = Vec::new();
         for (i, section) in help::sections(&self.help_sections).iter().enumerate() {
             if i > 0 {
-                let gap = ui.add(content, Layout::new(Axis::X));
-                ui.set_layout_params(gap, Some(LayoutParams::fixed(1, dp(ui, HELP_SECTION_DP))));
+                let px = dp(ui, HELP_SECTION_DP);
+                build::gap(ui, content, px);
             }
-            let heading = text(ui, content, &section.title);
-            ui.set_skin(heading, TbId::new(HELP_HEADING_SKIN));
+            build::heading(ui, content, &section.title);
             for (press, what) in &section.rows {
-                let mut row = Layout::new(Axis::X);
-                row.position = LayoutPosition::LeftTop;
-                row.distribution_position = LayoutDistributionPosition::LeftTop;
-                row.spacing = Some(dp(ui, HELP_COLUMN_DP));
-                let row = ui.add(content, row);
-                keys.push(text(ui, row, press));
-                text(ui, row, what);
+                let spacing = dp(ui, HELP_COLUMN_DP);
+                let row = build::row(ui, content, spacing);
+                keys.push(build::text(ui, row, press));
+                build::text(ui, row, what);
             }
         }
-        let gap = ui.add(content, Layout::new(Axis::X));
-        ui.set_layout_params(gap, Some(LayoutParams::fixed(1, dp(ui, HELP_SECTION_DP))));
-        let close = ui.add(content, Button::new("Close"));
-        ui.set_id(close, TbId::new(HELP_CLOSE_ID));
-        ui.set_focusable(close, false);
+        let px = dp(ui, HELP_SECTION_DP);
+        build::gap(ui, content, px);
+        build::button(ui, content, HELP_CLOSE_ID, "Close");
         // The keys' column is as wide as its widest.
         let width = keys.iter().map(|key| ui.preferred_size_free(*key).pref.w).max().unwrap_or(0);
         for key in keys {
-            let mut lp = LayoutParams::default();
-            lp.set_width(width);
-            ui.set_layout_params(key, Some(lp));
+            build::set_width(ui, key, width);
         }
-        let bounds = Rect::from_size(ui.rect(self.root_window).size());
-        let r = ui.fit_content_rect(win, ResizeFit::Preferred);
-        ui.set_rect(win, r.center_in(&bounds).move_in(&bounds).clip(&bounds));
-        // The content goes under the title, inside the window's padding.
-        let inside = ui.padding_rect(win);
-        ui.set_rect(content, inside);
-        self.help = Some(win);
+        let everywhere = Rect::from_size(ui.rect(self.root_window).size());
+        build::place(ui, parts, everywhere, (0.5, 0.5));
+        self.help = Some(parts.window);
     }
 
     /// Show another map: the views start over, on its cursor.

@@ -18,6 +18,7 @@ use std::f32::consts::PI;
 use crate::noise::{fractal, lattice, spread, unit};
 use crate::scatter::{Features, pool};
 use crate::shapes::{Rgb, ball, length, light, mix, octagon, rectangle, rotate, scale, segment};
+use crate::sides;
 
 /// A terrain of the game's maps.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
@@ -102,7 +103,7 @@ impl Terrain {
             Terrain::Desert => desert(x, y, features),
             Terrain::Mountain => mountain(x, y, features),
             Terrain::Water => water(x, y, features),
-            Terrain::City => city(x, y, features),
+            Terrain::City => city(x, y, features, sides::NEUTRAL.color),
             Terrain::Temple => temple(x, y, features),
             Terrain::Ruin => ruin(x, y, features),
         }
@@ -314,12 +315,18 @@ fn water(x: f32, y: f32, features: &Features) -> Rgb {
 /// How big the pictures of the city, the temple and the ruin are (1 is the
 /// size their numbers are written for).
 pub const ICON: f32 = 1.18;
-const ROOF: Rgb = [0.74, 0.27, 0.17];
 const DARK: Rgb = [0.24, 0.22, 0.20];
 
 /// A walled town on grass: an octagon of wall with a gate and four towers,
-/// red roofs around a keep.
-fn city(x: f32, y: f32, features: &Features) -> Rgb {
+/// houses around a keep. The roofs of the houses, the towers and the keep are
+/// in `roof`, the color of the side that holds the city (`sides`), and the
+/// wall's stone is tinted with it, so that whose it is shows from afar.
+pub fn city(x: f32, y: f32, features: &Features, roof: Rgb) -> Rgb {
+    // The eaves and the ridges: the roof's color, much darker.
+    let eaves = scale(roof, 0.35);
+    // The wall's stone, and its battlements' shadows.
+    let stone = mix([0.78, 0.75, 0.69], roof, 0.55);
+    let shadow = mix([0.55, 0.52, 0.48], scale(roof, 0.7), 0.55);
     let mut c = grass(x, y, features);
     let (x, y) = (x / ICON, y / ICON);
     let (radius, wall) = (0.58f32, 0.11f32);
@@ -348,11 +355,11 @@ fn city(x: f32, y: f32, features: &Features) -> Rgb {
         let d = rectangle(lx, ly, 0.095, 0.06);
         if d < 0.0 {
             c = if d > -0.016 || ly.abs() < 0.008 {
-                [0.30, 0.12, 0.08] // the eaves and the ridge
+                eaves
             } else if ly < 0.0 {
-                scale(ROOF, 1.1)
+                scale(roof, 1.1)
             } else {
-                scale(ROOF, 0.78)
+                scale(roof, 0.78)
             };
         }
     }
@@ -369,19 +376,15 @@ fn city(x: f32, y: f32, features: &Features) -> Rgb {
         } else {
             0.75
         };
-        c = if d > -0.018 || (x.abs() - y.abs()).abs() < 0.007 {
-            [0.16, 0.17, 0.25]
-        } else {
-            scale([0.40, 0.45, 0.62], face)
-        };
+        c = if d > -0.018 || (x.abs() - y.abs()).abs() < 0.007 { eaves } else { scale(roof, face) };
     }
     // The wall, with battlements.
     if o < 0.0 && o > -wall {
         let angle = y.atan2(x);
         let block = (((angle + PI) / (2.0 * PI) * 40.0).floor() as i32) % 2;
-        let mut color = scale([0.78, 0.75, 0.69], 0.95 + 0.1 * fractal(x, y, 24, 1, 102));
+        let mut color = scale(stone, 0.95 + 0.1 * fractal(x, y, 24, 1, 102));
         if o > -0.042 && block == 0 {
-            color = [0.55, 0.52, 0.48];
+            color = shadow;
         }
         if o > -0.016 || o < -wall + 0.016 {
             color = DARK;
@@ -405,12 +408,12 @@ fn city(x: f32, y: f32, features: &Features) -> Rgb {
             c = if d > 0.125 - 0.018 {
                 DARK
             } else if d > 0.095 {
-                [0.78, 0.75, 0.69]
+                stone
             } else if d > 0.095 - 0.014 {
-                [0.30, 0.12, 0.08]
+                eaves
             } else {
                 let bright = (0.55 - 0.9 * (tx * 0.6 + ty * 0.8) / 0.095).clamp(0.0, 1.0);
-                scale(ROOF, 0.6 + 0.6 * bright)
+                scale(roof, 0.6 + 0.6 * bright)
             };
         }
     }

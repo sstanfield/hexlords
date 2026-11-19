@@ -1,8 +1,9 @@
 //! The main map: the visible hexes with their terrain textures and borders,
 //! the roads over them, the units (a disc of their side's color and their
-//! kind's picture), a banner on a city that has an owner and a pip for each
-//! unit in it (a city shows itself, not a unit), and the overlay on the hexes
-//! the caller marks (in the game: where the selected unit can move).
+//! kind's picture), the cities (each drawn with its owner's picture, roofs in
+//! the owner's color, and a pip for each unit in it: a city shows itself, not
+//! a unit), and the overlay on the hexes the caller marks (in the game: where
+//! the selected unit can move).
 //!
 //! The geometry is built on the CPU each frame (`MapGeometry`, which needs no
 //! GPU and is tested without one) and drawn in layers: the terrain, one mesh
@@ -24,6 +25,7 @@ use super::mesh::{BufferPool, MeshList};
 use super::roads::{self, ROAD_PICTURES};
 use super::shaders::{FlatVertex, HexVertex, Pipelines};
 use super::textures::{AssetDirs, Sampling};
+use crate::state::scenario::side_name;
 use crate::state::{DEFAULT_UNIT_IMAGE, Hex, Map, Side, TileType, UnitId};
 use crate::view::{HEX_HEIGHT_ADJUST, MapView};
 
@@ -43,9 +45,6 @@ const NO_BORDER: [f32; 4] = [0.0, 0.0, 0.0, 2.0];
 pub const DISC_RADIUS: f32 = 0.5;
 pub const DISC_RING: f32 = 0.05;
 pub const RING_COLOR: [f32; 4] = [0.08, 0.07, 0.07, 1.0];
-/// The banner of a city's owner: a small disc toward the hex's upper right.
-const BANNER_AT: [f32; 2] = [0.42, 0.66];
-const BANNER_RADIUS: f32 = 0.16;
 /// A city shows its own picture, not a unit: its garrison is a pip for each
 /// unit, in its side's color, in rows over the gate, the first unit at the
 /// left of the bottom row. `pip_at` places them.
@@ -88,10 +87,34 @@ pub struct Marks<'a> {
 }
 
 /// The image a terrain is drawn with, relative to the asset directory: every
-/// terrain has its own, made by `tools/assetgen` (`docs/tiles.md`).
+/// terrain has its own, made by `tools/assetgen` (`docs/tiles.md`). A city's
+/// is nobody's city; a side's is [`city_image`].
 pub fn tile_image(kind: TileType) -> String {
     format!("tiles/{}_tile.png", kind.name())
 }
+
+/// The image a city held by `side` is drawn with: its roofs in the side's
+/// color (nobody's: the city terrain's own tile).
+pub fn city_image(side: Side) -> String {
+    match side {
+        Side::Grey => tile_image(TileType::City),
+        side => format!("tiles/city_{}_tile.png", side_name(side)),
+    }
+}
+
+/// Every side a city can belong to, nobody last: the order of the cities'
+/// meshes and textures.
+pub const CITY_SIDES: [Side; 9] = [
+    Side::Black,
+    Side::White,
+    Side::Red,
+    Side::Green,
+    Side::Blue,
+    Side::Orange,
+    Side::Yellow,
+    Side::Purple,
+    Side::Grey,
+];
 
 /// How many terrains, and so tile images, there are.
 const TERRAINS: usize = TileType::ALL.len();
@@ -100,11 +123,14 @@ const TERRAINS: usize = TileType::ALL.len();
 /// coordinates.
 #[derive(Default)]
 pub struct MapGeometry {
-    /// The terrain, a mesh for each kind's image (indexed like `TileType::ALL`).
+    /// The terrain, a mesh for each kind's image (indexed like `TileType::ALL`;
+    /// the cities are not here).
     terrain: [MeshList<HexVertex>; TERRAINS],
+    /// The cities, a mesh for each owner's picture (indexed by `Side::index`).
+    cities: [MeshList<HexVertex>; CITY_SIDES.len()],
     /// The roads, a mesh for each picture (`roads::picture`).
     roads: Vec<MeshList<HexVertex>>,
-    /// The discs under the units and the cities' banners.
+    /// The discs under the units and the cities' pips.
     discs: MeshList<FlatVertex>,
     /// The hexes that hold units, by the image of the unit that is shown.
     units: Vec<(String, MeshList<HexVertex>)>,
@@ -169,7 +195,7 @@ impl MapGeometry {
     /// tint, and which: where the selected unit can go, in the game.
     /// C++: MapRenderer::renderMap, drawHex
     pub fn build(&mut self, map: &Map, view: &MapView, marks: &Marks) {
-        for list in &mut self.terrain {
+        for list in self.terrain.iter_mut().chain(&mut self.cities) {
             list.clear();
         }
         self.roads.resize_with(ROAD_PICTURES, MeshList::new);
@@ -196,7 +222,12 @@ impl MapGeometry {
 
             let vertices: [HexVertex; HEX_VERTICES] =
                 std::array::from_fn(|i| HexVertex { pos: corner(i), uv: uvs[i], bary: HEX_BARY[i], border });
-            self.terrain[tile.kind.index()].push(&vertices, &HEX_INDICES);
+            // A city is drawn with its owner's picture.
+            let owner = map.city_at(hex).map_or(Side::Grey, |city| city.side);
+            match tile.kind {
+                TileType::City => self.cities[owner.index()].push(&vertices, &HEX_INDICES),
+                kind => self.terrain[kind.index()].push(&vertices, &HEX_INDICES),
+            }
 
             // The road, over the terrain and its border. The places have a
             // picture of their own in the middle of their tile: roads run up
@@ -213,14 +244,8 @@ impl MapGeometry {
                 self.roads[roads::picture(shape, tile.kind == TileType::Water)].push(&road, &HEX_INDICES);
             }
 
-            // A city's banner, in its owner's color, and its garrison's pips.
+            // A city's garrison: its pips.
             if tile.kind == TileType::City {
-                if let Some(city) = map.city_at(hex).filter(|c| c.side != Side::Grey) {
-                    let [r, g, b] = side_color(city.side);
-                    let ring = BANNER_RADIUS + DISC_RING * 0.8;
-                    push_disc(&mut self.discs, view, visible.center, variant, BANNER_AT, ring, RING_COLOR);
-                    push_disc(&mut self.discs, view, visible.center, variant, BANNER_AT, BANNER_RADIUS, [r, g, b, 1.0]);
-                }
                 let garrison: Vec<(UnitId, Side)> =
                     tile.units().iter().filter_map(|id| map.units().get(*id).map(|unit| (*id, unit.side()))).collect();
                 for (i, (id, side)) in garrison.iter().enumerate() {
@@ -263,9 +288,14 @@ impl MapGeometry {
         }
     }
 
-    /// The hexes of one terrain.
+    /// The hexes of one terrain (no cities: see [`MapGeometry::cities`]).
     pub fn terrain(&self, kind: TileType) -> &MeshList<HexVertex> {
         &self.terrain[kind.index()]
+    }
+
+    /// The cities that `side` holds (`Side::Grey`: nobody's).
+    pub fn cities(&self, side: Side) -> &MeshList<HexVertex> {
+        &self.cities[side.index()]
     }
 
     /// The hexes whose road is drawn with one picture (`roads::picture`).
@@ -273,8 +303,8 @@ impl MapGeometry {
         self.roads.get(picture).unwrap_or(&self.none)
     }
 
-    /// The discs under the units and the cities' banners, each with its dark
-    /// ring first.
+    /// The discs under the units and the cities' pips, each with its ring
+    /// first.
     pub fn discs(&self) -> &MeshList<FlatVertex> {
         &self.discs
     }
@@ -300,6 +330,8 @@ pub struct MapRenderer {
     dirs: AssetDirs,
     /// Indexed like `TileType::ALL`.
     tiles: Vec<TextureId>,
+    /// The cities' pictures, indexed by `Side::index`.
+    cities: Vec<TextureId>,
     /// Indexed by `roads::picture`.
     roads: Vec<TextureId>,
     /// The units' pictures that have been asked for, by image; `None` for one
@@ -311,11 +343,17 @@ pub struct MapRenderer {
     buffers: BufferPool,
 }
 
-/// The textures every map needs: the tiles, the roads, the default unit.
-fn load_all(
-    ctx: &mut dyn RenderingBackend,
-    dirs: &AssetDirs,
-) -> Result<(Vec<TextureId>, Vec<TextureId>, TextureId), String> {
+/// The textures every map needs.
+struct Textures {
+    tiles: Vec<TextureId>,
+    cities: Vec<TextureId>,
+    roads: Vec<TextureId>,
+    unit: TextureId,
+}
+
+/// The textures every map needs: the tiles, the sides' cities, the roads, the
+/// default unit.
+fn load_all(ctx: &mut dyn RenderingBackend, dirs: &AssetDirs) -> Result<Textures, String> {
     // On an error, what was loaded before it goes again.
     let mut loaded: Vec<TextureId> = Vec::new();
     let mut load = |ctx: &mut dyn RenderingBackend, path: &str, sampling| match dirs.texture(ctx, path, sampling) {
@@ -336,12 +374,16 @@ fn load_all(
     for kind in TileType::ALL {
         tiles.push(load(ctx, &tile_image(kind), Sampling::Smooth)?);
     }
-    let mut road_pictures = Vec::with_capacity(ROAD_PICTURES);
+    let mut cities = Vec::with_capacity(CITY_SIDES.len());
+    for side in CITY_SIDES {
+        cities.push(load(ctx, &city_image(side), Sampling::Smooth)?);
+    }
+    let mut roads = Vec::with_capacity(ROAD_PICTURES);
     for picture in 0..ROAD_PICTURES {
-        road_pictures.push(load(ctx, &roads::road_image(picture), Sampling::Smooth)?);
+        roads.push(load(ctx, &roads::road_image(picture), Sampling::Smooth)?);
     }
     let unit = load(ctx, UNIT_IMAGE, Sampling::Nearest)?;
-    Ok((tiles, road_pictures, unit))
+    Ok(Textures { tiles, cities, roads, unit })
 }
 
 /// Draw a layer of textured hexes with the hex pipeline, which is applied.
@@ -371,10 +413,11 @@ impl MapRenderer {
     /// Load the tiles, the roads and the default unit's picture.
     /// C++: MapRenderer::MapRenderer
     pub fn new(ctx: &mut dyn RenderingBackend, dirs: AssetDirs) -> Result<MapRenderer, String> {
-        let (tiles, roads, unit) = load_all(ctx, &dirs)?;
+        let Textures { tiles, cities, roads, unit } = load_all(ctx, &dirs)?;
         Ok(MapRenderer {
             dirs,
             tiles,
+            cities,
             roads,
             units: HashMap::new(),
             unit,
@@ -391,9 +434,9 @@ impl MapRenderer {
     /// Take the pictures from other directories (another map was opened, with
     /// assets of its own or without). If one cannot be read, the old ones stay.
     pub fn set_dirs(&mut self, ctx: &mut dyn RenderingBackend, dirs: AssetDirs) -> Result<(), String> {
-        let (tiles, roads, unit) = load_all(ctx, &dirs)?;
+        let Textures { tiles, cities, roads, unit } = load_all(ctx, &dirs)?;
         self.delete_textures(ctx);
-        (self.dirs, self.tiles, self.roads, self.unit) = (dirs, tiles, roads, unit);
+        (self.dirs, self.tiles, self.cities, self.roads, self.unit) = (dirs, tiles, cities, roads, unit);
         Ok(())
     }
 
@@ -441,6 +484,9 @@ impl MapRenderer {
         for kind in TileType::ALL {
             draw_textured(ctx, buffers, geometry.terrain(kind), self.tiles[kind.index()]);
         }
+        for side in CITY_SIDES {
+            draw_textured(ctx, buffers, geometry.cities(side), self.cities[side.index()]);
+        }
         for (picture, texture) in self.roads.iter().enumerate() {
             draw_textured(ctx, buffers, geometry.roads(picture), *texture);
         }
@@ -460,7 +506,8 @@ impl MapRenderer {
 
     fn delete_textures(&mut self, ctx: &mut dyn RenderingBackend) {
         let units = self.units.drain().filter_map(|(_, texture)| texture);
-        for texture in self.tiles.drain(..).chain(self.roads.drain(..)).chain(units).chain([self.unit]) {
+        let pictures = self.tiles.drain(..).chain(self.cities.drain(..)).chain(self.roads.drain(..));
+        for texture in pictures.chain(units).chain([self.unit]) {
             ctx.delete_texture(texture);
         }
     }
@@ -505,6 +552,14 @@ mod tests {
         let images: Vec<String> = TileType::ALL.into_iter().map(tile_image).collect();
         assert_eq!(images[0], "tiles/grass_tile.png");
         assert_eq!(tile_image(TileType::City), "tiles/city_tile.png");
+        // A side's city has its own; nobody's is the terrain's.
+        assert_eq!(city_image(Side::Red), "tiles/city_red_tile.png");
+        assert_eq!(city_image(Side::Grey), tile_image(TileType::City));
+        for (i, side) in CITY_SIDES.into_iter().enumerate() {
+            assert_eq!(side.index(), i, "{side:?}");
+            let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+            assert!(AssetDirs::new(&assets, None).find(&city_image(side)).is_some(), "{side:?}");
+        }
         assert_eq!(tile_image(TileType::Desert), "tiles/desert_tile.png");
         let mut different = images.clone();
         different.sort();
@@ -530,7 +585,8 @@ mod tests {
         g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
         for (col, kind) in TileType::ALL.into_iter().enumerate() {
             let want = center_of(&view, Hex::new(10, col as u16 + 5));
-            let drawn = hexes(g.terrain(kind));
+            // (A city hex without a city record is nobody's city.)
+            let drawn = hexes(if kind == TileType::City { g.cities(Side::Grey) } else { g.terrain(kind) });
             assert!(drawn.iter().any(|h| h[0].pos == want), "{kind:?}");
             if kind != TileType::Water {
                 assert_eq!(drawn.len(), 1, "{kind:?}");
@@ -767,7 +823,7 @@ mod tests {
     }
 
     #[test]
-    fn a_city_shows_itself_its_owners_banner_and_a_pip_for_each_unit() {
+    fn a_city_shows_itself_in_its_owners_colors_and_a_pip_for_each_unit() {
         let mut rows = vec!["g".repeat(20); 20];
         rows[10] = "gggggcggggcgggcggggg".to_string();
         let terrain = format!("20\n20\n{}\n", rows.join("\n"));
@@ -780,29 +836,34 @@ mod tests {
         let mut g = MapGeometry::new();
         g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
 
+        // Each city with its owner's picture, nobody's with the city's own;
+        // none in the terrain's.
+        let at = |list: &MeshList<HexVertex>| -> Vec<[f32; 2]> { hexes(list).iter().map(|h| h[0].pos).collect() };
+        assert_eq!(at(g.cities(Side::Red)), [center_of(&view, Hex::new(10, 5))]);
+        assert_eq!(at(g.cities(Side::Blue)), [center_of(&view, Hex::new(10, 10))]);
+        assert_eq!(at(g.cities(Side::Grey)), [center_of(&view, Hex::new(10, 14))]);
+        assert!(g.terrain(TileType::City).is_empty() && g.cities(Side::Green).is_empty());
         // No unit's picture: the cities' own show.
         assert_eq!(g.units().count(), 0);
-        // One has its banner and two red pips, Two its banner and six blue
-        // pips, Three (nobody's, empty) nothing.
+        // One has two red pips, Two six blue ones, Three (nobody's, empty)
+        // nothing.
         let colors: Vec<[f32; 4]> = discs(&g).into_iter().map(|(_, color)| color).collect();
         let count = |colors: &[[f32; 4]], color: [f32; 4]| colors.iter().filter(|c| **c == color).count();
-        assert_eq!(count(&colors, solid(Side::Red)), 3);
-        assert_eq!(count(&colors, solid(Side::Blue)), 7);
+        assert_eq!(count(&colors, solid(Side::Red)), 2);
+        assert_eq!(count(&colors, solid(Side::Blue)), 6);
         assert_eq!(count(&colors, solid(Side::Grey)), 0);
-        assert_eq!((count(&colors, RING_COLOR), colors.len()), (10, 20));
-        // Each pip where `pip_at` says, under the banner.
+        assert_eq!((count(&colors, RING_COLOR), colors.len()), (8, 16));
+        // Each pip where `pip_at` says, in the lower half of the hex.
         let place = |hex: Hex, at: [f32; 2]| {
             let middle = view.hex_center(hex);
             view.to_ndc([middle[0] + at[0], middle[1] + at[1]])
         };
         let pips: Vec<[f32; 2]> =
             discs(&g).into_iter().filter(|(_, color)| *color == solid(Side::Blue)).map(|(at, _)| at).collect();
-        let banner = place(Hex::new(10, 10), BANNER_AT);
-        assert_eq!(pips[0], banner);
-        for i in 0..6 {
+        for (i, pip) in pips.iter().enumerate() {
             let at = place(Hex::new(10, 10), pip_at(i, 6).unwrap());
-            assert!((pips[i + 1][0] - at[0]).abs() < 1e-6 && (pips[i + 1][1] - at[1]).abs() < 1e-6, "pip {i}");
-            assert!(at[1] < banner[1]);
+            assert!((pip[0] - at[0]).abs() < 1e-6 && (pip[1] - at[1]).abs() < 1e-6, "pip {i}");
+            assert!(at[1] < center_of(&view, Hex::new(10, 10))[1]);
         }
 
         // Rows of four from the bottom, each row centered; no more than two.
@@ -825,7 +886,7 @@ mod tests {
         let militia = map.units_at(Hex::new(10, 5))[1];
         g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: Some(militia) });
         let colors: Vec<[f32; 4]> = discs(&g).into_iter().map(|(_, color)| color).collect();
-        assert_eq!((count(&colors, SELECTED_RING), count(&colors, RING_COLOR)), (1, 9));
+        assert_eq!((count(&colors, SELECTED_RING), count(&colors, RING_COLOR)), (1, 7));
         let gold = discs(&g).into_iter().find(|(_, color)| *color == SELECTED_RING).unwrap().0;
         assert_eq!(gold, place(Hex::new(10, 5), pip_at(1, 2).unwrap()));
         assert_eq!(g.units().count(), 0);

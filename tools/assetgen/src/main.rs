@@ -10,14 +10,16 @@ use assetgen::png::encode_rgba;
 use assetgen::preview::previews;
 use assetgen::road;
 use assetgen::scatter::Features;
+use assetgen::sides;
 use assetgen::terrain::Terrain;
-use assetgen::tile::{Edge, SIZES, atlas, render_all};
+use assetgen::tile::{Edge, SIZES, atlas, render_all, render_city};
 
 const USAGE: &str = "\
 usage: assetgen [--out <dir>] [--size <pixels>] [--cutout] [--atlas] [--previews <dir>]
 
 Draws the game's pictures and writes them into an asset directory:
   tiles/<terrain>_tile.png          the ten terrains
+  tiles/city_<side>_tile.png        a city for each side, in its color
   roads/road_NN.png, bridge_NN.png  a road over land and over water, in each
                                     of its 14 shapes
   units/<name>.png                  the units' signs
@@ -101,7 +103,16 @@ fn run(args: &Args) -> Result<(), String> {
     for (terrain, tile) in Terrain::ALL.into_iter().zip(&tiles) {
         write_png(&dir.join(format!("{}_tile.png", terrain.name())), size, size, tile)?;
     }
-    println!("wrote {} tiles of {size} x {size} pixels to {}", tiles.len(), dir.display());
+    // A city for each side, in its color (the terrain's own is nobody's).
+    for side in &sides::PLAYERS {
+        write_png(&dir.join(sides::city_file(side)), size, size, &render_city(side, size, args.edge, &features))?;
+    }
+    println!(
+        "wrote {} tiles and {} sides' cities of {size} x {size} pixels to {}",
+        tiles.len(),
+        sides::PLAYERS.len(),
+        dir.display()
+    );
     if args.atlas {
         let atlas = atlas(&tiles, size, "atlas.png");
         write_png(&dir.join("atlas.png"), atlas.w, atlas.h, &atlas.rgba)?;

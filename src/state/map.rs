@@ -428,11 +428,67 @@ impl Map {
     }
 
     /// A city, to change who holds it, its name or its walls. Where it is
-    /// does not change.
+    /// does not change. Who holds a city shows on the map (its picture, its
+    /// color on the minimap), so this counts as a change of the terrain.
     pub fn city_mut(&mut self, id: CityId) -> Option<&mut City> {
         self.cities.get(id)?;
-        self.changed();
+        self.terrain_changed();
         self.cities.get_mut(id)
+    }
+
+    /// Set what a city builds: one of what it can build (an index into its
+    /// `units`), or nothing. A change starts the work over. False if there is
+    /// no such city, or it cannot build that.
+    pub fn set_production(&mut self, id: CityId, building: Option<usize>) -> bool {
+        let Some(city) = self.cities.get_mut(id) else { return false };
+        if building.is_some_and(|i| i >= city.units.len()) {
+            return false;
+        }
+        if city.building != building {
+            city.building = building;
+            city.progress = 0;
+        }
+        self.changed();
+        true
+    }
+
+    /// A turn of work in every city that `side` holds. A city that builds
+    /// something works a turn more on it; when it has worked the turns the
+    /// unit takes, the unit stands in the city and the work starts over. A
+    /// city whose hex is full waits, its unit done, until there is room. A
+    /// kind the map does not have is never done. Returns the new units.
+    pub fn produce(&mut self, side: Side) -> Vec<UnitId> {
+        let working: Vec<CityId> = self
+            .cities
+            .iter()
+            .filter(|city| city.side == side && city.side != Side::Grey && city.production().is_some())
+            .map(|city| city.id)
+            .collect();
+        let mut made = Vec::new();
+        for id in working {
+            let Some(city) = self.cities.get_mut(id) else { continue };
+            let Some(prod) = city.production().cloned() else { continue };
+            city.progress = city.progress.saturating_add(1).min(prod.time.max(1));
+            if city.progress < prod.time.max(1) {
+                continue;
+            }
+            let pos = city.pos;
+            let room = self.units_at(pos).len() < MAX_STACK;
+            let Some(kind) = self.units.kind_named(&prod.basename).filter(|_| room) else { continue };
+            let Some(unit) = self.new_unit_of(side, kind) else { continue };
+            if self.place_unit(unit, pos).is_ok() {
+                made.push(unit);
+                if let Some(city) = self.cities.get_mut(id) {
+                    city.progress = 0;
+                }
+            } else {
+                self.kill_unit(unit);
+            }
+        }
+        if !made.is_empty() {
+            self.changed();
+        }
+        made
     }
 
     /// C++: Map::getCity
@@ -751,5 +807,89 @@ mod tests {
         let before = map.terrain_revision();
         map.tile_mut(hex).unwrap().road = true;
         assert!(map.terrain_revision() > before);
+    }
+
+    /// A city held by red that can build riders (in two turns) and militia,
+    /// with one militia in it.
+    fn city_map() -> (Map, CityId) {
+        let mut rows = vec!["g".repeat(20); 20];
+        rows[5] = "gggggcgggggggggggggg".to_string();
+        let terrain = format!("20\n20\n{}\n", rows.join("\n"));
+        let units = "unit riders\nname Riders\nmoves 10\nenter grass 1, city 1\n\
+                     unit militia\nname Militia\nmoves 6\nenter grass 1, city 1\n";
+        let cities = "city 5 5\nname Wrenfold\nside red\nproduce riders 2\nproduce militia 1\ngarrison militia\n";
+        let (map, _) = crate::state::scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+        let id = map.city_at(Hex::new(5, 5)).unwrap().id;
+        (map, id)
+    }
+
+    #[test]
+    fn a_city_builds_what_it_is_set_to_in_its_turns() {
+        let (mut map, id) = city_map();
+        let city = Hex::new(5, 5);
+        // Nothing at first: the turns go by and nothing comes.
+        assert_eq!(map.cities().get(id).unwrap().production(), None);
+        assert!(map.produce(Side::Red).is_empty());
+        // Riders: two turns.
+        let before = map.revision();
+        assert!(map.set_production(id, Some(0)));
+        assert!(map.revision() > before);
+        assert_eq!(map.cities().get(id).unwrap().production().unwrap().basename, "riders");
+        assert!(map.produce(Side::Red).is_empty());
+        assert_eq!(map.cities().get(id).unwrap().progress, 1);
+        let made = map.produce(Side::Red);
+        assert_eq!(made.len(), 1);
+        let rider = map.units().get(made[0]).unwrap();
+        assert_eq!((rider.name.as_str(), rider.side(), rider.movement), ("Riders", Side::Red, 10));
+        assert_eq!(map.units_at(city).len(), 2);
+        assert_eq!(map.units_at(city)[1], made[0], "it joins the end of the stack");
+        // And the work starts over.
+        assert_eq!(map.cities().get(id).unwrap().progress, 0);
+        // Only the holder's turn counts.
+        assert!(map.produce(Side::Blue).is_empty());
+        assert_eq!(map.cities().get(id).unwrap().progress, 0);
+    }
+
+    #[test]
+    fn a_change_of_production_starts_over_and_a_full_city_waits() {
+        let (mut map, id) = city_map();
+        map.set_production(id, Some(0));
+        map.produce(Side::Red);
+        // The same again keeps the work; another starts it over.
+        map.set_production(id, Some(0));
+        assert_eq!(map.cities().get(id).unwrap().progress, 1);
+        map.set_production(id, Some(1));
+        assert_eq!(map.cities().get(id).unwrap().progress, 0);
+        // Not something it cannot build, and not a city that is not there.
+        assert!(!map.set_production(id, Some(2)));
+        assert!(!map.set_production(CityId(9), None));
+        assert_eq!(map.cities().get(id).unwrap().building, Some(1));
+        // Militia, one turn each, until the hex is full; then it waits, done.
+        let city = Hex::new(5, 5);
+        for _ in 0..MAX_STACK - 1 {
+            assert_eq!(map.produce(Side::Red).len(), 1);
+        }
+        assert_eq!(map.units_at(city).len(), MAX_STACK);
+        assert!(map.produce(Side::Red).is_empty());
+        assert_eq!(map.cities().get(id).unwrap().progress, 1, "done, and waiting");
+        // Room again: it comes.
+        let first = map.units_at(city)[0];
+        map.kill_unit(first);
+        assert_eq!(map.produce(Side::Red).len(), 1);
+        // Nothing: no more work.
+        map.set_production(id, None);
+        assert!(map.produce(Side::Red).is_empty());
+    }
+
+    #[test]
+    fn a_city_that_changes_hands_is_a_change_of_what_the_map_shows() {
+        let (mut map, id) = city_map();
+        let before = map.terrain_revision();
+        map.city_mut(id).unwrap().side = Side::Blue;
+        assert!(map.terrain_revision() > before);
+        // Its production is not.
+        let before = map.terrain_revision();
+        map.set_production(id, Some(1));
+        assert_eq!(map.terrain_revision(), before);
     }
 }

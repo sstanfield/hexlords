@@ -8,7 +8,9 @@
 
 use crate::ASPECT;
 use crate::scatter::Features;
-use crate::terrain::Terrain;
+use crate::shapes::Rgb;
+use crate::sides::Side;
+use crate::terrain::{Terrain, city};
 
 /// What is outside the hex in a tile's image.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -36,6 +38,17 @@ pub fn hex_distance(x: f32, y: f32) -> f32 {
 /// row first. Every pixel is the mean of a grid of samples (6 x 6 up to 64
 /// pixels, 4 x 4 above).
 pub fn render(terrain: Terrain, size: usize, edge: Edge, features: &Features) -> Vec<u8> {
+    render_with(size, edge, &|x, y| terrain.shade(x, y, features))
+}
+
+/// A side's city as a tile, its roofs in the side's color (see [`render`]).
+pub fn render_city(side: &Side, size: usize, edge: Edge, features: &Features) -> Vec<u8> {
+    render_with(size, edge, &|x, y| city(x, y, features, side.color))
+}
+
+/// Draw a picture given by its color at each point of screen space (see
+/// [`render`]).
+fn render_with(size: usize, edge: Edge, shade: &dyn Fn(f32, f32) -> Rgb) -> Vec<u8> {
     let samples = if size <= 64 { 6 } else { 4 };
     // A pixel's width in the hex model, which is 2 wide.
     let pixel = 2.0 / size as f32;
@@ -54,7 +67,7 @@ pub fn render(terrain: Terrain, size: usize, edge: Edge, features: &Features) ->
                         continue;
                     }
                     // The model is 2 high; on the screen that is 2 x ASPECT.
-                    let color = terrain.shade(x, y * ASPECT, features);
+                    let color = shade(x, y * ASPECT);
                     for (total, part) in sum.iter_mut().zip(color) {
                         *total += part;
                     }

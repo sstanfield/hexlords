@@ -1,6 +1,7 @@
-//! The minimap: the whole map as flat-colored hexes on black, drawn once into a
-//! texture and blitted from it every frame, with a marker on top that shows the
-//! part of the map the main view is looking at.
+//! The minimap: the whole map as flat-colored hexes on black, its cities as
+//! squares in their holders' colors, drawn once into a texture and blitted
+//! from it every frame, with a marker on top that shows the part of the map
+//! the main view is looking at.
 //!
 //! The C++ drew the minimap into the window and read it back with
 //! `glReadPixels` to cache it. Here it is drawn into a render target, which has
@@ -12,6 +13,7 @@
 use miniquad::{PassAction, RenderPass, RenderingBackend, TextureId};
 
 use super::hex_mesh::{HEX_INDICES, HEX_VERTICES, HexVariant};
+use super::map_renderer::{RING_COLOR, side_color};
 use super::mesh::{BufferPool, MAX_VERTICES, Mesh};
 use super::shaders::{BlitVertex, FlatVertex, Pipelines};
 use super::textures::texture_params;
@@ -37,10 +39,11 @@ pub fn terrain_color(kind: TileType) -> [f32; 3] {
         TileType::Hill => [0.51, 0.53, 0.29],
         TileType::Mountain => [0.48, 0.45, 0.41],
         TileType::Water => [0.19, 0.38, 0.64],
-        // The dome's gold, the bare ground's brown, the roofs' red.
+        // The dome's gold, the bare ground's brown, nobody's roofs' grey (a
+        // city's mark in its holder's color goes over it: `city_marks`).
         TileType::Temple => [0.95, 0.80, 0.30],
         TileType::Ruin => [0.42, 0.28, 0.18],
-        TileType::City => [0.80, 0.16, 0.12],
+        TileType::City => [0.55, 0.55, 0.55],
     }
 }
 
@@ -54,6 +57,20 @@ pub fn minimap_hex(map: &Map, view: &MiniMapView, hex: Hex) -> [FlatVertex; HEX_
         pos: view.to_ndc([positions[i][0] + cx, positions[i][1] + cy]),
         color: [r, g, b, 1.0],
     })
+}
+
+/// The cities' marks: for each city a dark square and over it one a little
+/// smaller in its holder's color (nobody's grey), bigger than a hex of a big
+/// map so that every city can be found. Quads of four vertices.
+pub fn city_marks(map: &Map, view: &MiniMapView) -> Vec<FlatVertex> {
+    let edge = (view.city_mark_reach() / 4.0).max(1.0);
+    let mut quads = Vec::with_capacity(map.cities().len() * 8);
+    for city in map.cities().iter() {
+        let [r, g, b] = side_color(city.side);
+        quads.extend(quad_corners(view.city_mark(city.pos, edge)).map(|pos| FlatVertex { pos, color: RING_COLOR }));
+        quads.extend(quad_corners(view.city_mark(city.pos, 0.0)).map(|pos| FlatVertex { pos, color: [r, g, b, 1.0] }));
+    }
+    quads
 }
 
 /// A rectangle `[left, bottom, right, top]` as four corners and two triangles.
@@ -151,6 +168,16 @@ impl MiniMapRenderer {
                 mesh.vertices.extend_from_slice(&minimap_hex(map, view, Hex::new(row, col)));
                 mesh.indices.extend(HEX_INDICES.iter().map(|i| base + i));
             }
+        }
+        flush(&mut mesh, &mut self.hex_buffers, ctx);
+        // The cities over the hexes.
+        for quad in city_marks(map, view).chunks(4) {
+            if mesh.vertices.len() + 4 > MAX_VERTICES {
+                flush(&mut mesh, &mut self.hex_buffers, ctx);
+            }
+            let base = mesh.vertices.len() as u16;
+            mesh.vertices.extend_from_slice(quad);
+            mesh.indices.extend(QUAD_INDICES.iter().map(|i| base + i));
         }
         flush(&mut mesh, &mut self.hex_buffers, ctx);
         self.hexes = mesh;
@@ -296,5 +323,26 @@ mod tests {
         assert!(quad.iter().all(|v| v.color == [0.0, 0.0, 0.0, 0.3]));
         // Two triangles that share the diagonal.
         assert_eq!(QUAD_INDICES, [0, 1, 2, 0, 2, 3]);
+    }
+
+    #[test]
+    fn a_city_is_a_square_in_its_holders_color_on_a_dark_one() {
+        let mut map = Map::new(30, 40, TileType::Grass).unwrap();
+        let red = map.add_city("Alder", Hex::new(5, 5), 1).unwrap();
+        map.city_mut(red).unwrap().side = crate::state::Side::Red;
+        map.add_city("Birch", Hex::new(20, 30), 0).unwrap();
+        let mut view = MiniMapView::new(30, 40);
+        view.resize(200, 231);
+        let marks = city_marks(&map, &view);
+        assert_eq!(marks.len(), 16, "two quads for each of the two cities");
+        let colors: Vec<[f32; 4]> = marks.chunks(4).map(|q| q[0].color).collect();
+        let [r, g, b] = side_color(crate::state::Side::Red);
+        let [nr, ng, nb] = side_color(crate::state::Side::Grey);
+        assert_eq!(colors, [RING_COLOR, [r, g, b, 1.0], RING_COLOR, [nr, ng, nb, 1.0]]);
+        // The color is inside the dark square, around the city's hex.
+        let (outer, inner) = (&marks[0..4], &marks[4..8]);
+        assert!(outer[0].pos[0] < inner[0].pos[0] && outer[2].pos[0] > inner[2].pos[0]);
+        let [x, y] = view.to_ndc(view.hex_center(Hex::new(5, 5)));
+        assert!(inner[0].pos[0] < x && x < inner[2].pos[0] && inner[0].pos[1] < y && y < inner[2].pos[1]);
     }
 }

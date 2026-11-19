@@ -10,7 +10,10 @@ there is a documented map format (`docs/map-format.md`: terrain, roads, the
 map's own kinds of unit, its cities), which the game plays with `--map`; a map
 editor (`tools/mapeditor`); and the tiles, the roads and the units' signs are
 drawn by a program (`tools/assetgen`, `docs/tiles.md`). Units move turn by
-turn; there are no rules for fighting, building or whose turn it is yet.
+turn, and cities build what their holder sets; there are no rules for
+fighting, gold or whose turn it is yet. **`docs/gameplay.md` is the plan for
+the rules**: two modes (turns one side after the other, and rounds where all
+sides give orders at once) on one set of rules made of orders.
 
 **The C++ is history, not a specification.** The owner's word (2026-11-18):
 the port is done and the game now goes its own way, so nothing has to match the
@@ -20,7 +23,8 @@ C++ to understand why something is the way it is, not to decide what to do.
 
 **Read before changing anything substantial:** `hexgame-rust-port-plan.md`
 (section 3 for the design, section 8 for what comes next; section 2 describes
-the C++ demo and is no longer binding).
+the C++ demo and is no longer binding), and `docs/gameplay.md` before
+touching the rules.
 
 ## Layout
 
@@ -30,17 +34,17 @@ the C++ demo and is no longer binding).
 | `src/game.rs` | `Game`: the map plus the selected unit and its range; the demo setup; `select_hex` |
 | `src/view.rs`, `src/minimap_view.rs` | Pure math: zoom, scale factors, visible hexes, picking, panning, recentering; the minimap's fit and marker |
 | `src/render/` | miniquad drawing: hex meshes, shaders, textures, the map and minimap renderers, the PNG writer; the units' icons for the panels (`unit_icon`, on the CPU) |
-| `src/gui/` | Turbo Ferret widgets: `MapWidget`, `MiniMapWidget`, `RootWindow`. They record commands; they hold no game state |
+| `src/gui/` | Turbo Ferret widgets: `MapWidget`, `MiniMapWidget`, `RootWindow`. They record commands; they hold no game state. `build`: windows made from code (the help, the cities') |
 | `src/platform.rs` | What miniquad leaves out: bringing the window to the front on macOS (the crate's one `unsafe` block) |
 | `src/screen.rs` | `MapScreen`: the `Ui`, a map and the two views together, with no window: what the game and the tools share. `Scene`: what the window can run |
-| `src/session.rs`, `src/info.rs` | `Session`: the game on a map screen (its layout, what a click and Enter do, the panels around the map: the stack's slots, the box the pointer opens over a unit, the city). `info`: what the panels say, as plain functions of the game's state. Tests drive both |
+| `src/session.rs`, `src/info.rs`, `src/city_windows.rs` | `Session`: the game on a map screen (its layout, what a click and Enter do, the panels around the map: the stack's slots, the box the pointer opens over a unit, the city). `info`: what the panels say, as plain functions of the game's state. `city_windows`: a city in full, where its holder sets what it builds, and the lists of cities. Tests drive all three |
 | `src/script.rs` | Scripted input (`--script`) for any scene, for screenshots and tests |
 | `src/app.rs`, `src/main.rs` | The miniquad window (`App<S: Scene>`, `app::run`): forwards input to the scene, draws the frame. `main.rs` is the game's command line |
 | `tools/mapeditor/` | The map editor, a workspace member on the game's library: `Editor` (a scene: the sidebar, painting, files), `brush`, `history` (undo), `check` (`--check`) |
 | `tools/assetgen/` | The picture generator, a workspace member with no dependencies: `terrain` (a function for each terrain's art), `noise` and `scatter` (what repeats on the hex grid), `tile` (the image, the atlas), `overlay`, `road` and `icons` (the pictures that go over a tile), `preview` (maps drawn without the game), `png` (the writer) |
 | `assets/` | `layouts/main.tb.txt` (the game), `layouts/editor.tb.txt` (the editor), Turbo Badger's default skin and `skin/hexgame.tb.txt` (our changes, loaded on top), `tiles/`, `roads/` and the signs in `units/` (what `assetgen` makes, and nothing else), `units/default_unit.png` (the C++ demo's), `maps/` (`*.map` files and map directories) |
 | `tests/`, `tools/*/tests/` | Headless tests of the layouts, the widgets and the interaction; of the generator against the game |
-| `docs/` | `map-format.md` (the map file, for people and agents who write maps); `tiles.md` (the tiles, for those who draw them); `deviations.md`; `screenshots/` |
+| `docs/` | `map-format.md` (the map file, for people and agents who write maps); `tiles.md` (the tiles, for those who draw them); `gameplay.md` (the plan for the rules); `deviations.md`; `screenshots/` |
 | `reference/hexGame/` | The C++ original, for reference. **Read-only, never edit it.** Gitignored: if it is missing, `git clone https://github.com/sstanfield/hexGame reference/hexGame` |
 | `encumbered/` | The owner's private maps that are not ours to give away (one built from an existing game, for nostalgia). Gitignored: **never commit anything from it, and never copy its names, maps, numbers or pictures into the game.** The game plays them with `--map encumbered/<map>` |
 
@@ -143,7 +147,9 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
   the two together.
   A new terrain is a `TileType`, a `Terrain` in the generator with the same
   name and letter (a test compares the two lists), a tile, and a minimap
-  color. Everything generated has to stay original: no shapes, palettes or
+  color. A city has a tile for each side (`city_<side>_tile.png`), in the
+  sides' colors, which the generator (`sides.rs`) and the game (`side_color`)
+  each know; a test holds them together. Everything generated has to stay original: no shapes, palettes or
   icons taken from an existing game.
 - **Maps are any size and shape**, 20 to 600 rows and as many columns, the
   two independent. Nothing may assume a square: `tests/shapes.rs` runs wide,
@@ -192,8 +198,9 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
 2. **The map is drawn by the host, not by a widget.** Turbo Ferret widgets paint
    through a batched, read-only `PaintCtx`, so `MapWidget` and `MiniMapWidget`
    paint nothing: `App::draw` draws the map into their rectangles first and the
-   UI on top (plan, section 3.3). A map that must sit *between* UI layers needs
-   a new hook in Turbo Ferret.
+   UI on top (plan, section 3.3). A map that must sit *between* UI layers (in
+   a window) cannot be drawn so: the list of cities shows a picture of the
+   minimap drawn on the CPU (`render::minimap_image`) in an `ImageWidget`.
 3. **Pixels are framebuffer pixels.** On a HiDPI screen the window is 1024 x 768
    points but 2048 x 1536 pixels, and the UI, the layout and the mouse all use
    the pixels.

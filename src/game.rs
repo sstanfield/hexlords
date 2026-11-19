@@ -32,11 +32,26 @@ pub struct Game {
     /// there is drawn instead of the game's of the same path.
     pub assets: Option<PathBuf>,
     turn: u32,
+    /// The side this screen plays: whose cities are "my cities", whose
+    /// production can be set. (Whose turn it is, and the other sides' players,
+    /// are rules still to come: `docs/gameplay.md`.)
+    player: Side,
 }
 
 impl Game {
     pub fn new(map: Map) -> Game {
-        Game { map, selected: None, range: None, range_revision: 0, assets: None, turn: 1 }
+        let player = first_side(&map);
+        Game { map, selected: None, range: None, range_revision: 0, assets: None, turn: 1, player }
+    }
+
+    /// The side this screen plays.
+    pub fn player(&self) -> Side {
+        self.player
+    }
+
+    /// Play another side.
+    pub fn set_player(&mut self, side: Side) {
+        self.player = side;
     }
 
     /// The game on a map that was read from its files, with its cities and
@@ -53,7 +68,13 @@ impl Game {
         if let Some(hex) = start {
             map.cursor = hex;
         }
-        Game { assets, ..Game::new(map) }
+        // The player is the side whose city the cursor starts on.
+        let player = start.and_then(|hex| map.city_at(hex)).map(|c| c.side).filter(|side| *side != Side::Grey);
+        let mut game = Game { assets, ..Game::new(map) };
+        if let Some(side) = player {
+            game.player = side;
+        }
+        game
     }
 
     /// Read a map (a `.map` file or a map directory, `docs/map-format.md`)
@@ -77,12 +98,17 @@ impl Game {
     }
 
     /// The turn is over: every unit of every side gets its movement points
-    /// back for the next (see `Units::reset_move_points`), and nothing is
-    /// selected. (There are no rules for whose turn it is yet: this is the
-    /// least a turn can be.)
+    /// back for the next (see `Units::reset_move_points`), every city that
+    /// builds something works a turn on it (`Map::produce`), and nothing is
+    /// selected. (There are no rules for whose turn it is yet, or for what
+    /// a unit costs: `docs/gameplay.md`.)
     pub fn end_turn(&mut self) {
         for side in Side::PLAYERS.into_iter().chain([Side::Grey]) {
             self.map.reset_move_points(side);
+        }
+        // The cities' work: what is done stands in its city, with all its moves.
+        for side in Side::PLAYERS {
+            self.map.produce(side);
         }
         self.deselect();
         self.turn += 1;
@@ -246,6 +272,15 @@ impl Game {
 
 /// A hex's terrain in words, with its road: "grass, road", "water, bridge",
 /// "mountain, pass".
+/// The side a game on this map is played as, until it is told otherwise: the
+/// holder of the first city that has one, else the side of the first unit,
+/// else red.
+fn first_side(map: &Map) -> Side {
+    let holder = map.cities().iter().map(|c| c.side).find(|side| *side != Side::Grey);
+    let unit = || map.units().iter().map(|u| u.side()).find(|side| *side != Side::Grey);
+    holder.or_else(unit).unwrap_or(Side::Red)
+}
+
 pub fn describe_terrain(kind: TileType, road: bool) -> String {
     let road = match (road, kind) {
         (false, _) => "",
@@ -601,5 +636,42 @@ mod tests {
         let e = Game::load(&dir.join("none.map")).err().unwrap();
         assert!(e.contains("none.map"), "{e}");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_player_is_the_side_whose_city_the_game_starts_in() {
+        let mut rows = vec!["g".repeat(20); 20];
+        rows[5] = "gggggcgggggcgggggggg".to_string();
+        let terrain = format!("20\n20\n{}\n", rows.join("\n"));
+        let units = "unit militia\nname Militia\nmoves 6\nenter grass 1, city 1\n";
+        let cities = "city 5 5\nname Alder\nside blue\ncity 5 11\nname Birch\nside green\ngarrison militia\n";
+        let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+        let mut game = Game::from_scenario(Scenario { map, assets: None, warnings });
+        assert_eq!(game.player(), Side::Green, "Birch has the garrison: the game starts there");
+        game.set_player(Side::Blue);
+        assert_eq!(game.player(), Side::Blue);
+        // The demo plays its one unit's side.
+        assert_eq!(Game::demo().player(), Side::Black);
+        // A map of nobody's: red.
+        assert_eq!(Game::new(Map::new(20, 20, TileType::Grass).unwrap()).player(), Side::Red);
+    }
+
+    #[test]
+    fn the_end_of_a_turn_is_a_turn_of_work_in_the_cities() {
+        let mut rows = vec!["g".repeat(20); 20];
+        rows[5] = "gggggcgggggggggggggg".to_string();
+        let terrain = format!("20\n20\n{}\n", rows.join("\n"));
+        let units = "unit militia\nname Militia\nmoves 6\nenter grass 1, city 1\n";
+        let cities = "city 5 5\nname Alder\nside blue\nproduce militia 2\n";
+        let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+        let mut game = Game::from_scenario(Scenario { map, assets: None, warnings });
+        let id = game.map.city_at(Hex::new(5, 5)).unwrap().id;
+        game.map.set_production(id, Some(0));
+        game.end_turn();
+        assert!(game.map.units_at(Hex::new(5, 5)).is_empty());
+        game.end_turn();
+        let &[unit] = game.map.units_at(Hex::new(5, 5)) else { panic!("one militia") };
+        // With its moves, and no more: it did not get the turn's extra.
+        assert_eq!(game.map.units().get(unit).unwrap().movement, 6);
     }
 }

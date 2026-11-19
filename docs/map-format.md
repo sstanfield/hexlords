@@ -161,7 +161,7 @@ city 13 7
 | `name` | The city's name; no two cities share one | an error: it must be given |
 | `side` | Who holds it at the start: `black`, `white`, `red`, `green`, `blue`, `orange`, `yellow`, `purple`, or `neutral` | `neutral` |
 | `walls` | How strong its walls are | 0 |
-| `produce` | A kind of unit it can build and the turns one takes: `produce <unit> <turns>`. A line for each | it builds nothing |
+| `produce` | A kind of unit it can build and the turns one takes: `produce <unit> <turns>`. A line for each. The game starts with the city building none of them: its holder chooses | it can build nothing |
 | `garrison` | Units that stand in it at the start, on its side: `garrison <unit> [<how many>]`. A line for each kind; at most 8 units in a city | nobody |
 
 A city tile without a record is still a city, with no name: `--check` warns of
@@ -174,7 +174,8 @@ A picture is looked for in the map's `assets/` directory first, then in the
 game's. So a map brings a unit's picture by having the file its `image` names
 (`assets/units/dragon.png` for `image units/dragon.png`), and it can replace
 any of the game's the same way: a terrain's tile (`assets/tiles/grass_tile.png`),
-a road (`assets/roads/road_09.png`). `docs/tiles.md` says what each picture
+a side's city (`assets/tiles/city_red_tile.png`), a road
+(`assets/roads/road_09.png`). `docs/tiles.md` says what each picture
 has to look like.
 
 ## How the grid lies on the screen

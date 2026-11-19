@@ -12,6 +12,7 @@
 pub mod hex_mesh;
 pub mod map_renderer;
 pub mod mesh;
+pub mod minimap_image;
 pub mod minimap_renderer;
 pub mod png_out;
 pub mod roads;
@@ -20,7 +21,10 @@ pub mod textures;
 pub mod unit_icon;
 
 pub use hex_mesh::HexVariant;
-pub use map_renderer::{MapGeometry, MapRenderer, Marks, RANGE_OVERLAY, side_color, tile_image};
+pub use map_renderer::{
+    CITY_SIDES, MapGeometry, MapRenderer, Marks, RANGE_OVERLAY, city_image, side_color, tile_image,
+};
+pub use minimap_image::minimap_image;
 pub use minimap_renderer::MiniMapRenderer;
 pub use shaders::Pipelines;
 pub use textures::AssetDirs;

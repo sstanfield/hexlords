@@ -18,7 +18,10 @@ direction. So far:
   passes, the map's own kinds of unit, its cities with what they build and
   who stands in them, and pictures of its own if it wants them;
 - the game plays such a map (`--map`): units of eight sides move over it,
-  along its roads, turn by turn. There is no fighting, building or winning yet;
+  along its roads, turn by turn, and cities build what their holder sets.
+  There is no fighting, gold or winning yet: [docs/gameplay.md](docs/gameplay.md)
+  is the plan for the rules, in two modes (sides taking turns, or all giving
+  orders at once);
 - a [map editor](#the-map-editor) for the terrain and the roads;
 - [tiles, roads and unit signs](#the-pictures) drawn by a program in the
   repository, so the art is original and can be made again.
@@ -54,16 +57,20 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | Two fingers or the wheel over the minimap | The view goes the same way as over the main map, but much farther: a pixel of the minimap for a pixel of the fingers |
 | Arrow keys | Move the cursor; the view follows when the cursor leaves it, and comes back to it if it was moved away |
 | `1` / `2` | Zoom out / in, centered on the cursor |
-| The End turn button, or Ctrl+T (Cmd+T) | The turn is over: every unit has its movement points back |
+| The End turn button, or Ctrl+T (Cmd+T) | The turn is over: every unit has its movement points back, and every city works a turn on what it builds |
+| City details, beside the map | The selected hex's city in a window: all about it, and buttons for what it builds (only its holder's work) |
+| All cities, My cities | A list of the cities, or of yours, with a minimap that rings the one you choose; open it in full, or go to it |
+| Esc | Close the window on top (the help first) |
 | F1, or `?` | The help: every key and what the mouse does (Esc closes it) |
 | Ctrl+Cmd+F, or F11 | Fullscreen on and off (macOS keeps F11 for itself) |
 | Ctrl+Q (or Cmd+Q) | Quit |
 
 A unit is a disc in its side's color with the sign of its kind. A city shows
-itself, not the units in it: a small disc of its owner's color if it has one,
-and a pip for each unit of its garrison in that unit's color (the selected
-unit's ringed in gold). The map stops at its edges: the view never shows
-what is past them.
+itself, not the units in it: its roofs and walls in its holder's color (grey
+for nobody's), and a pip for each unit of its garrison in that unit's color
+(the selected unit's ringed in gold). On the minimap a city is a square in
+its holder's color. The map stops at its edges: the view never shows what is
+past them.
 
 **Under the map** the first line says the turn and what is under the cursor
 (with what it would cost the selected unit to go there). Below it is the
@@ -73,11 +80,15 @@ the unit's icon with its strength and the movement points it has left
 (`4 · 6/10`). Pointing at one opens a box with all about it; clicking it
 selects it, and the last line is about the selected unit. The map takes all
 the room the panel leaves. **Under the minimap** is the selected hex's city:
-its name, who holds it, its walls and garrison, and what it builds, in how
-many turns, at what price.
+its name, who holds it, its walls and garrison, what it is building and what
+it can build, in how many turns, at what price.
 
-Every unit can be moved, whoever's it is: whose turn it is, fighting and
-building are rules still to come.
+![The list of cities and a city in full](docs/screenshots/cities.png)
+
+The game plays one side, the holder of the city it starts in: those are "my
+cities", and only those can be set to build. Every unit can still be moved,
+whoever's it is: whose turn it is, fighting and gold are rules still to come
+([docs/gameplay.md](docs/gameplay.md)).
 
 ## Options
 

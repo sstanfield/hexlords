@@ -107,6 +107,34 @@ impl MiniMapView {
         Some(self.pick((x as f32 + 0.5 - half_w) / half_w, -(y as f32 + 0.5 - half_h) / half_h))
     }
 
+    /// Where the map is on the widget: `[left, bottom, right, top]` in
+    /// normalized device coordinates (the rest of the widget is margin).
+    pub fn map_rect(&self) -> [f32; 4] {
+        let (map_w, map_h) = self.extent();
+        let (x, y) = (map_w / 2.0 * self.wf, map_h / 2.0 * self.hf);
+        [-x, -y, x, y]
+    }
+
+    /// How far a city's mark reaches from the city's middle, in pixels: a
+    /// fixed share of the widget, so that a city shows on a big map whose hexes
+    /// are a pixel or two, and at least about its hex on a small one.
+    pub fn city_mark_reach(&self) -> f32 {
+        let (w, h) = self.size;
+        let hex = self.wf * w as f32;
+        (w.min(h) as f32 / 60.0).max(0.55 * hex).max(2.0)
+    }
+
+    /// A city's mark on the minimap, a square around the city's hex grown by
+    /// `more` pixels on each side: `[left, bottom, right, top]` in normalized
+    /// device coordinates.
+    pub fn city_mark(&self, hex: Hex, more: f32) -> [f32; 4] {
+        let (w, h) = self.size;
+        let [x, y] = self.to_ndc(self.hex_center(hex));
+        let reach = self.city_mark_reach() + more;
+        let (dx, dy) = (reach * 2.0 / w.max(1) as f32, reach * 2.0 / h.max(1) as f32);
+        [x - dx, y - dy, x + dx, y + dy]
+    }
+
     /// The part of the map the main view shows, as a rectangle `[left, bottom,
     /// right, top]` in the minimap's normalized device coordinates, clamped to the
     /// widget.
@@ -342,5 +370,37 @@ mod tests {
         assert_eq!(v.pick_pixel(-50, -50, W, H), Some(Hex::new(0, 0)));
         assert_eq!(v.pick_pixel(W + 50, H + 50, W, H), Some(Hex::new(99, 99)));
         assert_eq!(v.pick_pixel(10, 10, 0, 0), None);
+    }
+
+    #[test]
+    fn the_map_fills_its_rect_and_a_city_has_a_mark_to_be_seen() {
+        // A wide map in the demo's widget: it fills the width, with margins
+        // above and below.
+        let v = mini(46, 72, W, H);
+        let [left, bottom, right, top] = v.map_rect();
+        assert!((left + 1.0).abs() < 1e-4 && (right - 1.0).abs() < 1e-4, "{left} {right}");
+        assert!(bottom > -1.0 && top < 1.0 && (bottom + top).abs() < 1e-4, "{bottom} {top}");
+        // The corner hexes' middles are inside it.
+        for hex in [Hex::new(0, 0), Hex::new(45, 71)] {
+            let [x, y] = v.to_ndc(v.hex_center(hex));
+            assert!(x >= left && x <= right && y >= bottom && y <= top, "{hex}");
+        }
+        // A city's mark: some pixels across, around its hex, square on the
+        // screen; a little more is a little bigger.
+        let hex = Hex::new(20, 30);
+        let [l, b, r, t] = v.city_mark(hex, 0.0);
+        let (px_w, px_h) = ((r - l) / 2.0 * W as f32, (t - b) / 2.0 * H as f32);
+        assert!((px_w - px_h).abs() < 1e-3 && (6.0..12.0).contains(&px_w), "{px_w} x {px_h}");
+        let [x, y] = v.to_ndc(v.hex_center(hex));
+        assert!(l < x && x < r && b < y && y < t);
+        let [l2, _, r2, _] = v.city_mark(hex, 1.0);
+        assert!(((r2 - l2) - (r - l) - 4.0 / W as f32).abs() < 1e-5);
+        // On a small map, at least about its hex.
+        let small = mini(20, 20, W, H);
+        let hex_px = small.factors().0 * W as f32;
+        assert!(small.city_mark_reach() * 2.0 >= hex_px, "{} {hex_px}", small.city_mark_reach());
+        // A widget with no size has no marks to speak of, and no division by zero.
+        let none = MiniMapView::new(20, 20);
+        assert!(none.city_mark(hex, 1.0).iter().all(|c| c.is_finite()));
     }
 }

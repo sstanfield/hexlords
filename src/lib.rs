@@ -13,7 +13,8 @@
 //! - [`screen`]: the UI, a map and its views together, without a window: what
 //!   the game and the tools share (tests drive it).
 //! - [`help`]: what the help window says (every window has one, on F1).
-//! - [`session`]: the game on a map screen.
+//! - [`session`]: the game on a map screen; [`city_windows`], its windows
+//!   about cities.
 //! - [`script`]: scripted input, for screenshots and tests.
 //! - [`app`]: the window (a miniquad `EventHandler`) that runs a scene.
 
@@ -22,6 +23,7 @@
 #![deny(unsafe_code)]
 
 pub mod app;
+pub mod city_windows;
 pub mod game;
 pub mod gui;
 pub mod help;

@@ -14,7 +14,7 @@ cargo run -p assetgen --release -- --previews target/previews  # and pictures of
 
 | Directory | What | Size |
 |---|---|---|
-| `assets/tiles/` | `<terrain>_tile.png`: the ten terrains | 256 x 256, no transparency |
+| `assets/tiles/` | `<terrain>_tile.png`: the ten terrains; `city_<side>_tile.png`: a city for each side | 256 x 256, no transparency |
 | `assets/roads/` | `road_NN.png` and `bridge_NN.png`: a road over land and over water, in each of its 14 shapes | 256 x 256, transparent |
 | `assets/units/` | `<name>.png`: the units' signs (and `default_unit.png`, the C++ demo's) | 128 x 128, transparent |
 
@@ -28,6 +28,16 @@ art. A map can bring pictures of its own that replace the game's
 `assets/tiles/<name>_tile.png`, where `<name>` is the terrain's name: `grass`,
 `forest`, `hill`, `swamp`, `desert`, `mountain`, `water`, `city`, `temple`,
 `ruin` (the terrains of `docs/map-format.md`).
+
+A city is drawn with the picture of the side that holds it:
+`city_<side>_tile.png`, `<side>` one of `black`, `white`, `red`, `green`,
+`blue`, `orange`, `yellow`, `purple`, and `city_tile.png` for nobody's. They
+are the same town, with its roofs (of the houses, the towers and the keep)
+in the side's color and its wall's stone tinted with it, so that whose a city
+is shows at a glance, even when a hex is a few pixels wide. The colors are
+the game's (`side_color` in `src/render/map_renderer.rs`, `sides.rs` in the
+generator; a test holds them together). A map that draws its own cities
+gives all nine.
 
 - **Square, 256 x 256, RGBA, no transparency.** A side has to be a power of
   two (the game makes smaller copies of the picture by halving it).
@@ -70,7 +80,8 @@ art. A map can bring pictures of its own that replace the game's
   (`terrain_color` in `src/render/minimap_renderer.rs`): for open country the
   mean color of its tile (a test compares them), for the three places a color
   that stands out. Change a tile's colors much and that test says to change
-  the minimap's.
+  the minimap's. A city is a square over its hex, a few pixels across
+  whatever the map's size, in its holder's color on a dark one.
 
 ## Roads and bridges
 
@@ -121,8 +132,7 @@ A unit's picture is the hex's square like a tile, **with the sign inside the
 disc**: within 0.45 of the middle, where the hex is 1 from its middle to its
 points (in a 128 pixel picture, within 29 pixels of the middle sideways and
 33 up and down). Its transparent pixels have the outline's color, for the
-same reason as the roads'. A city that has an owner flies a small disc of the
-owner's color at its upper right. A city shows its own picture, never a unit's:
+same reason as the roads'. A city shows its own picture, never a unit's:
 its garrison is a small pip for each unit, in the unit's color, in rows of
 four over the gate at the bottom of the tile, so keep that part of a city
 plain enough for them to show.

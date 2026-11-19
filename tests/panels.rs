@@ -100,7 +100,15 @@ fn at_the_start_the_panels_are_about_the_hex_the_cursor_starts_on() {
     assert!(s.tip().is_empty());
     assert_eq!(
         s.city(),
-        ["Wrenfold", "Held by green", "Walls 1", "Garrison: 3 units", "Builds:", "  Riders: 2 turns, price 9"]
+        [
+            "Wrenfold",
+            "Held by green",
+            "Walls 1",
+            "Garrison: 3 units",
+            "Building nothing",
+            "Can build:",
+            "  Riders: 2 turns, price 9"
+        ]
     );
     // The widgets say the same.
     assert_eq!(s.screen.ui.text(widget(&s, "status")), Some(s.status()));

@@ -19,6 +19,7 @@
 //! - [`shapes`]: colors, distances to shapes, light.
 //! - [`scatter`]: the trees, peaks, reeds ... strewn over a tile.
 //! - [`terrain`]: the ten terrains, one function each.
+//! - [`sides`]: the sides' colors, which a city's roofs are drawn in.
 //! - [`tile`]: a terrain as a tile image; the atlas.
 //! - [`overlay`]: pictures that let the tile show through.
 //! - [`road`]: roads and bridges, in the 14 shapes a hex's road can have.
@@ -39,6 +40,7 @@ pub mod preview;
 pub mod road;
 pub mod scatter;
 pub mod shapes;
+pub mod sides;
 pub mod terrain;
 pub mod tile;
 
