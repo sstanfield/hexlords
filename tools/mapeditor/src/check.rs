@@ -94,11 +94,12 @@ pub fn check_path(path: &Path, assets: Option<&Path>) -> Result<Report, String> 
         let builds: Vec<String> = city.units.iter().map(|p| format!("{} ({})", p.basename, p.time)).collect();
         let builds = if builds.is_empty() { "nothing".to_string() } else { builds.join(", ") };
         report.cities.push(format!(
-            "{} at {}: {}, walls {}, builds {builds}, garrison {}",
+            "{} at {}: {}, walls {}, income {}, builds {builds}, garrison {}",
             city.name,
             city.pos,
             side_name(city.side),
             city.walls,
+            city.income,
             map.units_at(city.pos).len()
         ));
     }
@@ -235,7 +236,10 @@ mod tests {
                 "ghosts \"ghosts\": strength 1, moves 3, upkeep 0, price 0, units/ghosts.png".to_string()
             ]
         );
-        assert_eq!(report.cities, ["Wrenfold at (4, 4): red, walls 1, builds riders (2), garrison 2".to_string()]);
+        assert_eq!(
+            report.cities,
+            ["Wrenfold at (4, 4): red, walls 1, income 10, builds riders (2), garrison 2".to_string()]
+        );
         // The city nobody named, and the picture that is nowhere.
         assert_eq!(report.warnings.len(), 2, "{:?}", report.warnings);
         assert_eq!(report.warnings[0], "the city tile at (4, 7) has no entry in cities.txt");

@@ -50,7 +50,11 @@ Built (2026-11-19):
   players, `--headless` to play agents against agents, and a text protocol
   for a program of one's own to play.
 
-Not built: gold, fog of war, rounds, saved games.
+- **gold**: a treasury for each side, its cities' taxes, its units'
+  upkeep (those it cannot pay leave), and the price of what its cities
+  build, paid when it is done (it waits for the gold);
+
+Not built: fog of war, rounds, saved games.
 
 ## One set of rules, two modes
 
@@ -145,12 +149,19 @@ and the rules use integers, not floats.
 5. **Cities change hands.** A city is taken by moving into it when no enemy
    stands in it (after a battle, or empty). A neutral city has a small
    garrison of its own.
-6. **Gold.** Every city brings in gold each turn; what a city builds is paid
-   for (proposal: when it is finished, or it waits); every unit costs its
-   upkeep each turn; a side that cannot pay loses units. **The price is the
-   city's** (decided): what its `produce` line says, or, if it says nothing,
-   the unit's `price`. (The unit's price is also what it would cost in a
-   city that is given a new kind to build, later.)
+6. **Gold** (built). Each side has a treasury (`--gold`, or the new game
+   screen: 50 unless set). At the start of each of its turns (from the
+   second round): its cities' taxes come in (a city's `income`, 10 unless
+   its map says); its units' upkeep goes out, and if the treasury cannot pay
+   it all, units leave, unpaid: as few as make up what it is short (the
+   least dear that does it alone, or else the dearest; a commander last);
+   then what its cities finish is paid for, and a unit whose price the
+   treasury cannot pay waits in its city, done, until it can. **The price is
+   the city's** (decided): what its `produce` line says, or, if it says
+   nothing, the unit's `price`. (The unit's price is also what it would
+   cost in a city that is given a new kind to build, later.) The sidebar
+   shows the treasury, its taxes and its upkeep; the log says who left
+   unpaid. Still to try: gold from a city taken, a tax rate to set.
 7. **Commanders**, in the first version of the rules (decided), even if
    they do little at first. Built: a kind of unit is a commander (the
    `commander <n>` key in `units.txt`, the bonus it gives); a hex holds one
@@ -260,6 +271,7 @@ it; the rules are written once for both modes from the first step.
    enemy is a battle (turns), with chance in it; units die; cities are
    taken; a commander leads a stack. **Done (2026-11-19).**
 3. **Gold.** Income, the cities' prices, upkeep; a treasury in the sidebar.
+   **Done (2026-11-19).**
 4. **The end, and an AI.** A side that has lost its cities is out; the last
    one wins; a first AI.
 5. **Fog of war.**

@@ -2,10 +2,12 @@
 # letter c) in terrain.map. docs/map-format.md says what the lines mean.
 #
 # Four sides start with a city each, and a captain in it; the other five
-# cities are nobody's.
+# cities are nobody's. "income" is the gold a city brings its holder each
+# turn: the sides' cities 20, the others 8 to 15.
 
 city 13 7
   name     Brindlewick
+  income   20
   side     red
   walls    2
   produce  militia 1
@@ -17,6 +19,7 @@ city 13 7
 
 city 19 42
   name     Eskerfall
+  income   20
   side     green
   walls    2
   produce  militia 1
@@ -28,6 +31,7 @@ city 19 42
 
 city 35 17
   name     Hollinstead
+  income   20
   side     yellow
   walls    2
   produce  militia 1
@@ -41,6 +45,7 @@ city 35 17
 
 city 38 48
   name     Kestrelby
+  income   20
   side     blue
   walls    2
   produce  militia 1
@@ -52,6 +57,7 @@ city 38 48
 
 city 11 23
   name     Cendermoor
+  income   10
   walls    1
   produce  militia 1
   produce  archers 3
@@ -59,6 +65,7 @@ city 11 23
 
 city 17 29
   name     Dunmarrow
+  income   10
   walls    1
   produce  militia 2
   produce  wardens 3
@@ -66,11 +73,13 @@ city 17 29
 
 city 22 11
   name     Fenwyke
+  income   8
   produce  militia 2
   garrison militia
 
 city 25 32
   name     Gorsehaven
+  income   15
   walls    3
   produce  wardens 2
   produce  riders 4
@@ -78,6 +87,7 @@ city 25 32
 
 city 31 25
   name     Ivelmouth
+  income   10
   walls    1
   produce  militia 1
   produce  riders 4

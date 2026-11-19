@@ -8,7 +8,8 @@
 //! - `--order fixed|drawn`: the sides play in the same order each round, or
 //!   one drawn anew; `--seed <n>`: the seed of the game's chance;
 //! - `--chance <0-10>`: how much chance there is in a battle (5); `--battles
-//!   lines|strength`: how a battle goes (lines);
+//!   lines|strength`: how a battle goes (lines); `--gold <n>`: the gold each
+//!   side starts with (50);
 //! - `--headless`: no window: the computer plays every side of `--map` until
 //!   one is left or `--rounds <n>` (200) have gone by, then says how it went
 //!   (`--log`: and everything that happened on the way);
@@ -51,12 +52,13 @@ struct Args {
     log: bool,
     chance: Option<u8>,
     battles: Option<System>,
+    gold: Option<u32>,
 }
 
 fn usage() -> String {
     format!(
         "usage: hexgame [--map <file.map or map directory>] [--players <side>=<person|agent>,...] [--order fixed|drawn] \
-         [--seed <n>] [--chance <0-10>] [--battles lines|strength] [--headless [--rounds <n>] [--log]] \
+         [--seed <n>] [--chance <0-10>] [--battles lines|strength] [--gold <n>] [--headless [--rounds <n>] [--log]] \
          [--script <steps>] {OPTIONS_USAGE}"
     )
 }
@@ -94,6 +96,10 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
                 let chance = n.parse::<u8>().ok().filter(|c| *c <= MAX_CHANCE);
                 parsed.chance = Some(chance.ok_or(format!("--chance: \"{n}\" is not a number from 0 to 10"))?);
             }
+            "--gold" => {
+                let n = value("a number")?;
+                parsed.gold = Some(n.parse().map_err(|_| format!("--gold: \"{n}\" is not a number"))?);
+            }
             "--battles" => {
                 let name = value("lines or strength")?;
                 parsed.battles =
@@ -118,7 +124,7 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let Args { window, map, script, players, order, seed, headless, rounds, log, chance, battles } = args;
+    let Args { window, map, script, players, order, seed, headless, rounds, log, chance, battles, gold } = args;
     // A map that cannot be read ends the run before a window opens.
     let game = match &map {
         Some(path) => match Game::load(path) {
@@ -154,6 +160,7 @@ fn main() {
             setup.seed = seed.unwrap_or(setup.seed);
             setup.combat.chance = chance.unwrap_or(setup.combat.chance);
             setup.combat.system = battles.unwrap_or(setup.combat.system);
+            setup.gold = gold.unwrap_or(setup.gold);
             Some(game.with_setup(setup))
         }
         None => None,
@@ -231,6 +238,8 @@ mod tests {
         assert_eq!((o.chance, o.battles), (Some(0), Some(System::Strength)));
         assert_eq!(parse(&["--chance", "11"]).unwrap_err(), "--chance: \"11\" is not a number from 0 to 10");
         assert_eq!(parse(&["--battles", "dice"]).unwrap_err(), "--battles: \"dice\" is not lines or strength");
+        assert_eq!(parse(&["--gold", "120"]).unwrap().gold, Some(120));
+        assert_eq!(parse(&["--gold", "lots"]).unwrap_err(), "--gold: \"lots\" is not a number");
     }
 
     #[test]

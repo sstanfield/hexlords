@@ -45,7 +45,7 @@ pub fn cursor_line(game: &Game) -> String {
 /// line or two: a battle it fought, as the attacker or the defender, with who
 /// died; a city it took or lost; a side out of the game, the winner. Nothing
 /// if it is not about `side` (the other sides' battles and cities, the units
-/// built).
+/// built). Units that left it unpaid are told too.
 pub fn record_lines(map: &Map, record: &Record, side: Side) -> Vec<String> {
     match &record.event {
         Event::Battle { at, attacker, defender, attackers, defenders, won, dead, .. }
@@ -73,6 +73,9 @@ pub fn record_lines(map: &Map, record: &Record, side: Side) -> Vec<String> {
             } else {
                 vec![format!("{} took {name} from you.", sentence(side_name(*by)))]
             }
+        }
+        Event::Deserted { side: whose, name } if *whose == side => {
+            vec![format!("Unpaid, your {name} left you: the treasury could not pay their upkeep.")]
         }
         Event::Out { side: out } if *out == side => vec!["You are out of the game.".to_string()],
         Event::Out { side: out } => vec![format!("{} is out of the game.", sentence(side_name(*out)))],
@@ -260,26 +263,54 @@ pub fn production_option(map: &Map, prod: &UnitProd) -> String {
 }
 
 /// What a city is building and how far it has got: "Building Riders, 1 of 3
-/// turns done", or "Building nothing".
+/// turns done", or "Building nothing". A unit that is done and still in the
+/// works waits for its price, or for room in the city: "Riders done: they
+/// wait for 10 gold".
 pub fn progress_line(map: &Map, city: &City) -> String {
     match city.production() {
+        Some(prod) if city.progress >= prod.time => {
+            format!("{} done: {}", kind_name(map, prod), waits(map, city, prod))
+        }
         Some(prod) => format!("Building {}, {} of {} done", kind_name(map, prod), city.progress, turns(prod.time)),
         None => "Building nothing".to_string(),
     }
 }
 
-/// What a city is building, short, for the sidebar: "Building Riders, 1/3".
+/// What a city is building, short, for the sidebar: "Building Riders, 1/3",
+/// or "Riders: wait for 10 gold".
 pub fn progress_short(map: &Map, city: &City) -> String {
     match city.production() {
+        Some(prod) if city.progress >= prod.time => format!("{}: {}", kind_name(map, prod), waits(map, city, prod)),
         Some(prod) => format!("Building {}, {}/{}", kind_name(map, prod), city.progress, prod.time),
         None => "Building nothing".to_string(),
     }
+}
+
+/// Why a unit that is done is not out yet: no room in the city, or no gold.
+fn waits(map: &Map, city: &City, prod: &UnitProd) -> String {
+    if map.units_at(city.pos).len() >= crate::state::MAX_STACK {
+        "they wait for room".to_string()
+    } else {
+        format!("they wait for {} gold", prod.cost)
+    }
+}
+
+/// A side's treasury in two lines, for the sidebar: "Gold 34", and what comes
+/// in and goes out a turn, "Taxes +40, upkeep -32".
+pub fn treasury_lines(game: &Game, side: Side) -> [String; 2] {
+    let (income, upkeep) = (game.income(side), game.upkeep(side));
+    [format!("Gold {}", game.gold(side)), format!("Taxes +{income}, upkeep -{upkeep}")]
 }
 
 /// A city's holder, walls and place in a line: "Held by red, walls 2, at row
 /// 13, column 7".
 pub fn city_summary(city: &City) -> String {
     format!("{}, walls {}, at row {}, column {}", holder(city.side), city.walls, city.pos.row, city.pos.col)
+}
+
+/// What a city brings its holder: "Taxes: 20 gold a turn".
+pub fn income_line(city: &City) -> String {
+    format!("Taxes: {} gold a turn", city.income)
 }
 
 /// Who stands in a city, kind by kind in the order they stand: "Garrison: 2
@@ -320,7 +351,7 @@ pub fn city_row(map: &Map, city: &City, own: bool) -> String {
 pub fn city_lines(map: &Map, city: &City, room: usize) -> Vec<String> {
     let mut lines = vec![city.name.clone()];
     lines.push(holder(city.side));
-    lines.push(format!("Walls {}", city.walls));
+    lines.push(format!("Walls {}, taxes {}", city.walls, city.income));
     lines.push(match map.units_at(city.pos).len() {
         0 => "No garrison".to_string(),
         1 => "Garrison: 1 unit".to_string(),
@@ -475,7 +506,7 @@ mod tests {
             [
                 "Wrenfold",
                 "Held by blue",
-                "Walls 2",
+                "Walls 2, taxes 10",
                 "Garrison: 3 units",
                 "Building nothing",
                 "Can build:",
@@ -486,12 +517,19 @@ mod tests {
         let tarn = game.map.city_at(Hex::new(5, 15)).unwrap();
         assert_eq!(
             city_lines(&game.map, tarn, 8),
-            ["Low Tarn", "Nobody's", "Walls 0", "No garrison", "Builds nothing"]
+            ["Low Tarn", "Nobody's", "Walls 0, taxes 10", "No garrison", "Builds nothing"]
         );
         // Less room than lines: the last says how many are left out.
         assert_eq!(
             city_lines(&game.map, wrenfold, 6),
-            ["Wrenfold", "Held by blue", "Walls 2", "Garrison: 3 units", "Building nothing", "  ... and 3 more"]
+            [
+                "Wrenfold",
+                "Held by blue",
+                "Walls 2, taxes 10",
+                "Garrison: 3 units",
+                "Building nothing",
+                "  ... and 3 more"
+            ]
         );
     }
 
@@ -509,7 +547,7 @@ mod tests {
         assert_eq!(city_row(&game.map, &city(&game), true), "Wrenfold: building nothing");
         // Building riders, a turn done.
         game.map.set_production(id, Some(0));
-        game.map.produce(Side::Blue);
+        game.map.produce(Side::Blue, &mut 1000);
         assert_eq!(progress_line(&game.map, &city(&game)), "Building Riders, 1 of 3 turns done");
         assert_eq!(city_row(&game.map, &city(&game), true), "Wrenfold: Riders, 1 of 3");
         assert_eq!(city_lines(&game.map, &city(&game), 9)[4], "Building Riders, 1/3");

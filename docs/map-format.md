@@ -150,6 +150,7 @@ city 13 7
   name     Brindlewick
   side     red
   walls    2
+  income   20
   produce  militia 1
   produce  riders 3 12
   garrison militia 2
@@ -162,7 +163,8 @@ city 13 7
 | `name` | The city's name; no two cities share one | an error: it must be given |
 | `side` | Who holds it at the start: `black`, `white`, `red`, `green`, `blue`, `orange`, `yellow`, `purple`, or `neutral` | `neutral` |
 | `walls` | How strong its walls are | 0 |
-| `produce` | A kind of unit it can build, the turns one takes, and what one costs this city: `produce <unit> <turns> [<cost>]`; without a cost, the unit's `price`. A line for each. The game starts with the city building none of them: its holder chooses | it can build nothing |
+| `income` | The gold it brings its holder at the start of each of the holder's turns (its taxes) | 10 |
+| `produce` | A kind of unit it can build, the turns one takes, and what one costs this city: `produce <unit> <turns> [<cost>]`; without a cost, the unit's `price`. The cost is paid from its holder's treasury when the unit is done; until it can be, the unit waits. A line for each. The game starts with the city building none of them: its holder chooses | it can build nothing |
 | `garrison` | Units that stand in it at the start, on its side: `garrison <unit> [<how many>]`. A line for each kind; at most 8 units in a city, and a commander besides | nobody |
 
 A city tile without a record is still a city, with no name: `--check` warns of

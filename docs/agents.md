@@ -32,8 +32,9 @@ take their chance from the game's own generator (`state::rng`), never from
 anywhere else.
 
 The same options set up a game in the window: `--map` with `--players`,
-`--order fixed|drawn`, `--seed`, `--chance <0-10>` and `--battles
-lines|strength` (without `--map`, the new game screen sets them). To compare
+`--order fixed|drawn`, `--seed`, `--chance <0-10>`, `--battles
+lines|strength` and `--gold <n>` (without `--map`, the new game screen sets
+them). To compare
 two ways of fighting, play the same seeds with each:
 
 ```sh
@@ -47,7 +48,7 @@ done
 | Name | What it does |
 |---|---|
 | `passive` | Ends every turn at once |
-| `simple` | Sets each idle city to build what gives the most strength for its turns, and stops its cities when it has two stacks' worth of units for each (until there is gold); keeps two units in each of its cities; attacks a city that is not its own, or another side's stack near its free units, with the strongest stack's worth of the free units that can reach it this turn, when the odds are at least 60 in 100 (or 15, when more than a stack can reach it: the first wave); else sends each stack's free units together toward the nearest such city, where they wait for the others |
+| `simple` | Sets each idle city to build what gives the most strength for its turns, of what its taxes can keep (after its units' upkeep and that of what its cities are already building), and stops the dearest work when they cannot; keeps two units in each of its cities; attacks a city that is not its own, or another side's stack near its free units, with the strongest stack's worth of the free units that can reach it this turn, when the odds are at least 60 in 100 (or 15, when more than a stack can reach it: the first wave); else sends each stack's free units together toward the nearest such city, where they wait for the others |
 | `cmd:<program> [<argument> ...]` | A program that plays (below) |
 
 A new agent is a type that implements `Agent` and a name in `agents::by_name`.
@@ -67,6 +68,7 @@ output, and the turn goes on without that order.
 turn 3 red
 order red green blue yellow
 battles lines chance 5
+gold 34 income 40 upkeep 32
 terrain
 46
 72
@@ -74,11 +76,11 @@ wwwwwwww...                      (the map file's rows: docs/map-format.md)
 end terrain
 kind riders strength 4 moves 18 upkeep 3 price 10 commander 0 enter grass 2 forest 5 city 1 road 1 bridge 1
 kind captain strength 3 moves 14 upkeep 4 price 20 commander 1 enter grass 2 forest 3 city 1 road 1 bridge 1
-city 13 7 red walls 2 builds 2 progress 1 name Brindlewick
+city 13 7 red walls 2 income 20 builds 2 progress 1 name Brindlewick
 can 13 7 0 militia 1 4
 can 13 7 1 archers 2 6
 can 13 7 2 riders 3 10
-city 19 42 green walls 2 builds none progress 0 name Eskerfall
+city 19 42 green walls 2 income 20 builds none progress 0 name Eskerfall
 unit red.0.0 red 13 7 militia strength 2 moves 10/10
 unit green.3.0 green 19 42 archers strength 3 moves 12/12
 end
@@ -88,13 +90,15 @@ end
 - `order`: this round's order of turns.
 - `battles <lines or strength> chance <0 to 10>`: how the game's battles go
   (`docs/gameplay.md`, "Fighting").
+- `gold <n> income <n> upkeep <n>`: the side's treasury, what its cities
+  bring in a turn, what its units cost a turn.
 - `terrain` ... `end terrain`: the map, as in a map file (rows, columns, a
   letter per hex; a capital is a road).
 - `kind`: each kind of unit: its numbers, whether it is a commander (the
   bonus it gives its stack, 0 if it is not one), and what each terrain costs
   it to enter.
-- `city <row> <col> <side> walls <n> builds <index or none> progress <turns
-  done> name <name>`: every city; `can <row> <col> <index> <kind> <turns>
+- `city <row> <col> <side> walls <n> income <n> builds <index or none>
+  progress <turns done> name <name>`: every city; `can <row> <col> <index> <kind> <turns>
   <cost>`: what each of the side's own cities can build.
 - `unit <name> <side> <row> <col> <kind> strength <n> moves <left>/<a turn's>`:
   every unit on the map. A unit's name (`red.0.0`) stays the same from turn

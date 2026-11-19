@@ -27,6 +27,10 @@ TBLayout: id: main_layout, axis: x, distribution: gravity, distribution-position
 		TBLayout: id: turn_row, axis: x, spacing: 5
 			TBButton: id: end_turn, text: End turn, is-focusable: 0, squeezable: 1
 			TBButton: id: undo, text: Undo, is-focusable: 0, squeezable: 1
+		# The player's treasury: its gold, and its taxes and upkeep a turn.
+		TBLayout: id: treasury, axis: y, distribution-position: top, position: left, spacing: 0
+			TBTextField: id: gold_0, text-align: left
+			TBTextField: id: gold_1, text-align: left
 		# The lists of cities: every one, and the player's.
 		TBLayout: id: city_lists, axis: x, spacing: 5
 			TBButton: id: all_cities, text: All cities, is-focusable: 0, squeezable: 1

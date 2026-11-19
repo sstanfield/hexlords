@@ -12,8 +12,8 @@ use crate::setup::{Controller, Setup, TurnOrder, WhenOut};
 use crate::state::combat::{self, Fighter};
 use crate::state::scenario::{self, Scenario, side_name};
 use crate::state::{
-    CityId, Direction, Hex, MAX_STACK, Map, MoveRange, Rng, Side, TileType, Unit, UnitId, compute_range, hostile,
-    step_toward_with,
+    CityId, Direction, Hex, MAX_STACK, Map, MoveRange, NUM_SIDES, Rng, Side, TileType, Unit, UnitId, compute_range,
+    hostile, step_toward_with,
 };
 
 /// The agent that passes its turns: the computer's, when nothing else is said.
@@ -94,6 +94,8 @@ pub struct Game {
     /// What has happened: the battles, the cities that changed hands, the
     /// sides that went out (`Game::history`).
     history: Vec<Record>,
+    /// Each side's gold, by `Side::index`.
+    treasury: [u32; NUM_SIDES + 1],
     /// The sides that are out, in the order they went.
     out: Vec<Side>,
     winner: Option<Side>,
@@ -122,7 +124,6 @@ impl Game {
             range: None,
             range_revision: 0,
             assets: None,
-            setup,
             order,
             current: 0,
             round: 1,
@@ -132,6 +133,8 @@ impl Game {
             undo: None,
             undo_mark: 0,
             history: Vec::new(),
+            treasury: [setup.gold; NUM_SIDES + 1],
+            setup,
         }
     }
 
@@ -574,14 +577,70 @@ impl Game {
         let mut events = vec![Event::Began { side, round: self.round }];
         if self.round > 1 {
             self.map.reset_move_points(side);
-            for unit in self.map.produce(side) {
-                let city = self.map.units().get(unit).and_then(|u| self.map.city_at(u.pos())).map(|c| c.id);
-                if let Some(city) = city {
-                    events.push(Event::Built { city, unit });
-                }
-            }
+            events.extend(self.pay_day(side));
         }
         events
+    }
+
+    /// The start of `side`'s turn: its cities' taxes come in; its units are
+    /// paid their upkeep, and those it cannot pay leave it (as few as make up
+    /// what it is short, a commander last); and what its cities finish is
+    /// paid for, or waits until it can be.
+    fn pay_day(&mut self, side: Side) -> Vec<Event> {
+        let mut gold = self.gold(side).saturating_add(self.income(side));
+        let mut events = Vec::new();
+        loop {
+            let owed = self.upkeep(side);
+            if owed <= gold {
+                gold -= owed;
+                break;
+            }
+            let Some(id) = self.deserter(side, owed - gold) else {
+                gold = 0;
+                break;
+            };
+            if let Some(unit) = self.map.kill_unit(id) {
+                events.push(Event::Deserted { side, name: unit.name });
+            }
+        }
+        for unit in self.map.produce(side, &mut gold) {
+            let city = self.map.units().get(unit).and_then(|u| self.map.city_at(u.pos())).map(|c| c.id);
+            if let Some(city) = city {
+                events.push(Event::Built { city, unit });
+            }
+        }
+        self.treasury[side.index()] = gold;
+        events
+    }
+
+    /// Who leaves `side` when it is `short` of its upkeep: the least dear
+    /// unit that makes it up alone, or else the dearest; a commander only
+    /// when there is nobody else.
+    fn deserter(&self, side: Side, short: u32) -> Option<UnitId> {
+        let map = &self.map;
+        let paid: Vec<&Unit> = map.units().of_side(side).filter(|u| u.upkeep > 0 && map.contains(u.pos())).collect();
+        let (leaders, soldiers): (Vec<&Unit>, Vec<&Unit>) = paid.into_iter().partition(|u| map.is_commander(u.id()));
+        let pick = |units: &[&Unit]| {
+            let enough = units.iter().filter(|u| u.upkeep >= short).min_by_key(|u| u.upkeep);
+            enough.or_else(|| units.iter().max_by_key(|u| u.upkeep)).map(|u| u.id())
+        };
+        pick(&soldiers).or_else(|| pick(&leaders))
+    }
+
+    /// The gold in a side's treasury.
+    pub fn gold(&self, side: Side) -> u32 {
+        self.treasury.get(side.index()).copied().unwrap_or(0)
+    }
+
+    /// What a side's cities bring in a turn: its taxes.
+    pub fn income(&self, side: Side) -> u32 {
+        self.map.cities().iter().filter(|c| c.side == side).map(|c| c.income).sum()
+    }
+
+    /// What a side's units cost a turn.
+    pub fn upkeep(&self, side: Side) -> u32 {
+        let map = &self.map;
+        map.units().of_side(side).filter(|u| map.contains(u.pos())).map(|u| u.upkeep).sum()
     }
 
     /// The first of the selected units (the one the map shows on its hex).

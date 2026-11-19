@@ -103,7 +103,7 @@ fn at_the_start_the_panels_are_about_the_hex_the_cursor_starts_on() {
         [
             "Wrenfold",
             "Held by green",
-            "Walls 1",
+            "Walls 1, taxes 10",
             "Garrison: 3 units",
             "Building nothing",
             "Can build:",
@@ -330,7 +330,7 @@ fn the_selected_unit_goes_where_it_is_sent_and_the_panels_follow() {
     assert!((0..STACK_SLOTS).all(|i| s.slot_icon(i).is_none()));
     // The other city, which is nobody's.
     click_hex(&mut s, Hex::new(10, 16));
-    assert_eq!(s.city(), ["Low Tarn", "Nobody's", "Walls 0", "No garrison", "Builds nothing"]);
+    assert_eq!(s.city(), ["Low Tarn", "Nobody's", "Walls 0, taxes 10", "No garrison", "Builds nothing"]);
 }
 
 #[test]

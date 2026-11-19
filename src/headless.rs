@@ -97,6 +97,7 @@ pub fn event_line(game: &Game, event: &Event) -> String {
             )
         }
         Event::Undone => "the last order is taken back".to_string(),
+        Event::Deserted { side, name } => format!("{}'s {name} leave, unpaid", side_name(*side)),
         Event::Out { side } => format!("{} is out", side_name(*side)),
         Event::Won { side } => format!("{} wins", side_name(*side)),
     }

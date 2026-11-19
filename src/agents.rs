@@ -132,7 +132,8 @@ impl Agent for Passive {
 }
 
 /// A first opponent, and a yardstick. Its cities build what gives the most
-/// strength for the turns it takes (the cheapest, of two alike). It keeps
+/// strength for the turns it takes (the cheapest, of two alike), of what its
+/// taxes can keep, and stop when they cannot keep more. It keeps
 /// [`Simple::KEEP`] units in each of its cities, and sends the others of a
 /// stack together toward the nearest city that is not its own; it attacks
 /// when the odds are at least [`Simple::DARE`] in a hundred, and else waits
@@ -152,9 +153,6 @@ impl Simple {
     /// more than a stack in reach, the first of several.
     pub const DARE: u32 = 60;
     pub const WEAR: u32 = 15;
-    /// It stops building when it has this many units for each of its cities
-    /// (until there is gold to say when to stop).
-    pub const ENOUGH: usize = 2 * (MAX_STACK + 1);
 }
 
 /// Of these units, as many as attack together (a hex's worth: the
@@ -181,22 +179,31 @@ impl Agent for Simple {
             self.done.clear();
         }
         let map = &game.map;
-        let held = map.cities().iter().filter(|c| c.side == side).count();
-        if map.units().of_side(side).count() >= Simple::ENOUGH * held {
-            // Enough: its cities build nothing more for now.
-            if let Some(city) = map.cities().iter().find(|c| c.side == side && c.building.is_some()) {
+        // What its taxes leave after the upkeep of its units and of one more
+        // of each kind its cities are building: what it can keep more.
+        let own = || map.cities().iter().filter(|c| c.side == side);
+        let planned: u32 = own().filter_map(|c| c.production()).map(|p| p.upkeep).sum();
+        let spare = i64::from(game.income(side)) - i64::from(game.upkeep(side)) - i64::from(planned);
+        if spare < 0 {
+            // More than it can keep: the dearest work stops.
+            let dearest = own().filter(|c| c.production().is_some()).max_by_key(|c| c.production().map(|p| p.upkeep));
+            if let Some(city) = dearest {
                 return Order::Build { city: city.id, what: None };
             }
-        } else if let Some(city) =
-            map.cities().iter().find(|c| c.side == side && c.building.is_none() && !c.units.is_empty())
-        {
+        }
+        // An idle city builds what gives the most strength for its turns, of
+        // what the side can keep.
+        let choice = own().filter(|c| c.building.is_none()).find_map(|city| {
             let best = city
                 .units
                 .iter()
                 .enumerate()
-                .max_by_key(|(_, p)| (p.strength * 100 / p.time.max(1), std::cmp::Reverse(p.cost)))
-                .map(|(i, _)| i);
-            return Order::Build { city: city.id, what: best };
+                .filter(|(_, p)| i64::from(p.upkeep) <= spare)
+                .max_by_key(|(_, p)| (p.strength * 100 / p.time.max(1), std::cmp::Reverse(p.cost)));
+            best.map(|(i, _)| (city.id, i))
+        });
+        if let Some((city, i)) = choice {
+            return Order::Build { city, what: Some(i) };
         }
         let targets: Vec<Hex> = map.cities().iter().filter(|c| c.side != side).map(|c| c.pos).collect();
         // The units free to go: not given an order this turn, with points
@@ -338,6 +345,7 @@ pub fn describe(game: &Game, side: Side) -> String {
     out.push_str(&format!("order {}\n", game.order().iter().map(|s| side_name(*s)).collect::<Vec<_>>().join(" ")));
     let combat = game.setup().combat;
     out.push_str(&format!("battles {} chance {}\n", combat.system.name(), combat.chance));
+    out.push_str(&format!("gold {} income {} upkeep {}\n", game.gold(side), game.income(side), game.upkeep(side)));
     out.push_str("terrain\n");
     out.push_str(&map.to_text());
     out.push_str("end terrain\n");
@@ -358,11 +366,12 @@ pub fn describe(game: &Game, side: Side) -> String {
     for city in map.cities().iter() {
         let builds = city.building.map_or("none".to_string(), |i| i.to_string());
         out.push_str(&format!(
-            "city {} {} {} walls {} builds {} progress {} name {}\n",
+            "city {} {} {} walls {} income {} builds {} progress {} name {}\n",
             city.pos.row,
             city.pos.col,
             side_name(city.side),
             city.walls,
+            city.income,
             builds,
             city.progress,
             city.name

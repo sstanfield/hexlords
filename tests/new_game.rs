@@ -8,8 +8,8 @@ mod common;
 use common::{assets, click, widget};
 use hexgame::game::Game;
 use hexgame::new_game::{
-    BATTLES_STRENGTH_ID, CHANCE_LESS_ID, CHANCE_MORE_ID, MODE_ROUNDS_ID, ORDER_DRAWN_ID, START_ID, map_id, map_name,
-    seat_id,
+    BATTLES_STRENGTH_ID, CHANCE_LESS_ID, CHANCE_MORE_ID, GOLD_LESS_ID, GOLD_MORE_ID, MODE_ROUNDS_ID, ORDER_DRAWN_ID,
+    START_ID, map_id, map_name, seat_id,
 };
 use hexgame::screen::Scene;
 use hexgame::session::{BEGIN_TURN_ID, COVER_ID, END_TURN_ID, GAME_OVER_ID, NEW_GAME_ID, Session};
@@ -112,9 +112,19 @@ fn the_battles_are_set_up_on_the_screen_and_carried_into_the_game() {
         push(&mut shell, CHANCE_MORE_ID);
     }
     assert_eq!(shell.new_game_screen().unwrap().setup().combat.chance, 10);
+    // Gold at the start, in tens.
+    assert_eq!(shell.new_game_screen().unwrap().setup().gold, hexgame::setup::START_GOLD);
+    push(&mut shell, GOLD_MORE_ID);
+    push(&mut shell, GOLD_MORE_ID);
+    push(&mut shell, GOLD_LESS_ID);
+    let gold = hexgame::setup::START_GOLD + 10;
+    assert!(
+        descendants_of(&shell, "new_game_settings").iter().any(|t| *t == format!("{gold} for each side at the start"))
+    );
     push(&mut shell, START_ID);
     let game = &shell.session().unwrap().screen.game;
     assert_eq!(game.setup().combat, Rules { chance: 10, system: System::Strength });
+    assert_eq!((game.setup().gold, game.gold(Side::Red)), (gold, gold));
 }
 
 fn descendants_of(shell: &Shell, name: &str) -> Vec<String> {

@@ -34,6 +34,11 @@ pub const BATTLES_LINES_ID: &str = "battles_lines";
 pub const BATTLES_STRENGTH_ID: &str = "battles_strength";
 pub const CHANCE_LESS_ID: &str = "chance_less";
 pub const CHANCE_MORE_ID: &str = "chance_more";
+pub const GOLD_LESS_ID: &str = "gold_less";
+pub const GOLD_MORE_ID: &str = "gold_more";
+/// How much a press of Gold's - or + changes it, and the most it can be.
+const GOLD_STEP: u32 = 10;
+const MAX_GOLD: u32 = 1000;
 /// The agent the computer plays with, unless told otherwise.
 pub const COMPUTER: &str = "simple";
 
@@ -107,6 +112,7 @@ impl NewGame {
                 ("Turns, Rounds", "How to play: one side after the other (rounds are to come)"),
                 ("Order of turns", "The same each round, or drawn anew"),
                 ("Battles", "Lines of duels, or strength against strength; how much chance, 0 to 10"),
+                ("Gold", "What each side's treasury holds at the start"),
                 ("Person, Computer", "Who plays each side: several people take turns at the screen"),
                 ("Start the game", "Play"),
             ],
@@ -172,6 +178,7 @@ impl NewGame {
                 let mut setup = Setup::solo(&game.map, person, COMPUTER);
                 (setup.mode, setup.order, setup.seed) = (self.setup.mode, self.setup.order, self.setup.seed);
                 setup.combat = self.setup.combat;
+                setup.gold = self.setup.gold;
                 self.setup = setup;
                 self.screen.set_game(game);
                 self.problem = None;
@@ -273,6 +280,13 @@ impl NewGame {
         build::button(ui, row, CHANCE_MORE_ID, "+");
 
         build::gap(ui, c, space);
+        build::heading(ui, c, "Gold");
+        let row = build::row(ui, c, space);
+        build::button(ui, row, GOLD_LESS_ID, "-");
+        build::text(ui, row, &format!("{} for each side at the start", self.setup.gold));
+        build::button(ui, row, GOLD_MORE_ID, "+");
+
+        build::gap(ui, c, space);
         build::heading(ui, c, "Who plays");
         if self.setup.seats.is_empty() {
             build::text(ui, c, "This map has no sides: nothing to play.");
@@ -329,6 +343,14 @@ impl NewGame {
                     chance.saturating_sub(1)
                 } else {
                     (*chance + 1).min(MAX_CHANCE)
+                };
+                self.rebuild();
+            } else if id == TbId::new(GOLD_LESS_ID) || id == TbId::new(GOLD_MORE_ID) {
+                let gold = &mut self.setup.gold;
+                *gold = if id == TbId::new(GOLD_LESS_ID) {
+                    gold.saturating_sub(GOLD_STEP)
+                } else {
+                    (*gold + GOLD_STEP).min(MAX_GOLD)
                 };
                 self.rebuild();
             } else if id == TbId::new(ORDER_FIXED_ID) || id == TbId::new(ORDER_DRAWN_ID) {

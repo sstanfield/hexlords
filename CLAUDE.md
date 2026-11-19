@@ -15,8 +15,9 @@ plays each side, a person or the computer, hotseat for several people), and
 cities build what their holder sets; an empty city is taken by moving in;
 stacks move together, and moving into another side's units is a battle
 (`state::combat`: how much chance and which system are set with the game;
-commanders lead stacks); a side that has lost its cities is out. There is no
-gold yet.
+commanders lead stacks); each side has a treasury, its cities' taxes come
+in and its units' upkeep goes out each turn, and what a city builds is paid
+for when it is done; a side that has lost its cities is out.
 **`docs/gameplay.md` is the plan for the rules**: two modes (turns one side
 after the other, and rounds where all sides give orders at once) on one set
 of rules made of orders. The computer's players are agents, which also play

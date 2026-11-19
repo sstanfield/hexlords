@@ -103,6 +103,7 @@ pub struct CityWindow {
     parts: WindowParts,
     city: CityId,
     summary: Text,
+    income: Text,
     garrison: Text,
     progress: Text,
     note: Text,
@@ -126,6 +127,7 @@ impl CityWindow {
         let content = parts.content;
         build::heading(ui, content, &city.name);
         let summary = Text::new(build::text(ui, content, ""));
+        let income = Text::new(build::text(ui, content, ""));
         let garrison = Text::new(build::text(ui, content, ""));
         let space = dp(ui, SPACING_DP);
         build::gap(ui, content, space);
@@ -146,7 +148,7 @@ impl CityWindow {
         let note = Text::new(build::text(ui, content, ""));
         build::gap(ui, content, space);
         build::button(ui, content, CITY_CLOSE_ID, "Close");
-        let mut window = CityWindow { parts, city: id, summary, garrison, progress, note, builds };
+        let mut window = CityWindow { parts, city: id, summary, income, garrison, progress, note, builds };
         window.fill(ui, map, player);
         build::place(ui, parts, area, align);
         Some(window)
@@ -187,6 +189,7 @@ impl CityWindow {
             (false, side) => format!("Only {} sets what it builds.", side_name(side)),
         };
         let mut changed = self.summary.set(ui, &info::city_summary(city));
+        changed |= self.income.set(ui, &info::income_line(city));
         changed |= self.garrison.set(ui, &info::garrison_line(map, city));
         changed |= self.progress.set(ui, &info::progress_line(map, city));
         changed |= self.note.set(ui, &note);

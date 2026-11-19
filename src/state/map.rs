@@ -485,10 +485,11 @@ impl Map {
 
     /// A turn of work in every city that `side` holds. A city that builds
     /// something works a turn more on it; when it has worked the turns the
-    /// unit takes, the unit stands in the city and the work starts over. A
-    /// city whose hex is full waits, its unit done, until there is room. A
-    /// kind the map does not have is never done. Returns the new units.
-    pub fn produce(&mut self, side: Side) -> Vec<UnitId> {
+    /// unit takes, its price is paid from `gold`, the unit stands in the city
+    /// and the work starts over. A city whose hex is full, or whose price
+    /// `gold` cannot pay, waits, its unit done, until there is room and gold.
+    /// A kind the map does not have is never done. Returns the new units.
+    pub fn produce(&mut self, side: Side, gold: &mut u32) -> Vec<UnitId> {
         let working: Vec<CityId> = self
             .cities
             .iter()
@@ -504,10 +505,13 @@ impl Map {
                 continue;
             }
             let pos = city.pos;
-            let room = self.units_at(pos).len() < MAX_STACK;
-            let Some(kind) = self.units.kind_named(&prod.basename).filter(|_| room) else { continue };
+            if *gold < prod.cost {
+                continue; // it waits to be paid for
+            }
+            let Some(kind) = self.units.kind_named(&prod.basename) else { continue };
             let Some(unit) = self.new_unit_of(side, kind) else { continue };
             if self.place_unit(unit, pos).is_ok() {
+                *gold -= prod.cost;
                 made.push(unit);
                 if let Some(city) = self.cities.get_mut(id) {
                     city.progress = 0;
@@ -860,15 +864,15 @@ mod tests {
         let city = Hex::new(5, 5);
         // Nothing at first: the turns go by and nothing comes.
         assert_eq!(map.cities().get(id).unwrap().production(), None);
-        assert!(map.produce(Side::Red).is_empty());
+        assert!(map.produce(Side::Red, &mut 1000).is_empty());
         // Riders: two turns.
         let before = map.revision();
         assert!(map.set_production(id, Some(0)));
         assert!(map.revision() > before);
         assert_eq!(map.cities().get(id).unwrap().production().unwrap().basename, "riders");
-        assert!(map.produce(Side::Red).is_empty());
+        assert!(map.produce(Side::Red, &mut 1000).is_empty());
         assert_eq!(map.cities().get(id).unwrap().progress, 1);
-        let made = map.produce(Side::Red);
+        let made = map.produce(Side::Red, &mut 1000);
         assert_eq!(made.len(), 1);
         let rider = map.units().get(made[0]).unwrap();
         assert_eq!((rider.name.as_str(), rider.side(), rider.movement), ("Riders", Side::Red, 10));
@@ -877,7 +881,7 @@ mod tests {
         // And the work starts over.
         assert_eq!(map.cities().get(id).unwrap().progress, 0);
         // Only the holder's turn counts.
-        assert!(map.produce(Side::Blue).is_empty());
+        assert!(map.produce(Side::Blue, &mut 1000).is_empty());
         assert_eq!(map.cities().get(id).unwrap().progress, 0);
     }
 
@@ -885,7 +889,7 @@ mod tests {
     fn a_change_of_production_starts_over_and_a_full_city_waits() {
         let (mut map, id) = city_map();
         map.set_production(id, Some(0));
-        map.produce(Side::Red);
+        map.produce(Side::Red, &mut 1000);
         // The same again keeps the work; another starts it over.
         map.set_production(id, Some(0));
         assert_eq!(map.cities().get(id).unwrap().progress, 1);
@@ -898,18 +902,18 @@ mod tests {
         // Militia, one turn each, until the hex is full; then it waits, done.
         let city = Hex::new(5, 5);
         for _ in 0..MAX_STACK - 1 {
-            assert_eq!(map.produce(Side::Red).len(), 1);
+            assert_eq!(map.produce(Side::Red, &mut 1000).len(), 1);
         }
         assert_eq!(map.units_at(city).len(), MAX_STACK);
-        assert!(map.produce(Side::Red).is_empty());
+        assert!(map.produce(Side::Red, &mut 1000).is_empty());
         assert_eq!(map.cities().get(id).unwrap().progress, 1, "done, and waiting");
         // Room again: it comes.
         let first = map.units_at(city)[0];
         map.kill_unit(first);
-        assert_eq!(map.produce(Side::Red).len(), 1);
+        assert_eq!(map.produce(Side::Red, &mut 1000).len(), 1);
         // Nothing: no more work.
         map.set_production(id, None);
-        assert!(map.produce(Side::Red).is_empty());
+        assert!(map.produce(Side::Red, &mut 1000).is_empty());
     }
 
     #[test]

@@ -353,7 +353,7 @@ fn a_stack_goes_toward_somewhere_only_as_far_as_all_of_it_fits() {
 }
 
 #[test]
-fn the_simple_agent_attacks_stacks_in_the_field_and_stops_building_at_enough() {
+fn the_simple_agent_attacks_stacks_in_the_field() {
     // A blue levy out on the grass beside red's soldiers: red goes for it
     // (Bluemoor is too strong for it, Farwater too far).
     let mut game = game("garrison soldiers 4\n", "garrison soldiers 8\n", |s| s.set_players("red=simple").unwrap());
@@ -367,26 +367,6 @@ fn the_simple_agent_attacks_stacks_in_the_field_and_stops_building_at_enough() {
         "{:?}",
         report.events
     );
-    // A side with enough units for its cities builds nothing more.
-    let mut game =
-        game_with("produce soldiers 1\ngarrison soldiers 8\ngarrison captain\n", "garrison soldiers 8\n", |s| {
-            s.set_players("red=simple").unwrap()
-        });
-    let soldiers = game.map.units().kind_named("soldiers").unwrap();
-    for i in 0..(Simple::ENOUGH - 9) as u16 {
-        let id = game.map.new_unit_of(Side::Red, soldiers).unwrap();
-        game.map.place_unit(id, Hex::new(10 + i / 8, 1 + i % 8)).unwrap();
-    }
-    let redhold = game.map.city_at(REDHOLD).unwrap().id;
-    game.map.set_production(redhold, Some(0));
-    // Its first order: Redhold stops.
-    let mut agent = Simple::default();
-    use hexgame::agents::Agent;
-    assert_eq!(agent.next_order(&game, Side::Red), Order::Build { city: redhold, what: None });
-    // One unit fewer, and it would build.
-    let one = at(&game, Hex::new(11, 1))[0];
-    game.map.kill_unit(one);
-    assert_ne!(agent.next_order(&game, Side::Red), Order::Build { city: redhold, what: None });
 }
 
 #[test]

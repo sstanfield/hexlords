@@ -55,6 +55,12 @@ pub enum Event {
         from: Side,
         by: Side,
     },
+    /// A unit of `side`'s left it, unpaid: its treasury could not pay all
+    /// the upkeep. (It is gone; this is its name.)
+    Deserted {
+        side: Side,
+        name: String,
+    },
     /// A city finished what it builds: the unit stands in it.
     Built {
         city: CityId,

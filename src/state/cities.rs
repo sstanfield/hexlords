@@ -30,6 +30,9 @@ pub struct City {
     pub units: Vec<UnitProd>,
     pub pos: Hex,
     pub walls: u32,
+    /// The gold it brings its holder at the start of each of its turns (its
+    /// taxes).
+    pub income: u32,
     /// What it is building: an index into `units`, or nothing. Set it with
     /// `Map::set_production`.
     pub building: Option<usize>,
@@ -43,6 +46,9 @@ impl City {
         self.building.and_then(|i| self.units.get(i))
     }
 }
+
+/// What a city brings in a turn unless its map says otherwise.
+pub const DEFAULT_INCOME: u32 = 10;
 
 /// Every city on the map.
 #[derive(Clone, Debug, Default)]
@@ -65,6 +71,7 @@ impl Cities {
             units: Vec::new(),
             pos,
             walls,
+            income: DEFAULT_INCOME,
             building: None,
             progress: 0,
         };

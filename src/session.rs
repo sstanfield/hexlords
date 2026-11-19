@@ -198,6 +198,8 @@ pub struct Session {
     tip: WidgetId,
     tip_lines: Vec<Line>,
     city: Vec<Line>,
+    /// The player's gold, and its taxes and upkeep.
+    gold: Vec<Line>,
     city_details: WidgetId,
     sidebar: WidgetId,
     city_lists: WidgetId,
@@ -268,6 +270,7 @@ impl Session {
             tip,
             tip_lines: lines(&screen, "tip", TIP_LINES)?,
             city: lines(&screen, "city", CITY_LINES)?,
+            gold: lines(&screen, "gold", 2)?,
             city_details: find(&screen, CITY_DETAILS_ID)?,
             sidebar: find(&screen, "main_sidebar")?,
             city_lists: find(&screen, "city_lists")?,
@@ -428,7 +431,7 @@ impl Session {
         }
         // The slots do not push the sidebar off a narrow window.
         ui.set_layout_params(self.stack_row, Some(LayoutParams { max_w: Some(map_w), ..LayoutParams::default() }));
-        for line in &self.city {
+        for line in self.city.iter().chain(&self.gold) {
             ui.set_layout_params(line.widget, Some(LayoutParams::fixed(side_w, line_h)));
         }
         // Nor do the sidebar's buttons push it wider than its share (their
@@ -603,6 +606,14 @@ impl Session {
         let game = &self.screen.game;
         let theirs = game.controller(game.player()) == Some(&Controller::Person) && game.winner().is_none();
         self.screen.ui.set_disabled(self.end_turn.widget, !theirs);
+        // The treasury of the person at the screen (none on a map without
+        // sides).
+        let viewer = self.viewer();
+        let gold =
+            if viewer == Side::Grey { Default::default() } else { info::treasury_lines(&self.screen.game, viewer) };
+        for (line, text) in self.gold.iter_mut().zip(&gold) {
+            line.set(&mut self.screen, text);
+        }
         // Undo is there while there is something to take back.
         let undo = self.screen.game.can_undo();
         self.screen.ui.set_disabled(self.undo, !undo);

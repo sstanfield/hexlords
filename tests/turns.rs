@@ -224,14 +224,15 @@ fn the_game_as_text_and_orders_from_text() {
     assert_eq!(lines[0], "turn 1 red");
     assert_eq!(lines[1], "order red green blue");
     assert_eq!(lines[2], "battles lines chance 5");
-    assert_eq!(lines[3], "terrain");
-    assert_eq!(lines[4..6], ["20", "20"]);
+    assert_eq!(lines[3], "gold 50 income 10 upkeep 0", "its treasury, its taxes, its upkeep");
+    assert_eq!(lines[4], "terrain");
+    assert_eq!(lines[5..7], ["20", "20"]);
     assert!(lines.contains(&"end terrain") && lines.last() == Some(&"end"));
     assert!(
         lines.contains(&"kind riders strength 4 moves 12 upkeep 0 price 5 commander 0 enter grass 2 city 1"),
         "{text}"
     );
-    assert!(lines.contains(&"city 5 5 red walls 0 builds none progress 0 name Redhold"), "{text}");
+    assert!(lines.contains(&"city 5 5 red walls 0 income 10 builds none progress 0 name Redhold"), "{text}");
     assert!(lines.contains(&"can 5 5 0 riders 1 5"), "its own cities say what they can build");
     assert!(!lines.iter().any(|l| l.starts_with("can 5 9")), "others' do not");
     let unit = format!("unit {} red 5 5 riders strength 4 moves 12/12", unit_name(id));

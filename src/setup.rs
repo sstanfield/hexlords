@@ -66,7 +66,12 @@ pub struct Setup {
     pub when_out: WhenOut,
     /// What the battles are like: how much chance, which system.
     pub combat: CombatRules,
+    /// The gold in each side's treasury at the start.
+    pub gold: u32,
 }
+
+/// The gold each side starts with unless the game is set up otherwise.
+pub const START_GOLD: u32 = 50;
 
 impl Setup {
     /// The sides of a map that are in a game on it: those that hold a city at
@@ -106,6 +111,7 @@ impl Setup {
             seed: 1,
             when_out: WhenOut::Disband,
             combat: CombatRules::default(),
+            gold: START_GOLD,
         }
     }
 

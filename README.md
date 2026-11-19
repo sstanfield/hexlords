@@ -86,17 +86,18 @@ the unit's icon with its strength and the movement points it has left
 (`4 · 6/10`). Pointing at one opens a box with all about it; clicking it
 takes it into the selection or out of it (the selected are pressed in, their
 numbers in gold), and the last line is about the selected units. The map takes all
-the room the panel leaves. **Under the minimap** is the selected hex's city:
-its name, who holds it, its walls and garrison, what it is building and what
-it can build, in how many turns, at what price.
+the room the panel leaves. **Under the minimap** are your
+gold, taxes and upkeep, and the selected hex's city: its name, who holds it,
+its walls and taxes, its garrison, what it is building and what it can
+build, in how many turns, at what price.
 
 ![The list of cities and a city in full](docs/screenshots/cities.png)
 
 **A new game** starts on its own screen: the map (the preview beside the
 settings can be looked over like the game's), how to play (turns; rounds are
 to come), the order of the turns (the same each round, or drawn anew), the
-battles (lines or strength, and how much chance, from 0 to 10), and who
-plays each side, a person or the computer. Several people take turns at
+battles (lines or strength, and how much chance, from 0 to 10), the gold
+each side starts with, and who plays each side, a person or the computer. Several people take turns at
 one screen (hotseat): between two people's turns a screen hides the map
 until the next one says they are there.
 
@@ -115,8 +116,14 @@ Strength counts, and so do chance, the ground (hills and forests 1, mountains
 stronger (or as much as its kind says). A window says how a battle went;
 what was done to a person while others played is told when their turn
 begins, and the log keeps all of it. When the last person is out, the
-computer plays on, a turn a frame, to the end. A side that loses its last city is out, and the last side left
-wins. Gold is a rule still to come ([docs/gameplay.md](docs/gameplay.md)).
+computer plays on, a turn a frame, to the end. A side that loses its last
+city is out, and the last side left wins.
+
+Each side has a treasury (the sidebar shows yours: "Gold 34", "Taxes +40,
+upkeep -32"). At the start of each of its turns its cities' taxes come in
+and its units' upkeep goes out; units it cannot pay leave it. What a city
+finishes is paid for then, at the city's price; without the gold, the unit
+waits in the city until there is enough ([docs/gameplay.md](docs/gameplay.md)).
 
 ![A battle, and the window that says how it went](docs/screenshots/battle.png)
 
@@ -126,7 +133,7 @@ wins. Gold is a rule still to come ([docs/gameplay.md](docs/gameplay.md)).
 
 ```
 hexgame [--map <file.map or map directory>] [--players <side>=<who>,...] [--order fixed|drawn] [--seed <n>]
-        [--chance <0-10>] [--battles lines|strength] [--headless [--rounds <n>] [--log]] [--script <steps>]
+        [--chance <0-10>] [--battles lines|strength] [--gold <n>] [--headless [--rounds <n>] [--log]] [--script <steps>]
         [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
 ```
 
@@ -142,7 +149,8 @@ Without `--map` the window opens on the new game screen.
 - `--chance <0-10>`: how much chance there is in a battle: 0 none (the
   stronger always wins), 10 nothing else; 5 unless it is said.
   `--battles lines|strength`: how a battle goes (lines unless it is said;
-  [docs/gameplay.md](docs/gameplay.md), "Fighting").
+  [docs/gameplay.md](docs/gameplay.md), "Fighting"). `--gold <n>`: the gold
+  each side starts with (50).
 - `--headless`: no window: the computer plays every side of `--map` until one
   side is left or `--rounds` (200) have gone by, and says how it went
   (`--log`: and all that happened). [docs/agents.md](docs/agents.md) says
