@@ -6,9 +6,11 @@ a 100 x 100 hex map, one unit, a movement range, a minimap. The UI is Turbo
 Ferret (<https://github.com/sstanfield/turbo-ferret>) and graphics go through
 miniquad. `hexgame-rust-port-plan.md` is the brief: the acceptance spec of the
 demo, the design, and the direction for the phases after it. Phase 2 has begun:
-there is a map editor (`tools/mapeditor`), a documented map file format
-(`docs/map-format.md`), the game plays a map file with `--map`, and the
-terrain tiles are drawn by a program (`tools/assetgen`, `docs/tiles.md`).
+there is a documented map format (`docs/map-format.md`: terrain, roads, the
+map's own kinds of unit, its cities), which the game plays with `--map`; a map
+editor (`tools/mapeditor`); and the tiles, the roads and the units' signs are
+drawn by a program (`tools/assetgen`, `docs/tiles.md`). Units move turn by
+turn; there are no rules for fighting, building or whose turn it is yet.
 
 **The C++ is history, not a specification.** The owner's word (2026-11-18):
 the port is done and the game now goes its own way, so nothing has to match the
@@ -24,7 +26,7 @@ the C++ demo and is no longer binding).
 
 | Path | What |
 |---|---|
-| `src/state/` | Map, tiles, units, cities, movement range. No UI, no graphics |
+| `src/state/` | Map, tiles, roads, units and their kinds, cities, movement range; `scenario`, the reader of a map's files. No UI, no graphics |
 | `src/game.rs` | `Game`: the map plus the selected unit and its range; the demo setup; `select_hex` |
 | `src/view.rs`, `src/minimap_view.rs` | Pure math: zoom, scale factors, visible hexes, picking, panning, recentering; the minimap's fit and marker |
 | `src/render/` | miniquad drawing: hex meshes, shaders, textures, the map and minimap renderers, the PNG writer |
@@ -35,8 +37,8 @@ the C++ demo and is no longer binding).
 | `src/script.rs` | Scripted input (`--script`) for any scene, for screenshots and tests |
 | `src/app.rs`, `src/main.rs` | The miniquad window (`App<S: Scene>`, `app::run`): forwards input to the scene, draws the frame. `main.rs` is the game's command line |
 | `tools/mapeditor/` | The map editor, a workspace member on the game's library: `Editor` (a scene: the sidebar, painting, files), `brush`, `history` (undo), `check` (`--check`) |
-| `tools/assetgen/` | The tile generator, a workspace member with no dependencies: `terrain` (a function for each terrain's art), `noise` and `scatter` (what repeats on the hex grid), `tile` (the image, the atlas), `preview` (maps drawn without the game), `png` (the writer) |
-| `assets/` | `layouts/main.tb.txt` (the game), `layouts/editor.tb.txt` (the editor), Turbo Badger's default skin and `skin/hexgame.tb.txt` (our changes, loaded on top), `tiles/<terrain>_tile.png` (what `assetgen` makes, and nothing else), the unit image, `maps/*.map` |
+| `tools/assetgen/` | The picture generator, a workspace member with no dependencies: `terrain` (a function for each terrain's art), `noise` and `scatter` (what repeats on the hex grid), `tile` (the image, the atlas), `overlay`, `road` and `icons` (the pictures that go over a tile), `preview` (maps drawn without the game), `png` (the writer) |
+| `assets/` | `layouts/main.tb.txt` (the game), `layouts/editor.tb.txt` (the editor), Turbo Badger's default skin and `skin/hexgame.tb.txt` (our changes, loaded on top), `tiles/`, `roads/` and the signs in `units/` (what `assetgen` makes, and nothing else), `units/default_unit.png` (the C++ demo's), `maps/` (`*.map` files and map directories) |
 | `tests/`, `tools/*/tests/` | Headless tests of the layouts, the widgets and the interaction; of the generator against the game |
 | `docs/` | `map-format.md` (the map file, for people and agents who write maps); `tiles.md` (the tiles, for those who draw them); `deviations.md`; `screenshots/` |
 | `reference/hexGame/` | The C++ original, for reference. **Read-only, never edit it.** Gitignored: if it is missing, `git clone https://github.com/sstanfield/hexGame reference/hexGame` |
@@ -65,7 +67,8 @@ cargo run -- --map assets/maps/example.map  # the game on a map file
 cargo run -p mapeditor -- assets/maps/example.map                # the map editor
 cargo run -p mapeditor -- --check assets/maps/*.map              # report on map files, no window
 cargo run -p mapeditor -- x.map --screenshot target/ed.png --script "press:brush_7,key:w"
-cargo run -p assetgen --release                                  # draw assets/tiles again
+cargo run -- --map assets/maps/continent    # the game on a whole map: roads, cities, units
+cargo run -p assetgen --release                                  # draw the game's pictures again
 cargo run -p assetgen --release -- --previews target/previews    # and maps drawn with the tiles
 cargo +1.86 check --workspace --all-targets # MSRV
 ```
@@ -120,10 +123,14 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
   The view goes the same way on both maps (the owner tried the other and
   found it backwards): the map follows the fingers on the main map, and on
   the minimap the view's marker goes against them, at the minimap's scale.
-- **The tiles are generated** (`docs/tiles.md`): `assets/tiles` holds what
-  `cargo run -p assetgen --release` writes and nothing else, and a test draws
-  every tile again to compare. To change the art, change
-  `tools/assetgen/src/terrain.rs` and run the generator; do not edit a PNG.
+- **The pictures are generated** (`docs/tiles.md`): `assets/tiles`,
+  `assets/roads` and the signs in `assets/units` hold what
+  `cargo run -p assetgen --release` writes and nothing else, and tests draw
+  every picture again to compare. To change the art, change the generator
+  (`terrain.rs`, `road.rs`, `icons.rs`) and run it; do not edit a PNG. The
+  game and the generator each know the 14 shapes of a road and how one is
+  turned (`src/render/roads.rs`, `tools/assetgen/src/road.rs`); a test holds
+  the two together.
   A new terrain is a `TileType`, a `Terrain` in the generator with the same
   name and letter (a test compares the two lists), a tile, and a minimap
   color. Everything generated has to stay original: no shapes, palettes or
@@ -132,11 +139,19 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
   two independent. Nothing may assume a square: `tests/shapes.rs` runs wide,
   tall and odd maps through the file, the views, the renderer's geometry and
   the unit's movement, and new code that takes rows and columns belongs in it.
-- **The map file format is a promise** (`docs/map-format.md`): files written
-  today must stay readable. New kinds of data go after the last row, where the
-  reader ignores lines today. Change the page and `assets/maps/example.map`
-  together (a test compares them), and keep `mapeditor --check` telling the
-  truth about what the reader forgives.
+- **The map format is a promise** (`docs/map-format.md`): maps written today
+  must stay readable. A map is a terrain file, or a directory of text files
+  (`terrain.map`, `units.txt`, `cities.txt`, `assets/`); `state::scenario`
+  reads it, and every mistake is an error with its file and line. A new kind
+  of data is a new key in a record or a new file in the directory, with a
+  default for maps that do not have it. Change the page, the reader and the
+  maps in `assets/maps` together (tests read the page's examples and every
+  map), and keep `mapeditor --check` telling the truth about what the reader
+  forgives. The game has no units or cities of its own: a map brings them.
+- **Roads are terrain.** `Tile::road` (a capital letter in the file) joins
+  the roads and cities around it: `Map::road_links` for drawing,
+  `movement::step_cost` for what a step along one costs. A bridge is a road
+  on water and a pass a road on a mountain; nothing else says so.
 - **One way to change the map:** `Map` owns its units and cities, and they
   change only through its methods (`new_unit`, `place_unit`, `move_unit`,
   `kill_unit`, `unit_mut`, `tile_mut`, `add_city` ...), which keep the tiles'

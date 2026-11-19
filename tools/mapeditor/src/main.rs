@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use hexgame::app::{self, OPTIONS_USAGE, Options, WindowSpec};
 use hexgame::script;
 use hexgame::state::{Map, TileType};
-use mapeditor::check::check;
+use mapeditor::check::check_path;
 use mapeditor::editor::Editor;
 
 const WINDOW: WindowSpec = WindowSpec { program: "mapeditor", title: "HexGame Map Editor", size: (1280, 800) };
@@ -29,7 +29,7 @@ struct Args {
 fn usage() -> String {
     format!(
         "usage: mapeditor [<file.map>] [--new <rows>x<cols>] [--script <steps>] {OPTIONS_USAGE}\n       \
-         mapeditor --check <file.map>..."
+         mapeditor --check <map>..."
     )
 }
 
@@ -68,7 +68,10 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
 /// The map to start with: the file's if it exists, else a new one.
 fn first_map(file: Option<&PathBuf>, new: Option<(u16, u16)>) -> Result<Map, String> {
     match (file, new) {
-        (Some(path), None) if path.exists() => Map::load(path).map_err(|e| e.to_string()),
+        // Of a map directory the editor edits the terrain.
+        (Some(path), None) if path.exists() => {
+            Map::load(&hexgame::state::scenario::terrain_path(path)).map_err(|e| e.to_string())
+        }
         (Some(path), Some(_)) if path.exists() => {
             Err(format!("--new: {} exists already (leave --new out to edit it)", path.display()))
         }
@@ -79,14 +82,12 @@ fn first_map(file: Option<&PathBuf>, new: Option<(u16, u16)>) -> Result<Map, Str
     }
 }
 
-/// `--check`: print what each file holds. False if one of them is no map.
-fn check_files(files: &[PathBuf]) -> bool {
+/// `--check`: print what each map holds, a file or a directory. False if one
+/// of them is no map.
+fn check_files(files: &[PathBuf], assets: &std::path::Path) -> bool {
     let mut good = true;
     for path in files {
-        let report = std::fs::read_to_string(path)
-            .map_err(|e| e.to_string())
-            .and_then(|text| check(&text).map_err(|e| e.to_string()));
-        match report {
+        match check_path(path, Some(assets)) {
             Ok(report) => print!("{}: {report}", path.display()),
             Err(e) => {
                 println!("{}: error: {e}", path.display());
@@ -109,7 +110,8 @@ fn main() {
         }
     };
     if !args.check.is_empty() {
-        std::process::exit(if check_files(&args.check) { 0 } else { 1 });
+        let assets = hexgame::paths::asset_root(args.window.assets.as_deref());
+        std::process::exit(if check_files(&args.check, &assets) { 0 } else { 1 });
     }
     let Args { window, file, new, script, .. } = args;
     let map = match first_map(file.as_ref(), new) {

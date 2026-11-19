@@ -11,10 +11,17 @@ through [miniquad](https://github.com/not-fl3/miniquad).
 
 The port is done (`docs/deviations.md` records how it differs from the C++),
 and from here the game goes its own way. `hexgame-rust-port-plan.md` has the
-direction. So far there is a [map editor](#the-map-editor), a
-[map file format](docs/map-format.md) for maps of any size and shape from
-20 x 20 to 600 x 600 (the game plays one with `--map`), and a set of
-[terrain tiles](#the-tiles) drawn by a program in the repository.
+direction. So far:
+
+- a [map format](docs/map-format.md) in plain text, for maps of any size and
+  shape from 20 x 20 to 600 x 600: terrain, roads with bridges and mountain
+  passes, the map's own kinds of unit, its cities with what they build and
+  who stands in them, and pictures of its own if it wants them;
+- the game plays such a map (`--map`): units of eight sides move over it,
+  along its roads, turn by turn. There is no fighting, building or winning yet;
+- a [map editor](#the-map-editor) for the terrain and the roads;
+- [tiles, roads and unit signs](#the-pictures) drawn by a program in the
+  repository, so the art is original and can be made again.
 
 ## Build and run
 
@@ -45,20 +52,28 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | Two fingers or the wheel over the minimap | The view goes the same way as over the main map, but much farther: a pixel of the minimap for a pixel of the fingers |
 | Arrow keys | Move the cursor; the view follows when the cursor leaves it, and comes back to it if it was moved away |
 | `1` / `2` | Zoom out / in, centered on the cursor |
+| The End turn button, or Ctrl+T (Cmd+T) | The turn is over: every unit has its movement points back |
 | F11 | Fullscreen on and off |
 | Ctrl+Q (or Cmd+Q) | Quit |
 
-The "SLS" button does nothing yet.
+A unit is a disc in its side's color with the sign of its kind; a city that
+has an owner flies a small disc of the owner's color. The line at the bottom
+of the window says the turn, and what is on the hex under the cursor: its
+terrain and road, its city (name, owner, walls, what it builds), its units
+(with the movement points they have left). Every unit can be moved, whoever's
+it is: whose turn it is, fighting and building are rules still to come.
 
 ## Options
 
 ```
-hexgame [--map <file.map>] [--script <steps>] [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
+hexgame [--map <file.map or map directory>] [--script <steps>] [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
 ```
 
-- `--map <file.map>`: play on this map instead of the demo's (the format is in
-  `docs/map-format.md`). The demo's unit starts on the land nearest the map's
-  middle.
+- `--map <file.map or map directory>`: play on this map instead of the demo's
+  (the format is in `docs/map-format.md`). A map directory brings its own
+  units and cities, and the view starts on the first city with a garrison. A
+  single terrain file has none: the demo's unit starts on the land nearest
+  its middle.
 - `--assets <dir>`: where the assets are. Without it: `../assets` next to the
   executable if that exists, else `assets` in the source tree (so `cargo run`
   works).
@@ -81,15 +96,16 @@ hexgame [--map <file.map>] [--script <steps>] [--assets <dir>] [--frames <n>] [-
 cargo run -- --screenshot shot.png --script "enter,1,1"     # the unit's range, zoomed out
 cargo run -- --screenshot corner.png --script "cursor:0:0"  # the map's top left corner
 cargo run -- --map assets/maps/example.map                  # the example island
-cargo run -- --map assets/maps/continent.map                # a larger map, 46 rows of 72
+cargo run -- --map assets/maps/continent                    # a whole map: roads, nine cities, four sides
 ```
 
 ## The map editor
 
 ```sh
 cargo run -p mapeditor -- assets/maps/mine.map      # edit it, or start it if it is not there
+cargo run -p mapeditor -- assets/maps/continent     # a map directory: its terrain and roads
 cargo run -p mapeditor -- mine.map --new 60x90      # a new map of 60 rows and 90 columns
-cargo run -p mapeditor -- --check assets/maps/*.map # what is in these files, and what is wrong with them
+cargo run -p mapeditor -- --check assets/maps/*     # what is in these maps, and what is wrong with them
 ```
 
 ![The map editor](docs/screenshots/editor.png)
@@ -105,6 +121,7 @@ the map does:
 | The terrain's letter (`g f h m w s d c t r`) | Choose it and paint at the cursor, which follows the pointer: point and type |
 | Press or drag on the map | Paint (a drag leaves no gaps), or fill with the Fill tool |
 | Paint / Fill | Paint puts the terrain under the brush; Fill gives it to the hex and every hex of the same terrain connected to it |
+| Road / No road | A press lays a road on the hex (over water: a bridge), a drag lays it along the way; No road takes it away. The terrain stays, and new terrain painted under a road leaves the road |
 | 1 / 7 / 19, or `[` and `]` | The brush's size in hexes. The larger ones show what they would paint |
 | Enter or Space | Use the tool at the cursor |
 | Undo / Redo, Ctrl+Z / Ctrl+Shift+Z or Ctrl+Y (Cmd on macOS) | A drag, a fill or a key is one step; 200 steps are kept |
@@ -115,24 +132,31 @@ Open, New and quitting ask a second time when the map has unsaved changes. The
 status line at the bottom shows the map's size, the hex under the cursor, the
 tool, the file, and what the last action had to say.
 
-The editor edits terrain, which is all a map file holds so far.
+The editor edits the terrain and the roads. Of a map directory that is its
+`terrain.map`; the units and the cities are text files, edited as text, and
+when the editor saves it says what `cities.txt` has to say about the new
+terrain (a city that is no longer on a city tile, a city tile without an
+entry). `--check` reads a whole map as the game does and reports on all of it.
 
 It takes the game's `--assets`, `--frames`, `--screenshot` and `--script`
 (`--script "press:terrain_w,press:brush_7,click:10:12,key:ctrl+s"`).
 
-## The tiles
+## The pictures
 
 ```sh
-cargo run -p assetgen --release                                # draw the tiles in assets/tiles again
+cargo run -p assetgen --release                                # draw the game's pictures again
 cargo run -p assetgen --release -- --previews target/previews  # and maps drawn with them, to look at
 ```
 
-The ten terrain tiles in `assets/tiles` are not drawn by hand: `tools/assetgen`
-(Rust, no dependencies) computes them from noise and shapes. So the art is
-original, it is under the game's licence and no other, and it can be made
-again at any size. A tile runs on into its neighbours of the same terrain
-without a seam. [docs/tiles.md](docs/tiles.md) says how a tile lies in its
-picture and how to change the art.
+The map's pictures are not drawn by hand: `tools/assetgen` (Rust, no
+dependencies) computes them from noise and shapes. The ten terrain tiles in
+`assets/tiles`, each running on into its neighbours of the same terrain
+without a seam; a road and a bridge in each of the 14 shapes a hex's road can
+have, in `assets/roads`; and four signs for units in `assets/units`. So the
+art is original, it is under the game's licence and no other, and it can be
+made again at any size. [docs/tiles.md](docs/tiles.md) says how each picture
+lies in its file and how to change the art. A map can bring pictures of its
+own, which are used instead of these.
 
 ![The tiles close up](docs/screenshots/tiles.png)
 

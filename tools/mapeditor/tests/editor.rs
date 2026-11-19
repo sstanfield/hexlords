@@ -633,19 +633,180 @@ fn scrolling_and_pulling_the_map_move_it_and_paint_nothing() {
 }
 
 #[test]
+fn the_road_tool_lays_roads_along_a_drag_and_keeps_them_under_new_terrain() {
+    let mut e = editor();
+    push(&mut e, "tool_road");
+    assert_eq!(e.tool(), Tool::Road);
+    assert!(chosen(&e, "tool_road") && !chosen(&e, "tool_paint"));
+    assert!(e.status().contains("Lay road"), "{}", e.status());
+
+    // A drag along row 20 lays a road on every hex of the way, as one step.
+    script::run(&mut e, "drag:20:16:20:22").unwrap();
+    let road = |e: &Editor, row: u16, col: u16| e.map().tile(Hex::new(row, col)).unwrap().road;
+    let laid: Vec<Hex> =
+        (0..40).flat_map(|r| (0..40).map(move |c| Hex::new(r, c))).filter(|h| road(&e, h.row, h.col)).collect();
+    assert!(laid.len() >= 7 && laid.contains(&Hex::new(20, 16)) && laid.contains(&Hex::new(20, 22)), "{laid:?}");
+    // A road in one piece: every hex of it joins another.
+    assert!(laid.iter().all(|h| e.map().road_links(*h) != 0));
+    assert_eq!(count(&e, TileType::Grass), 40 * 40, "the terrain is what it was");
+    assert!(e.modified());
+    assert!(e.status().contains("row 20, column 22: grass, road"), "{}", e.status());
+    // The brush's size is not the road's: a road is one hex wide.
+    assert!(!e.marked(Hex::new(21, 22)));
+
+    // Water painted under it makes a bridge; the road stays. (In column 19,
+    // an odd one, the drag went through the hex of row 20 or of row 21.)
+    let mid = *laid.iter().find(|h| h.col == 19).expect("a road hex in column 19");
+    push(&mut e, "tool_paint");
+    push(&mut e, "terrain_w");
+    let p = pixel(&e, mid.row, mid.col);
+    click(&mut e, p);
+    assert_eq!(kind(&e, mid.row, mid.col), TileType::Water);
+    assert!(road(&e, mid.row, mid.col));
+    assert!(e.status().contains("water, bridge"), "{}", e.status());
+    assert!(e.map().to_text().contains('W'), "a capital in the file");
+
+    // The other tool takes it away again; undo brings it back, step by step.
+    push(&mut e, "tool_unroad");
+    assert!(e.status().contains("Remove road"), "{}", e.status());
+    click(&mut e, p);
+    assert!(!road(&e, mid.row, mid.col) && road(&e, 20, 18));
+    key(&mut e, 'z', Modifiers::CTRL);
+    assert!(road(&e, mid.row, mid.col));
+    key(&mut e, 'z', Modifiers::CTRL);
+    assert_eq!(kind(&e, mid.row, mid.col), TileType::Grass);
+    key(&mut e, 'z', Modifiers::CTRL);
+    assert!(laid.iter().all(|h| !road(&e, h.row, h.col)), "the whole drag is one step");
+    // Enter lays one at the cursor.
+    push(&mut e, "tool_road");
+    special(&mut e, SpecialKey::Enter);
+    assert!(road(&e, e.map().cursor.row, e.map().cursor.col));
+}
+
+#[test]
+fn a_map_directory_is_opened_and_saved_by_its_terrain() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("editor_mapdir");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut rows = vec!["g".repeat(20); 20];
+    rows[4] = "ggggcGGggggggggggggg".to_string();
+    std::fs::write(dir.join("terrain.map"), format!("20\n20\n{}\n", rows.join("\n"))).unwrap();
+    let units = "unit riders\nmoves 9\nenter grass 2\n";
+    let cities = "city 4 4\nname Wrenfold\ngarrison riders\n";
+    std::fs::write(dir.join("units.txt"), units).unwrap();
+    std::fs::write(dir.join("cities.txt"), cities).unwrap();
+
+    let mut e = editor();
+    set_file(&mut e, &dir);
+    push(&mut e, "open");
+    assert!(e.message().starts_with("Opened "), "{}", e.message());
+    assert_eq!((e.map().rows(), e.map().cols()), (20, 20));
+    assert!(e.map().tile(Hex::new(4, 5)).unwrap().road);
+    // The editor has the terrain; the units are the game's business.
+    assert_eq!(e.map().units().iter().count(), 0);
+
+    // A change, and a save: the terrain file is written, the others are not touched.
+    e.frame(16);
+    push(&mut e, "terrain_f");
+    let p = pixel(&e, 10, 10);
+    click(&mut e, p);
+    push(&mut e, "save");
+    assert_eq!(e.message(), format!("Saved {}", dir.join("terrain.map").display()));
+    assert!(!e.modified());
+    assert_eq!(e.path(), Some(dir.as_path()));
+    let text = std::fs::read_to_string(dir.join("terrain.map")).unwrap();
+    assert_eq!(text.lines().nth(12).unwrap().chars().nth(10), Some('f'));
+    assert_eq!(text.lines().nth(6), Some("ggggcGGggggggggggggg"));
+    assert_eq!(std::fs::read_to_string(dir.join("units.txt")).unwrap(), units);
+    assert_eq!(std::fs::read_to_string(dir.join("cities.txt")).unwrap(), cities);
+    assert!(!dir.join("terrain.map").is_dir());
+
+    // Painting the city away leaves its entry without a city: the saving says so.
+    push(&mut e, "terrain_g");
+    script::run(&mut e, "cursor:4:4,click:4:4").unwrap();
+    push(&mut e, "save");
+    assert!(e.message().starts_with("Saved "), "{}", e.message());
+    assert!(
+        e.message().contains("but: ") && e.message().contains("Wrenfold is at (4, 4), which is grass"),
+        "{}",
+        e.message()
+    );
+    // A new city tile without an entry is said too, more quietly.
+    key(&mut e, 'z', Modifiers::CTRL);
+    push(&mut e, "terrain_c");
+    script::run(&mut e, "cursor:8:8,click:8:8").unwrap();
+    push(&mut e, "save");
+    assert!(e.message().ends_with("(the city tile at (8, 8) has no entry in cities.txt)"), "{}", e.message());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn the_maps_in_the_repository_are_good() {
     let dir = assets().join("maps");
-    let mut maps = 0;
+    let (mut files, mut directories) = (0, 0);
     for entry in std::fs::read_dir(&dir).unwrap() {
         let path = entry.unwrap().path();
-        if path.extension().is_some_and(|e| e == "map") {
+        if path.is_dir() {
+            // A whole map: its files agree, and every unit has its picture.
+            let report = mapeditor::check::check_path(&path, Some(&assets())).unwrap_or_else(|e| panic!("{e}"));
+            assert_eq!(report.warnings, Vec::<String>::new(), "{}", path.display());
+            assert!(!report.units.is_empty() && !report.cities.is_empty(), "{}", path.display());
+            // And the game starts on it, with units to move.
+            let (game, warnings) = hexgame::game::Game::load(&path).unwrap();
+            assert!(warnings.is_empty());
+            assert!(game.map.units().iter().count() > 0 && !game.map.units_at(game.map.cursor).is_empty());
+            directories += 1;
+        } else if path.extension().is_some_and(|e| e == "map") {
             let text = std::fs::read_to_string(&path).unwrap();
             let report = mapeditor::check::check(&text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
             assert_eq!(report.warnings, Vec::<String>::new(), "{}", path.display());
-            maps += 1;
+            files += 1;
         }
     }
-    assert!(maps >= 1, "no maps in {}", dir.display());
+    assert!(files >= 1 && directories >= 1, "{files} map files and {directories} map directories in {}", dir.display());
+}
+
+#[test]
+fn the_format_pages_units_and_cities_are_read_as_it_says() {
+    use hexgame::state::scenario::{parse_cities, parse_units};
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let page = std::fs::read_to_string(root.join("docs/map-format.md")).unwrap();
+    let (mut units, mut cities) = (0, 0);
+    // Every other piece between the fences is a block of the page.
+    for block in page.split("```").skip(1).step_by(2) {
+        let block = block.trim_start_matches(|c: char| c != '\n');
+        match block.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with('#')) {
+            Some(first) if first.starts_with("unit ") => {
+                let kinds = parse_units(block).unwrap_or_else(|e| panic!("{e}"));
+                assert_eq!((kinds[0].id.as_str(), kinds[0].moves, kinds[0].cost.bridge), ("riders", 18, 1));
+                units += 1;
+            }
+            Some(first) if first.starts_with("city ") => {
+                let entries = parse_cities(block).unwrap_or_else(|e| panic!("{e}"));
+                assert_eq!((entries[0].name.as_str(), entries[0].hex), ("Brindlewick", Hex::new(13, 7)));
+                assert_eq!(entries[0].garrison, [("militia".to_string(), 2), ("riders".to_string(), 1)]);
+                cities += 1;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!((units, cities), (1, 1), "the page has an example of each");
+}
+
+#[test]
+fn the_example_continent_is_a_whole_map() {
+    let report = mapeditor::check::check_path(&assets().join("maps/continent"), Some(&assets())).unwrap();
+    assert_eq!((report.rows, report.cols), (46, 72));
+    assert_eq!((report.units.len(), report.cities.len()), (4, 9));
+    assert!(report.roads > 50 && report.bridges >= 1 && report.passes >= 1, "{report}");
+    // Every city is on the road: a road or another city beside it.
+    let (game, _) = hexgame::game::Game::load(&assets().join("maps/continent")).unwrap();
+    for city in game.map.cities().iter() {
+        assert!(game.map.road_links(city.pos) != 0, "{} has no road", city.name);
+    }
+    // Four sides hold a city each, and the first one's rider can ride out.
+    let held = game.map.cities().iter().filter(|c| c.side != hexgame::state::Side::Grey).count();
+    assert_eq!(held, 4);
 }
 
 #[test]

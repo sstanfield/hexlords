@@ -7,10 +7,10 @@
 
 use std::path::{Path, PathBuf};
 
-use hexgame::game::Game;
+use hexgame::game::{Game, describe_terrain};
 use hexgame::gui::{MapCommand, MapKey, RootCommand};
 use hexgame::screen::{MapScreen, Scene};
-use hexgame::state::{Hex, Map, TileType};
+use hexgame::state::{Hex, Map, TileType, scenario};
 use turbo_ferret::{LayoutParams, Modifiers, Point, Size, SpecialKey, TbId, WidgetId, tbid};
 
 use crate::brush::{MAX_RADIUS, footprint, region};
@@ -25,7 +25,7 @@ const SIDEBAR_DP: i32 = 270;
 const STATUS_DP: i32 = 24;
 const SPACING_DP: i32 = 5;
 /// The height the sidebar's buttons and fields need below the minimap, in dp.
-const CONTROLS_DP: i32 = 470;
+const CONTROLS_DP: i32 = 500;
 /// The minimap is never lower than this, in dp.
 const MIN_MINIMAP_DP: i32 = 60;
 /// A drag paints every hex it crosses: between two pointer positions the brush
@@ -44,6 +44,30 @@ pub enum Tool {
     /// Give the chosen terrain to the hex and to every hex of its terrain that
     /// is connected to it.
     Fill,
+    /// Lay a road on the hex (over water: a bridge); a drag lays it along the
+    /// way. The terrain stays.
+    Road,
+    /// Take the hex's road away.
+    Unroad,
+}
+
+impl Tool {
+    /// The tool's button in the sidebar.
+    fn button(self) -> TbId {
+        match self {
+            Tool::Paint => tbid!("tool_paint"),
+            Tool::Fill => tbid!("tool_fill"),
+            Tool::Road => tbid!("tool_road"),
+            Tool::Unroad => tbid!("tool_unroad"),
+        }
+    }
+
+    const ALL: [Tool; 4] = [Tool::Paint, Tool::Fill, Tool::Road, Tool::Unroad];
+
+    /// True for the tools a drag goes on with.
+    fn strokes(self) -> bool {
+        self != Tool::Fill
+    }
 }
 
 /// Something that throws unsaved changes away, and so has to be asked twice.
@@ -212,7 +236,7 @@ impl Editor {
                     if let Some(hex) = self.screen.pick(p, size) {
                         self.use_tool(hex);
                     }
-                    if self.tool == Tool::Paint {
+                    if self.tool.strokes() {
                         self.stroke = Some(p);
                     }
                 }
@@ -259,10 +283,8 @@ impl Editor {
             self.set_brush(kind);
         } else if let Some(radius) = BRUSH_IDS.iter().position(|b| *b == id) {
             self.set_radius(radius as u8);
-        } else if id == tbid!("tool_paint") {
-            self.set_tool(Tool::Paint);
-        } else if id == tbid!("tool_fill") {
-            self.set_tool(Tool::Fill);
+        } else if let Some(tool) = Tool::ALL.into_iter().find(|tool| tool.button() == id) {
+            self.set_tool(tool);
         } else if id == tbid!("undo") {
             self.undo();
         } else if id == tbid!("redo") {
@@ -323,7 +345,7 @@ impl Editor {
 
     pub fn set_tool(&mut self, tool: Tool) {
         self.tool = tool;
-        self.press_button(if tool == Tool::Paint { tbid!("tool_paint") } else { tbid!("tool_fill") });
+        self.press_button(tool.button());
     }
 
     /// Show a button of a group as the chosen one (the others pop out).
@@ -353,6 +375,12 @@ impl Editor {
         self.changed(changed);
     }
 
+    /// Lay a road on `hex`, or take it away. Part of the step in the making.
+    pub fn road(&mut self, hex: Hex, road: bool) {
+        let changed = self.history.set_road(&mut self.screen.game.map, hex, road);
+        self.changed(changed);
+    }
+
     fn changed(&mut self, changed: bool) {
         if changed {
             self.modified = true;
@@ -365,6 +393,8 @@ impl Editor {
         match self.tool {
             Tool::Paint => self.paint(hex),
             Tool::Fill => self.fill(hex),
+            Tool::Road => self.road(hex, true),
+            Tool::Unroad => self.road(hex, false),
         }
     }
 
@@ -386,7 +416,7 @@ impl Editor {
             if hex != last {
                 last = hex;
                 if let Some(hex) = hex {
-                    self.paint(hex);
+                    self.use_tool(hex);
                 }
             }
         }
@@ -425,13 +455,27 @@ impl Editor {
         Some(PathBuf::from(name))
     }
 
-    /// Write the map to the file named in the sidebar.
+    /// Write the map to the file named in the sidebar. For a map directory
+    /// that is its terrain file; its units and cities are text, edited as
+    /// text, and what they have to say about the new terrain (a city that is
+    /// no longer on a city tile) is said after the saving.
     pub fn save(&mut self) {
         let Some(path) = self.typed_path() else { return };
         self.history.commit();
-        match self.map().save(&path) {
+        let file = scenario::terrain_path(&path);
+        match self.map().save(&file) {
             Ok(()) => {
-                self.message = format!("Saved {}", path.display());
+                self.message = format!("Saved {}", file.display());
+                if path.is_dir() {
+                    match scenario::load(&path) {
+                        Ok(whole) => {
+                            if let Some(warning) = whole.warnings.first() {
+                                self.message.push_str(&format!(" ({warning})"));
+                            }
+                        }
+                        Err(e) => self.message.push_str(&format!(", but: {e}")),
+                    }
+                }
                 self.path = Some(path);
                 self.modified = false;
                 self.armed = None;
@@ -444,7 +488,8 @@ impl Editor {
     pub fn open(&mut self) {
         let Some(path) = self.typed_path() else { return };
         // Find out that the file is no good before asking to discard anything.
-        let map = match Map::load(&path) {
+        // Of a map directory the editor has the terrain; the rest is text.
+        let map = match Map::load(&scenario::terrain_path(&path)) {
             Ok(map) => map,
             Err(e) => {
                 self.message = format!("Not opened: {e}");
@@ -548,10 +593,12 @@ impl Editor {
     fn status_text(&self) -> String {
         let map = self.map();
         let cursor = map.cursor;
-        let terrain = map.tile(cursor).map_or("", |t| t.kind.name());
+        let terrain = map.tile(cursor).map_or(String::new(), |t| describe_terrain(t.kind, t.road));
         let tool = match self.tool {
             Tool::Paint => format!("Paint {}, {}", self.brush.name(), [1, 7, 19][usize::from(self.radius)]),
             Tool::Fill => format!("Fill with {}", self.brush.name()),
+            Tool::Road => "Lay road".to_string(),
+            Tool::Unroad => "Remove road".to_string(),
         };
         let file = match &self.path {
             Some(path) => path.display().to_string(),

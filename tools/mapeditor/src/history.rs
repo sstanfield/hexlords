@@ -1,5 +1,5 @@
-//! What the editor did to the terrain, so that it can be undone. A step is
-//! everything one gesture changed: a drag of the brush, a fill, a key.
+//! What the editor did to the terrain and the roads, so that it can be undone.
+//! A step is everything one gesture changed: a drag of the brush, a fill, a key.
 
 use hexgame::state::{Hex, Map, TileType};
 
@@ -9,8 +9,9 @@ pub const MAX_STEPS: usize = 200;
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 struct Change {
     hex: Hex,
-    before: TileType,
-    after: TileType,
+    /// The tile's terrain, and whether it has a road.
+    before: (TileType, bool),
+    after: (TileType, bool),
 }
 
 #[derive(Default)]
@@ -28,17 +29,28 @@ impl History {
         History::default()
     }
 
-    /// Change a tile's terrain as part of the step in the making. False if the
-    /// tile has that terrain already, or the hex is off the map.
+    /// Change a tile's terrain as part of the step in the making; a road on it
+    /// stays. False if the tile has that terrain already, or the hex is off the
+    /// map.
     pub fn set(&mut self, map: &mut Map, hex: Hex, kind: TileType) -> bool {
-        let Some(before) = map.tile(hex).map(|t| t.kind) else { return false };
-        if before == kind {
+        let Some(road) = map.tile(hex).map(|t| t.road) else { return false };
+        self.put(map, hex, (kind, road))
+    }
+
+    /// Lay a road on a tile or take it away, as part of the step in the
+    /// making. False if nothing changed.
+    pub fn set_road(&mut self, map: &mut Map, hex: Hex, road: bool) -> bool {
+        let Some(kind) = map.tile(hex).map(|t| t.kind) else { return false };
+        self.put(map, hex, (kind, road))
+    }
+
+    fn put(&mut self, map: &mut Map, hex: Hex, after: (TileType, bool)) -> bool {
+        let Some(before) = map.tile(hex).map(|t| (t.kind, t.road)) else { return false };
+        if before == after {
             return false;
         }
-        if let Some(tile) = map.tile_mut(hex) {
-            tile.kind = kind;
-        }
-        self.open.push(Change { hex, before, after: kind });
+        write(map, hex, after);
+        self.open.push(Change { hex, before, after });
         true
     }
 
@@ -65,9 +77,7 @@ impl History {
         let step = self.done.pop()?;
         // Backwards: a gesture may have changed a tile more than once.
         for change in step.iter().rev() {
-            if let Some(tile) = map.tile_mut(change.hex) {
-                tile.kind = change.before;
-            }
+            write(map, change.hex, change.before);
         }
         let tiles = step.len();
         self.undone.push(step);
@@ -81,9 +91,7 @@ impl History {
         }
         let step = self.undone.pop()?;
         for change in &step {
-            if let Some(tile) = map.tile_mut(change.hex) {
-                tile.kind = change.after;
-            }
+            write(map, change.hex, change.after);
         }
         let tiles = step.len();
         self.done.push(step);
@@ -101,6 +109,13 @@ impl History {
 
     pub fn can_redo(&self) -> bool {
         !self.undone.is_empty() && self.open.is_empty()
+    }
+}
+
+/// Give a tile a terrain and a road, or none.
+fn write(map: &mut Map, hex: Hex, (kind, road): (TileType, bool)) {
+    if let Some(tile) = map.tile_mut(hex) {
+        (tile.kind, tile.road) = (kind, road);
     }
 }
 
@@ -192,5 +207,33 @@ mod tests {
         assert_eq!(undone, MAX_STEPS);
         h.clear();
         assert!(!h.can_undo() && !h.can_redo());
+    }
+
+    #[test]
+    fn roads_are_laid_taken_away_and_kept_under_new_terrain() {
+        let (mut m, mut h) = (map(), History::new());
+        let hex = Hex::new(4, 4);
+        let tile = |m: &Map| (m.tile(hex).unwrap().kind, m.tile(hex).unwrap().road);
+        assert!(h.set_road(&mut m, hex, true));
+        assert!(!h.set_road(&mut m, hex, true), "it has one");
+        assert!(!h.set_road(&mut m, Hex::new(40, 4), true), "off the map");
+        h.commit();
+        // New terrain under the road: the road stays.
+        assert!(h.set(&mut m, hex, TileType::Water));
+        h.commit();
+        assert_eq!(tile(&m), (TileType::Water, true));
+        assert!(h.set_road(&mut m, hex, false));
+        h.commit();
+        assert_eq!(tile(&m), (TileType::Water, false));
+        // And back, a step at a time.
+        h.undo(&mut m);
+        assert_eq!(tile(&m), (TileType::Water, true));
+        h.undo(&mut m);
+        assert_eq!(tile(&m), (TileType::Grass, true));
+        h.undo(&mut m);
+        assert_eq!(tile(&m), (TileType::Grass, false));
+        h.redo(&mut m);
+        h.redo(&mut m);
+        assert_eq!(tile(&m), (TileType::Water, true));
     }
 }

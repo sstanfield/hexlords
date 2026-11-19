@@ -1,18 +1,27 @@
-# The terrain tiles
+# The map's pictures: tiles, roads, units
 
 Every terrain of the map has a tile: a picture the game draws on each hex of
-that terrain. The ten in `assets/tiles/` are drawn by a program,
-`tools/assetgen`, not by hand: noise, shapes and a little light, all computed.
-So the art is original, it has no licence but the game's, and it can be made
-again, at any size, by anyone:
+that terrain. Over it go the hex's road, if it has one, and the sign of a unit
+that stands there. All of these are drawn by a program, `tools/assetgen`, not
+by hand: noise, shapes and a little light, all computed. So the art is
+original, it has no licence but the game's, and it can be made again, at any
+size, by anyone:
 
 ```sh
-cargo run -p assetgen --release                                # assets/tiles, as the game ships them
+cargo run -p assetgen --release                                # the game's assets, as it ships them
 cargo run -p assetgen --release -- --previews target/previews  # and pictures of maps drawn with them
 ```
 
-This page is for whoever changes the tiles, or draws others: how a tile lies
-in its picture, what the game does with it, and how to change the art.
+| Directory | What | Size |
+|---|---|---|
+| `assets/tiles/` | `<terrain>_tile.png`: the ten terrains | 256 x 256, no transparency |
+| `assets/roads/` | `road_NN.png` and `bridge_NN.png`: a road over land and over water, in each of its 14 shapes | 256 x 256, transparent |
+| `assets/units/` | `<name>.png`: the units' signs (and `default_unit.png`, the C++ demo's) | 128 x 128, transparent |
+
+This page is for whoever changes these pictures, or draws others: how a
+picture lies in its file, what the game does with it, and how to change the
+art. A map can bring pictures of its own that replace the game's
+(`docs/map-format.md`, "Pictures of its own"); they follow the same rules.
 
 ## A tile's picture
 
@@ -63,6 +72,58 @@ in its picture, what the game does with it, and how to change the art.
   that stands out. Change a tile's colors much and that test says to change
   the minimap's.
 
+## Roads and bridges
+
+A hex with a road (a capital letter in the map file) gets a second picture
+over its tile, transparent but for the road. The road leaves the hex through
+the middle of each side whose neighbour has a road too, or is a city, and
+crosses the side squarely, so that it goes on in the neighbour without a step.
+
+Which sides those are is a number from 0 to 63: a bit for each side,
+clockwise from the top (1 north, 2 north-east, 4 south-east, 8 south, 16
+south-west, 32 north-west). Turning a road by a sixth of a turn gives another
+of the 64, so there are only **14 shapes** to draw, and the game draws each
+one turned as the map needs it:
+
+| File | Sides | The road |
+|---|---|---|
+| `road_00` | none | a small round place |
+| `road_01` | N | a dead end |
+| `road_03` | N, NE | a tight bend |
+| `road_05` | N, SE | a wide bend |
+| `road_09` | N, S | straight through |
+| `road_07`, `road_11`, `road_13`, `road_21` | three sides | forks |
+| `road_15`, `road_23`, `road_27` | four | crossings |
+| `road_31`, `road_63` | five, six | where everything meets |
+
+`bridge_NN.png` is the same shape over water: planks between two rails, with
+a shadow on the water. A picture is the hex's square like a tile, and it is
+**drawn for its lowest turn**: `road_03` has the road leaving through the top
+and the upper right. Because the game turns it, the art must not have a
+light from one side or anything else that looks wrong turned.
+
+Transparent pixels are not black: they have the color of the road's rim and
+no opacity. The game scales these pictures smoothly, which mixes a pixel with
+its neighbours, and a black neighbour would darken the road's edge.
+
+No road is drawn over a city, a temple or a ruin: the roads beside one run up
+to it.
+
+## Units
+
+A unit is drawn as a disc in its side's color, half a hex wide, with the
+picture of its kind on it (`image` in the map's `units.txt`). The game's four
+signs are a sword (`militia.png`), a shield (`wardens.png`), a bow
+(`archers.png`) and a horseshoe (`riders.png`): light, with a dark outline, on
+nothing, and without a color of a side, since the disc has that.
+
+A unit's picture is the hex's square like a tile, **with the sign inside the
+disc**: within 0.45 of the middle, where the hex is 1 from its middle to its
+points (in a 128 pixel picture, within 29 pixels of the middle sideways and
+33 up and down). Its transparent pixels have the outline's color, for the
+same reason as the roads'. A city that has an owner flies a small disc of the
+owner's color at its upper right.
+
 ## No seams
 
 Two tiles of the same terrain side by side look like one piece of ground. The
@@ -97,28 +158,33 @@ cargo test --workspace                                          # the tiles in a
 cargo run -- --map assets/maps/continent.map                    # and in the game
 ```
 
-`assets/tiles` holds what the generator makes and nothing else: a test draws
-every tile again and compares. Do not edit a tile's PNG, and do not add other
-files there; change the generator and run it. A tile drawn some other way (by
-hand, by another program) can replace the generator's, if it follows "A tile's
-picture" above; then that test goes, and the tile's origin and licence go
-into `NOTICE`.
+The roads are in `road.rs` (`road`, `bridge`, and `lines`, the way a shape's
+road runs), the signs in `icons.rs`, each a shape given by its distance.
+
+`assets/tiles`, `assets/roads` and the signs in `assets/units` hold what the
+generator makes and nothing else: tests draw every picture again and compare.
+Do not edit a PNG, and do not add other files there; change the generator and
+run it. A picture drawn some other way (by hand, by another program) can
+replace the generator's, if it follows this page; then its test goes, and the
+picture's origin and licence go into `NOTICE`. A map that wants other pictures
+does not have to touch the game's: it brings its own.
 
 ### The generator's options
 
 | Option | What it does |
 |---|---|
-| `--out <dir>` | Where the tiles go. Default: `assets/tiles` (run it from the repository's root) |
-| `--size <pixels>` | The side of a tile, 8 to 2048. Default: 256 |
-| `--cutout` | Leave what is outside the hex transparent (with one pixel of terrain past the rim): tiles to look at, or for a renderer that takes single pixels. Not for the game |
-| `--atlas` | Also write `atlas.png` (all ten tiles in a grid of 5 x 2, two transparent pixels around each) and `atlas.txt` (a line for each: `name letter x y w h u0 v0 u1 v1`). The game does not use an atlas |
-| `--previews <dir>` | Also draw maps with the tiles: `near.png` and `near_no_border.png` (a mixed map, about ten hexes across), `closeup.png` (256 pixel tiles, a pixel for a pixel), `far.png` (a made-up continent, about 68 hexes across), `seams.png`, and `far.map`, the continent as a map file |
+| `--out <dir>` | The asset directory: the pictures go into its `tiles`, `roads` and `units`. Default: `assets` (run it from the repository's root) |
+| `--size <pixels>` | The side of a tile and of a road, 8 to 2048; the signs are half that. Default: 256 |
+| `--cutout` | Leave what is outside the hex transparent in the tiles (with one pixel of terrain past the rim): tiles to look at, or for a renderer that takes single pixels. Not for the game |
+| `--atlas` | Also write `tiles/atlas.png` (all ten tiles in a grid of 5 x 2, two transparent pixels around each) and `atlas.txt` (a line for each: `name letter x y w h u0 v0 u1 v1`). The game does not use an atlas |
+| `--previews <dir>` | Also draw maps with the pictures: `near.png` and `near_no_border.png` (a mixed map with roads, a bridge and a pass, about ten hexes across), `closeup.png` (256 pixel tiles, a pixel for a pixel), `far.png` (a made-up continent, about 68 hexes across), `seams.png`, and `far.map`, the continent as a map file |
 
 The previews are drawn by the generator itself, the way the game lays a map
-out, so the art can be judged without a window. `assets/maps/continent.map` is
-`far.map`.
+out, so the art can be judged without a window. The terrain of
+`assets/maps/continent` began as `far.map`.
 
 ## Not here yet
 
-Units, cities' owners, roads and rivers have no generated art. The one unit
-picture, `assets/units/default_unit.png`, is the C++ demo's.
+Rivers, and anything that moves on water. The minimap shows no roads. The
+unit picture `assets/units/default_unit.png` is the C++ demo's, drawn for a
+kind of unit that names no picture.

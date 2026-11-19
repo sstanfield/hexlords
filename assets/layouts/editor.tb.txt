@@ -35,6 +35,11 @@ TBLayout: id: main_layout, axis: y, distribution: gravity, distribution-position
 					lp: width: 133
 				TBButton: id: tool_fill, group-id: tool, text: "Fill", gravity: left right, is-focusable: 0
 					lp: width: 133
+			TBLayout: distribution: gravity, gravity: left right, spacing: 4
+				TBButton: id: tool_road, group-id: tool, text: "Road", gravity: left right, is-focusable: 0
+					lp: width: 133
+				TBButton: id: tool_unroad, group-id: tool, text: "No road", gravity: left right, is-focusable: 0
+					lp: width: 133
 			TBTextField: text: "Brush size in hexes ( [ and ] keys)", text-align: left
 			TBLayout: distribution: gravity, gravity: left right, spacing: 4
 				TBButton: id: brush_1, group-id: brush, text: "1", gravity: left right, is-focusable: 0, value: 1
