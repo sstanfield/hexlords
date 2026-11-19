@@ -33,7 +33,7 @@ the C++ demo and is no longer binding).
 | `src/gui/` | Turbo Ferret widgets: `MapWidget`, `MiniMapWidget`, `RootWindow`. They record commands; they hold no game state |
 | `src/platform.rs` | What miniquad leaves out: bringing the window to the front on macOS (the crate's one `unsafe` block) |
 | `src/screen.rs` | `MapScreen`: the `Ui`, a map and the two views together, with no window: what the game and the tools share. `Scene`: what the window can run |
-| `src/session.rs` | `Session`: the game on a map screen (its layout, what a click and Enter do). Tests drive it |
+| `src/session.rs`, `src/info.rs` | `Session`: the game on a map screen (its layout, what a click and Enter do, the panels around the map). `info`: what the panels say, as plain functions of the game's state. Tests drive both |
 | `src/script.rs` | Scripted input (`--script`) for any scene, for screenshots and tests |
 | `src/app.rs`, `src/main.rs` | The miniquad window (`App<S: Scene>`, `app::run`): forwards input to the scene, draws the frame. `main.rs` is the game's command line |
 | `tools/mapeditor/` | The map editor, a workspace member on the game's library: `Editor` (a scene: the sidebar, painting, files), `brush`, `history` (undo), `check` (`--check`) |

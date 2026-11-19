@@ -204,7 +204,7 @@ fn the_maps_edges_are_cut_straight_on_all_four_sides() {
         let mut view = hexgame::view::MapView::new(rows, cols, Hex::new(last_row, last_col));
         view.resize(819, 537);
         let mut geometry = MapGeometry::new();
-        geometry.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false });
+        geometry.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
         let drawn: usize = TileType::ALL.into_iter().map(|kind| geometry.terrain(kind).vertex_count()).sum();
         assert_eq!(drawn, view.visible_hexes().count() * 7, "{rows} x {cols}");
         // Nothing is drawn right of the last column's cut or below the last row's.

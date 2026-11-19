@@ -23,7 +23,7 @@ use super::mesh::{BufferPool, MeshList};
 use super::roads::{self, ROAD_PICTURES};
 use super::shaders::{FlatVertex, HexVertex, Pipelines};
 use super::textures::{AssetDirs, Sampling};
-use crate::state::{DEFAULT_UNIT_IMAGE, Hex, Map, Side, TileType};
+use crate::state::{DEFAULT_UNIT_IMAGE, Hex, Map, Side, TileType, UnitId};
 use crate::view::{HEX_HEIGHT_ADJUST, MapView};
 
 /// The border of the hex under the cursor. C++: drawHex (`isSelected`)
@@ -68,6 +68,9 @@ pub struct Marks<'a> {
     /// The tint: red, green, blue and how much of it.
     pub color: [f32; 4],
     pub marked: &'a dyn Fn(Hex) -> bool,
+    /// The unit that shows on its hex whoever else stands there (the selected
+    /// one). Of every other hex the first unit shows.
+    pub front: Option<UnitId>,
 }
 
 /// The image a terrain is drawn with, relative to the asset directory: every
@@ -194,9 +197,11 @@ impl MapGeometry {
                 }
             }
 
-            // The first unit of the hex: a disc of its side's color, and on
-            // it the picture of its kind.
-            if let Some(unit) = tile.units().first().and_then(|id| map.units().get(*id)) {
+            // The unit that shows (the selected one if it stands here, else
+            // the first): a disc of its side's color, and on it the picture
+            // of its kind.
+            let shown = marks.front.filter(|id| tile.units().contains(id)).or(tile.units().first().copied());
+            if let Some(unit) = shown.and_then(|id| map.units().get(id)) {
                 let [r, g, b] = side_color(unit.side());
                 let middle = [0.0, 0.0];
                 push_disc(&mut self.discs, view, visible.center, variant, middle, DISC_RADIUS + DISC_RING, RING_COLOR);
@@ -446,7 +451,7 @@ mod tests {
 
     fn geometry(game: &Game, view: &MapView) -> MapGeometry {
         let mut g = MapGeometry::new();
-        g.build(&game.map, view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex) });
+        g.build(&game.map, view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex), front: None });
         g
     }
 
@@ -486,7 +491,7 @@ mod tests {
         let mut view = MapView::new(20, 20, Hex::new(10, 10));
         view.resize(819, 537);
         let mut g = MapGeometry::new();
-        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false });
+        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
         for (col, kind) in TileType::ALL.into_iter().enumerate() {
             let want = center_of(&view, Hex::new(10, col as u16 + 5));
             let drawn = hexes(g.terrain(kind));
@@ -620,7 +625,7 @@ mod tests {
         let mut view = MapView::new(20, 20, Hex::new(10, 8));
         view.resize(819, 537);
         let mut g = MapGeometry::new();
-        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false });
+        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
 
         let mut drawn = 0;
         for col in 6..=9 {
@@ -662,7 +667,7 @@ mod tests {
         let mut view = MapView::new(20, 20, Hex::new(10, 10));
         view.resize(819, 537);
         let mut g = MapGeometry::new();
-        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false });
+        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
 
         // The first unit of a hex is the one that shows.
         let at = |image: &str| -> Vec<[f32; 2]> { hexes(g.units_with(image)).iter().map(|h| h[0].pos).collect() };
@@ -692,11 +697,21 @@ mod tests {
             }
         }
 
+        // The selected unit shows on its hex instead of the first: in the red
+        // city the militia stands behind the rider.
+        let militia = map.units_at(Hex::new(10, 5))[1];
+        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: Some(militia) });
+        assert!(g.units_with("units/riders.png").is_empty());
+        assert_eq!(at_all(&g, "units/militia.png"), 2);
+        // A unit that is not on a hex changes nothing there.
+        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
+        assert_eq!(at_all(&g, "units/riders.png"), 1);
+
         // The map changes and the pictures follow: the rider is gone.
         let mut map = map;
         let rider = map.units_at(Hex::new(10, 5))[0];
         map.kill_unit(rider);
-        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false });
+        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
         assert!(g.units_with("units/riders.png").is_empty());
         assert_eq!(g.units().count(), 2);
         assert_eq!(at_all(&g, "units/militia.png"), 2);
@@ -717,7 +732,7 @@ mod tests {
         let mut view = MapView::new(20, 20, Hex::new(1, 1));
         view.resize(819, 537);
         let mut g = MapGeometry::new();
-        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false });
+        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
         let top = center_of(&view, hex)[1];
         let vertices: Vec<&FlatVertex> = g.discs().meshes().iter().flat_map(|m| m.vertices.iter()).collect();
         assert_eq!(vertices.len(), 2 * (DISC_CORNERS + 1));
@@ -801,9 +816,9 @@ mod tests {
         let game = Game::demo();
         let view = view_at(START);
         let mut g = MapGeometry::new();
-        g.build(&game.map, &view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex) });
+        g.build(&game.map, &view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex), front: None });
         let first = g.terrain(TileType::Grass).vertex_count();
-        g.build(&game.map, &view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex) });
+        g.build(&game.map, &view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex), front: None });
         assert_eq!(g.terrain(TileType::Grass).vertex_count(), first);
         assert_eq!(hexes(g.units_with(UNIT_IMAGE)).len(), 1);
     }

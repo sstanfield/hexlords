@@ -1,8 +1,11 @@
-# The main screen: the map, a sidebar with the minimap, and a strip below them.
+# The main screen: the map, a sidebar with the minimap and the selected city,
+# and under the map the selected hex with its units.
 #
-# C++: assets/layouts/main.lua, which built this tree from Lua. The map and the
-# minimap get their sizes from the window (Session::apply_layout_sizes): the map
-# 80% of its width and 70% of its height, the minimap the rest of each.
+# C++: assets/layouts/main.lua, which built the map, the minimap and a button
+# from Lua. The map and the minimap get their sizes from the window
+# (Session::apply_layout_sizes): the map 80% of its width and 70% of its
+# height, the minimap the rest of each. Session also sizes the lines of text
+# and writes them (src/info.rs has the words).
 #
 # Only the map takes the keyboard focus, so its keys work whatever was clicked.
 TBLayout: id: main_layout, axis: y, distribution: gravity, distribution-position: top, position: left, spacing: 5
@@ -11,7 +14,45 @@ TBLayout: id: main_layout, axis: y, distribution: gravity, distribution-position
 		TBLayout: id: main_sidebar, axis: y, distribution-position: top, spacing: 5
 			MiniMapWidget: id: mini_map
 			TBButton: id: end_turn, text: End turn, is-focusable: 0
-	# Under the map: what is on the hex under the cursor (Session sets its size
-	# and its text).
-	TBLayout: id: main_layout2, axis: x, spacing: 5
+			# The city on the selected hex, a line at a time.
+			TBLayout: id: city_panel, axis: y, distribution-position: top, position: left, spacing: 0
+				TBTextField: id: city_0, text-align: left
+				TBTextField: id: city_1, text-align: left
+				TBTextField: id: city_2, text-align: left
+				TBTextField: id: city_3, text-align: left
+				TBTextField: id: city_4, text-align: left
+				TBTextField: id: city_5, text-align: left
+				TBTextField: id: city_6, text-align: left
+				TBTextField: id: city_7, text-align: left
+				TBTextField: id: city_8, text-align: left
+	TBLayout: id: main_layout2, axis: y, distribution-position: top, position: left, spacing: 3
+		# What is under the cursor.
 		TBTextField: id: status, text-align: left
+		# The selected hex: its heading, a button for each unit that stands on
+		# it (eight at most, in two columns), and all about the selected unit.
+		TBTextField: id: hex_title, text-align: left
+		TBLayout: id: hex_panel, axis: x, distribution-position: left, position: top, spacing: 6
+			TBLayout: id: stack_a, axis: y, distribution-position: top, spacing: 2
+				TBButton: id: unit_0, group-id: stack, is-focusable: 0
+					lp: width: 200
+				TBButton: id: unit_1, group-id: stack, is-focusable: 0
+					lp: width: 200
+				TBButton: id: unit_2, group-id: stack, is-focusable: 0
+					lp: width: 200
+				TBButton: id: unit_3, group-id: stack, is-focusable: 0
+					lp: width: 200
+			TBLayout: id: stack_b, axis: y, distribution-position: top, spacing: 2
+				TBButton: id: unit_4, group-id: stack, is-focusable: 0
+					lp: width: 200
+				TBButton: id: unit_5, group-id: stack, is-focusable: 0
+					lp: width: 200
+				TBButton: id: unit_6, group-id: stack, is-focusable: 0
+					lp: width: 200
+				TBButton: id: unit_7, group-id: stack, is-focusable: 0
+					lp: width: 200
+			TBLayout: id: unit_panel, axis: y, distribution-position: top, position: left, spacing: 0
+				TBTextField: id: detail_0, text-align: left
+				TBTextField: id: detail_1, text-align: left
+				TBTextField: id: detail_2, text-align: left
+				TBTextField: id: detail_3, text-align: left
+				TBTextField: id: detail_4, text-align: left

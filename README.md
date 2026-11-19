@@ -44,7 +44,8 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | Input | What it does |
 |---|---|
 | Move the pointer over the map | The hex under it becomes the cursor (red border) |
-| Click a hex, or Enter at the cursor | With nothing selected: select the unit on the hex, which shows where it can go (red tint). With a unit selected: move it to the hex if it can reach it, or deselect it if this is its own hex |
+| Click a hex, or Enter at the cursor | The hex is the selected one: the panels are about it. With no unit selected: select the first unit on the hex, which shows where it can go (red tint). With a unit selected: move it to the hex if it can reach it, or deselect it if this is its own hex |
+| Click a unit's button under the map | Select that unit of the stack: its reach shows on the map, and everything about it beside the buttons |
 | Two fingers on a trackpad, or the mouse wheel, over the map | The map moves with the fingers (a wheel moves it up and down, and sideways with Shift) |
 | Drag with the right or the middle button | Pulls the map along with the pointer |
 | Ctrl (or Cmd) and the wheel or two fingers | Zoom in and out; what is under the pointer stays under it |
@@ -57,11 +58,20 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | Ctrl+Q (or Cmd+Q) | Quit |
 
 A unit is a disc in its side's color with the sign of its kind; a city that
-has an owner flies a small disc of the owner's color. The line at the bottom
-of the window says the turn, and what is on the hex under the cursor: its
-terrain and road, its city (name, owner, walls, what it builds), its units
-(with the movement points they have left). Every unit can be moved, whoever's
-it is: whose turn it is, fighting and building are rules still to come.
+has an owner flies a small disc of the owner's color.
+
+**Under the map** the first line says the turn and what is under the cursor
+(with what it would cost the selected unit to go there). Below it is the
+selected hex, the one last clicked: its terrain and road, and a button for
+every unit that stands on it, with the unit's strength and the movement
+points it has left (`mv 6/10`). A button selects its unit, and beside the
+buttons is all about the selected unit: its side, strength, moves, upkeep and
+price, and what every terrain costs it to enter. **Under the minimap** is the
+selected hex's city: its name, who holds it, its walls and garrison, and what
+it builds, in how many turns, at what price.
+
+Every unit can be moved, whoever's it is: whose turn it is, fighting and
+building are rules still to come.
 
 ## Options
 

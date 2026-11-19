@@ -159,6 +159,13 @@ impl Game {
         self.range = None;
     }
 
+    /// Select one unit by name (a row of a stack was chosen): it is the one a
+    /// chosen hex will move. False, and nothing changes, if there is no such
+    /// unit any more.
+    pub fn select_unit(&mut self, id: UnitId) -> bool {
+        self.select(id)
+    }
+
     fn select(&mut self, id: UnitId) -> bool {
         let Some(unit) = self.map.units().get(id) else { return false };
         self.range = Some(compute_range(&self.map, unit));

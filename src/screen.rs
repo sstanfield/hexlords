@@ -472,6 +472,12 @@ pub trait Scene {
     /// Whether the main map lays a tint over this hex.
     fn marked(&self, hex: Hex) -> bool;
 
+    /// The unit that shows on its hex whoever else stands there: the selected
+    /// one, in the game.
+    fn front_unit(&self) -> Option<crate::state::UnitId> {
+        None
+    }
+
     /// The tint of the marked hexes: red, green, blue and how much of it.
     fn mark_color(&self) -> [f32; 4] {
         RANGE_OVERLAY

@@ -23,6 +23,7 @@
 pub mod app;
 pub mod game;
 pub mod gui;
+pub mod info;
 pub mod minimap_view;
 pub mod paths;
 pub mod platform;
