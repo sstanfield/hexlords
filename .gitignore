@@ -1,6 +1,9 @@
 /target
 # The C++ original, for reference only (see CLAUDE.md). Never committed.
 /reference
+# The owner's own maps and pictures that are not ours to give away (built from
+# an existing game, for nostalgia). Never committed, never copied from.
+/encumbered
 **/*.rs.bk
 .DS_Store
 /.claude/

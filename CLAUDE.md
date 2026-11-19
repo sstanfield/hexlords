@@ -42,6 +42,7 @@ the C++ demo and is no longer binding).
 | `tests/`, `tools/*/tests/` | Headless tests of the layouts, the widgets and the interaction; of the generator against the game |
 | `docs/` | `map-format.md` (the map file, for people and agents who write maps); `tiles.md` (the tiles, for those who draw them); `deviations.md`; `screenshots/` |
 | `reference/hexGame/` | The C++ original, for reference. **Read-only, never edit it.** Gitignored: if it is missing, `git clone https://github.com/sstanfield/hexGame reference/hexGame` |
+| `encumbered/` | The owner's private maps that are not ours to give away (one built from an existing game, for nostalgia). Gitignored: **never commit anything from it, and never copy its names, maps, numbers or pictures into the game.** The game plays them with `--map encumbered/<map>` |
 
 ## Commands
 
