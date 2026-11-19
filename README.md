@@ -7,13 +7,14 @@ range, zoom, and a minimap. The UI is
 [Turbo Ferret](https://github.com/sstanfield/turbo-ferret) and the graphics go
 through [miniquad](https://github.com/not-fl3/miniquad).
 
-![The start view](docs/screenshots/start.png)
+![A map in the game](docs/screenshots/continent.png)
 
 The port is done (`docs/deviations.md` records how it differs from the C++),
 and from here the game goes its own way. `hexgame-rust-port-plan.md` has the
-direction. So far there is a [map editor](#the-map-editor) and a
-[map file format](docs/map-format.md), and the game plays a map of your own
-with `--map`.
+direction. So far there is a [map editor](#the-map-editor), a
+[map file format](docs/map-format.md) for maps of any size and shape from
+20 x 20 to 600 x 600 (the game plays one with `--map`), and a set of
+[terrain tiles](#the-tiles) drawn by a program in the repository.
 
 ## Build and run
 
@@ -80,6 +81,7 @@ hexgame [--map <file.map>] [--script <steps>] [--assets <dir>] [--frames <n>] [-
 cargo run -- --screenshot shot.png --script "enter,1,1"     # the unit's range, zoomed out
 cargo run -- --screenshot corner.png --script "cursor:0:0"  # the map's top left corner
 cargo run -- --map assets/maps/example.map                  # the example island
+cargo run -- --map assets/maps/continent.map                # a larger map, 46 rows of 72
 ```
 
 ## The map editor
@@ -113,12 +115,26 @@ Open, New and quitting ask a second time when the map has unsaved changes. The
 status line at the bottom shows the map's size, the hex under the cursor, the
 tool, the file, and what the last action had to say.
 
-The editor edits terrain, which is all a map file holds so far. Deserts,
-cities, temples and ruins share one placeholder image on the main map until
-there are better assets; the minimap and the status line tell them apart.
+The editor edits terrain, which is all a map file holds so far.
 
 It takes the game's `--assets`, `--frames`, `--screenshot` and `--script`
 (`--script "press:terrain_w,press:brush_7,click:10:12,key:ctrl+s"`).
+
+## The tiles
+
+```sh
+cargo run -p assetgen --release                                # draw the tiles in assets/tiles again
+cargo run -p assetgen --release -- --previews target/previews  # and maps drawn with them, to look at
+```
+
+The ten terrain tiles in `assets/tiles` are not drawn by hand: `tools/assetgen`
+(Rust, no dependencies) computes them from noise and shapes. So the art is
+original, it is under the game's licence and no other, and it can be made
+again at any size. A tile runs on into its neighbours of the same terrain
+without a seam. [docs/tiles.md](docs/tiles.md) says how a tile lies in its
+picture and how to change the art.
+
+![The tiles close up](docs/screenshots/tiles.png)
 
 ## Development
 
@@ -128,8 +144,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace    # needs no GPU and no display
 ```
 
-The repository is a Cargo workspace: the game at its root, the tools under
-`tools/`. The code is laid out so that almost all of it runs in `cargo test`:
+The repository is a Cargo workspace: the game at its root, the tools
+(`mapeditor`, `assetgen`) under `tools/`. The code is laid out so that almost all of it runs in `cargo test`:
 the game state (`src/state`, `src/game.rs`), the view math (`src/view.rs`,
 `src/minimap_view.rs`), the geometry the renderers draw (`src/render`), and the
 UI with its input (`src/screen.rs`, `src/session.rs` and the editor, driven
@@ -158,4 +174,5 @@ HexGame is under the zlib licence (`LICENSE`), as the C++ original is.
 `NOTICE` lists what it is built on and ships with: Turbo Ferret and Turbo Badger
 (zlib), Turbo Badger's default skin in `assets/skin` (public domain), miniquad
 (MIT or Apache-2.0), and the built-in font, DejaVu Sans, whose licence notice
-has to accompany every copy of the program.
+has to accompany every copy of the program. The terrain tiles are made by
+`tools/assetgen` and are part of the game; the unit picture is the C++ demo's.

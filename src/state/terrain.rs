@@ -33,7 +33,13 @@ impl TileType {
         TileType::City,
     ];
 
-    /// The terrain's name, in lower case.
+    /// Its place in [`TileType::ALL`].
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The terrain's name, in lower case. Its tile image is
+    /// `tiles/<name>_tile.png`.
     pub fn name(self) -> &'static str {
         match self {
             TileType::Grass => "grass",

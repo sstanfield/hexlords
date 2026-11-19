@@ -7,7 +7,8 @@ Ferret (<https://github.com/sstanfield/turbo-ferret>) and graphics go through
 miniquad. `hexgame-rust-port-plan.md` is the brief: the acceptance spec of the
 demo, the design, and the direction for the phases after it. Phase 2 has begun:
 there is a map editor (`tools/mapeditor`), a documented map file format
-(`docs/map-format.md`), and the game plays a map file with `--map`.
+(`docs/map-format.md`), the game plays a map file with `--map`, and the
+terrain tiles are drawn by a program (`tools/assetgen`, `docs/tiles.md`).
 
 **The C++ is history, not a specification.** The owner's word (2026-11-18):
 the port is done and the game now goes its own way, so nothing has to match the
@@ -34,9 +35,10 @@ the C++ demo and is no longer binding).
 | `src/script.rs` | Scripted input (`--script`) for any scene, for screenshots and tests |
 | `src/app.rs`, `src/main.rs` | The miniquad window (`App<S: Scene>`, `app::run`): forwards input to the scene, draws the frame. `main.rs` is the game's command line |
 | `tools/mapeditor/` | The map editor, a workspace member on the game's library: `Editor` (a scene: the sidebar, painting, files), `brush`, `history` (undo), `check` (`--check`) |
-| `assets/` | `layouts/main.tb.txt` (the game), `layouts/editor.tb.txt` (the editor), Turbo Badger's default skin and `skin/hexgame.tb.txt` (our changes, loaded on top), tiles, the unit image, `maps/*.map` |
-| `tests/`, `tools/mapeditor/tests/` | Headless tests of the layouts, the widgets and the interaction |
-| `docs/` | `map-format.md` (the map file, for people and agents who write maps); `deviations.md`; `screenshots/` |
+| `tools/assetgen/` | The tile generator, a workspace member with no dependencies: `terrain` (a function for each terrain's art), `noise` and `scatter` (what repeats on the hex grid), `tile` (the image, the atlas), `preview` (maps drawn without the game), `png` (the writer) |
+| `assets/` | `layouts/main.tb.txt` (the game), `layouts/editor.tb.txt` (the editor), Turbo Badger's default skin and `skin/hexgame.tb.txt` (our changes, loaded on top), `tiles/<terrain>_tile.png` (what `assetgen` makes, and nothing else), the unit image, `maps/*.map` |
+| `tests/`, `tools/*/tests/` | Headless tests of the layouts, the widgets and the interaction; of the generator against the game |
+| `docs/` | `map-format.md` (the map file, for people and agents who write maps); `tiles.md` (the tiles, for those who draw them); `deviations.md`; `screenshots/` |
 | `reference/hexGame/` | The C++ original, for reference. **Read-only, never edit it.** Gitignored: if it is missing, `git clone https://github.com/sstanfield/hexGame reference/hexGame` |
 
 ## Commands
@@ -63,6 +65,8 @@ cargo run -- --map assets/maps/example.map  # the game on a map file
 cargo run -p mapeditor -- assets/maps/example.map                # the map editor
 cargo run -p mapeditor -- --check assets/maps/*.map              # report on map files, no window
 cargo run -p mapeditor -- x.map --screenshot target/ed.png --script "press:brush_7,key:w"
+cargo run -p assetgen --release                                  # draw assets/tiles again
+cargo run -p assetgen --release -- --previews target/previews    # and maps drawn with the tiles
 cargo +1.86 check --workspace --all-targets # MSRV
 ```
 
@@ -75,7 +79,8 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
 
 - **Dependencies:** the runtime dependencies are `miniquad`, `turbo-ferret` and
   `turbo-ferret-miniquad` (pinned once, in `[workspace.dependencies]`); a tool
-  may also depend on the game's library. Nothing else: no `image`, `png`, `glam`, `serde`,
+  may also depend on the game's library (`assetgen` depends on nothing, and
+  has the game only as a dev-dependency, for its tests). Nothing else: no `image`, `png`, `glam`, `serde`,
   `log`, `rand`. PNGs are decoded by Turbo Ferret's decoder and written by the
   small encoder in `src/render/png_out.rs`. A dev-dependency is allowed when a
   test really needs one. Turbo Ferret is pinned by `rev`; bump it on purpose. A
@@ -115,6 +120,18 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
   The view goes the same way on both maps (the owner tried the other and
   found it backwards): the map follows the fingers on the main map, and on
   the minimap the view's marker goes against them, at the minimap's scale.
+- **The tiles are generated** (`docs/tiles.md`): `assets/tiles` holds what
+  `cargo run -p assetgen --release` writes and nothing else, and a test draws
+  every tile again to compare. To change the art, change
+  `tools/assetgen/src/terrain.rs` and run the generator; do not edit a PNG.
+  A new terrain is a `TileType`, a `Terrain` in the generator with the same
+  name and letter (a test compares the two lists), a tile, and a minimap
+  color. Everything generated has to stay original: no shapes, palettes or
+  icons taken from an existing game.
+- **Maps are any size and shape**, 20 to 600 rows and as many columns, the
+  two independent. Nothing may assume a square: `tests/shapes.rs` runs wide,
+  tall and odd maps through the file, the views, the renderer's geometry and
+  the unit's movement, and new code that takes rows and columns belongs in it.
 - **The map file format is a promise** (`docs/map-format.md`): files written
   today must stay readable. New kinds of data go after the last row, where the
   reader ignores lines today. Change the page and `assets/maps/example.map`
@@ -167,12 +184,18 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
    when it is done: the editor's fields do on Enter and Esc, its buttons are
    `is-focusable: 0`, and it takes letters for terrain keys only while the map
    has the focus.
-6. **The view's middle is a point, not a hex.** `MapView` keeps the nearest
+6. **A tile is scaled smoothly, so it has no transparency.** Terrain
+   textures are read with linear filtering and mipmaps (`Sampling::Smooth`):
+   a hex is 20 to 270 pixels wide. That mixes each pixel with its neighbours,
+   so a tile is painted to the corners of its square, outside the hex too,
+   and its side is a power of two. A picture with transparency (the unit
+   image) is read by the nearest pixel instead.
+7. **The view's middle is a point, not a hex.** `MapView` keeps the nearest
    hex (`center()`) and how far the middle is from it; a scroll leaves part of
    a hex there. Ask `middle()`, `hex_center`, `shows` or `pick`, and do not
    compute a place on screen from `center()` alone. The cursor can be out of
    view after a scroll; an arrow key brings the view back to it.
-7. **A press on the map is three commands and a click is a fourth.**
+8. **A press on the map is three commands and a click is a fourth.**
    `MapCommand::Press`, `Hover`s while the button is held (a drag, which may
    leave the map), `Release`, and then `Click` if the release was on the map.
    The game acts on `Click`, the editor on `Press` and the drag: do not act on

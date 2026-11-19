@@ -1,0 +1,17 @@
+[package]
+name = "assetgen"
+description = "Generates the HexGame terrain tiles: procedural art, so it is original and can be made again at any size."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+license = "Zlib"
+publish = false
+
+# Nothing: the generator is arithmetic and a PNG writer.
+[dependencies]
+
+# The tests check the generator against the game it draws for: the terrains'
+# names and letters, the PNG decoder the game loads tiles with, the map reader.
+[dev-dependencies]
+hexgame = { path = "../.." }
+turbo-ferret = { workspace = true }

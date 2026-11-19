@@ -23,20 +23,24 @@ pub const BACKING: (f32, f32, f32, f32) = (0.0, 0.0, 0.0, 1.0);
 /// The marker over the main view's part of the map. C++: miniMapLocMarker
 pub const MARKER: [f32; 4] = [0.0, 0.0, 0.0, 0.3];
 
-/// A terrain's color on the minimap. Deserts and cities, which the C++ left
-/// black ("XXX Fixme"), have colors of their own. C++: getTileColor
+/// A terrain's color on the minimap. Open country has the color its tile has
+/// from far away (the mean of `assets/tiles/<name>_tile.png`; a test holds
+/// them together). The places are a picture on grass, so their tiles are all
+/// but grass from far away: they get the color of what stands on them, to be
+/// found on the minimap. C++: getTileColor
 pub fn terrain_color(kind: TileType) -> [f32; 3] {
     match kind {
-        TileType::Grass => [0.0, 0.76, 0.0],
-        TileType::Forest => [0.22, 0.416, 0.122],
-        TileType::Swamp => [0.0, 0.76, 0.522],
-        TileType::Desert => [0.87, 0.78, 0.5],
-        TileType::Hill => [0.863, 0.667, 0.208],
-        TileType::Mountain => [0.475, 0.467, 0.443],
-        TileType::Water => [0.09, 0.886, 0.902],
-        TileType::Temple => [0.5, 0.5, 0.5],
-        TileType::Ruin => [0.6, 0.6, 0.6],
-        TileType::City => [0.75, 0.1, 0.1],
+        TileType::Grass => [0.37, 0.56, 0.22],
+        TileType::Forest => [0.15, 0.29, 0.11],
+        TileType::Swamp => [0.30, 0.33, 0.22],
+        TileType::Desert => [0.81, 0.69, 0.45],
+        TileType::Hill => [0.51, 0.53, 0.29],
+        TileType::Mountain => [0.48, 0.45, 0.41],
+        TileType::Water => [0.19, 0.38, 0.64],
+        // The dome's gold, the bare ground's brown, the roofs' red.
+        TileType::Temple => [0.95, 0.80, 0.30],
+        TileType::Ruin => [0.42, 0.28, 0.18],
+        TileType::City => [0.80, 0.16, 0.12],
     }
 }
 
@@ -205,6 +209,11 @@ impl MiniMapRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// True for the terrains that are a picture on grass (see `terrain_color`).
+    fn is_place(kind: TileType) -> bool {
+        matches!(kind, TileType::Temple | TileType::Ruin | TileType::City)
+    }
     use crate::game::Game;
 
     fn mini() -> MiniMapView {
@@ -215,20 +224,34 @@ mod tests {
 
     #[test]
     fn terrain_colors() {
-        assert_eq!(terrain_color(TileType::Grass), [0.0, 0.76, 0.0]);
-        assert_eq!(terrain_color(TileType::Forest), [0.22, 0.416, 0.122]);
-        assert_eq!(terrain_color(TileType::Swamp), [0.0, 0.76, 0.522]);
-        assert_eq!(terrain_color(TileType::Hill), [0.863, 0.667, 0.208]);
-        assert_eq!(terrain_color(TileType::Mountain), [0.475, 0.467, 0.443]);
-        assert_eq!(terrain_color(TileType::Water), [0.09, 0.886, 0.902]);
-        assert_eq!(terrain_color(TileType::Temple), [0.5, 0.5, 0.5]);
-        assert_eq!(terrain_color(TileType::Ruin), [0.6, 0.6, 0.6]);
-        // Every terrain has a color of its own (the C++ left desert and city
-        // black), so that a map can be read off the minimap.
+        // No two alike: every pair differs clearly in some channel.
         for (i, a) in TileType::ALL.into_iter().enumerate() {
             for b in &TileType::ALL[i + 1..] {
-                assert_ne!(terrain_color(a), terrain_color(*b), "{a:?} and {b:?}");
+                let (ca, cb) = (terrain_color(a), terrain_color(*b));
+                let apart = (0..3).map(|k| (ca[k] - cb[k]).abs()).fold(0.0, f32::max);
+                assert!(apart > 0.1, "{a:?} and {b:?}: {ca:?} {cb:?}");
             }
+        }
+        // Water is the blue one, and the places stand out from the grass.
+        let water = terrain_color(TileType::Water);
+        assert!(water[2] > water[0] && water[2] > water[1]);
+        assert!(TileType::ALL.into_iter().filter(|k| is_place(*k)).count() == 3);
+    }
+
+    #[test]
+    fn open_country_has_its_tiles_color() {
+        use crate::render::textures::load_image;
+        use crate::render::tile_image;
+        let mut loader = turbo_ferret::FsLoader::new(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets"));
+        for kind in TileType::ALL.into_iter().filter(|k| !is_place(*k)) {
+            let tile = load_image(&mut loader, &tile_image(kind)).unwrap();
+            let pixels = (tile.rgba.len() / 4) as f32;
+            let mean: [f32; 3] = std::array::from_fn(|k| {
+                tile.rgba.chunks_exact(4).map(|p| f32::from(p[k])).sum::<f32>() / pixels / 255.0
+            });
+            let color = terrain_color(kind);
+            let apart = (0..3).map(|k| (mean[k] - color[k]).abs()).fold(0.0, f32::max);
+            assert!(apart < 0.03, "{kind:?}: the tile is {mean:?}, the minimap {color:?}");
         }
     }
 
@@ -237,9 +260,9 @@ mod tests {
         let game = Game::demo();
         let view = mini();
         let grass = minimap_hex(&game.map, &view, Hex::new(10, 11));
-        assert!(grass.iter().all(|v| v.color == [0.0, 0.76, 0.0, 1.0]));
+        assert!(grass.iter().all(|v| v.color == [0.37, 0.56, 0.22, 1.0]));
         let mountain = minimap_hex(&game.map, &view, Hex::new(10, 10));
-        assert!(mountain.iter().all(|v| v.color == [0.475, 0.467, 0.443, 1.0]));
+        assert!(mountain.iter().all(|v| v.color == [0.48, 0.45, 0.41, 1.0]));
         // Its first vertex is its center, where the view puts the hex.
         assert_eq!(grass[0].pos, view.to_ndc(view.hex_center(Hex::new(10, 11))));
         // A whole hex is 2 model units wide and high.

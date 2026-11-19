@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "assetgen"
+version = "0.1.0"
+dependencies = [
+ "hexgame",
+ "turbo-ferret",
+]
+
+[[package]]
 name = "hexgame"
 version = "0.1.0"
 dependencies = [

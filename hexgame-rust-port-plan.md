@@ -568,7 +568,9 @@ simultaneous turns and our own unit set and numbers.
   terrain tiles that match the flat-top mesh, plus unit counters (a simple
   silhouette or icon on a side-colored disc for each of the 8 sides) and city and
   road markers. All of it is generated, so the licensing is clean and it can be
-  regenerated.
+  regenerated. **Partly done (2026-11-18):** `tools/assetgen` draws the ten
+  terrain tiles, which the game ships (`docs/tiles.md`). Unit counters and
+  city and road markers are still to do.
 - Show a stack-size indicator on hexes with units (a count, or pips).
 - ~~Restore the map editor hotkeys that are commented out in `main.cpp` (G/F/W/H/M/S
   paint terrain, C places a city, Ctrl+S saves, Ctrl+T ends the turn), behind a

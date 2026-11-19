@@ -9,6 +9,8 @@
 //!
 //! C++: src/render/maprender.cpp MapRenderer (renderMap, CTX::drawHex,
 //! CTX::getTileTexture)
+//!
+//! Every terrain has its own tile image (the C++ had seven for ten terrains).
 
 use miniquad::{RenderingBackend, TextureId};
 use turbo_ferret::ResourceLoader;
@@ -16,7 +18,7 @@ use turbo_ferret::ResourceLoader;
 use super::hex_mesh::{HEX_BARY, HEX_INDICES, HEX_VERTICES, HexVariant};
 use super::mesh::{BufferPool, MeshList};
 use super::shaders::{FlatVertex, HexVertex, Pipelines};
-use super::textures::load_texture;
+use super::textures::{Sampling, load_texture};
 use crate::state::{Hex, Map, TileType};
 use crate::view::MapView;
 
@@ -36,67 +38,21 @@ pub struct Marks<'a> {
     pub marked: &'a dyn Fn(Hex) -> bool,
 }
 
-/// The texture a terrain is drawn with.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub enum TileTexture {
-    Grass,
-    Forest,
-    Swamp,
-    Hill,
-    Mountain,
-    Water,
-    City,
+/// The image a terrain is drawn with, relative to the asset directory: every
+/// terrain has its own, made by `tools/assetgen` (`docs/tiles.md`).
+pub fn tile_image(kind: TileType) -> String {
+    format!("tiles/{}_tile.png", kind.name())
 }
 
-impl TileTexture {
-    pub const ALL: [TileTexture; 7] = [
-        TileTexture::Grass,
-        TileTexture::Forest,
-        TileTexture::Swamp,
-        TileTexture::Hill,
-        TileTexture::Mountain,
-        TileTexture::Water,
-        TileTexture::City,
-    ];
-
-    /// Cities, temples, ruins and deserts all use the city tile, as in the C++
-    /// (which marked the last three "XXX"). C++: CTX::getTileTexture
-    pub fn of(kind: TileType) -> TileTexture {
-        match kind {
-            TileType::Grass => TileTexture::Grass,
-            TileType::Forest => TileTexture::Forest,
-            TileType::Swamp => TileTexture::Swamp,
-            TileType::Hill => TileTexture::Hill,
-            TileType::Mountain => TileTexture::Mountain,
-            TileType::Water => TileTexture::Water,
-            TileType::City | TileType::Temple | TileType::Ruin | TileType::Desert => TileTexture::City,
-        }
-    }
-
-    /// The image file, relative to the asset directory.
-    pub fn path(self) -> &'static str {
-        match self {
-            TileTexture::Grass => "tiles/grass_tile.png",
-            TileTexture::Forest => "tiles/forest_tile.png",
-            TileTexture::Swamp => "tiles/swamp_tile.png",
-            TileTexture::Hill => "tiles/hill_tile.png",
-            TileTexture::Mountain => "tiles/mountain_tile.png",
-            TileTexture::Water => "tiles/water_tile.png",
-            TileTexture::City => "tiles/citycenter_tile.png",
-        }
-    }
-
-    fn index(self) -> usize {
-        self as usize
-    }
-}
+/// How many terrains, and so tile images, there are.
+const TERRAINS: usize = TileType::ALL.len();
 
 /// One frame of the main map as triangles, in the widget's normalized device
 /// coordinates.
 #[derive(Default)]
 pub struct MapGeometry {
-    /// The terrain, by texture (indexed like `TileTexture::ALL`).
-    terrain: [MeshList<HexVertex>; 7],
+    /// The terrain, a mesh for each kind's image (indexed like `TileType::ALL`).
+    terrain: [MeshList<HexVertex>; TERRAINS],
     /// The hexes that hold units, to be drawn with the unit image.
     units: MeshList<HexVertex>,
     /// The marked hexes.
@@ -132,7 +88,7 @@ impl MapGeometry {
 
             let vertices: [HexVertex; HEX_VERTICES] =
                 std::array::from_fn(|i| HexVertex { pos: corner(i), uv: uvs[i], bary: HEX_BARY[i], border });
-            self.terrain[TileTexture::of(tile.kind).index()].push(&vertices, &HEX_INDICES);
+            self.terrain[tile.kind.index()].push(&vertices, &HEX_INDICES);
             if !tile.units().is_empty() {
                 self.units.push(&vertices, &HEX_INDICES);
             }
@@ -144,9 +100,9 @@ impl MapGeometry {
         }
     }
 
-    /// The terrain drawn with `texture`.
-    pub fn terrain(&self, texture: TileTexture) -> &MeshList<HexVertex> {
-        &self.terrain[texture.index()]
+    /// The hexes of one terrain.
+    pub fn terrain(&self, kind: TileType) -> &MeshList<HexVertex> {
+        &self.terrain[kind.index()]
     }
 
     pub fn units(&self) -> &MeshList<HexVertex> {
@@ -160,8 +116,8 @@ impl MapGeometry {
 
 /// Draws the main map into the current viewport.
 pub struct MapRenderer {
-    /// Indexed like `TileTexture::ALL`.
-    tiles: [TextureId; 7],
+    /// Indexed like `TileType::ALL`.
+    tiles: [TextureId; TERRAINS],
     unit: TextureId,
     geometry: MapGeometry,
     buffers: BufferPool,
@@ -170,12 +126,14 @@ pub struct MapRenderer {
 impl MapRenderer {
     /// Load the tile and unit images. C++: MapRenderer::MapRenderer
     pub fn new(ctx: &mut dyn RenderingBackend, loader: &mut dyn ResourceLoader) -> Result<MapRenderer, String> {
-        let mut tiles = Vec::with_capacity(TileTexture::ALL.len());
-        for texture in TileTexture::ALL {
-            tiles.push(load_texture(ctx, loader, texture.path())?);
+        // The tiles are drawn at every size from a few pixels to their own, so
+        // they are scaled smoothly; the unit image is a few flat colors.
+        let mut tiles = Vec::with_capacity(TERRAINS);
+        for kind in TileType::ALL {
+            tiles.push(load_texture(ctx, loader, &tile_image(kind), Sampling::Smooth)?);
         }
-        let unit = load_texture(ctx, loader, UNIT_IMAGE)?;
-        let tiles: [TextureId; 7] = tiles.try_into().map_err(|_| "tile textures".to_string())?;
+        let unit = load_texture(ctx, loader, UNIT_IMAGE, Sampling::Nearest)?;
+        let tiles: [TextureId; TERRAINS] = tiles.try_into().map_err(|_| "tile textures".to_string())?;
         Ok(MapRenderer { tiles, unit, geometry: MapGeometry::new(), buffers: BufferPool::new() })
     }
 
@@ -194,7 +152,7 @@ impl MapRenderer {
 
         // All the terrain, then the units, then the overlay.
         ctx.apply_pipeline(&pipelines.hex);
-        let textured = TileTexture::ALL
+        let textured = TileType::ALL
             .into_iter()
             .map(|t| (self.geometry.terrain(t), self.tiles[t.index()]))
             .chain([(self.geometry.units(), self.unit)]);
@@ -253,15 +211,40 @@ mod tests {
     }
 
     #[test]
-    fn terrain_textures() {
-        assert_eq!(TileTexture::of(TileType::Grass), TileTexture::Grass);
-        assert_eq!(TileTexture::of(TileType::Mountain), TileTexture::Mountain);
-        for kind in [TileType::City, TileType::Temple, TileType::Ruin, TileType::Desert] {
-            assert_eq!(TileTexture::of(kind), TileTexture::City, "{kind:?}");
+    fn every_terrain_has_its_own_image() {
+        let images: Vec<String> = TileType::ALL.into_iter().map(tile_image).collect();
+        assert_eq!(images[0], "tiles/grass_tile.png");
+        assert_eq!(tile_image(TileType::City), "tiles/city_tile.png");
+        assert_eq!(tile_image(TileType::Desert), "tiles/desert_tile.png");
+        let mut different = images.clone();
+        different.sort();
+        different.dedup();
+        assert_eq!(different.len(), TERRAINS);
+        // And every one is in the repository's assets.
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        for image in &images {
+            assert!(assets.join(image).is_file(), "{image}");
         }
-        for (i, t) in TileTexture::ALL.into_iter().enumerate() {
-            assert_eq!(t.index(), i);
-            assert!(t.path().starts_with("tiles/") && t.path().ends_with("_tile.png"));
+    }
+
+    #[test]
+    fn every_terrain_is_drawn_with_its_own_mesh() {
+        // A map with one hex of each terrain in a row.
+        let mut map = Map::new(20, 20, TileType::Water).unwrap();
+        for (col, kind) in TileType::ALL.into_iter().enumerate() {
+            map.tile_mut(Hex::new(10, col as u16 + 5)).unwrap().kind = kind;
+        }
+        let mut view = MapView::new(20, 20, Hex::new(10, 10));
+        view.resize(819, 537);
+        let mut g = MapGeometry::new();
+        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false });
+        for (col, kind) in TileType::ALL.into_iter().enumerate() {
+            let want = center_of(&view, Hex::new(10, col as u16 + 5));
+            let drawn = hexes(g.terrain(kind));
+            assert!(drawn.iter().any(|h| h[0].pos == want), "{kind:?}");
+            if kind != TileType::Water {
+                assert_eq!(drawn.len(), 1, "{kind:?}");
+            }
         }
     }
 
@@ -271,12 +254,13 @@ mod tests {
         let view = view_at(START);
         let g = geometry(&game, &view);
         let visible = view.visible_hexes().count();
-        let grass = hexes(g.terrain(TileTexture::Grass)).len();
-        let mountain = hexes(g.terrain(TileTexture::Mountain)).len();
+        let grass = hexes(g.terrain(TileType::Grass)).len();
+        let mountain = hexes(g.terrain(TileType::Mountain)).len();
         assert_eq!(grass + mountain, visible);
         // Rows 43..=57 are drawn: one mountain in each.
         assert_eq!(mountain, 15);
-        for t in [TileTexture::Forest, TileTexture::Swamp, TileTexture::Hill, TileTexture::Water, TileTexture::City] {
+        for t in [TileType::Forest, TileType::Swamp, TileType::Hill, TileType::Water, TileType::City, TileType::Desert]
+        {
             assert!(g.terrain(t).is_empty(), "{t:?}");
         }
         // One hex holds a unit, in the middle; nothing is selected.
@@ -285,7 +269,7 @@ mod tests {
         assert_eq!(units[0][0].pos, [0.0, 0.0]);
         assert!(g.overlay().is_empty());
         // Six triangles a hex.
-        assert_eq!(g.terrain(TileTexture::Grass).index_count(), grass * 18);
+        assert_eq!(g.terrain(TileType::Grass).index_count(), grass * 18);
     }
 
     #[test]
@@ -294,7 +278,7 @@ mod tests {
         let view = view_at(START);
         let g = geometry(&game, &view);
         let (wf, hf) = view.factors();
-        for hex in hexes(g.terrain(TileTexture::Grass)) {
+        for hex in hexes(g.terrain(TileType::Grass)) {
             // A whole hex: its center, then its corners around it.
             let [cx, cy] = hex[0].pos;
             for (v, model) in hex.iter().zip(HexVariant::Full.positions()) {
@@ -308,7 +292,7 @@ mod tests {
         }
         // The hex right of the center is in the list, where the view says.
         let want = center_of(&view, Hex::new(50, 51));
-        assert!(hexes(g.terrain(TileTexture::Grass)).iter().any(|h| h[0].pos == want));
+        assert!(hexes(g.terrain(TileType::Grass)).iter().any(|h| h[0].pos == want));
     }
 
     #[test]
@@ -319,7 +303,7 @@ mod tests {
         let g = geometry(&game, &view);
         let cursor_at = center_of(&view, Hex::new(50, 52));
         let mut red = 0;
-        for t in TileTexture::ALL {
+        for t in TileType::ALL {
             for hex in hexes(g.terrain(t)) {
                 let is_cursor = hex[0].pos == cursor_at;
                 let want = if is_cursor { [1.0, 0.0, 0.0, 0.84] } else { [0.0, 0.0, 0.0, 0.94] };
@@ -341,7 +325,7 @@ mod tests {
         let g = geometry(&game, &view);
         // The unit stands on a mountain: the same seven vertices are in both layers.
         let unit = hexes(g.units())[0];
-        assert!(hexes(g.terrain(TileTexture::Mountain)).contains(&unit));
+        assert!(hexes(g.terrain(TileType::Mountain)).contains(&unit));
         // It is under the cursor at the start, so it carries the red border.
         assert_eq!(unit[0].border[..3], CURSOR_BORDER);
     }
@@ -375,7 +359,7 @@ mod tests {
         let g = geometry(&game, &view);
         let find = |hex: Hex| {
             let at = center_of(&view, hex);
-            TileTexture::ALL
+            TileType::ALL
                 .into_iter()
                 .flat_map(|t| hexes(g.terrain(t)))
                 .find(|h| h[0].pos == at)
@@ -396,7 +380,7 @@ mod tests {
         assert_eq!(find(Hex::new(0, 1)).iter().map(|v| v.uv).collect::<Vec<_>>(), HexVariant::Top.uvs());
         // Nothing off the map is drawn: no hex is centered left of column 0.
         let left_edge = center_of(&view, Hex::new(0, 0))[0];
-        assert!(TileTexture::ALL.into_iter().flat_map(|t| hexes(g.terrain(t))).all(|h| h[0].pos[0] >= left_edge));
+        assert!(TileType::ALL.into_iter().flat_map(|t| hexes(g.terrain(t))).all(|h| h[0].pos[0] >= left_edge));
     }
 
     #[test]
@@ -408,10 +392,10 @@ mod tests {
         let mut view = view_at(START);
         while view.zoom_out() {}
         let g = geometry(&game, &view);
-        let total: usize = TileTexture::ALL.into_iter().map(|t| g.terrain(t).vertex_count()).sum();
+        let total: usize = TileType::ALL.into_iter().map(|t| g.terrain(t).vertex_count()).sum();
         assert_eq!(total, view.visible_hexes().count() * HEX_VERTICES);
         assert!(total < 65_536, "{total}");
-        for t in TileTexture::ALL {
+        for t in TileType::ALL {
             assert!(g.terrain(t).meshes().len() <= 1);
         }
         assert_eq!(g.overlay().meshes().len(), 1);
@@ -423,9 +407,9 @@ mod tests {
         let view = view_at(START);
         let mut g = MapGeometry::new();
         g.build(&game.map, &view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex) });
-        let first = g.terrain(TileTexture::Grass).vertex_count();
+        let first = g.terrain(TileType::Grass).vertex_count();
         g.build(&game.map, &view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex) });
-        assert_eq!(g.terrain(TileTexture::Grass).vertex_count(), first);
+        assert_eq!(g.terrain(TileType::Grass).vertex_count(), first);
         assert_eq!(hexes(g.units()).len(), 1);
     }
 }
