@@ -1,7 +1,8 @@
 # The cities of this map: "city <row> <column>", on a hex that is a city (the
 # letter c) in terrain.map. docs/map-format.md says what the lines mean.
 #
-# Four sides start with a city each; the other five cities are nobody's.
+# Four sides start with a city each, and a captain in it; the other five
+# cities are nobody's.
 
 city 13 7
   name     Brindlewick
@@ -12,6 +13,7 @@ city 13 7
   produce  riders 3
   garrison militia 2
   garrison riders
+  garrison captain
 
 city 19 42
   name     Eskerfall
@@ -22,6 +24,7 @@ city 19 42
   produce  archers 2
   garrison wardens
   garrison archers 2
+  garrison captain
 
 city 35 17
   name     Hollinstead
@@ -34,6 +37,7 @@ city 35 17
   garrison militia
   garrison wardens
   garrison riders
+  garrison captain
 
 city 38 48
   name     Kestrelby
@@ -44,6 +48,7 @@ city 38 48
   produce  riders 3
   garrison archers
   garrison riders 2
+  garrison captain
 
 city 11 23
   name     Cendermoor

@@ -17,6 +17,7 @@ use crate::gui::build;
 use crate::help::HelpSection;
 use crate::screen::{MapScreen, Scene};
 use crate::setup::{Controller, Mode, Setup, TurnOrder};
+use crate::state::combat::{MAX_CHANCE, System};
 use crate::state::scenario::side_name;
 use crate::state::{Hex, Map, Side, TileType};
 
@@ -29,6 +30,10 @@ pub const MODE_TURNS_ID: &str = "mode_turns";
 pub const MODE_ROUNDS_ID: &str = "mode_rounds";
 pub const ORDER_FIXED_ID: &str = "order_fixed";
 pub const ORDER_DRAWN_ID: &str = "order_drawn";
+pub const BATTLES_LINES_ID: &str = "battles_lines";
+pub const BATTLES_STRENGTH_ID: &str = "battles_strength";
+pub const CHANCE_LESS_ID: &str = "chance_less";
+pub const CHANCE_MORE_ID: &str = "chance_more";
 /// The agent the computer plays with, unless told otherwise.
 pub const COMPUTER: &str = "simple";
 
@@ -98,6 +103,7 @@ impl NewGame {
                 ("A map's name", "Choose it: it shows beside the settings"),
                 ("Turns, Rounds", "How to play: one side after the other (rounds are to come)"),
                 ("Order of turns", "The same each round, or drawn anew"),
+                ("Battles", "Lines of duels, or strength against strength; how much chance, 0 to 10"),
                 ("Person, Computer", "Who plays each side: several people take turns at the screen"),
                 ("Start the game", "Play"),
             ],
@@ -162,6 +168,7 @@ impl NewGame {
                 let person = game.setup().seats.iter().find(|s| s.controller == Controller::Person).map(|s| s.side);
                 let mut setup = Setup::solo(&game.map, person, COMPUTER);
                 (setup.mode, setup.order, setup.seed) = (self.setup.mode, self.setup.order, self.setup.seed);
+                setup.combat = self.setup.combat;
                 self.setup = setup;
                 self.screen.set_game(game);
                 self.problem = None;
@@ -251,6 +258,18 @@ impl NewGame {
         press(ui, drawn, "order", self.setup.order == TurnOrder::Drawn);
 
         build::gap(ui, c, space);
+        build::heading(ui, c, "Battles");
+        let row = build::row(ui, c, space);
+        let lines = build::button(ui, row, BATTLES_LINES_ID, "Lines");
+        press(ui, lines, "battles", self.setup.combat.system == System::Lines);
+        let strength = build::button(ui, row, BATTLES_STRENGTH_ID, "Strength");
+        press(ui, strength, "battles", self.setup.combat.system == System::Strength);
+        let row = build::row(ui, c, space);
+        build::button(ui, row, CHANCE_LESS_ID, "-");
+        build::text(ui, row, &format!("Chance {} of {MAX_CHANCE}", self.setup.combat.chance));
+        build::button(ui, row, CHANCE_MORE_ID, "+");
+
+        build::gap(ui, c, space);
         build::heading(ui, c, "Who plays");
         if self.setup.seats.is_empty() {
             build::text(ui, c, "This map has no sides: nothing to play.");
@@ -298,6 +317,17 @@ impl NewGame {
                 self.start = true;
             } else if id == TbId::new(MODE_TURNS_ID) {
                 self.setup.mode = Mode::Turns;
+            } else if id == TbId::new(BATTLES_LINES_ID) || id == TbId::new(BATTLES_STRENGTH_ID) {
+                let lines = id == TbId::new(BATTLES_LINES_ID);
+                self.setup.combat.system = if lines { System::Lines } else { System::Strength };
+            } else if id == TbId::new(CHANCE_LESS_ID) || id == TbId::new(CHANCE_MORE_ID) {
+                let chance = &mut self.setup.combat.chance;
+                *chance = if id == TbId::new(CHANCE_LESS_ID) {
+                    chance.saturating_sub(1)
+                } else {
+                    (*chance + 1).min(MAX_CHANCE)
+                };
+                self.rebuild();
             } else if id == TbId::new(ORDER_FIXED_ID) || id == TbId::new(ORDER_DRAWN_ID) {
                 self.setup.order = if id == TbId::new(ORDER_FIXED_ID) { TurnOrder::Fixed } else { TurnOrder::Drawn };
                 self.rebuild();

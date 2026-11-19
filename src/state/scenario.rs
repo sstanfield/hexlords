@@ -167,6 +167,7 @@ pub fn parse_units(text: &str) -> Result<Vec<UnitKind>, ScenarioError> {
             upkeep: 0,
             price: 0,
             cost: MoveCost::default(),
+            commander: 0,
         };
         let mut seen: Vec<&str> = Vec::new();
         for (line, key, value) in record.fields {
@@ -193,6 +194,7 @@ pub fn parse_units(text: &str) -> Result<Vec<UnitKind>, ScenarioError> {
                 "moves" => kind.moves = number(file, line, "moves", value, 1)?,
                 "upkeep" => kind.upkeep = number(file, line, "upkeep", value, 0)?,
                 "price" => kind.price = number(file, line, "price", value, 0)?,
+                "commander" => kind.commander = number(file, line, "commander", value, 1)?,
                 "enter" => {
                     for part in value.split(',').map(str::trim).filter(|p| !p.is_empty()) {
                         let mut words = part.split_whitespace();
@@ -215,7 +217,9 @@ pub fn parse_units(text: &str) -> Result<Vec<UnitKind>, ScenarioError> {
                     return error(
                         file,
                         line,
-                        format!("\"{key}\" is not one of name, image, strength, moves, upkeep, price, enter"),
+                        format!(
+                            "\"{key}\" is not one of name, image, strength, moves, upkeep, price, enter, commander"
+                        ),
                     );
                 }
             }
@@ -333,9 +337,12 @@ pub fn parse_cities(text: &str) -> Result<Vec<CityEntry>, ScenarioError> {
             return error(file, record.line, format!("there is a {} at {} already", other.name, other.hex));
         }
         // Summed wider than a count is read: two large counts must not wrap.
+        // (Whether one of them is a commander, which has a place of its own,
+        // is known when the units are placed.)
         let standing: u64 = city.garrison.iter().map(|(_, n)| u64::from(*n)).sum();
-        if standing > MAX_STACK as u64 {
-            return error(file, record.line, format!("{standing} units in {}: a hex holds {MAX_STACK}", city.name));
+        if standing > MAX_STACK as u64 + 1 {
+            let why = format!("{standing} units in {}: a hex holds {MAX_STACK} and a commander", city.name);
+            return error(file, record.line, why);
         }
         cities.push(city);
     }
@@ -401,7 +408,9 @@ pub fn build(mut map: Map, kinds: Vec<UnitKind>, cities: &[CityEntry]) -> Result
             for _ in 0..*count {
                 let placed = map.new_unit_of(entry.side, kind).map(|u| map.place_unit(u, *hex));
                 if !matches!(placed, Some(Ok(()))) {
-                    return error(file, *line, format!("{name}: no room for its garrison"));
+                    let why =
+                        format!("{name}: no room for its garrison (a hex holds {MAX_STACK} units and a commander)");
+                    return error(file, *line, why);
                 }
             }
         }
@@ -589,7 +598,7 @@ city 12 14
             ("unit a\nmoves 3\nmoves 4\n", "units.txt line 3: \"moves\" is given twice for a"),
             (
                 "unit a\nspeed 3\n",
-                "units.txt line 2: \"speed\" is not one of name, image, strength, moves, upkeep, price, enter",
+                "units.txt line 2: \"speed\" is not one of name, image, strength, moves, upkeep, price, enter, commander",
             ),
             (
                 "unit a\nenter lava 2\n",
@@ -637,12 +646,16 @@ city 12 14
             (city("name A\ngarrison pikes\n"), "cities.txt line 1: A: there is no unit \"pikes\" (spearmen, scouts)"),
             (city("name A\ngarrison scouts 1 2\n"), "cities.txt line 3: expected \"garrison <unit> [<how many>]\""),
             (
+                city("name A\ngarrison scouts 5\ngarrison spearmen 5\n"),
+                "cities.txt line 1: 10 units in A: a hex holds 8 and a commander",
+            ),
+            (
                 city("name A\ngarrison scouts 5\ngarrison spearmen 4\n"),
-                "cities.txt line 1: 9 units in A: a hex holds 8",
+                "cities.txt line 1: A: no room for its garrison (a hex holds 8 units and a commander)",
             ),
             (
                 city("name A\ngarrison scouts 4294967295\ngarrison spearmen 4294967295\n"),
-                "cities.txt line 1: 8589934590 units in A: a hex holds 8",
+                "cities.txt line 1: 8589934590 units in A: a hex holds 8 and a commander",
             ),
             (city("name A\ncity 5 5\nname B\n"), "cities.txt line 3: A is at (5, 5) already"),
             (city("name A\ncity 12 14\nname A\n"), "cities.txt line 3: there is a A at (5, 5) already"),

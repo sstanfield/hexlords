@@ -122,11 +122,12 @@ unit riders
 | `unit` | The kind's id: lower-case letters, digits and `_`. `cities.txt` names it by this | (starts the record) |
 | `name` | What the player reads | the id |
 | `image` | The kind's picture, a path in an asset directory (below) | `units/default_unit.png` |
-| `strength` | How hard it fights | 1 |
+| `strength` | How hard it fights (`docs/gameplay.md`, "Fighting") | 1 |
 | `moves` | Its movement points each turn, at least 1 | an error: it must be given |
 | `upkeep` | What it costs each turn | 0 |
 | `price` | What it costs a city to build one, unless the city's `produce` line says otherwise | 0 |
 | `enter` | What a step costs it: `<what> <points>`, with commas between; may be given on several lines | an error: at least one |
+| `commander` | The kind is a commander: every other unit of its stack fights this much stronger, and it fights last. A hex holds one commander besides its 8 units. At least 1 | not a commander |
 
 What `enter` can name: `grass`, `forest`, `swamp`, `desert`, `hill`,
 `mountain`, `water`, `city`, and `road` and `bridge`, the price of a step along
@@ -162,7 +163,7 @@ city 13 7
 | `side` | Who holds it at the start: `black`, `white`, `red`, `green`, `blue`, `orange`, `yellow`, `purple`, or `neutral` | `neutral` |
 | `walls` | How strong its walls are | 0 |
 | `produce` | A kind of unit it can build, the turns one takes, and what one costs this city: `produce <unit> <turns> [<cost>]`; without a cost, the unit's `price`. A line for each. The game starts with the city building none of them: its holder chooses | it can build nothing |
-| `garrison` | Units that stand in it at the start, on its side: `garrison <unit> [<how many>]`. A line for each kind; at most 8 units in a city | nobody |
+| `garrison` | Units that stand in it at the start, on its side: `garrison <unit> [<how many>]`. A line for each kind; at most 8 units in a city, and a commander besides | nobody |
 
 A city tile without a record is still a city, with no name: `--check` warns of
 it. A record on a hex that is not a city, a unit that `units.txt` does not

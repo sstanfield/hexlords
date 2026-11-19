@@ -22,11 +22,12 @@ use turbo_ferret::{ImageHandle, LayoutParams, Modifiers, Point, Rect, Size, TbId
 
 use crate::agents::{self, Agents};
 use crate::city_windows::{self, CityList, CityOrder, CityWindow};
-use crate::game::Game;
+use crate::game::{Game, SelectOutcome};
 use crate::gui::build::{self, WindowParts};
 use crate::gui::{MapCommand, MapKey, RootCommand};
 use crate::help::{HelpSection, command_key};
 use crate::info;
+use crate::orders::Event;
 use crate::render::{AssetDirs, unit_icon};
 use crate::screen::{MapScreen, Scene};
 use crate::setup::Controller;
@@ -65,6 +66,9 @@ pub const BEGIN_TURN_ID: &str = "begin_turn";
 /// The window that says who won, and its buttons.
 pub const GAME_OVER_ID: &str = "game_over";
 pub const NEW_GAME_ID: &str = "new_game";
+/// The window of a few lines (a battle's report, the news), and its button.
+pub const NOTICE_ID: &str = "notice";
+pub const NOTICE_CLOSE_ID: &str = "notice_close";
 pub const GAME_OVER_CLOSE_ID: &str = "game_over_close";
 /// Where the windows go on the map: the list in its left part, a city in its
 /// right, a third of the way down (see `gui::build::place`).
@@ -136,7 +140,7 @@ impl Slot {
     fn resource(i: usize) -> String {
         let id = unit_button_id(i);
         format!(
-            "TBButton: id: {id}, skin: UnitSlot, group-id: stack, is-focusable: 0\n\
+            "TBButton: id: {id}, skin: UnitSlot, is-focusable: 0\n\
              \tTBLayout: axis: y, spacing: 2\n\
              \t\tTBImageWidget: id: {id}_icon\n\
              \t\tTBTextField: id: {id}_text, text-align: center\n"
@@ -150,9 +154,10 @@ fn help_section() -> HelpSection {
     HelpSection::new(
         "The game",
         &[
-            ("Click a hex,  or  Enter", "Choose it: select its first unit, or send the selected one there"),
+            ("Click a hex,  or  Enter", "Choose it: select its stack, or send the selected units there"),
+            ("A hex with another side's units", "Sending units there attacks them: the line below says the odds"),
             ("Point at a unit below", "All about it"),
-            ("Click a unit below", "Select it"),
+            ("Click a unit below", "Take it into the selection, or leave it out"),
             (&end_turn, "End the turn: units get their moves back, cities work on what they build"),
             ("City details", "All about the selected city; set what it builds"),
             ("All cities, My cities", "A list of cities: see where one is, go to it, open it"),
@@ -195,6 +200,10 @@ pub struct Session {
     game_over: Option<WindowParts>,
     /// A new game was asked for (the game over window's button).
     wants_new_game: bool,
+    /// The window of a few lines (a battle's report, the news), while it is
+    /// open; and the news kept for the people at this screen until their turn.
+    notice: Option<WindowParts>,
+    news: Vec<(Side, String)>,
 }
 
 impl Session {
@@ -243,6 +252,8 @@ impl Session {
             last_person: None,
             game_over: None,
             wants_new_game: false,
+            notice: None,
+            news: Vec::new(),
             screen,
         };
         session.apply_layout_sizes();
@@ -259,7 +270,9 @@ impl Session {
         if self.cover.is_some() || self.screen.game.winner().is_some() {
             return;
         }
-        self.screen.game.end_turn();
+        let side = self.screen.game.player();
+        let events = self.screen.game.end_turn();
+        self.record(&events, side);
         self.turn_passed();
     }
 
@@ -268,7 +281,27 @@ impl Session {
     /// person is not the one who played last, the map is covered until they
     /// say they are there.
     fn turn_passed(&mut self) {
-        agents::play_computers(&mut self.screen.game, &mut self.agents);
+        // The computer's turns, side by side, and what they did.
+        loop {
+            let game = &self.screen.game;
+            let side = game.player();
+            let computer = matches!(game.controller(side), Some(Controller::Computer(_)));
+            if !computer || game.winner().is_some() || self.agents.get_mut(side).is_none() {
+                break;
+            }
+            let Some(agent) = self.agents.get_mut(side) else { break };
+            let report = agents::play_turn(&mut self.screen.game, agent);
+            self.record(&report.events, side);
+            if self
+                .screen
+                .game
+                .order()
+                .iter()
+                .all(|s| !matches!(self.screen.game.controller(*s), Some(Controller::Person)))
+            {
+                break; // nobody plays at this screen: a turn a frame
+            }
+        }
         let game = &self.screen.game;
         let side = game.player();
         let person = game.controller(side) == Some(&Controller::Person);
@@ -277,6 +310,9 @@ impl Session {
         }
         if person {
             self.last_person = Some(side);
+            if self.cover.is_none() {
+                self.show_news();
+            }
         }
         // The panels are about the hex the cursor is on.
         self.shown = self.screen.game.map.cursor;
@@ -460,12 +496,16 @@ impl Session {
                 ((image.to_string(), unit.side()), info::unit_numbers(unit))
             })
             .collect();
-        let chosen = game.selected().and_then(|id| ids.iter().position(|unit| *unit == id));
-        // The selected unit in a line, wherever it stands.
+        let chosen: Vec<bool> = ids.iter().map(|id| game.selection().contains(id)).collect();
+        // The selected unit in a line, wherever it stands; a stack in a word.
         let line = match game.selected().and_then(|id| map.units().get(id)) {
+            Some(_) if game.selection().len() > 1 => format!(
+                "{} units selected: they move together (click one to leave it behind, or to take it along).",
+                game.selection().len()
+            ),
             Some(unit) => info::unit_line(map, unit),
             None if ids.is_empty() => String::new(),
-            None => "Click a unit to select it, then a hex to send it there.".to_string(),
+            None => "Click your units to select them, then a hex to send them there.".to_string(),
         };
         // All about the unit whose slot the pointer is on.
         let hovered = self.screen.ui.hovered();
@@ -493,7 +533,7 @@ impl Session {
             let visibility = if unit.is_some() { Visibility::Visible } else { Visibility::Invisible };
             set_visibility(&mut self.screen, slot.button, visibility);
             // The selected unit's slot is the one that is pressed in.
-            let pressed = i32::from(chosen == Some(i));
+            let pressed = i32::from(chosen.get(i).copied().unwrap_or(false));
             if self.screen.ui.value(slot.button).as_int() != pressed {
                 self.screen.ui.set_value(slot.button, pressed);
             }
@@ -590,9 +630,16 @@ impl Session {
         self.city_list.as_ref()
     }
 
-    /// Close the window on top (a city's over the list). False if none was open.
+    /// Close the window on top (a notice, a city's, the list). False if none
+    /// was open.
     fn close_top_window(&mut self) -> bool {
         let ui = &mut self.screen.ui;
+        if let Some(notice) = self.notice.take() {
+            if build::is_open(ui, notice.window) {
+                build::close(ui, notice.window);
+                return true;
+            }
+        }
         if let Some(window) = self.city_window.take() {
             window.close(ui);
             return true;
@@ -720,8 +767,71 @@ impl Session {
     /// the game selects or moves a unit, and the panels are about that hex
     /// from now on.
     fn choose(&mut self, hex: Hex) {
-        self.screen.game.select_hex(hex);
+        let side = self.screen.game.player();
+        if let SelectOutcome::Fought(events) = self.screen.game.select_hex(hex) {
+            let lines = info::battle_lines(&self.screen.game.map, &events);
+            self.open_notice("Battle", &lines);
+            self.record(&events, side);
+        }
         self.shown = hex;
+    }
+
+    /// Keep what `actor` did that is news to the others who play at this
+    /// screen: a battle they fought, a city they lost.
+    fn record(&mut self, events: &[Event], actor: Side) {
+        let game = &self.screen.game;
+        for seat in game.setup().seats.iter().filter(|s| s.controller == Controller::Person && s.side != actor) {
+            for event in events {
+                if let Some(line) = info::news_line(&game.map, event, seat.side) {
+                    self.news.push((seat.side, line));
+                }
+            }
+        }
+    }
+
+    /// A person's turn begins (they are at the screen): what happened to
+    /// them since their last, in a window, if anything did.
+    fn show_news(&mut self) {
+        let side = self.screen.game.player();
+        let lines: Vec<String> = self.news.iter().filter(|(s, _)| *s == side).map(|(_, l)| l.clone()).collect();
+        self.news.retain(|(s, _)| *s != side);
+        if !lines.is_empty() {
+            self.open_notice("While you waited", &lines);
+        }
+    }
+
+    /// A window of a few lines, with a button that closes it (as Esc does).
+    fn open_notice(&mut self, title: &str, lines: &[String]) {
+        if lines.is_empty() {
+            return;
+        }
+        if let Some(old) = self.notice.take() {
+            build::close(&mut self.screen.ui, old.window);
+        }
+        let root = self.screen.root_window();
+        let area = self.window_area();
+        let ui = &mut self.screen.ui;
+        let parts = build::window(ui, root, NOTICE_ID, title);
+        for line in lines {
+            build::text(ui, parts.content, line);
+        }
+        let space = ui.dimension_converter().dp_to_px(SPACING_DP * 2);
+        build::gap(ui, parts.content, space);
+        build::button(ui, parts.content, NOTICE_CLOSE_ID, "Close");
+        build::place(ui, parts, area, (0.5, 0.15));
+        self.notice = Some(parts);
+        self.screen.settle();
+    }
+
+    /// What the window of a few lines says, while it is open.
+    pub fn notice(&self) -> Vec<String> {
+        let Some(parts) = self.notice.filter(|p| build::is_open(&self.screen.ui, p.window)) else { return Vec::new() };
+        let ui = &self.screen.ui;
+        ui.children(parts.content)
+            .iter()
+            .filter_map(|id| ui.get::<turbo_ferret::widgets::TextField>(*id))
+            .map(|t| t.text.clone())
+            .collect()
     }
 
     /// Apply what the widgets recorded since the last call. The host calls this
@@ -735,6 +845,7 @@ impl Session {
                     if let Some(cover) = self.cover.take() {
                         build::close(&mut self.screen.ui, cover.window);
                     }
+                    self.show_news();
                 }
             }
             self.refresh();
@@ -769,6 +880,11 @@ impl Session {
                     self.end_turn();
                 }
                 RootCommand::Click(id) if id == TbId::new(NEW_GAME_ID) => self.wants_new_game = true,
+                RootCommand::Click(id) if id == TbId::new(NOTICE_CLOSE_ID) => {
+                    if let Some(notice) = self.notice.take() {
+                        build::close(&mut self.screen.ui, notice.window);
+                    }
+                }
                 RootCommand::Click(id) if id == TbId::new(GAME_OVER_CLOSE_ID) => {
                     if let Some(window) = self.game_over {
                         build::close(&mut self.screen.ui, window.window);
@@ -780,7 +896,7 @@ impl Session {
                     let unit = (0..STACK_SLOTS).find(|i| id == TbId::new(&unit_button_id(*i)));
                     let unit = unit.and_then(|i| self.stack_units().get(i).copied());
                     if let Some(unit) = unit {
-                        self.screen.game.select_unit(unit);
+                        self.screen.game.toggle_unit(unit);
                     }
                 }
                 _ => {}

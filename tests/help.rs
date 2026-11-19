@@ -79,9 +79,14 @@ fn esc_and_the_buttons_close_it() {
 fn a_click_beside_it_goes_to_the_map() {
     let mut s = session();
     f1(&mut s);
-    let hex = Hex::new(48, 44);
+    // A hex in view beside the window (however big the help has grown).
+    let window = help_window(&s).unwrap();
+    let beside = |hex: &Hex| {
+        let p = pixel_of(&s, *hex);
+        s.screen.map_rect().contains(p) && !window.contains(p)
+    };
+    let hex = (30..50).rev().map(|col| Hex::new(48, col)).find(beside).expect("a hex beside the window");
     let p = pixel_of(&s, hex);
-    assert!(!help_window(&s).unwrap().contains(p), "the hex is beside the window");
     hover(&mut s, p);
     assert_eq!(s.screen.game.map.cursor, hex);
     // Its buttons are no one else's: the scene hears nothing of them.

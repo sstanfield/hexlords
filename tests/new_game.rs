@@ -7,11 +7,15 @@ mod common;
 
 use common::{assets, click, widget};
 use hexgame::game::Game;
-use hexgame::new_game::{MODE_ROUNDS_ID, ORDER_DRAWN_ID, START_ID, map_id, map_name, seat_id};
+use hexgame::new_game::{
+    BATTLES_STRENGTH_ID, CHANCE_LESS_ID, CHANCE_MORE_ID, MODE_ROUNDS_ID, ORDER_DRAWN_ID, START_ID, map_id, map_name,
+    seat_id,
+};
 use hexgame::screen::Scene;
 use hexgame::session::{BEGIN_TURN_ID, COVER_ID, END_TURN_ID, GAME_OVER_ID, NEW_GAME_ID, Session};
 use hexgame::setup::{Controller, Setup, TurnOrder};
 use hexgame::shell::Shell;
+use hexgame::state::combat::{Rules, System};
 use hexgame::state::scenario::{self, Scenario};
 use hexgame::state::{Hex, Side};
 use turbo_ferret::{Point, Size, TbId};
@@ -84,6 +88,46 @@ fn start_hands_the_window_to_the_game_set_up_as_chosen() {
     assert_eq!(game.player(), Side::Red);
     assert_eq!(session.screen.ui.text(widget(session, END_TURN_ID)), Some("End red's turn"));
     assert!(exists(session, "main_map") && !exists(session, START_ID));
+}
+
+#[test]
+fn the_battles_are_set_up_on_the_screen_and_carried_into_the_game() {
+    let mut shell = shell();
+    assert_eq!(shell.new_game_screen().unwrap().setup().combat, Rules::default());
+    assert_eq!(Rules::default(), Rules { chance: 5, system: System::Lines });
+    // Strength against strength, and less chance; never below none.
+    push(&mut shell, BATTLES_STRENGTH_ID);
+    for _ in 0..3 {
+        push(&mut shell, CHANCE_LESS_ID);
+    }
+    assert_eq!(shell.new_game_screen().unwrap().setup().combat, Rules { chance: 2, system: System::Strength });
+    for _ in 0..3 {
+        push(&mut shell, CHANCE_LESS_ID);
+    }
+    assert_eq!(shell.new_game_screen().unwrap().setup().combat.chance, 0);
+    // The screen says how much, and stops at all chance.
+    let says = descendants_of(&shell, "new_game_settings");
+    assert!(says.iter().any(|t| t == "Chance 0 of 10"), "{says:?}");
+    for _ in 0..12 {
+        push(&mut shell, CHANCE_MORE_ID);
+    }
+    assert_eq!(shell.new_game_screen().unwrap().setup().combat.chance, 10);
+    push(&mut shell, START_ID);
+    let game = &shell.session().unwrap().screen.game;
+    assert_eq!(game.setup().combat, Rules { chance: 10, system: System::Strength });
+}
+
+fn descendants_of(shell: &Shell, name: &str) -> Vec<String> {
+    let ui = &shell.screen().ui;
+    let mut out = Vec::new();
+    let mut stack = vec![ui.find(ui.root(), TbId::new(name)).unwrap_or(ui.root())];
+    while let Some(id) = stack.pop() {
+        if let Some(text) = ui.text(id) {
+            out.push(text.to_string());
+        }
+        stack.extend(ui.children(id).iter().copied());
+    }
+    out
 }
 
 /// A map with red's and blue's cities, a rider in red's, blue's with nobody in

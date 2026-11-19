@@ -9,21 +9,26 @@ use std::path::{Path, PathBuf};
 
 use crate::orders::{Event, Order};
 use crate::setup::{Controller, Setup, TurnOrder, WhenOut};
+use crate::state::combat::{self, Fighter};
 use crate::state::scenario::{self, Scenario, side_name};
 use crate::state::{
-    CityId, Direction, Hex, Map, MoveRange, Rng, Side, TileType, Unit, UnitId, compute_range, step_toward,
+    CityId, Direction, Hex, MAX_STACK, Map, MoveRange, Rng, Side, TileType, Unit, UnitId, compute_range, hostile,
+    step_toward,
 };
 
 /// The agent that passes its turns: the computer's, when nothing else is said.
 pub const PASSIVE: &str = "passive";
 
 /// What `Game::select_hex` did.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SelectOutcome {
     /// Nothing was selected and the hex had a unit: it is selected now.
     Selected(UnitId),
     /// The selected unit's own hex was chosen: nothing is selected now.
     Deselected,
+    /// The selected units attacked the hex: what happened (the battle, and
+    /// the moves and the city taken if they won).
+    Fought(Vec<Event>),
     /// The selected unit moved to the hex, paid `cost` and was deselected.
     Moved { unit: UnitId, cost: u32 },
     /// Nothing changed: no unit here to select, or the selected unit cannot go here.
@@ -32,7 +37,9 @@ pub enum SelectOutcome {
 
 pub struct Game {
     pub map: Map,
-    selected: Option<UnitId>,
+    /// The units selected to move together (a stack, or some of one).
+    selected: Vec<UnitId>,
+    /// Where all of them can go.
     range: Option<MoveRange>,
     /// The map's revision when `range` was computed.
     range_revision: u64,
@@ -72,7 +79,7 @@ impl Game {
         }
         Game {
             map,
-            selected: None,
+            selected: Vec::new(),
             range: None,
             range_revision: 0,
             assets: None,
@@ -170,11 +177,25 @@ impl Game {
         }
         let side = self.player();
         match order {
-            Order::Move { unit, to } => self.move_unit(side, unit, to),
-            Order::Toward { unit, to } => {
-                let u = self.own_unit(side, unit)?;
-                let (hex, _) = step_toward(&self.map, u, to).ok_or("there is no way there")?;
-                self.move_unit(side, unit, hex)
+            Order::Move { units, to } => self.move_units(side, &units, to),
+            Order::Toward { units, to } => {
+                // The way of the slowest; whoever can get as far comes along.
+                let mut lead: Option<&Unit> = None;
+                for id in &units {
+                    let unit = self.own_unit(side, *id)?;
+                    if lead.is_none_or(|l| unit.movement < l.movement) {
+                        lead = Some(unit);
+                    }
+                }
+                let lead = lead.ok_or("no units")?;
+                let (hex, _) = step_toward(&self.map, lead, to).ok_or("there is no way there")?;
+                let map = &self.map;
+                let coming: Vec<UnitId> = units
+                    .iter()
+                    .copied()
+                    .filter(|id| map.units().get(*id).is_some_and(|u| compute_range(map, u).cost(hex).is_some()))
+                    .collect();
+                self.move_units(side, &coming, hex)
             }
             Order::Build { city, what } => {
                 let holder = self.map.cities().get(city).map(|c| c.side).ok_or("there is no such city")?;
@@ -199,24 +220,141 @@ impl Game {
         Ok(unit)
     }
 
-    /// A unit of `side` goes to a hex it can reach, and pays for it; a city
-    /// of another side with nobody in it is taken.
-    fn move_unit(&mut self, side: Side, id: UnitId, to: Hex) -> Result<Vec<Event>, String> {
-        let unit = self.own_unit(side, id)?;
-        let from = unit.pos();
-        let cost = compute_range(&self.map, unit).cost(to).ok_or("it cannot get there this turn")?;
-        self.map.move_unit(id, to).map_err(|_| "there is no room there".to_string())?;
-        if let Some(unit) = self.map.unit_mut(id) {
-            unit.movement = unit.movement.saturating_sub(cost);
+    /// Units of `side` go to a hex every one of them can reach, and each pays
+    /// what it costs it. Into another side's units, they fight first, and go
+    /// in only if they win; a city of another side with nobody left in it is
+    /// taken.
+    fn move_units(&mut self, side: Side, ids: &[UnitId], to: Hex) -> Result<Vec<Event>, String> {
+        let mut ids = ids.to_vec();
+        ids.dedup();
+        if ids.is_empty() {
+            return Err("no units".to_string());
         }
-        if self.selected == Some(id) {
+        // Who goes, from where, at what cost.
+        let mut going = Vec::with_capacity(ids.len());
+        for id in &ids {
+            let unit = self.own_unit(side, *id)?;
+            let cost = compute_range(&self.map, unit).cost(to);
+            let cost = cost.ok_or(format!("{} cannot get there this turn", unit.name))?;
+            going.push((*id, unit.pos(), cost));
+        }
+        let mut events = Vec::new();
+        if hostile(&self.map, side, to) {
+            let (won, battle) = self.battle(side, &ids, to);
+            events.push(battle);
+            if !won {
+                for (id, _, cost) in &going {
+                    self.pay(*id, *cost);
+                }
+                return Ok(events);
+            }
+            going.retain(|(id, _, _)| self.map.units().get(*id).is_some());
+        } else if !self.fits(to, &ids) {
+            return Err("there is no room there".to_string());
+        }
+        for (id, from, cost) in going {
+            // After a battle, those that do not fit stay where they were.
+            if self.map.move_unit(id, to).is_ok() {
+                events.push(Event::Moved { unit: id, from, to, cost });
+            }
+            self.pay(id, cost);
+        }
+        self.selected.retain(|id| !ids.contains(id));
+        if self.selected.is_empty() {
             self.deselect();
         }
-        let mut events = vec![Event::Moved { unit: id, from, to, cost }];
         if let Some((city, holder)) = self.map.city_at(to).filter(|c| c.side != side).map(|c| (c.id, c.side)) {
             events.extend(self.take(city, holder, side));
         }
         Ok(events)
+    }
+
+    /// A unit pays for a move.
+    fn pay(&mut self, id: UnitId, cost: u32) {
+        if let Some(unit) = self.map.unit_mut(id) {
+            unit.movement = unit.movement.saturating_sub(cost);
+        }
+    }
+
+    /// True if `ids` all have room on `to` together (with who is there).
+    fn fits(&self, to: Hex, ids: &[UnitId]) -> bool {
+        let here: Vec<UnitId> = self.map.units_at(to).iter().copied().filter(|u| !ids.contains(u)).collect();
+        let all = || here.iter().chain(ids);
+        let commanders = all().filter(|u| self.map.is_commander(**u)).count();
+        commanders <= 1 && all().count() - commanders <= MAX_STACK
+    }
+
+    /// How strong a unit fights in a battle on `at`: its strength, the best
+    /// bonus of a commander in its stack (`stack`, not itself), and, if it
+    /// defends, the ground's bonus and the walls of a city there.
+    pub fn battle_strength(&self, unit: &Unit, at: Hex, defending: bool, stack: &[UnitId]) -> u32 {
+        let units = self.map.units();
+        let led = stack
+            .iter()
+            .filter(|id| **id != unit.id())
+            .filter_map(|id| units.get(*id).and_then(|u| units.kind_of(u)))
+            .map(|kind| kind.commander)
+            .max()
+            .unwrap_or(0);
+        let mut strength = unit.strength.saturating_add(led);
+        if defending {
+            let ground = self.map.tile(at).map_or(0, |t| combat::ground_bonus(t.kind));
+            let walls = self.map.city_at(at).map_or(0, |c| c.walls);
+            strength = strength.saturating_add(ground).saturating_add(walls);
+        }
+        strength
+    }
+
+    /// The two sides of a battle of `attackers` against whoever is on `at`.
+    fn fighters(&self, attackers: &[UnitId], at: Hex) -> (Vec<Fighter>, Vec<Fighter>) {
+        let defenders: Vec<UnitId> = self.map.units_at(at).to_vec();
+        let side = |ids: &[UnitId], defending: bool| -> Vec<Fighter> {
+            ids.iter()
+                .filter_map(|id| self.map.units().get(*id))
+                .map(|unit| Fighter {
+                    unit: unit.id(),
+                    strength: self.battle_strength(unit, at, defending, ids),
+                    commander: self.map.is_commander(unit.id()),
+                })
+                .collect()
+        };
+        (side(attackers, false), side(&defenders, true))
+    }
+
+    /// How likely `attackers` are to win against whoever is on `at`, in
+    /// percent (`None` if nobody is there to fight): from battles fought with
+    /// a chance of their own, so the game's is not touched, and the same
+    /// question in the same turn gets the same answer.
+    pub fn battle_odds(&self, attackers: &[UnitId], at: Hex) -> Option<u32> {
+        let (a, d) = self.fighters(attackers, at);
+        if d.is_empty() || a.is_empty() {
+            return None;
+        }
+        let seed = (u64::from(self.round) << 32) ^ (u64::from(at.row) << 16) ^ u64::from(at.col);
+        Some(combat::odds(&a, &d, &self.setup.combat, seed, 200))
+    }
+
+    /// `side`'s units attack whoever is on `at`: they fight with the game's
+    /// chance; the dead go. Returns whether the attackers won, and the event.
+    fn battle(&mut self, side: Side, attackers: &[UnitId], at: Hex) -> (bool, Event) {
+        let (a, d) = self.fighters(attackers, at);
+        let defender = d.first().map_or(Side::Grey, |f| f.unit.side);
+        let battle = combat::fight(&a, &d, &self.setup.combat, &mut self.rng);
+        let lost = |s: Side| battle.dead.iter().filter(|u| u.side == s).count();
+        let event = Event::Battle {
+            at,
+            attacker: side,
+            defender,
+            attackers: a.len(),
+            defenders: d.len(),
+            attackers_lost: lost(side),
+            defenders_lost: lost(defender),
+            won: battle.attackers_won,
+        };
+        for unit in &battle.dead {
+            self.map.kill_unit(*unit);
+        }
+        (battle.attackers_won, event)
     }
 
     /// `by` takes a city from `from`: it starts its work over, and a side
@@ -295,93 +433,157 @@ impl Game {
         events
     }
 
+    /// The first of the selected units (the one the map shows on its hex).
     pub fn selected(&self) -> Option<UnitId> {
-        self.selected
+        self.selected.first().copied()
     }
 
-    /// Where the selected unit can go.
+    /// The units selected to move together.
+    pub fn selection(&self) -> &[UnitId] {
+        &self.selected
+    }
+
+    /// Where the selected units can all go.
     pub fn range(&self) -> Option<&MoveRange> {
         self.range.as_ref()
     }
 
-    /// True if a unit is selected and it can move to `hex` with the movement it has
-    /// left. These are the hexes the map marks.
+    /// True if units are selected and all of them can move to `hex` with the
+    /// movement they have left (into an enemy: an attack). These are the hexes
+    /// the map marks.
     pub fn can_move_to(&self, hex: Hex) -> bool {
         self.range.as_ref().is_some_and(|r| r.cost(hex).is_some())
     }
 
     pub fn deselect(&mut self) {
-        self.selected = None;
+        self.selected.clear();
         self.range = None;
     }
 
-    /// Select one unit by name (a row of a stack was chosen): it is the one a
-    /// chosen hex will move. False, and nothing changes, if there is no such
-    /// unit any more, or it is not the side's whose turn it is.
+    /// Select one unit by name (a slot of the stack was chosen), and no other.
+    /// False, and nothing changes, if there is no such unit any more, or it is
+    /// not the side's whose turn it is.
     pub fn select_unit(&mut self, id: UnitId) -> bool {
-        let own = self.map.units().get(id).is_some_and(|u| u.side() == self.player());
-        own && self.select(id)
+        self.own(id) && self.select(vec![id])
     }
 
-    fn select(&mut self, id: UnitId) -> bool {
-        let Some(unit) = self.map.units().get(id) else { return false };
-        self.range = Some(compute_range(&self.map, unit));
+    /// Take a unit into the selection, or out of it (a slot of the stack was
+    /// chosen): a unit of another hex than the selection's starts a new one.
+    /// False if it is not the side's whose turn it is.
+    pub fn toggle_unit(&mut self, id: UnitId) -> bool {
+        if !self.own(id) {
+            return false;
+        }
+        let pos = |game: &Game, u: UnitId| game.map.units().get(u).map(|u| u.pos());
+        let mut units = self.selected.clone();
+        if units.first().is_some_and(|first| pos(self, *first) != pos(self, id)) {
+            units.clear();
+        }
+        if let Some(i) = units.iter().position(|u| *u == id) {
+            units.remove(i);
+        } else {
+            units.push(id);
+        }
+        if units.is_empty() {
+            self.deselect();
+            return true;
+        }
+        self.select(units)
+    }
+
+    fn own(&self, id: UnitId) -> bool {
+        self.map.units().get(id).is_some_and(|u| u.side() == self.player())
+    }
+
+    /// Select these units (they are there), with where all of them can go.
+    fn select(&mut self, units: Vec<UnitId>) -> bool {
+        let map = &self.map;
+        let mut range: Option<MoveRange> = None;
+        for id in &units {
+            let Some(unit) = map.units().get(*id) else { return false };
+            let one = compute_range(map, unit);
+            range = Some(match range {
+                Some(all) => all.both(&one),
+                None => one,
+            });
+        }
+        self.range = range;
         self.range_revision = self.map.revision();
-        self.selected = Some(id);
+        self.selected = units;
         true
     }
 
     /// Bring the selection up to date with the map, which is public and may have
-    /// changed since the unit was selected: a unit that is gone is no longer
+    /// changed since the units were selected: units that are gone are no longer
     /// selected, and a range computed from an older map is computed again.
     /// `select_hex` does this itself; whoever draws the range calls it first.
     /// Returns true if anything changed.
     pub fn refresh(&mut self) -> bool {
-        let Some(id) = self.selected else { return false };
-        if self.map.units().get(id).is_none() {
+        if self.selected.is_empty() {
+            return false;
+        }
+        let before = self.selected.len();
+        let units = self.map.units();
+        self.selected.retain(|id| units.get(*id).is_some());
+        if self.selected.is_empty() {
             self.deselect();
             return true;
         }
-        if self.range.is_some() && self.range_revision == self.map.revision() {
+        if before == self.selected.len() && self.range.is_some() && self.range_revision == self.map.revision() {
             return false;
         }
-        self.select(id)
+        self.select(self.selected.clone())
     }
 
     /// The player chose a hex (a click, or Enter at the cursor).
     ///
-    /// - A unit is selected and this is its hex: deselect it.
-    /// - A unit is selected and it can reach the hex: it moves there
-    ///   (`Order::Move`: it pays the cost, it may take a city) and is deselected.
+    /// - Units are selected and this is their hex: deselect them.
+    /// - Units are selected and all of them can reach the hex: they move there
+    ///   (`Order::Move`: each pays its cost; into another side's units it is a
+    ///   battle; a city may be taken) and are deselected.
     /// - Nothing is selected and the hex has units of the side whose turn it
-    ///   is: select the first of them.
+    ///   is: select them all, the stack (those with points left, if any have).
     ///
     /// C++: MapRenderer::selectHex. There a selected unit could go to any hex that
     /// the flood fill had not reached, mountains included, for free; here it stays
     /// selected and nothing happens.
     pub fn select_hex(&mut self, hex: Hex) -> SelectOutcome {
         self.refresh();
-        let Some(id) = self.selected else {
+        let Some(first) = self.selected() else {
             let side = self.player();
             let units = self.map.units();
-            let first =
-                self.map.units_at(hex).iter().copied().find(|id| units.get(*id).is_some_and(|u| u.side() == side));
-            return match first {
-                Some(first) if self.select(first) => SelectOutcome::Selected(first),
+            let own: Vec<UnitId> = self
+                .map
+                .units_at(hex)
+                .iter()
+                .copied()
+                .filter(|id| units.get(*id).is_some_and(|u| u.side() == side))
+                .collect();
+            let able: Vec<UnitId> =
+                own.iter().copied().filter(|id| units.get(*id).is_some_and(|u| u.movement > 0)).collect();
+            let stack = if able.is_empty() { own } else { able };
+            return match stack.first().copied() {
+                Some(first) if self.select(stack) => SelectOutcome::Selected(first),
                 _ => SelectOutcome::Nothing,
             };
         };
-        let Some(unit) = self.map.units().get(id) else { return SelectOutcome::Nothing };
-        if unit.pos() == hex {
+        if self.map.units().get(first).is_some_and(|u| u.pos() == hex) {
             self.deselect();
             return SelectOutcome::Deselected;
         }
         let Some(cost) = self.range.as_ref().and_then(|r| r.cost(hex)) else { return SelectOutcome::Nothing };
-        if cost > unit.movement || self.apply(Order::Move { unit: id, to: hex }).is_err() {
-            return SelectOutcome::Nothing; // a full stack, for one
+        let units = self.selected.clone();
+        match self.apply(Order::Move { units, to: hex }) {
+            Ok(events) => {
+                self.deselect();
+                if events.iter().any(|e| matches!(e, Event::Battle { .. })) {
+                    SelectOutcome::Fought(events)
+                } else {
+                    SelectOutcome::Moved { unit: first, cost }
+                }
+            }
+            Err(_) => SelectOutcome::Nothing, // a full stack, for one
         }
-        self.deselect();
-        SelectOutcome::Moved { unit: id, cost }
     }
 
     /// Move the cursor one hex, stopping at the map's edges. Returns true if it
@@ -693,22 +895,30 @@ mod tests {
         assert_eq!((game.turn(), game.selected()), (1, None));
         assert_eq!(game.map.units_at(city).len(), 2);
 
-        // A rider goes down the road and over the bridge: 1 a step.
+        // The city's stack goes down the road and over the bridge, the two
+        // riders together: 1 a step.
         assert!(matches!(game.select_hex(city), SelectOutcome::Selected(_)));
+        assert_eq!(game.selection().len(), 2);
         assert!(game.can_move_to(Hex::new(5, 8)));
         assert_eq!(game.range().unwrap().cost(Hex::new(5, 8)), Some(3));
         assert_eq!(game.range().unwrap().cost(Hex::new(5, 9)), Some(4), "the pass");
         assert!(matches!(game.select_hex(Hex::new(5, 9)), SelectOutcome::Moved { cost: 4, .. }));
-        let rider = game.map.units_at(Hex::new(5, 9))[0];
-        assert_eq!(game.map.units().get(rider).unwrap().movement, 6);
+        assert!(game.map.units_at(city).is_empty());
+        let riders = game.map.units_at(Hex::new(5, 9)).to_vec();
+        assert_eq!(riders.len(), 2);
+        assert!(riders.iter().all(|r| game.map.units().get(*r).unwrap().movement == 6));
 
-        // The turn ends: it has its points back (and the two it may carry over).
-        game.select_hex(Hex::new(5, 9));
+        // One of them goes on alone; the other stays.
+        assert!(game.select_unit(riders[1]));
+        assert!(matches!(game.select_hex(Hex::new(5, 10)), SelectOutcome::Moved { cost: 2, .. }));
+        assert_eq!(game.map.units_at(Hex::new(5, 9)), [riders[0]]);
+
+        // The turn ends: they have their points back (and the two they may
+        // carry over).
         game.end_turn();
         assert_eq!((game.turn(), game.selected()), (2, None));
-        assert_eq!(game.map.units().get(rider).unwrap().movement, 12);
-        let other = game.map.units_at(city)[0];
-        assert_eq!(game.map.units().get(other).unwrap().movement, 12);
+        assert_eq!(game.map.units().get(riders[0]).unwrap().movement, 12);
+        assert_eq!(game.map.units().get(riders[1]).unwrap().movement, 12);
     }
 
     #[test]

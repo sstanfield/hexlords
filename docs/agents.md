@@ -24,22 +24,30 @@ red wins in round 23.
 ```
 
 `--log` prints everything that happened on the way, a line each (`round 3:
-green's turn`, `red.4.0 moves from (5, 5) to (10, 4) for 12`, `red takes
-Waste from nobody`, `blue is out`), and the orders the game refused, with
+green's turn`, `red.4.0 moves from (5, 5) to (10, 4) for 12`, `red attacks
+blue at (22, 11), 5 against 2: red loses 1, blue 2; red wins`, `red takes
+Fenwyke from blue`, `blue is out`), and the orders the game refused, with
 why. One seed and one set of agents always make the same game: the rules
 take their chance from the game's own generator (`state::rng`), never from
 anywhere else.
 
 The same options set up a game in the window: `--map` with `--players`,
-`--order fixed|drawn` and `--seed` (without `--map`, the new game screen
-sets them).
+`--order fixed|drawn`, `--seed`, `--chance <0-10>` and `--battles
+lines|strength` (without `--map`, the new game screen sets them). To compare
+two ways of fighting, play the same seeds with each:
+
+```sh
+for seed in 1 2 3 4 5 6; do
+  cargo run -q --release -- --headless --map assets/maps/continent --seed $seed --battles strength | head -1
+done
+```
 
 ## The agents
 
 | Name | What it does |
 |---|---|
 | `passive` | Ends every turn at once |
-| `simple` | Sets each idle city to build the cheapest of what it can; keeps one unit in each of its cities; sends the others toward the nearest city that is not its own and has nobody in it |
+| `simple` | Sets each idle city to build what gives the most strength for its turns; keeps two units in each of its cities; attacks a city that is not its own with every free unit that can reach it this turn, when the odds are at least 60 in 100; else sends each stack's free units together toward the nearest such city, where they wait for the others |
 | `cmd:<program> [<argument> ...]` | A program that plays (below) |
 
 A new agent is a type that implements `Agent` and a name in `agents::by_name`.
@@ -58,12 +66,14 @@ output, and the turn goes on without that order.
 ```
 turn 3 red
 order red green blue yellow
+battles lines chance 5
 terrain
 46
 72
 wwwwwwww...                      (the map file's rows: docs/map-format.md)
 end terrain
-kind riders strength 4 moves 18 upkeep 3 price 10 enter grass 2 forest 5 city 1 road 1 bridge 1
+kind riders strength 4 moves 18 upkeep 3 price 10 commander 0 enter grass 2 forest 5 city 1 road 1 bridge 1
+kind captain strength 3 moves 14 upkeep 4 price 20 commander 1 enter grass 2 forest 3 city 1 road 1 bridge 1
 city 13 7 red walls 2 builds 2 progress 1 name Brindlewick
 can 13 7 0 militia 1 4
 can 13 7 1 archers 2 6
@@ -76,9 +86,13 @@ end
 
 - `turn <round> <side>`: whose turn it is, which is the side the program plays.
 - `order`: this round's order of turns.
+- `battles <lines or strength> chance <0 to 10>`: how the game's battles go
+  (`docs/gameplay.md`, "Fighting").
 - `terrain` ... `end terrain`: the map, as in a map file (rows, columns, a
   letter per hex; a capital is a road).
-- `kind`: each kind of unit, with what each terrain costs it to enter.
+- `kind`: each kind of unit: its numbers, whether it is a commander (the
+  bonus it gives its stack, 0 if it is not one), and what each terrain costs
+  it to enter.
 - `city <row> <col> <side> walls <n> builds <index or none> progress <turns
   done> name <name>`: every city; `can <row> <col> <index> <kind> <turns>
   <cost>`: what each of the side's own cities can build.
@@ -92,11 +106,14 @@ A line each, in the order they are to be carried out:
 
 | Order | What it does |
 |---|---|
-| `move <unit> <row> <col>` | Move to a hex the unit can reach this turn |
-| `toward <unit> <row> <col>` | Move as far as it gets this turn on its cheapest way to that hex |
+| `move <units> <row> <col>` | Move to a hex every one of the units can reach this turn; into another side's units, an attack |
+| `toward <units> <row> <col>` | Move together as far as the slowest gets this turn on its cheapest way to that hex |
 | `build <row> <col> <index or none>` | Set what a city of its side builds |
 | `end` | The turn is over (the end of the output says so too) |
 
-Empty lines and lines starting with `#` are skipped. A unit of another side
-blocks a hex (there are no battles yet); a city of another side, or nobody's,
-with nobody in it is taken by moving in, and the move ends there.
+`<units>` is one unit's name or several, with commas between and no spaces
+(`red.0.0,red.3.0`); they may stand on different hexes. Empty lines and
+lines starting with `#` are skipped. Units of another side can be attacked
+but not gone through: a move into them is a battle, and the winners go in. A
+city of another side, or nobody's, ends a move: with nobody in it, it is
+taken by moving in.

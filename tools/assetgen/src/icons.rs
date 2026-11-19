@@ -1,5 +1,6 @@
 //! The units' pictures: a plain sign for each kind (a sword, a shield, a bow,
-//! a horseshoe), light with a dark outline, on nothing. The game draws it on a
+//! a horseshoe, and a banner for a commander), light with a dark outline, on
+//! nothing. The game draws it on a
 //! disc of the unit's side's color, so the sign itself has no color of a side.
 //!
 //! A sign is a shape given by its distance: below zero inside. Points are in
@@ -18,6 +19,7 @@ pub enum Icon {
     Shield,
     Bow,
     Horseshoe,
+    Banner,
 }
 
 /// The sign's body and its outline, which is also the color of the nothing
@@ -28,7 +30,7 @@ pub const OUTLINE: Rgb = [0.13, 0.11, 0.10];
 const LINE: f32 = 0.035;
 
 impl Icon {
-    pub const ALL: [Icon; 4] = [Icon::Sword, Icon::Shield, Icon::Bow, Icon::Horseshoe];
+    pub const ALL: [Icon; 5] = [Icon::Sword, Icon::Shield, Icon::Bow, Icon::Horseshoe, Icon::Banner];
 
     /// The file's name without `.png`, which is also what the example map
     /// calls the unit that carries the sign.
@@ -38,6 +40,7 @@ impl Icon {
             Icon::Shield => "wardens",
             Icon::Bow => "archers",
             Icon::Horseshoe => "riders",
+            Icon::Banner => "captain",
         }
     }
 
@@ -48,6 +51,7 @@ impl Icon {
             Icon::Shield => shield(x, y),
             Icon::Bow => bow(x, y),
             Icon::Horseshoe => horseshoe(x, y),
+            Icon::Banner => banner(x, y),
         }
     }
 
@@ -61,6 +65,8 @@ impl Icon {
                 let angle = PI * (0.62 + 0.352 * i as f32);
                 length(x - 0.27 * angle.cos(), y + 0.03 + 0.27 * angle.sin()) < 0.024
             }),
+            // The banner's round device.
+            Icon::Banner => length(x - 0.06, y + 0.15) < 0.055,
             _ => false,
         }
     }
@@ -140,6 +146,17 @@ fn horseshoe(x: f32, y: f32) -> f32 {
     }
 }
 
+/// A banner on a staff: the staff upright on the left with a knob on top,
+/// the cloth flying to the right from its top, cut in two tails at the end.
+fn banner(x: f32, y: f32) -> f32 {
+    let staff = rectangle(x + 0.18, y - 0.03, 0.03, 0.35);
+    let knob = length(x + 0.18, y + 0.35) - 0.045;
+    let cloth = rectangle(x - 0.075, y + 0.15, 0.225, 0.15);
+    // The cut: a notch in the cloth's free end, deepest at its middle.
+    let notch = (x - (0.17 + 0.13 * (y + 0.15).abs() / 0.15)) / 1.3;
+    staff.min(knob).min(cloth.max(notch))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,9 +206,14 @@ mod tests {
         // The horseshoe is a ring with its middle and its bottom open.
         assert!(Icon::Horseshoe.distance(0.0, -0.3) < 0.0 && Icon::Horseshoe.distance(0.27, -0.03) < 0.0);
         assert!(Icon::Horseshoe.distance(0.0, 0.0) > LINE && Icon::Horseshoe.distance(0.0, 0.25) > LINE);
-        // Four signs, four names.
+        // The banner: the staff, the cloth to its right, the cut at its end.
+        assert!(Icon::Banner.distance(-0.18, 0.3) < 0.0 && Icon::Banner.distance(0.0, -0.25) < 0.0);
+        assert!(Icon::Banner.distance(0.1, 0.2) > LINE, "under the cloth");
+        assert!(Icon::Banner.distance(0.27, -0.15) > 0.0 && Icon::Banner.distance(0.27, -0.28) < 0.0, "the tails");
+        assert_eq!(Icon::Banner.ink(0.06, -0.15), Some((OUTLINE, 1.0)));
+        // Five signs, five names.
         let mut names: Vec<&str> = Icon::ALL.iter().map(|i| i.name()).collect();
         names.dedup();
-        assert_eq!(names, ["militia", "wardens", "archers", "riders"]);
+        assert_eq!(names, ["militia", "wardens", "archers", "riders", "captain"]);
     }
 }

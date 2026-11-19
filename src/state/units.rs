@@ -74,6 +74,9 @@ pub struct UnitKind {
     pub price: u32,
     /// What it pays to enter each terrain.
     pub cost: MoveCost,
+    /// A commander: how much stronger it makes the others of its stack in a
+    /// battle (0: it is not one). A stack has one, in a place of its own.
+    pub commander: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -407,6 +410,7 @@ mod tests {
             upkeep: 2,
             price: 9,
             cost: cav_costs(),
+            commander: 0,
         };
         let kind = units.add_kind(lancers.clone()).unwrap();
         assert_eq!(units.add_kind(lancers.clone()), None, "an id is used once");

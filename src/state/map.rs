@@ -353,9 +353,27 @@ impl Map {
         self.push_unit(id, hex)
     }
 
+    /// True if a unit is a commander (its kind leads a stack).
+    pub fn is_commander(&self, id: UnitId) -> bool {
+        self.units.get(id).and_then(|u| self.units.kind_of(u)).is_some_and(|k| k.commander > 0)
+    }
+
+    /// True if `id` has room on `hex`: a hex holds [`MAX_STACK`] units that
+    /// are not commanders, and one commander besides.
+    pub fn has_room(&self, hex: Hex, id: UnitId) -> bool {
+        let Some(i) = self.index(hex) else { return false };
+        let here = &self.tiles[i].units;
+        let commanders = here.iter().filter(|u| **u != id && self.is_commander(**u)).count();
+        if self.is_commander(id) {
+            commanders == 0
+        } else {
+            here.iter().filter(|u| **u != id).count() - commanders < MAX_STACK
+        }
+    }
+
     fn push_unit(&mut self, id: UnitId, hex: Hex) -> Result<(), PlaceError> {
         let i = self.index(hex).ok_or(PlaceError::OffMap)?;
-        if self.tiles[i].units.len() >= MAX_STACK {
+        if !self.has_room(hex, id) {
             return Err(PlaceError::StackFull);
         }
         self.tiles[i].units.push(id);

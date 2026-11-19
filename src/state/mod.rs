@@ -4,6 +4,7 @@
 //! C++: src/state/
 
 pub mod cities;
+pub mod combat;
 pub mod hex;
 pub mod map;
 pub mod movement;
@@ -15,7 +16,7 @@ pub mod units;
 pub use cities::{Cities, City, CityId, UnitProd};
 pub use hex::{Direction, Hex, HexSide};
 pub use map::{MAX_COLS, MAX_ROWS, MAX_STACK, MIN_COLS, MIN_ROWS, Map, MapError, PlaceError, Tile};
-pub use movement::{MoveRange, Passage, compute_range, passage, step_cost, step_toward};
+pub use movement::{MoveRange, Passage, compute_range, hostile, passage, step_cost, step_toward};
 pub use rng::Rng;
 pub use scenario::{Scenario, ScenarioError};
 pub use terrain::{MoveCost, TileType};

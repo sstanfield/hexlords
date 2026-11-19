@@ -47,9 +47,9 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | Input | What it does |
 |---|---|
 | Move the pointer over the map | The hex under it becomes the cursor (red border) |
-| Click a hex, or Enter at the cursor | The hex is the selected one: the panels are about it. With no unit selected: select the first unit on the hex, which shows where it can go (red tint). With a unit selected: move it to the hex if it can reach it, or deselect it if this is its own hex |
+| Click a hex, or Enter at the cursor | The hex is the selected one: the panels are about it. With no unit selected: select your stack on the hex (those of its units with moves left), which shows where all of them can go (red tint). With units selected: they move to the hex together if all of them can reach it (into another side's units: an attack), or are deselected if this is their own hex |
 | Point at a unit under the map | A box over it says all about the unit: its side, numbers, and what each terrain costs it to enter |
-| Click a unit under the map | Select that unit of the stack: its reach shows on the map, and the line under the units is about it |
+| Click a unit under the map | Take that unit into the selection, or leave it out (a unit of another hex starts a new one): the reach of those selected shows on the map, and the line under the units is about them |
 | Two fingers on a trackpad, or the mouse wheel, over the map | The map moves with the fingers (a wheel moves it up and down, and sideways with Shift) |
 | Drag with the right or the middle button | Pulls the map along with the pointer |
 | Ctrl (or Cmd) and the wheel or two fingers | Zoom in and out; what is under the pointer stays under it |
@@ -73,12 +73,14 @@ its holder's color. The map stops at its edges: the view never shows what is
 past them.
 
 **Under the map** the first line says the turn and what is under the cursor
-(with what it would cost the selected unit to go there). Below it is the
+(with what it would cost the selected unit to go there, or, if it is another
+side's units, how likely an attack on them is to be won). Below it is the
 selected hex, the one last clicked: its terrain and road, and its units in
-the stack's order, nine places in a row (eight units and one to spare), each
+the stack's order, nine places in a row (eight units and a commander), each
 the unit's icon with its strength and the movement points it has left
 (`4 · 6/10`). Pointing at one opens a box with all about it; clicking it
-selects it, and the last line is about the selected unit. The map takes all
+takes it into the selection or out of it (the selected are pressed in, their
+numbers in gold), and the last line is about the selected units. The map takes all
 the room the panel leaves. **Under the minimap** is the selected hex's city:
 its name, who holds it, its walls and garrison, what it is building and what
 it can build, in how many turns, at what price.
@@ -87,8 +89,9 @@ it can build, in how many turns, at what price.
 
 **A new game** starts on its own screen: the map (the preview beside the
 settings can be looked over like the game's), how to play (turns; rounds are
-to come), the order of the turns (the same each round, or drawn anew), and
-who plays each side, a person or the computer. Several people take turns at
+to come), the order of the turns (the same each round, or drawn anew), the
+battles (lines or strength, and how much chance, from 0 to 10), and who
+plays each side, a person or the computer. Several people take turns at
 one screen (hotseat): between two people's turns a screen hides the map
 until the next one says they are there.
 
@@ -98,16 +101,24 @@ The sides play one after the other. On a side's turn only its units move and
 only its cities can be set to build ("my cities"); End turn passes to the
 next side, and the computer plays its sides' turns at once. A side's turn
 begins with its units' points back and its cities' work. A city of another
-side, or nobody's, with nobody in it, is taken by moving into it; a unit of
-another side blocks its hex (there are no battles yet). A side that loses
-its last city is out, and the last side left wins. Fighting and gold are
-rules still to come ([docs/gameplay.md](docs/gameplay.md)).
+side, or nobody's, with nobody in it, is taken by moving into it. Units sent
+into another side's units attack them: the two stacks fight until one is
+gone, and if the attackers win they go in (and take the city, if it is one).
+Strength counts, and so do chance, the ground (hills and forests 1, mountains
+2), a city's walls and a commander, who makes every other unit of its stack 1
+stronger (or as much as its kind says). A window says how a battle went;
+what was done to a person while others played is told when their turn
+begins. A side that loses its last city is out, and the last side left
+wins. Gold is a rule still to come ([docs/gameplay.md](docs/gameplay.md)).
+
+![A battle, and the window that says how it went](docs/screenshots/battle.png)
 
 ## Options
 
 ```
 hexgame [--map <file.map or map directory>] [--players <side>=<who>,...] [--order fixed|drawn] [--seed <n>]
-        [--headless [--rounds <n>] [--log]] [--script <steps>] [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
+        [--chance <0-10>] [--battles lines|strength] [--headless [--rounds <n>] [--log]] [--script <steps>]
+        [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
 ```
 
 Without `--map` the window opens on the new game screen.
@@ -119,6 +130,10 @@ Without `--map` the window opens on the new game screen.
   agent of the computer's (`passive`, `simple`, `cmd:<program>`).
 - `--order fixed|drawn`: the sides play in the same order each round, or one
   drawn anew; `--seed <n>`: the seed of the game's chance.
+- `--chance <0-10>`: how much chance there is in a battle: 0 none (the
+  stronger always wins), 10 nothing else; 5 unless it is said.
+  `--battles lines|strength`: how a battle goes (lines unless it is said;
+  [docs/gameplay.md](docs/gameplay.md), "Fighting").
 - `--headless`: no window: the computer plays every side of `--map` until one
   side is left or `--rounds` (200) have gone by, and says how it went
   (`--log`: and all that happened). [docs/agents.md](docs/agents.md) says

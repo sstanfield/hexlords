@@ -82,7 +82,7 @@ fn pressed(s: &Session, name: &str) -> bool {
     s.screen.ui.value(widget(s, name)).as_int() == 1
 }
 
-const HINT: &str = "Click a unit to select it, then a hex to send it there.";
+const HINT: &str = "Click your units to select them, then a hex to send them there.";
 
 #[test]
 fn at_the_start_the_panels_are_about_the_hex_the_cursor_starts_on() {
@@ -210,13 +210,19 @@ fn a_units_slot_selects_it_and_its_line_says_who_it_is() {
     hover_hex(&mut s, Hex::new(10, 12));
     assert_eq!(s.status(), "Turn 1  |  row 10, column 12: grass, road  |  4 of 10 points to move here");
 
-    // Another slot: another unit, with its own reach.
+    // Another slot: that unit comes along too, and the two go where both can.
     push(&mut s, "unit_0");
-    assert_eq!(s.screen.game.selected(), Some(ids[0]));
-    assert!(pressed(&s, "unit_0") && !pressed(&s, "unit_2"));
-    assert!(s.unit_line().starts_with("Militia (green): strength 2, moves 8/8"), "{}", s.unit_line());
+    assert_eq!(s.screen.game.selection(), [ids[2], ids[0]]);
+    assert!(pressed(&s, "unit_0") && pressed(&s, "unit_2") && !pressed(&s, "unit_1"));
+    assert!(s.unit_line().starts_with("2 units selected"), "{}", s.unit_line());
     let bridge = Hex::new(10, 11);
     assert!(!s.marked(bridge), "the militia does not cross bridges");
+    // The rider's slot again: it stays behind, and the militia goes alone.
+    push(&mut s, "unit_2");
+    assert_eq!(s.screen.game.selection(), [ids[0]]);
+    assert!(pressed(&s, "unit_0") && !pressed(&s, "unit_2"));
+    assert!(s.unit_line().starts_with("Militia (green): strength 2, moves 8/8"), "{}", s.unit_line());
+    assert!(!s.marked(bridge));
     hover_hex(&mut s, bridge);
     assert_eq!(s.status(), "Turn 1  |  row 10, column 11: water, bridge");
     // The keys still go to the map: the slots do not take them.
@@ -302,18 +308,19 @@ fn the_selected_unit_goes_where_it_is_sent_and_the_panels_follow() {
     assert_eq!(s.city(), Vec::<&str>::new(), "no city here");
     assert_eq!(s.unit_line(), HINT);
 
-    // A click on a hex with units selects the first, as before, and shows it.
+    // A click on a hex with units selects the stack, to move together, and
+    // shows it.
     click_hex(&mut s, CITY);
-    assert_eq!(s.screen.game.selected(), Some(ids[0]));
-    assert!(pressed(&s, "unit_0"));
+    assert_eq!(s.screen.game.selection(), [ids[0], ids[1]]);
+    assert!(pressed(&s, "unit_0") && pressed(&s, "unit_1"));
     assert_eq!(s.stack().len(), 2);
     assert_eq!(s.slot_icon(0), Some(("units/militia.png", Side::Green)));
     assert_eq!(s.city()[3], "Garrison: 2 units");
-    assert!(s.unit_line().starts_with("Militia (green)"));
+    assert!(s.unit_line().starts_with("2 units selected"), "{}", s.unit_line());
     // A click on its own hex deselects it.
     click_hex(&mut s, CITY);
     assert_eq!(s.screen.game.selected(), None);
-    assert!(!pressed(&s, "unit_0"));
+    assert!(!pressed(&s, "unit_0") && !pressed(&s, "unit_1"));
 
     // An empty hex: its terrain, nobody, nothing to say about a unit.
     click_hex(&mut s, Hex::new(8, 8));

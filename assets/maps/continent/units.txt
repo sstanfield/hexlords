@@ -44,3 +44,16 @@ unit riders
   price    10
   enter    grass 2, forest 5, hill 5, desert 3
   enter    city 1, road 1, bridge 1
+
+# A commander: a captain makes every other unit of its stack fight 1 the
+# stronger, and fights last itself. A stack has one.
+unit captain
+  name      Captain
+  image     units/captain.png
+  strength  3
+  moves     14
+  upkeep    4
+  price     20
+  commander 1
+  enter     grass 2, forest 3, hill 4, swamp 5, desert 3
+  enter     city 1, road 1, bridge 1

@@ -88,16 +88,29 @@ pub fn event_line(game: &Game, event: &Event) -> String {
         }
         Event::Built { city: id, unit } => format!("{} builds {}", city(*id), agents::unit_name(*unit)),
         Event::Began { side, round } => format!("round {round}: {}'s turn", side_name(*side)),
+        Event::Battle { at, attacker, defender, attackers, defenders, attackers_lost, defenders_lost, won } => {
+            let (a, d) = (side_name(*attacker), side_name(*defender));
+            let winner = if *won { a } else { d };
+            format!(
+                "{a} attacks {d} at {at}, {attackers} against {defenders}: {a} loses {attackers_lost}, \
+                 {d} {defenders_lost}; {winner} wins"
+            )
+        }
         Event::Out { side } => format!("{} is out", side_name(*side)),
         Event::Won { side } => format!("{} wins", side_name(*side)),
     }
 }
 
+/// Units' names, with commas between.
+fn names(units: &[crate::state::UnitId]) -> String {
+    units.iter().map(|u| agents::unit_name(*u)).collect::<Vec<_>>().join(",")
+}
+
 /// The order an agent gave, in its text form (for logs and tests).
 pub fn order_line(game: &Game, order: &Order) -> String {
     match order {
-        Order::Move { unit, to } => format!("move {} {} {}", agents::unit_name(*unit), to.row, to.col),
-        Order::Toward { unit, to } => format!("toward {} {} {}", agents::unit_name(*unit), to.row, to.col),
+        Order::Move { units, to } => format!("move {} {} {}", names(units), to.row, to.col),
+        Order::Toward { units, to } => format!("toward {} {} {}", names(units), to.row, to.col),
         Order::Build { city, what } => {
             let at = game.map.cities().get(*city).map_or((0, 0), |c| (c.pos.row, c.pos.col));
             let what = what.map_or("none".to_string(), |i| i.to_string());

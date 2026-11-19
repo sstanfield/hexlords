@@ -4,6 +4,7 @@
 //! `Game::start` plays it. `docs/gameplay.md` has the rules these choose
 //! between.
 
+use crate::state::combat::Rules as CombatRules;
 use crate::state::scenario::{side_name, side_named};
 use crate::state::{Map, Side};
 
@@ -63,6 +64,8 @@ pub struct Setup {
     /// make the same game.
     pub seed: u64,
     pub when_out: WhenOut,
+    /// What the battles are like: how much chance, which system.
+    pub combat: CombatRules,
 }
 
 impl Setup {
@@ -96,7 +99,14 @@ impl Setup {
                 },
             })
             .collect();
-        Setup { mode: Mode::Turns, order: TurnOrder::Fixed, seats, seed: 1, when_out: WhenOut::Disband }
+        Setup {
+            mode: Mode::Turns,
+            order: TurnOrder::Fixed,
+            seats,
+            seed: 1,
+            when_out: WhenOut::Disband,
+            combat: CombatRules::default(),
+        }
     }
 
     /// Who plays `side`, if it is in the game.

@@ -8,11 +8,12 @@ use crate::state::{CityId, Hex, Side, UnitId};
 /// What a side asks for.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Order {
-    /// Move a unit to a hex it can reach this turn.
-    Move { unit: UnitId, to: Hex },
-    /// Move a unit as far as it gets this turn on its cheapest way toward a
-    /// hex, near or far.
-    Toward { unit: UnitId, to: Hex },
+    /// Move units (a stack, or some of one) to a hex every one of them can
+    /// reach this turn. Into another side's units: a battle.
+    Move { units: Vec<UnitId>, to: Hex },
+    /// Move units together as far as the slowest gets this turn on its
+    /// cheapest way toward a hex, near or far.
+    Toward { units: Vec<UnitId>, to: Hex },
     /// Set what a city builds: an index into what it can build, or nothing.
     Build { city: CityId, what: Option<usize> },
     /// The side has done all it means to this turn.
@@ -27,6 +28,20 @@ pub enum Event {
         from: Hex,
         to: Hex,
         cost: u32,
+    },
+    /// A battle: `attacker`'s units went into `defender`'s on `at`.
+    Battle {
+        at: Hex,
+        attacker: Side,
+        defender: Side,
+        /// How many fought on each side, and how many of them died.
+        attackers: usize,
+        defenders: usize,
+        attackers_lost: usize,
+        defenders_lost: usize,
+        /// The attackers won: the defenders are gone, and the attackers that
+        /// live stand on the hex (a `Moved` each follows).
+        won: bool,
     },
     /// A side's unit went into another's (or nobody's) city with nobody in it.
     Taken {

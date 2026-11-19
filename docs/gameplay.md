@@ -2,7 +2,7 @@
 
 This is the plan for the game's rules: what a side can do, what a turn is,
 and how the two ways to play (below) share one set of rules. It is a plan,
-not a description: almost none of it is built yet. It takes the place of
+not a description, though its first steps are built ("Where we are"). It takes the place of
 phase 3 of `hexgame-rust-port-plan.md`, section 8, which proposed one mode
 (simultaneous turns); the owner's word (2026-11-19) is that the game supports
 two, since they feel very different, above all with several players:
@@ -36,15 +36,21 @@ Built (2026-11-19):
 - **orders** (`src/orders.rs`) and **events**: everything a side does goes
   through `Game::apply`, a person's clicks and the computer's alike;
 - **taking cities**: another side's (or nobody's) city with nobody in it is
-  taken by moving in; a unit of another side blocks its hex (until there
-  are battles);
+  taken by moving in;
+- **stacks, battles and commanders** (below, "Fighting"): the units of a hex
+  are selected together and move together, or some of them; units sent into
+  another side's fight them, and go in if they win; the chance (0 to 10)
+  and the system (lines, or strength against strength) are set with the
+  game; the ground, walls and a commander make units stronger; the odds
+  are shown before an attack, a report after it, and the news to whoever
+  was attacked while they waited;
 - **the end**: a side that has lost its last city is out (its units go, in
   one place, `Game::put_out`, so that this can change); the last side wins;
 - **agents and games without a window** (`docs/agents.md`): the computer's
   players, `--headless` to play agents against agents, and a text protocol
   for a program of one's own to play.
 
-Not built: battles, gold, commanders, fog of war, rounds, saved games.
+Not built: gold, fog of war, rounds, saved games.
 
 ## One set of rules, two modes
 
@@ -88,31 +94,49 @@ and the rules use integers, not floats.
 2. **Orders and events** (`state::orders`, `state::rules`): applying an
    order checks it is allowed (it is that side's unit, the path is within
    reach) and changes the state through `Map`'s methods.
-3. **Stacks.** A stack is the units on a hex that move together: as far as
-   the slowest of them can go. Orders to split a stack and to join two.
-4. **Fighting.** Our own design, kept in a pure `combat` module with tests
-   that run it many times, and **made to be experimented with** (decided):
-   - **How much chance**, a setting of the game from 0 to 10, on the new
-     game screen. At 0 there is none: strengths decide who wins and what
-     each side loses, always the same. At 10 strength does little or
-     nothing, and it is all chance. The middle (4 to 7) should be where the
-     game is best; the ends are there to try. A proposal for how: a duel
-     between strengths `a` and `b` is won by `a` with the chance
-     `a^k / (a^k + b^k)`, where `k` falls as the setting rises (infinite at
-     0, so the stronger always wins; 0 at 10, an even chance; about 2 at 5,
-     so a strength of 4 beats 2 four times in five).
-   - **How a battle goes**, a choice of systems behind one interface
-     (`fight(attackers, defenders, the place, the settings, the game's
-     chance) -> what died`), so that more can be added and each played
-     without a window against the others:
-     - *Lines*: each stack stands in a line from its weakest to its
-       strongest; the two at the front fight a duel; the loser dies and the
-       next of its line steps up; it ends when one line is gone.
-     - *Strength against strength*: each exchange, the two stacks' total
-       strengths (with their bonuses) decide the hits each side takes, and
-       a hit falls on a unit of the stack drawn at random, so that cheap
-       units in front do not shield the dear ones behind.
-   - Bonuses for terrain, a city's walls and a commander, in either system.
+3. **Stacks** (built). A stack is the units on a hex: a click on the hex
+   selects those of them with moves left, and they go together where all
+   of them can (each pays its own way); a click on a unit under the map
+   takes it into the selection or leaves it out, so a stack splits by
+   sending some of it, and two join by going to one hex. A hex holds eight
+   units and a commander. `Order::Move` and `Order::Toward` take a list of
+   units (`Toward`: as far as the slowest gets).
+4. **Fighting** (built, `state::combat`, pure and in integers, with tests
+   that run it many times): our own design, **made to be experimented
+   with** (decided). Units sent into another side's units attack them; the
+   two stacks fight until one is gone; the dead are gone; the attackers that
+   live go in (and take the city), or, if they lost, the defenders stay.
+   - **An exchange** between strengths `a` (the attacker's) and `b`: each
+     side scores its strength times `10 - chance`, plus a draw from 0 to
+     `chance` times the stronger's strength; the higher score wins, a tie
+     is the defender's. The loser of an exchange takes a hit; a unit dies
+     at its second (`combat::HITS`), and is whole again after the battle.
+   - **How much chance**, 0 to 10, set on the new game screen (or
+     `--chance`); **5 unless it is set** (decided). At 0 the stronger always
+     wins. From 5 up any weaker unit may win an exchange; below 5 only one
+     near enough (at 3, a 4 always beats a 2). At 10 strength counts for
+     nothing. A 4 against a 2 wins an exchange 85 times in 100 at 5, 67 at
+     7; a 4 against a 3, 69 at 5.
+   - **How a battle goes**, a choice of systems behind one function
+     (`combat::fight(attackers, defenders, rules, the game's chance) -> who
+     died`), so that more can be added and each played without a window
+     against the others (`--battles`):
+     - *Lines* (`lines`, the default for now): each stack stands in a line
+       from its weakest to its strongest, its commander last; the two at
+       the front fight; a unit out of hits dies and the next of its line
+       steps up.
+     - *Strength against strength* (`strength`): each exchange matches the
+       two stacks' whole strengths, and the hit falls on a unit of the
+       loser drawn by chance, so that cheap units in front do not shield the
+       dear ones behind. Many weak units beat one strong one here, where in
+       lines they lose one by one.
+   - **Bonuses**, in either system: a defender is 1 stronger on hills and
+     in forests, 2 on mountains, and as much as its city's walls; every
+     unit of a stack with a commander is as much stronger as the commander
+     says (`commander 1`). The attackers get no ground and no walls.
+   - **The odds** before an attack (`Game::battle_odds`) are 200 battles
+     fought with a chance of their own, so asking does not change the game;
+     the line under the map shows them ("attack: 82% likely to win").
    - The tests check the odds over many seeds (the stronger mostly wins,
      the weaker sometimes, at the middle settings; never at 0), and that one
      seed always gives the same battle.
@@ -126,11 +150,12 @@ and the rules use integers, not floats.
    the unit's `price`. (The unit's price is also what it would cost in a
    city that is given a new kind to build, later.)
 7. **Commanders**, in the first version of the rules (decided), even if
-   they do little at first. A proposal: a kind of unit is a commander (a
-   `commander` key in `units.txt`); a stack has at most one, in a place of
-   its own (the ninth slot under the map is kept for it); in a battle it
-   gives its stack better odds; it fights last. Later: they grow with
-   battles won, carry things, lead bigger stacks.
+   they do little at first. Built: a kind of unit is a commander (the
+   `commander <n>` key in `units.txt`, the bonus it gives); a hex holds one
+   besides its eight units (the ninth slot under the map); every other unit
+   of its stack fights `n` stronger; in lines it fights last. The continent
+   has a captain in each side's first city. Later: they grow with battles
+   won, carry things, lead bigger stacks, are bought differently.
 8. **The end** (decided): a side that has lost all its cities is out of the
    game, and its units with it; the game ends when one side is left. (More
    ways to win can come later: a share of the cities, a number of rounds.)
@@ -202,8 +227,9 @@ thing to happen. Ideas to try, as the rules grow:
   deterministic, every machine computes the same game (lockstep), and a
   replay is the orders again.
 - The AI makes orders like a player (an agent, `docs/agents.md`). The first
-  one, `simple`, builds the cheapest it can, keeps a unit at home and goes
-  for cities it can take. Agents play without a window, against each other,
+  one, `simple`, builds what gives the most strength for its time, keeps
+  two units in each city, and attacks the nearest cities that are not its
+  own when the odds are good, gathering its units first. Agents play without a window, against each other,
   to try the rules and balance the numbers (decided): keep that working for
   every rule that is added.
 
@@ -220,7 +246,7 @@ it; the rules are written once for both modes from the first step.
    window. **Done (2026-11-19).**
 2. **Stacks, battles and commanders.** Stacks move together; moving into an
    enemy is a battle (turns), with chance in it; units die; cities are
-   taken; a commander leads a stack.
+   taken; a commander leads a stack. **Done (2026-11-19).**
 3. **Gold.** Income, the cities' prices, upkeep; a treasury in the sidebar.
 4. **The end, and an AI.** A side that has lost its cities is out; the last
    one wins; a first AI.
@@ -257,10 +283,12 @@ it; the rules are written once for both modes from the first step.
 11. **Combat is to be experimented with**: a setting from no chance at all
     to nothing but chance, and more than one system (lines of duels,
     strength against strength).
+12. **The chance a game starts with is 5**, until play says otherwise.
 
 ## Still open
 
 1. Rounds: what happens when two stacks meet halfway, and the other cases
    of the resolution; a sketch is above, to be tried once the battles exist.
-2. Combat: which system and which setting a game starts with, until play
-   says otherwise (proposal: lines, chance 5).
+2. Combat: which system a game starts with (lines for now). Agents
+   against agents without a window can compare them (`--battles`, with
+   many seeds).

@@ -38,6 +38,13 @@ impl MoveRange {
         *self.cost.get(usize::from(hex.row) * usize::from(self.cols) + usize::from(hex.col))?
     }
 
+    /// Where two units can both go (a stack): the hexes in both ranges, at the
+    /// dearer of the two costs.
+    pub fn both(&self, other: &MoveRange) -> MoveRange {
+        let cost = self.cost.iter().zip(&other.cost).map(|(a, b)| Some((*a)?.max((*b)?))).collect();
+        MoveRange { origin: self.origin, cols: self.cols, cost }
+    }
+
     /// Every hex in reach, with its cost, in row-major order.
     pub fn reachable(&self) -> impl Iterator<Item = (Hex, u32)> + '_ {
         let cols = usize::from(self.cols);
@@ -79,19 +86,18 @@ pub enum Passage {
     Blocked,
 }
 
-/// What a hex is to a unit of `side`. Another side's units are in the way
-/// (until there are battles: `docs/gameplay.md`); another side's city, or
-/// nobody's, with nobody in it, can be gone into, which takes it, and the
-/// move ends there.
+/// What a hex is to a unit of `side`. Another side's units there can be
+/// attacked (going in is a battle), and not gone through; another side's
+/// city, or nobody's, can be gone into, which takes it if nobody is in it:
+/// either way the move ends there. (Nothing blocks a hex yet.)
 pub fn passage(map: &Map, side: Side, hex: Hex) -> Passage {
     let others = map.units_at(hex).iter().filter_map(|id| map.units().get(*id)).any(|u| u.side() != side);
-    if others {
-        Passage::Blocked
-    } else if map.city_at(hex).is_some_and(|city| city.side != side) {
-        Passage::Stop
-    } else {
-        Passage::Open
-    }
+    if others || map.city_at(hex).is_some_and(|city| city.side != side) { Passage::Stop } else { Passage::Open }
+}
+
+/// True if `hex` has units of a side other than `side`: going in is a battle.
+pub fn hostile(map: &Map, side: Side, hex: Hex) -> bool {
+    map.units_at(hex).iter().filter_map(|id| map.units().get(*id)).any(|u| u.side() != side)
 }
 
 /// Where `unit` gets to this turn on the cheapest way toward `target`, and
@@ -144,7 +150,7 @@ pub fn step_toward(map: &Map, unit: &Unit, target: Hex) -> Option<(Hex, u32)> {
     }
     way.into_iter().find_map(|hex| {
         let cost = best[index(hex)]?;
-        let room = map.units_at(hex).len() < crate::state::MAX_STACK;
+        let room = hostile(map, side, hex) || map.has_room(hex, unit.id());
         (cost <= unit.movement && room).then_some((hex, cost))
     })
 }
@@ -519,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn others_units_are_in_the_way_and_others_cities_end_a_move() {
+    fn others_units_are_attacked_and_others_cities_end_a_move() {
         let mut map = grass();
         let me = rider(&mut map, Side::Red, Hex::new(10, 5), 8);
         // A blue unit two hexes east, a red one north, nobody's city south.
@@ -527,11 +533,13 @@ mod tests {
         rider(&mut map, Side::Red, Hex::new(8, 5), 8);
         let city = map.add_city("Tarn", Hex::new(12, 5), 0).unwrap();
         let unit = map.units().get(me).unwrap().clone();
-        assert_eq!(passage(&map, Side::Red, Hex::new(10, 7)), Passage::Blocked);
+        assert_eq!(passage(&map, Side::Red, Hex::new(10, 7)), Passage::Stop);
+        assert!(hostile(&map, Side::Red, Hex::new(10, 7)) && !hostile(&map, Side::Red, Hex::new(8, 5)));
         assert_eq!(passage(&map, Side::Red, Hex::new(8, 5)), Passage::Open);
         assert_eq!(passage(&map, Side::Red, Hex::new(12, 5)), Passage::Stop);
         let range = compute_range(&map, &unit);
-        assert_eq!(range.cost(Hex::new(10, 7)), None, "the blue unit's hex");
+        // The blue unit's hex can be gone into (an attack), not through.
+        assert_eq!(range.cost(Hex::new(10, 7)), Some(4));
         assert_eq!(range.cost(Hex::new(8, 5)), Some(4), "a red one's is open");
         assert_eq!(range.cost(Hex::new(6, 5)), Some(8), "and through it");
         // Into the city (grass, then the city's 1), but not through it: beyond
@@ -543,9 +551,9 @@ mod tests {
         assert_eq!(passage(&map, Side::Red, Hex::new(12, 5)), Passage::Open);
         let range = compute_range(&map, &unit);
         assert_eq!(range.cost(Hex::new(13, 5)), Some(5));
-        // Someone in it of another side: in the way.
+        // Someone in it of another side: an attack.
         rider(&mut map, Side::Blue, Hex::new(12, 5), 8);
-        assert_eq!(passage(&map, Side::Red, Hex::new(12, 5)), Passage::Blocked);
+        assert_eq!(passage(&map, Side::Red, Hex::new(12, 5)), Passage::Stop);
     }
 
     #[test]
@@ -563,12 +571,13 @@ mod tests {
         rider(&mut map, Side::Blue, Hex::new(10, 3), 6);
         let (hex, _) = step_toward(&map, &unit, Hex::new(10, 4)).unwrap();
         assert_ne!(hex, Hex::new(10, 3));
-        // No way: a target beyond water it cannot cross, or in the way itself.
+        // Toward another side's units in reach: into them, an attack.
+        assert_eq!(step_toward(&map, &unit, Hex::new(10, 3)), Some((Hex::new(10, 3), 2)));
+        // No way: a target beyond water it cannot cross.
         for row in 0..20 {
             map.tile_mut(Hex::new(row, 8)).unwrap().kind = TileType::Water;
         }
         assert_eq!(step_toward(&map, &unit, Hex::new(10, 15)), None);
-        assert_eq!(step_toward(&map, &unit, Hex::new(10, 3)), None);
         assert_eq!(step_toward(&map, &unit, Hex::new(10, 2)), None, "where it is");
         // Without points it goes nowhere.
         map.unit_mut(me).unwrap().movement = 1;

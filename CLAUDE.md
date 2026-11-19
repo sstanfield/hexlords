@@ -12,8 +12,11 @@ editor (`tools/mapeditor`); and the tiles, the roads and the units' signs are
 drawn by a program (`tools/assetgen`, `docs/tiles.md`). Units move turn by
 turn, one side after the other (a new game screen sets the game up: who
 plays each side, a person or the computer, hotseat for several people), and
-cities build what their holder sets; an empty city is taken by moving in, a
-side that has lost its cities is out. There are no battles or gold yet.
+cities build what their holder sets; an empty city is taken by moving in;
+stacks move together, and moving into another side's units is a battle
+(`state::combat`: how much chance and which system are set with the game;
+commanders lead stacks); a side that has lost its cities is out. There is no
+gold yet.
 **`docs/gameplay.md` is the plan for the rules**: two modes (turns one side
 after the other, and rounds where all sides give orders at once) on one set
 of rules made of orders. The computer's players are agents, which also play
@@ -34,7 +37,7 @@ touching the rules.
 
 | Path | What |
 |---|---|
-| `src/state/` | Map, tiles, roads, units and their kinds, cities, movement range; `scenario`, the reader of a map's files. No UI, no graphics |
+| `src/state/` | Map, tiles, roads, units and their kinds, cities, movement range; `combat`, the battles (pure); `rng`, the game's chance; `scenario`, the reader of a map's files. No UI, no graphics |
 | `src/game.rs`, `src/orders.rs`, `src/setup.rs` | `Game`: the map, whose turn it is, and the rules: `Game::apply` carries out an `Order` and says what came of it (`Event`s); the selected unit and its range for the screen. `Setup`: a game before it starts (the mode, the order of turns, who plays each side, the seed) |
 | `src/agents.rs`, `src/headless.rs` | The computer's players (`Agent`: `passive`, `simple`, `cmd:<program>` over a text protocol); a game played without a window (`--headless`) |
 | `src/view.rs`, `src/minimap_view.rs` | Pure math: zoom, scale factors, visible hexes, picking, panning, recentering; the minimap's fit and marker |

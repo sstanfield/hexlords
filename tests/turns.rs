@@ -88,15 +88,15 @@ fn a_side_may_move_only_its_own_on_its_turn() {
     let to = Hex::new(5, 7);
     // On green's turn, red's rider does not move.
     game.end_turn();
-    let refused = game.apply(Order::Move { unit: id, to }).unwrap_err();
+    let refused = game.apply(Order::Move { units: vec![id], to }).unwrap_err();
     assert_eq!(refused, "it is red's, and green's turn");
     assert!(!game.select_unit(id));
     // On red's, it does; too far, not.
     game.end_turn();
     game.end_turn();
     assert_eq!(game.player(), Side::Red);
-    assert!(game.apply(Order::Move { unit: id, to: Hex::new(18, 18) }).is_err());
-    let events = game.apply(Order::Move { unit: id, to }).unwrap();
+    assert!(game.apply(Order::Move { units: vec![id], to: Hex::new(18, 18) }).is_err());
+    let events = game.apply(Order::Move { units: vec![id], to }).unwrap();
     assert_eq!(events, [Event::Moved { unit: id, from: RED_HOME, to, cost: 4 }]);
     // Another side's city: only its holder sets what it builds.
     let blues = game.map.city_at(BLUE_HOME).unwrap().id;
@@ -121,12 +121,12 @@ fn taking_the_last_city_puts_a_side_out_and_the_last_side_wins() {
     let mut game = game(|_| {});
     let id = rider(&game);
     // Into nobody's empty city: taken, nobody is out.
-    let mut events = game.apply(Order::Toward { unit: id, to: NOBODYS }).unwrap();
+    let mut events = game.apply(Order::Toward { units: vec![id], to: NOBODYS }).unwrap();
     while game.map.units().get(id).unwrap().pos() != NOBODYS {
         for _ in 0..3 {
             game.end_turn();
         }
-        events = game.apply(Order::Toward { unit: id, to: NOBODYS }).unwrap();
+        events = game.apply(Order::Toward { units: vec![id], to: NOBODYS }).unwrap();
     }
     let waste = game.map.city_at(NOBODYS).unwrap().id;
     assert!(events.contains(&Event::Taken { city: waste, from: Side::Grey, by: Side::Red }), "{events:?}");
@@ -139,7 +139,7 @@ fn taking_the_last_city_puts_a_side_out_and_the_last_side_wins() {
     let mut events = Vec::new();
     for _ in 0..20 {
         if game.player() == Side::Red {
-            if let Ok(e) = game.apply(Order::Toward { unit: id, to: BLUE_HOME }) {
+            if let Ok(e) = game.apply(Order::Toward { units: vec![id], to: BLUE_HOME }) {
                 events.extend(e);
             }
         }
@@ -169,7 +169,7 @@ fn taking_the_last_city_puts_a_side_out_and_the_last_side_wins() {
     let mut won = Vec::new();
     for _ in 0..20 {
         if game.player() == Side::Red {
-            if let Ok(e) = game.apply(Order::Toward { unit: id, to: NOBODYS }) {
+            if let Ok(e) = game.apply(Order::Toward { units: vec![id], to: NOBODYS }) {
                 won.extend(e);
             }
         }
@@ -223,10 +223,14 @@ fn the_game_as_text_and_orders_from_text() {
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[0], "turn 1 red");
     assert_eq!(lines[1], "order red green blue");
-    assert_eq!(lines[2], "terrain");
-    assert_eq!(lines[3..5], ["20", "20"]);
+    assert_eq!(lines[2], "battles lines chance 5");
+    assert_eq!(lines[3], "terrain");
+    assert_eq!(lines[4..6], ["20", "20"]);
     assert!(lines.contains(&"end terrain") && lines.last() == Some(&"end"));
-    assert!(lines.contains(&"kind riders strength 4 moves 12 upkeep 0 price 5 enter grass 2 city 1"), "{text}");
+    assert!(
+        lines.contains(&"kind riders strength 4 moves 12 upkeep 0 price 5 commander 0 enter grass 2 city 1"),
+        "{text}"
+    );
     assert!(lines.contains(&"city 5 5 red walls 0 builds none progress 0 name Redhold"), "{text}");
     assert!(lines.contains(&"can 5 5 0 riders 1 5"), "its own cities say what they can build");
     assert!(!lines.iter().any(|l| l.starts_with("can 5 9")), "others' do not");
@@ -236,6 +240,7 @@ fn the_game_as_text_and_orders_from_text() {
     for line in [
         format!("move {} 5 7", unit_name(id)),
         format!("toward {} 12 4", unit_name(id)),
+        format!("move {},{} 5 7", unit_name(id), unit_name(id)),
         "build 5 5 0".into(),
         "build 5 9 none".into(),
         "end".into(),
@@ -248,5 +253,6 @@ fn the_game_as_text_and_orders_from_text() {
     assert!(parse_order(&game, "fly away").is_err());
     assert!(parse_order(&game, "move red.0.0 99 99").unwrap_err().contains("not on the map"));
     assert!(parse_order(&game, "move blah 5 5").unwrap_err().contains("not a unit's name"));
+    assert!(parse_order(&game, "move red.0.0,blah 5 5").unwrap_err().contains("\"blah\" is not a unit's name"));
     assert!(parse_order(&game, "build 6 6 0").unwrap_err().contains("no city there"));
 }

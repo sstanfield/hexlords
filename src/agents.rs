@@ -17,7 +17,7 @@ use crate::game::Game;
 use crate::orders::{Event, Order};
 use crate::setup::Controller;
 use crate::state::scenario::{side_name, side_named};
-use crate::state::{Hex, Side, UnitId, step_toward};
+use crate::state::{Hex, Side, UnitId, compute_range, step_toward};
 
 /// What a side's agent is asked for.
 pub trait Agent {
@@ -131,15 +131,25 @@ impl Agent for Passive {
     }
 }
 
-/// A first opponent, and a yardstick: its cities build the cheapest of what
-/// they can; one unit stays in each of its cities; the others go for the
-/// nearest city they can get to that is not theirs and has nobody in it.
+/// A first opponent, and a yardstick. Its cities build what gives the most
+/// strength for the turns it takes (the cheapest, of two alike). It keeps
+/// [`Simple::KEEP`] units in each of its cities, and sends the others of a
+/// stack together toward the nearest city that is not its own; it attacks
+/// when the odds are at least [`Simple::DARE`] in a hundred, and else waits
+/// where it is for more to come.
 #[derive(Default)]
 pub struct Simple {
     /// The turn it is playing (round and side), and the units it has given an
     /// order this turn.
     turn: Option<(u32, Side)>,
     done: Vec<UnitId>,
+}
+
+impl Simple {
+    /// How many units stay in each of its cities.
+    pub const KEEP: usize = 2;
+    /// The odds, in percent, it attacks at.
+    pub const DARE: u32 = 60;
 }
 
 impl Agent for Simple {
@@ -151,25 +161,62 @@ impl Agent for Simple {
         let map = &game.map;
         let idle = map.cities().iter().find(|c| c.side == side && c.building.is_none() && !c.units.is_empty());
         if let Some(city) = idle {
-            let cheapest = city.units.iter().enumerate().min_by_key(|(_, p)| (p.cost, p.time)).map(|(i, _)| i);
-            return Order::Build { city: city.id, what: cheapest };
+            let best = city
+                .units
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, p)| (p.strength * 100 / p.time.max(1), std::cmp::Reverse(p.cost)))
+                .map(|(i, _)| i);
+            return Order::Build { city: city.id, what: best };
         }
-        let mut targets: Vec<Hex> =
-            map.cities().iter().filter(|c| c.side != side && map.units_at(c.pos).is_empty()).map(|c| c.pos).collect();
-        for unit in map.units().of_side(side) {
-            if self.done.contains(&unit.id()) || unit.movement == 0 {
+        let targets: Vec<Hex> = map.cities().iter().filter(|c| c.side != side).map(|c| c.pos).collect();
+        // The units free to go: not given an order this turn, with points
+        // left, and not the first KEEP of one of its cities.
+        let keeps = |id: UnitId, at: Hex| {
+            map.city_at(at).is_some_and(|c| c.side == side)
+                && map.units_at(at).iter().take(Simple::KEEP).any(|k| *k == id)
+        };
+        let free: Vec<&crate::state::Unit> = map
+            .units()
+            .of_side(side)
+            .filter(|u| !self.done.contains(&u.id()) && u.movement > 0 && !keeps(u.id(), u.pos()))
+            .collect();
+        if free.is_empty() {
+            return Order::EndTurn;
+        }
+        // An attack: all the free units that can get to a target this turn,
+        // from wherever they are, if together they are likely to win.
+        let ranges: Vec<_> = free.iter().map(|u| (u.id(), compute_range(map, u))).collect();
+        for target in &targets {
+            let able: Vec<UnitId> =
+                ranges.iter().filter(|(_, r)| r.cost(*target).is_some()).map(|(id, _)| *id).collect();
+            if able.is_empty() {
                 continue;
             }
-            self.done.push(unit.id());
+            if game.battle_odds(&able, *target).unwrap_or(100) >= Simple::DARE {
+                self.done.extend(able.iter().copied());
+                return Order::Move { units: able, to: *target };
+            }
+        }
+        // Else each stack's free units go together toward the nearest target
+        // they can get to; those already near a target wait for the others.
+        let mut seen: Vec<Hex> = Vec::new();
+        for unit in &free {
             let here = unit.pos();
-            let keeps =
-                map.city_at(here).is_some_and(|c| c.side == side) && map.units_at(here).first() == Some(&unit.id());
-            if keeps {
+            if seen.contains(&here) {
                 continue;
             }
-            targets.sort_by_key(|t| (t.distance(here), *t));
-            if let Some(target) = targets.iter().copied().find(|t| step_toward(map, unit, *t).is_some()) {
-                return Order::Toward { unit: unit.id(), to: target };
+            seen.push(here);
+            let stack: Vec<&crate::state::Unit> = free.iter().copied().filter(|u| u.pos() == here).collect();
+            let ids: Vec<UnitId> = stack.iter().map(|u| u.id()).collect();
+            self.done.extend(ids.iter().copied());
+            let lead = stack.iter().copied().min_by_key(|u| u.movement).unwrap_or(unit);
+            let mut near = targets.clone();
+            near.sort_by_key(|t| (t.distance(here), *t));
+            let Some(target) = near.into_iter().find(|t| step_toward(map, lead, *t).is_some()) else { continue };
+            let waits = ids.iter().all(|id| ranges.iter().any(|(u, r)| u == id && r.cost(target).is_some()));
+            if !waits {
+                return Order::Toward { units: ids, to: target };
             }
         }
         Order::EndTurn
@@ -244,6 +291,8 @@ pub fn describe(game: &Game, side: Side) -> String {
     let map = &game.map;
     let mut out = format!("turn {} {}\n", game.turn(), side_name(side));
     out.push_str(&format!("order {}\n", game.order().iter().map(|s| side_name(*s)).collect::<Vec<_>>().join(" ")));
+    let combat = game.setup().combat;
+    out.push_str(&format!("battles {} chance {}\n", combat.system.name(), combat.chance));
     out.push_str("terrain\n");
     out.push_str(&map.to_text());
     out.push_str("end terrain\n");
@@ -251,12 +300,13 @@ pub fn describe(game: &Game, side: Side) -> String {
         let prices: Vec<String> =
             kind.cost.prices().iter().filter(|(_, p)| *p > 0).map(|(w, p)| format!("{w} {p}")).collect();
         out.push_str(&format!(
-            "kind {} strength {} moves {} upkeep {} price {} enter {}\n",
+            "kind {} strength {} moves {} upkeep {} price {} commander {} enter {}\n",
             kind.id,
             kind.strength,
             kind.moves,
             kind.upkeep,
             kind.price,
+            kind.commander,
             prices.join(" ")
         ));
     }
@@ -299,8 +349,9 @@ pub fn describe(game: &Game, side: Side) -> String {
     out
 }
 
-/// An order in a line of text (`docs/agents.md`): `move <unit> <row> <col>`,
-/// `toward <unit> <row> <col>`, `build <row> <col> <index or none>`, `end`.
+/// An order in a line of text (`docs/agents.md`): `move <units> <row> <col>`,
+/// `toward <units> <row> <col>` (units: names with commas between),
+/// `build <row> <col> <index or none>`, `end`.
 /// `None` for an empty line or a comment (`#`).
 pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
     let words: Vec<&str> = line.split_whitespace().collect();
@@ -309,13 +360,15 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
         let hex = Hex::new(row, col);
         if game.map.contains(hex) { Ok(hex) } else { Err(format!("{hex} is not on the map")) }
     };
-    let unit = |name: &str| parse_unit(name).ok_or(format!("\"{name}\" is not a unit's name"));
+    let units = |names: &str| -> Result<Vec<UnitId>, String> {
+        names.split(',').map(|name| parse_unit(name).ok_or(format!("\"{name}\" is not a unit's name"))).collect()
+    };
     Ok(Some(match words[..] {
         [] => return Ok(None),
         [first, ..] if first.starts_with('#') => return Ok(None),
         ["end"] => Order::EndTurn,
-        ["move", u, row, col] => Order::Move { unit: unit(u)?, to: hex(row, col)? },
-        ["toward", u, row, col] => Order::Toward { unit: unit(u)?, to: hex(row, col)? },
+        ["move", u, row, col] => Order::Move { units: units(u)?, to: hex(row, col)? },
+        ["toward", u, row, col] => Order::Toward { units: units(u)?, to: hex(row, col)? },
         ["build", row, col, what] => {
             let city = game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id;
             let what = match what {

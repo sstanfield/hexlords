@@ -6,12 +6,14 @@
 //! Not a port: the C++ had no panels.
 
 use crate::game::{Game, describe_terrain};
+use crate::orders::Event;
 use crate::state::scenario::side_name;
 use crate::state::{City, Hex, Map, MoveCost, Side, Unit, UnitProd};
 
 /// The line about the hex under the cursor: the turn, the hex's terrain and
-/// road, its city's name, how many units stand there, and what it costs the
-/// selected unit to go there, if it can.
+/// road, its city's name, how many units stand there, and, if the selected
+/// units can go there, what it costs (one unit) or that they can (a stack),
+/// and the odds of winning if going there is an attack.
 pub fn cursor_line(game: &Game) -> String {
     let (map, hex) = (&game.map, game.map.cursor);
     let mut parts = vec![format!("Turn {}", game.turn())];
@@ -28,9 +30,78 @@ pub fn cursor_line(game: &Game) -> String {
     }
     let selected = game.selected().and_then(|id| map.units().get(id));
     if let (Some(unit), Some(cost)) = (selected, game.range().and_then(|r| r.cost(hex))) {
-        parts.push(format!("{cost} of {} points to move here", unit.movement));
+        match game.battle_odds(game.selection(), hex) {
+            Some(odds) => parts.push(format!("attack: {odds}% likely to win")),
+            None if game.selection().len() > 1 => {
+                parts.push(format!("the {} units can move here", game.selection().len()))
+            }
+            None => parts.push(format!("{cost} of {} points to move here", unit.movement)),
+        }
     }
     parts.join("  |  ")
+}
+
+/// A battle, a line at a time, for the one who fought it: who attacked whom
+/// where, with how many, what each side lost, and who won (and the city, if
+/// one was taken). Nothing for an event that is not a battle.
+pub fn battle_lines(map: &Map, events: &[Event]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for event in events {
+        if let Event::Battle { at, attacker, defender, attackers, defenders, attackers_lost, defenders_lost, won } =
+            event
+        {
+            let (a, d) = (side_name(*attacker), who(*defender));
+            lines.push(sentence(&format!("{a} attacked {d} at {}, {attackers} against {defenders}.", place(map, *at))));
+            lines.push(sentence(&format!("{a} lost {attackers_lost}, {d} {defenders_lost}.")));
+            lines.push(sentence(&if *won { format!("{a} won.") } else { format!("{d} held.") }));
+        }
+        if let Event::Taken { city, by, .. } = event {
+            if let Some(city) = map.cities().get(*city) {
+                lines.push(sentence(&format!("{} took {}.", side_name(*by), city.name)));
+            }
+        }
+    }
+    lines
+}
+
+/// What happened to `side` while others played, in a line, if the event was
+/// about it: a battle it fought, a city it lost, a side that is out.
+pub fn news_line(map: &Map, event: &Event, side: Side) -> Option<String> {
+    let line = match event {
+        Event::Battle { at, attacker, defender, attackers_lost, defenders_lost, won, .. } if *defender == side => {
+            let how = if *won { "lost it" } else { "held" };
+            let (by, at) = (side_name(*attacker), place(map, *at));
+            format!("{by} attacked you at {at}: you {how}, losing {defenders_lost}; they lost {attackers_lost}.")
+        }
+        Event::Battle { at, attacker, defender, attackers_lost, defenders_lost, won, .. } if *attacker == side => {
+            let how = if *won { "won" } else { "lost" };
+            let (whom, at) = (who(*defender), place(map, *at));
+            format!("You attacked {whom} at {at}: you {how}, losing {attackers_lost}; they lost {defenders_lost}.")
+        }
+        Event::Taken { city, from, by } if *from == side => {
+            let name = map.cities().get(*city).map_or("a city".to_string(), |c| c.name.clone());
+            format!("{} took {name} from you.", side_name(*by))
+        }
+        Event::Out { side: out } if *out != side => format!("{} is out of the game.", side_name(*out)),
+        _ => return None,
+    };
+    Some(sentence(&line))
+}
+
+/// Where a battle was: its city's name, or the hex.
+fn place(map: &Map, at: Hex) -> String {
+    map.city_at(at).map_or(format!("row {}, column {}", at.row, at.col), |c| c.name.clone())
+}
+
+/// A line with its first letter a capital.
+fn sentence(line: &str) -> String {
+    let mut chars = line.chars();
+    chars.next().map_or(String::new(), |first| first.to_uppercase().chain(chars).collect())
+}
+
+/// A side's name in a sentence: nobody's units are "nobody".
+fn who(side: Side) -> &'static str {
+    if side == Side::Grey { "nobody" } else { side_name(side) }
 }
 
 /// The heading of the selected hex: where it is, what it is, who is there.
@@ -61,7 +132,8 @@ pub fn unit_numbers(unit: &Unit) -> String {
     format!("{} \u{b7} {}/{}", unit.strength, unit.movement, unit.base_move_points)
 }
 
-/// The selected unit in a line: who it is, its numbers, and its price.
+/// The selected unit in a line: who it is, its numbers, and its price (and
+/// what it does for its stack, if it is a commander).
 pub fn unit_line(map: &Map, unit: &Unit) -> String {
     let mut line = format!(
         "{} ({}): strength {}, moves {}/{}, upkeep {}",
@@ -74,6 +146,9 @@ pub fn unit_line(map: &Map, unit: &Unit) -> String {
     );
     if let Some(kind) = map.units().kind_of(unit) {
         line.push_str(&format!(", price {}", kind.price));
+        if kind.commander > 0 {
+            line.push_str(&format!(", commands (+{})", kind.commander));
+        }
     }
     line
 }
@@ -103,10 +178,15 @@ pub fn unit_details(map: &Map, unit: &Unit) -> Vec<String> {
         "Strength {}   Moves {}/{}   Upkeep {}",
         unit.strength, unit.movement, unit.base_move_points, unit.upkeep
     );
+    let mut leads = None;
     if let Some(kind) = map.units().kind_of(unit) {
         numbers.push_str(&format!("   Price {}", kind.price));
+        if kind.commander > 0 {
+            leads = Some(format!("Commands: its stack fights {} stronger; it fights last", kind.commander));
+        }
     }
     lines.push(numbers);
+    lines.extend(leads);
     match map.units().move_cost(unit.move_cost) {
         Some(cost) => lines.extend(enters(cost, 5)),
         None => lines.push("Enters nothing".to_string()),
@@ -249,7 +329,8 @@ mod tests {
         game.set_cursor(Hex::new(5, 8));
         assert_eq!(cursor_line(&game), "Turn 1  |  row 5, column 8: water, bridge");
         // With a unit selected: what it costs to go there, of what it has.
-        assert!(matches!(game.select_hex(Hex::new(5, 5)), SelectOutcome::Selected(_)));
+        let rider = game.map.units_at(Hex::new(5, 5))[0];
+        assert!(game.select_unit(rider));
         assert_eq!(cursor_line(&game), "Turn 1  |  row 5, column 8: water, bridge  |  3 of 10 points to move here");
         game.set_cursor(Hex::new(5, 5));
         assert_eq!(cursor_line(&game), "Turn 1  |  row 5, column 5: city  |  Wrenfold  |  3 units");
@@ -259,6 +340,23 @@ mod tests {
         game.end_turn();
         game.set_cursor(Hex::new(5, 6));
         assert_eq!(cursor_line(&game), "Turn 2  |  row 5, column 6: grass, road  |  1 unit");
+        // The stack: whether all of it can go there (the militia has no
+        // bridge to cross).
+        game.end_turn();
+        assert!(matches!(game.select_hex(Hex::new(5, 5)), SelectOutcome::Selected(_)));
+        assert_eq!(game.selection().len(), 2);
+        game.set_cursor(Hex::new(5, 7));
+        assert_eq!(cursor_line(&game), "Turn 3  |  row 5, column 7: grass, road  |  the 2 units can move here");
+        game.set_cursor(Hex::new(5, 8));
+        assert_eq!(cursor_line(&game), "Turn 3  |  row 5, column 8: water, bridge");
+        // Another side's units: an attack, and how likely it is to be won.
+        let cost = game.map.acquire_move_cost(MoveCost { grass: 1, ..MoveCost::default() });
+        let raider = game.map.new_unit(Side::Red, "Raider", 0, 1, 5, cost);
+        game.map.place_unit(raider, Hex::new(5, 7)).unwrap();
+        game.set_cursor(Hex::new(5, 7));
+        let line = cursor_line(&game);
+        let odds: u32 = line.rsplit("attack: ").next().unwrap().split('%').next().unwrap().parse().unwrap();
+        assert!(line.ends_with("% likely to win") && odds > 80, "{line}");
     }
 
     #[test]
@@ -268,7 +366,7 @@ mod tests {
         assert_eq!(hex_title(&game.map, Hex::new(5, 15)), "Row 5, column 15: city (Low Tarn), no units");
         assert_eq!(hex_title(&game.map, Hex::new(5, 7)), "Row 5, column 7: grass, road, no units");
         assert_eq!(hex_title(&game.map, Hex::new(40, 0)), "");
-        game.select_hex(Hex::new(5, 5));
+        game.select_unit(game.map.units_at(Hex::new(5, 5))[0]);
         game.select_hex(Hex::new(5, 7));
         assert_eq!(hex_title(&game.map, Hex::new(5, 7)), "Row 5, column 7: grass, road, 1 unit (blue)");
         // Units of two sides on a hex: both are named.
@@ -310,7 +408,7 @@ mod tests {
             ]
         );
         // After a move the points that are left show.
-        game.select_hex(city);
+        game.select_unit(ids[0]);
         game.select_hex(Hex::new(5, 8));
         assert_eq!(unit_numbers(&unit(&game, 0)), "4 \u{b7} 7/10");
         assert!(unit_line(&game.map, &unit(&game, 0)).contains("moves 7/10"));

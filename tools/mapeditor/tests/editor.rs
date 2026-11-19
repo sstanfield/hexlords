@@ -800,7 +800,8 @@ fn the_format_pages_units_and_cities_are_read_as_it_says() {
 fn the_example_continent_is_a_whole_map() {
     let report = mapeditor::check::check_path(&assets().join("maps/continent"), Some(&assets())).unwrap();
     assert_eq!((report.rows, report.cols), (46, 72));
-    assert_eq!((report.units.len(), report.cities.len()), (4, 9));
+    assert_eq!((report.units.len(), report.cities.len()), (5, 9));
+    assert!(report.units.iter().any(|u| u.contains("commander 1")), "a captain: {:?}", report.units);
     assert!(report.roads > 50 && report.bridges >= 1 && report.passes >= 1, "{report}");
     // Every city is on the road: a road or another city beside it.
     let (game, _) = hexgame::game::Game::load(&assets().join("maps/continent")).unwrap();
