@@ -125,7 +125,7 @@ unit riders
 | `strength` | How hard it fights | 1 |
 | `moves` | Its movement points each turn, at least 1 | an error: it must be given |
 | `upkeep` | What it costs each turn | 0 |
-| `price` | What it costs a city to build one | 0 |
+| `price` | What it costs a city to build one, unless the city's `produce` line says otherwise | 0 |
 | `enter` | What a step costs it: `<what> <points>`, with commas between; may be given on several lines | an error: at least one |
 
 What `enter` can name: `grass`, `forest`, `swamp`, `desert`, `hill`,
@@ -150,7 +150,7 @@ city 13 7
   side     red
   walls    2
   produce  militia 1
-  produce  riders 3
+  produce  riders 3 12
   garrison militia 2
   garrison riders
 ```
@@ -161,7 +161,7 @@ city 13 7
 | `name` | The city's name; no two cities share one | an error: it must be given |
 | `side` | Who holds it at the start: `black`, `white`, `red`, `green`, `blue`, `orange`, `yellow`, `purple`, or `neutral` | `neutral` |
 | `walls` | How strong its walls are | 0 |
-| `produce` | A kind of unit it can build and the turns one takes: `produce <unit> <turns>`. A line for each. The game starts with the city building none of them: its holder chooses | it can build nothing |
+| `produce` | A kind of unit it can build, the turns one takes, and what one costs this city: `produce <unit> <turns> [<cost>]`; without a cost, the unit's `price`. A line for each. The game starts with the city building none of them: its holder chooses | it can build nothing |
 | `garrison` | Units that stand in it at the start, on its side: `garrison <unit> [<how many>]`. A line for each kind; at most 8 units in a city | nobody |
 
 A city tile without a record is still a city, with no name: `--check` warns of

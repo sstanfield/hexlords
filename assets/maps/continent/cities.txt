@@ -29,7 +29,8 @@ city 35 17
   walls    2
   produce  militia 1
   produce  wardens 2
-  produce  riders 3
+  # A horse town: its riders cost less than elsewhere.
+  produce  riders 3 8
   garrison militia
   garrison wardens
   garrison riders

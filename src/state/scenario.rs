@@ -240,10 +240,19 @@ pub struct CityEntry {
     pub name: String,
     pub side: Side,
     pub walls: u32,
-    /// What it builds: a unit's id and the turns one takes.
-    pub produce: Vec<(String, u32)>,
+    /// What it can build.
+    pub produce: Vec<Produce>,
     /// Who stands in it at the start: a unit's id and how many.
     pub garrison: Vec<(String, u32)>,
+}
+
+/// A kind of unit a city can build: the unit's id, the turns one takes, and
+/// what one costs the city (if it does not say: the unit's `price`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Produce {
+    pub unit: String,
+    pub turns: u32,
+    pub cost: Option<u32>,
 }
 
 /// Read `cities.txt`: the cities, in the file's order. Whether their hexes
@@ -289,13 +298,17 @@ pub fn parse_cities(text: &str) -> Result<Vec<CityEntry>, ScenarioError> {
                 }
                 "walls" => city.walls = number(file, line, "walls", value, 0)?,
                 "produce" => {
-                    let [unit, turns] = words[..] else {
-                        return error(file, line, "expected \"produce <unit> <turns>\"");
+                    let (unit, turns, cost) = match words[..] {
+                        [unit, turns] => (unit, turns, None),
+                        [unit, turns, cost] => (unit, turns, Some(cost)),
+                        _ => return error(file, line, "expected \"produce <unit> <turns> [<cost>]\""),
                     };
-                    if city.produce.iter().any(|(u, _)| u == unit) {
+                    if city.produce.iter().any(|p| p.unit == unit) {
                         return error(file, line, format!("{unit} is produced twice"));
                     }
-                    city.produce.push((unit.to_string(), number(file, line, "the turns to build", turns, 1)?));
+                    let turns = number(file, line, "the turns to build", turns, 1)?;
+                    let cost = cost.map(|cost| number(file, line, "the cost", cost, 0)).transpose()?;
+                    city.produce.push(Produce { unit: unit.to_string(), turns, cost });
                 }
                 "garrison" => {
                     let (unit, count) = match words[..] {
@@ -368,14 +381,15 @@ pub fn build(mut map: Map, kinds: Vec<UnitKind>, cities: &[CityEntry]) -> Result
         let known: Vec<String> = map.units().kinds().iter().map(|k| k.id.clone()).collect();
         let known = if known.is_empty() { format!("{UNITS_FILE} has none") } else { known.join(", ") };
         let unknown = |unit: &str| format!("{name}: there is no unit \"{unit}\" ({known})");
-        for (unit, turns) in &entry.produce {
+        for Produce { unit, turns, cost } in &entry.produce {
             let Some(kind) = map.units().kind_named(unit).and_then(|k| map.units().kind(k)).cloned() else {
                 return error(file, *line, unknown(unit));
             };
+            // The city's own cost, if it gives one; else the unit's price.
             let prod = UnitProd {
                 basename: kind.id,
                 time: *turns,
-                cost: kind.price,
+                cost: cost.unwrap_or(kind.price),
                 upkeep: kind.upkeep,
                 strength: kind.strength,
                 movement: kind.moves,
@@ -487,7 +501,7 @@ city 5 5
   side     red
   walls    2
   produce  spearmen 2
-  produce  scouts 1
+  produce  scouts 1 3
   garrison spearmen 2
   garrison scouts
 
@@ -532,7 +546,8 @@ city 12 14
         assert_eq!((wrenfold.name.as_str(), wrenfold.side, wrenfold.walls), ("Wrenfold", Side::Red, 2));
         let builds: Vec<(&str, u32, u32, u32)> =
             wrenfold.units.iter().map(|p| (p.basename.as_str(), p.time, p.cost, p.movement)).collect();
-        assert_eq!(builds, [("spearmen", 2, 6, 12), ("scouts", 1, 0, 20)]);
+        // The spearmen cost their price; the scouts what Wrenfold says.
+        assert_eq!(builds, [("spearmen", 2, 6, 12), ("scouts", 1, 3, 20)]);
         let tarn = map.city_at(Hex::new(12, 14)).unwrap();
         assert_eq!((tarn.name.as_str(), tarn.side, tarn.walls, tarn.units.len()), ("Low Tarn", Side::Grey, 0, 0));
 
@@ -613,7 +628,9 @@ city 12 14
                 city("name A\nmayor Bo\n"),
                 "cities.txt line 3: \"mayor\" is not one of name, side, walls, produce, garrison",
             ),
-            (city("name A\nproduce scouts\n"), "cities.txt line 3: expected \"produce <unit> <turns>\""),
+            (city("name A\nproduce scouts\n"), "cities.txt line 3: expected \"produce <unit> <turns> [<cost>]\""),
+            (city("name A\nproduce scouts 1 2 3\n"), "cities.txt line 3: expected \"produce <unit> <turns> [<cost>]\""),
+            (city("name A\nproduce scouts 1 dear\n"), "cities.txt line 3: the cost must be a number, found \"dear\""),
             (city("name A\nproduce scouts 0\n"), "cities.txt line 3: the turns to build must be at least 1"),
             (city("name A\nproduce scouts 1\nproduce scouts 2\n"), "cities.txt line 4: scouts is produced twice"),
             (city("name A\nproduce pikes 1\n"), "cities.txt line 1: A: there is no unit \"pikes\" (spearmen, scouts)"),

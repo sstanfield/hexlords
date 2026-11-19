@@ -786,6 +786,8 @@ fn the_format_pages_units_and_cities_are_read_as_it_says() {
                 let entries = parse_cities(block).unwrap_or_else(|e| panic!("{e}"));
                 assert_eq!((entries[0].name.as_str(), entries[0].hex), ("Brindlewick", Hex::new(13, 7)));
                 assert_eq!(entries[0].garrison, [("militia".to_string(), 2), ("riders".to_string(), 1)]);
+                let costs: Vec<Option<u32>> = entries[0].produce.iter().map(|p| p.cost).collect();
+                assert_eq!(costs, [None, Some(12)]);
                 cities += 1;
             }
             _ => {}
