@@ -570,10 +570,12 @@ simultaneous turns and our own unit set and numbers.
   road markers. All of it is generated, so the licensing is clean and it can be
   regenerated. **Done (2026-11-18):** `tools/assetgen` draws the ten
   terrain tiles, roads and bridges, and four signs for units; the game draws a
-  unit as its kind's sign on a disc of its side's color, and a banner on an
-  owned city (`docs/tiles.md`). A map brings its own kinds of unit and its
-  cities (`docs/map-format.md`).
-- Show a stack-size indicator on hexes with units (a count, or pips).
+  unit as its kind's sign on a disc of its side's color (`docs/tiles.md`). A
+  map brings its own kinds of unit and its cities (`docs/map-format.md`).
+  Since (2026-11-19): a city is drawn in its holder's colors (a picture for
+  each side), with a pip for each unit in it.
+- Show a stack-size indicator on hexes with units (a count, or pips). **Done
+  for cities** (their pips); not yet for a stack in the open.
 - ~~Restore the map editor hotkeys that are commented out in `main.cpp` (G/F/W/H/M/S
   paint terrain, C places a city, Ctrl+S saves, Ctrl+T ends the turn), behind a
   `--edit` flag. The minimap marks itself dirty on edits.~~ **Done differently
@@ -585,6 +587,12 @@ simultaneous turns and our own unit set and numbers.
   its units.
 
 ### Phase 3: Core gameplay, simultaneous turns ("WEGO")
+
+**Taken over by `docs/gameplay.md` (2026-11-19, the owner's word):** the
+game supports two modes, turns one side after the other and rounds where all
+sides give orders at once, on one set of rules. What follows is the first
+proposal, kept for its ideas; `docs/gameplay.md` is the plan.
+
 - **The turn loop.** There is an orders phase, in which every player gives orders
   in secret: move along a path, attack, hold, garrison, produce in a city. Then a
   resolution phase plays all orders out at once. Start with hotseat play, where
