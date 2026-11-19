@@ -97,8 +97,8 @@ fn units_that_cannot_be_paid_leave_as_few_as_make_it_up() {
         game.history().iter().map(|r| &r.event).filter(|e| matches!(e, Event::Deserted { .. })).collect();
     assert_eq!(deserted, [&Event::Deserted { side: Side::Red, name: "Soldiers".to_string() }]);
     // The log says so.
-    let lines = info::log(&game, Side::Red);
-    assert_eq!(lines[0].1[0], ["Unpaid, your Soldiers left you: the treasury could not pay their upkeep."]);
+    let lines = info::log(&game, Side::Red, 0);
+    assert_eq!(lines[0].1[0].lines, ["Unpaid, your Soldiers left you: the treasury could not pay their upkeep."]);
     // A commander goes last: with taxes of 0, everyone else goes first.
     let redhold = game.map.city_at(REDHOLD).unwrap().id;
     game.map.city_mut(redhold).unwrap().income = 0;
@@ -152,8 +152,7 @@ fn the_sidebar_shows_the_treasury_and_a_city_its_taxes() {
         Session::with_game(&assets(), Size::new(1024, 768), 96, game("garrison soldiers\n", 30, |_| {})).unwrap();
     let says = |s: &Session, name: &str| s.screen.ui.text(widget(s, name)).unwrap_or("").to_string();
     assert_eq!((says(&s, "gold_0"), says(&s, "gold_1")), ("Gold 30".to_string(), "Taxes +6, upkeep -2".to_string()));
-    s.end_turn();
-    s.pump();
+    assert!(s.next_turn());
     assert_eq!(says(&s, "gold_0"), "Gold 34");
     // The city's window says what it brings in.
     let r = s.screen.area(widget(&s, hexgame::session::CITY_DETAILS_ID));

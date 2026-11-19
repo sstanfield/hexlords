@@ -191,6 +191,23 @@ impl Agent for Simple {
                 return Order::Build { city: city.id, what: None };
             }
         }
+        // A side without a commander builds one, where it can, if it can
+        // keep it.
+        let units = map.units();
+        let leads = |p: &crate::state::UnitProd| {
+            units.kind_named(&p.basename).and_then(|k| units.kind(k)).is_some_and(|k| k.commander > 0)
+        };
+        let led = units.of_side(side).any(|u| map.is_commander(u.id()));
+        let building_one = own().any(|c| c.production().is_some_and(&leads));
+        if !led && !building_one {
+            let at = own().find_map(|city| {
+                let i = city.units.iter().position(|p| leads(p) && i64::from(p.upkeep) <= spare)?;
+                Some((city.id, i))
+            });
+            if let Some((city, i)) = at {
+                return Order::Build { city, what: Some(i) };
+            }
+        }
         // An idle city builds what gives the most strength for its turns, of
         // what the side can keep.
         let choice = own().filter(|c| c.building.is_none()).find_map(|city| {

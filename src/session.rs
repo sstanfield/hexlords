@@ -64,6 +64,9 @@ pub const ALL_CITIES_ID: &str = "all_cities";
 pub const UNDO_ID: &str = "undo";
 pub const NEXT_STACK_ID: &str = "next_stack";
 pub const NEXT_CITY_ID: &str = "next_city";
+/// How long the computer takes over a turn at least, in ms, so that the log
+/// can be followed while it plays.
+pub const COMPUTER_TURN_MS: u64 = 400;
 /// The button that opens the log (`log_window`).
 pub const LOG_ID: &str = "log";
 pub const MY_CITIES_ID: &str = "my_cities";
@@ -174,8 +177,8 @@ fn help_section() -> HelpSection {
             ("N,  or  Next stack", "Select the next stack that can still move (Shift+N: the one before)"),
             ("C,  or  Next city", "Go to your next city (Shift+C: the one before)"),
             ("L,  or  Log", "Your battles, with who won and who died, and the cities you took and lost"),
-            (&end_turn, "End the turn: units get their moves back, cities work on what they build"),
-            ("City details", "All about the selected city; set what it builds"),
+            (&end_turn, "End the turn: your log shows what the others do; then Start turn"),
+            ("City details", "All about the selected city; set what it builds (point at one: all about it)"),
             ("All cities, My cities", "A list of cities: see where one is, go to it, open it"),
         ],
     )
@@ -208,11 +211,15 @@ pub struct Session {
     undo: WidgetId,
     /// The log, while it is open.
     log: Option<LogWindow>,
-    /// How far each person at this screen has read the game's history: their
-    /// news, at the start of their turn, is what came after; and those told
-    /// they are out.
+    /// How long the game's history was when each person at this screen last
+    /// ended a turn: what came after is new to them (the log marks it).
     seen: Vec<(Side, usize)>,
-    told_out: Vec<Side>,
+    /// Between a person's turns: from End turn (or, in hotseat, the next
+    /// person's Begin) to Start turn, while the log shows what the others do.
+    between: bool,
+    /// When the computer last played a turn, in ms (it plays one at a time,
+    /// [`COMPUTER_TURN_MS`] apart, so that the log can be followed).
+    last_play: Option<u64>,
     /// The hex of the stack Next stack went to last.
     cycled: Option<Hex>,
     /// The windows about cities, while they are open.
@@ -279,7 +286,8 @@ impl Session {
             undo: find(&screen, UNDO_ID)?,
             log: None,
             seen: Vec::new(),
-            told_out: Vec::new(),
+            between: false,
+            last_play: None,
             cycled: None,
             city_window: None,
             city_list: None,
@@ -293,54 +301,122 @@ impl Session {
             screen,
         };
         session.apply_layout_sizes();
-        // The computer's turns that come before the first person's.
+        // The computer's turns that come before the first person's are
+        // played by the frames, the log open; or the first person is handed
+        // the game.
+        session.between = !session.persons_turn();
         session.turn_passed();
+        if session.between {
+            session.open_log();
+        }
         session.refresh();
         session.screen.settle();
         Ok(session)
     }
 
-    /// The person whose turn it is has done: the next side's turn, then the
-    /// computer's, until a person's.
-    pub fn end_turn(&mut self) {
+    /// True if it is the turn of a person at this screen.
+    fn persons_turn(&self) -> bool {
         let game = &self.screen.game;
+        game.controller(game.player()) == Some(&Controller::Person)
+    }
+
+    /// The person whose turn it is has done (End turn): the next side's
+    /// turn. Their log opens, and shows what the others do, a turn at a time
+    /// (the frames play the computer's); when it is a person's turn again,
+    /// Start turn begins it.
+    pub fn end_turn(&mut self) {
         // Only a person's turn is the screen's to end (once nobody here is in
         // the game, the computer plays on by itself).
-        let person = game.controller(game.player()) == Some(&Controller::Person);
-        if self.cover.is_some() || game.winner().is_some() || !person {
+        if self.cover.is_some() || self.screen.game.winner().is_some() || !self.persons_turn() {
             return;
         }
+        let side = self.screen.game.player();
+        let length = self.screen.game.history().len();
+        match self.seen.iter_mut().find(|(s, _)| *s == side) {
+            Some((_, seen)) => *seen = length,
+            None => self.seen.push((side, length)),
+        }
         self.screen.game.end_turn();
+        // Nobody else plays before this person's next turn (a side alone):
+        // nothing to wait for.
+        self.between = !(self.persons_turn() && self.screen.game.player() == side);
+        if self.between {
+            self.open_log();
+        }
         self.turn_passed();
     }
 
-    /// A turn has passed: the computer plays its sides' turns, as far as the
-    /// next person's (a round at most, if nobody is a person); and when that
-    /// person is not the one who played last, the map is covered until they
-    /// say they are there.
-    fn turn_passed(&mut self) {
-        // The computer's turns, side by side, and what they did.
-        loop {
-            let game = &self.screen.game;
-            let side = game.player();
-            let computer = matches!(game.controller(side), Some(Controller::Computer(_)));
-            if !computer || game.winner().is_some() || self.agents.get_mut(side).is_none() {
+    /// Start the turn of the person whose turn it is (Start turn): the log
+    /// closes, and the map is theirs.
+    pub fn start_turn(&mut self) {
+        if !self.between || !self.persons_turn() || self.cover.is_some() {
+            return;
+        }
+        self.between = false;
+        if let Some(log) = self.log.take() {
+            log.close(&mut self.screen.ui);
+        }
+    }
+
+    /// The button under the minimap, or Ctrl+T: Start turn between turns,
+    /// else End turn.
+    fn turn_button(&mut self) {
+        if self.between { self.start_turn() } else { self.end_turn() }
+    }
+
+    /// The computer plays one turn, that of the side whose turn it is, if the
+    /// computer plays it.
+    fn play_one(&mut self) {
+        let game = &self.screen.game;
+        let side = game.player();
+        if game.winner().is_some() || !matches!(game.controller(side), Some(Controller::Computer(_))) {
+            return;
+        }
+        let Some(agent) = self.agents.get_mut(side) else { return };
+        agents::play_turn(&mut self.screen.game, agent);
+        self.turn_passed();
+    }
+
+    /// Play the computer's turns now, up to a person's (a turn at most, once
+    /// nobody here is in the game): what the frames do a turn at a time. For
+    /// tests and scripts.
+    pub fn wait_for_turn(&mut self) {
+        for _ in 0..self.screen.game.order().len() + 1 {
+            let before = (self.screen.game.player(), self.screen.game.turn());
+            if self.cover.is_some() || self.persons_turn() {
                 break;
             }
-            let Some(agent) = self.agents.get_mut(side) else { break };
-            agents::play_turn(&mut self.screen.game, agent);
-            if !self.people_in_play() {
-                break; // nobody here plays any more: a turn a frame
+            self.play_one();
+            if (self.screen.game.player(), self.screen.game.turn()) == before || !self.people_in_play() {
+                break;
             }
         }
-        // The last person here went out in the computer's turns: they hear
-        // of it, once.
-        if !self.people_in_play() {
-            if let Some(side) = self.last_person.filter(|s| !self.told_out.contains(s)) {
-                self.told_out.push(side);
-                self.show_news_to(side);
-            }
+        self.refresh();
+    }
+
+    /// End the turn, play the others', and start the next: a round in one
+    /// step, for scripts. False if it was not a person's turn to end.
+    pub fn next_turn(&mut self) -> bool {
+        if !self.persons_turn() || self.between {
+            self.start_turn();
         }
+        if !self.persons_turn() {
+            return false;
+        }
+        self.end_turn();
+        self.wait_for_turn();
+        if let Some(cover) = self.cover.take() {
+            build::close(&mut self.screen.ui, cover.window);
+        }
+        self.start_turn();
+        self.refresh();
+        true
+    }
+
+    /// A turn has passed: if it is a person's turn now, and not the person
+    /// who played last (hotseat), the map is covered until they say they are
+    /// there.
+    fn turn_passed(&mut self) {
         let game = &self.screen.game;
         let side = game.player();
         let person = game.controller(side) == Some(&Controller::Person);
@@ -349,9 +425,6 @@ impl Session {
         }
         if person {
             self.last_person = Some(side);
-            if self.cover.is_none() {
-                self.show_news();
-            }
         }
         // The panels are about the hex the cursor is on.
         self.shown = self.screen.game.map.cursor;
@@ -596,15 +669,21 @@ impl Session {
         }
         let details = if city.is_empty() { Visibility::Gone } else { Visibility::Visible };
         set_visibility(&mut self.screen, self.city_details, details);
-        // The button says whose turn it ends (on a map without sides, nobody's).
-        let label = match self.screen.game.player() {
+        // The button says whose turn it ends (on a map without sides,
+        // nobody's), or, between turns, that the next can start; while the
+        // computer plays, whose turn it waits for.
+        let game = &self.screen.game;
+        let (person, side) = (self.persons_turn(), game.player());
+        let theirs = person && game.winner().is_none();
+        let label = match side {
+            _ if game.winner().is_some() => "Game over".to_string(),
             Side::Grey => "End turn".to_string(),
+            _ if !person => format!("Waiting for {}", side_name(side)),
+            _ if self.between => "Start turn".to_string(),
             side => format!("End {}'s turn", side_name(side)),
         };
         self.end_turn.set(&mut self.screen, &label);
         // It is a person's to press, on their turn.
-        let game = &self.screen.game;
-        let theirs = game.controller(game.player()) == Some(&Controller::Person) && game.winner().is_none();
         self.screen.ui.set_disabled(self.end_turn.widget, !theirs);
         // The treasury of the person at the screen (none on a map without
         // sides).
@@ -626,12 +705,17 @@ impl Session {
     /// The windows about cities: forget those that were closed, and bring the
     /// others up to date.
     fn refresh_windows(&mut self) {
-        // The log says what the history says now, to the player of now.
+        // The log says what the history says now, to the player of now, and
+        // whose turn it is while the others play.
         let viewer = self.viewer();
-        match &self.log {
-            Some(log) if !log.is_open(&self.screen.ui) => self.log = None,
-            Some(log) if log.stale(&self.screen.game, viewer) => self.open_log(),
-            _ => {}
+        let new_from = self.seen_by(viewer);
+        let status = self.log_status();
+        if self.log.as_ref().is_some_and(|log| !log.is_open(&self.screen.ui)) {
+            self.log = None;
+        }
+        if let Some(log) = &mut self.log {
+            log.refresh(&mut self.screen.ui, &self.screen.game, viewer, new_from);
+            log.set_status(&mut self.screen.ui, &status);
         }
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
         if let Some(window) = &mut self.city_window {
@@ -655,8 +739,20 @@ impl Session {
             window.close(&mut self.screen.ui);
         }
         let (root, area) = (self.screen.root_window(), self.window_area());
+        // The icons of what it can build, in its holder's colors.
+        let keys: Vec<IconKey> = self.screen.game.map.cities().get(id).map_or(Vec::new(), |city| {
+            let units = self.screen.game.map.units();
+            city.units
+                .iter()
+                .map(|p| {
+                    let kind = units.kind_named(&p.basename).and_then(|k| units.kind(k));
+                    (kind.map_or(DEFAULT_UNIT_IMAGE, |k| k.image.as_str()).to_string(), city.side)
+                })
+                .collect()
+        });
+        let icons: Vec<ImageHandle> = keys.iter().map(|key| self.icon(key)).collect();
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
-        self.city_window = CityWindow::open(ui, root, &game.map, id, game.player(), (area, CITY_ALIGN));
+        self.city_window = CityWindow::open(ui, root, &game.map, id, game.player(), &icons, (area, CITY_ALIGN));
     }
 
     /// The list of cities, every one or the player's (`own`); the same list
@@ -819,13 +915,16 @@ impl Session {
         }
     }
 
-    /// One frame of host work before drawing (see `MapScreen::frame`). In a
-    /// game the computer plays alone, a round of it a frame.
+    /// One frame of host work before drawing (see `MapScreen::frame`). On the
+    /// computer's turns, it plays one, [`COMPUTER_TURN_MS`] after the last.
     pub fn frame(&mut self, now_ms: u64) {
-        let game = &self.screen.game;
-        let nobody = game.controller(game.player()) != Some(&Controller::Person);
-        if nobody && game.winner().is_none() && self.cover.is_none() {
-            self.turn_passed();
+        let due = self.last_play.is_none_or(|last| now_ms >= last.saturating_add(COMPUTER_TURN_MS));
+        if !self.persons_turn() && self.cover.is_none() && due {
+            let before = (self.screen.game.player(), self.screen.game.turn());
+            self.play_one();
+            if (self.screen.game.player(), self.screen.game.turn()) != before {
+                self.last_play = Some(now_ms);
+            }
         }
         self.screen.frame(now_ms);
         self.refresh();
@@ -835,6 +934,10 @@ impl Session {
     /// the game selects or moves a unit, and the panels are about that hex
     /// from now on.
     fn choose(&mut self, hex: Hex) {
+        // An order starts the turn, if it has not been started.
+        if self.between && self.persons_turn() {
+            self.start_turn();
+        }
         let side = self.screen.game.player();
         let before = self.screen.game.history().len();
         if let SelectOutcome::Fought(_) = self.screen.game.select_hex(hex) {
@@ -868,8 +971,51 @@ impl Session {
         let root = self.screen.root_window();
         let area = self.window_area();
         let side = self.viewer();
-        self.log = Some(LogWindow::open(&mut self.screen.ui, root, &self.screen.game, side, (area, (0.5, 0.3))));
+        let whose = (side, self.seen_by(side));
+        let status = self.log_status();
+        let mut log = LogWindow::open(&mut self.screen.ui, root, &self.screen.game, whose, (area, (0.5, 0.3)));
+        log.set_status(&mut self.screen.ui, &status);
+        self.log = Some(log);
         self.screen.settle();
+    }
+
+    /// True if something happened to `side` since it last ended a turn.
+    fn has_news(&self, side: Side) -> bool {
+        let game = &self.screen.game;
+        let records = game.history().get(self.seen_by(side)..).unwrap_or_default();
+        records.iter().any(|r| !info::record_lines(&game.map, r, side).is_empty())
+    }
+
+    /// How long the history was when `side` last ended a turn (0: never).
+    fn seen_by(&self, side: Side) -> usize {
+        self.seen.iter().find(|(s, _)| *s == side).map_or(0, |(_, seen)| *seen)
+    }
+
+    /// The log's line on top: whose turn it is while the others play, and
+    /// then that the person's can start.
+    fn log_status(&self) -> String {
+        let game = &self.screen.game;
+        let side = game.player();
+        if let Some(winner) = game.winner() {
+            return format!("{} has won.", title(side_name(winner)));
+        }
+        if !self.persons_turn() && side != Side::Grey {
+            return format!("{} is playing...", title(side_name(side)));
+        }
+        if self.between { "Your turn: press Start turn when you are ready.".to_string() } else { String::new() }
+    }
+
+    /// What the log's line on top says, while it is open.
+    pub fn log_status_line(&self) -> String {
+        self.log.as_ref().filter(|log| log.is_open(&self.screen.ui)).map_or(String::new(), |log| log.status().into())
+    }
+
+    /// The new lines of the log, while it is open.
+    pub fn log_new_lines(&self) -> Vec<String> {
+        self.log
+            .as_ref()
+            .filter(|log| log.is_open(&self.screen.ui))
+            .map_or(Vec::new(), |l| l.new_lines(&self.screen.ui))
     }
 
     /// Whose log the screen shows: the person whose turn it is, or, in the
@@ -931,33 +1077,11 @@ impl Session {
         self.shown = hex;
     }
 
-    /// A person's turn begins (they are at the screen): what happened to
-    /// them in the others' turns since they last read the history, in a
-    /// window, if anything did. (All of it stays in the log.)
-    fn show_news(&mut self) {
-        self.show_news_to(self.screen.game.player());
-    }
-
     /// True while a side that a person plays at this screen is still in the
     /// game.
     fn people_in_play(&self) -> bool {
         let game = &self.screen.game;
         game.order().iter().any(|s| !game.out().contains(s) && game.controller(*s) == Some(&Controller::Person))
-    }
-
-    fn show_news_to(&mut self, side: Side) {
-        let length = self.screen.game.history().len();
-        let from = match self.seen.iter_mut().find(|(s, _)| *s == side) {
-            Some((_, seen)) => std::mem::replace(seen, length),
-            None => {
-                self.seen.push((side, length));
-                0
-            }
-        };
-        let lines = info::news(&self.screen.game, side, from);
-        if !lines.is_empty() {
-            self.open_notice("While you waited", &lines);
-        }
     }
 
     /// A window of a few lines, with a button that closes it (as Esc does).
@@ -1005,7 +1129,13 @@ impl Session {
                     if let Some(cover) = self.cover.take() {
                         build::close(&mut self.screen.ui, cover.window);
                     }
-                    self.show_news();
+                    // Their log, if anything happened to them since they
+                    // last played; then Start turn.
+                    let side = self.screen.game.player();
+                    self.between = self.has_news(side);
+                    if self.between {
+                        self.open_log();
+                    }
                 }
             }
             self.refresh();
@@ -1032,13 +1162,13 @@ impl Session {
         }
         for command in self.screen.pump_shared() {
             match command {
-                RootCommand::Click(id) if id == TbId::new(END_TURN_ID) => self.end_turn(),
-                // Ctrl+T (Cmd+T) ends the turn too. C++: main.cpp (the
-                // commented-out Ctrl+T)
+                RootCommand::Click(id) if id == TbId::new(END_TURN_ID) => self.turn_button(),
+                // Ctrl+T (Cmd+T) ends the turn too, or starts it. C++:
+                // main.cpp (the commented-out Ctrl+T)
                 RootCommand::Key(ch, mods)
                     if ch.eq_ignore_ascii_case(&'t') && mods.intersects(Modifiers::CTRL | Modifiers::SUPER) =>
                 {
-                    self.end_turn();
+                    self.turn_button();
                 }
                 RootCommand::Click(id) if id == TbId::new(UNDO_ID) => self.undo(),
                 RootCommand::Key(ch, mods)
@@ -1112,6 +1242,10 @@ impl Scene for Session {
         Session::frame(self, now_ms);
     }
 
+    fn next_turn(&mut self) -> bool {
+        Session::next_turn(self)
+    }
+
     /// Where the selected unit can go.
     fn marked(&self, hex: Hex) -> bool {
         self.screen.game.can_move_to(hex)
@@ -1122,4 +1256,10 @@ impl Scene for Session {
     fn front_unit(&self) -> Option<UnitId> {
         self.screen.game.selected()
     }
+}
+
+/// A word with a capital: "Red".
+fn title(word: &str) -> String {
+    let mut chars = word.chars();
+    chars.next().map_or(String::new(), |c| c.to_uppercase().chain(chars).collect())
 }

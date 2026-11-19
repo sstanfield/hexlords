@@ -1,13 +1,15 @@
 //! The log: what the game's history (`Game::history`) says to the side at the
 //! screen, in a window that scrolls. Its battles, as the attacker or the
 //! defender, with who won and who died on each side; the cities it took and
-//! lost; the sides that went out. The latest round first, each round's events
-//! in the order they happened. The words are `info::log`'s.
+//! lost; the units that left it unpaid; the sides that went out. The latest
+//! round first, each round's events in the order they happened; what is new
+//! since the side last ended a turn in a color of its own. A line on top says
+//! whose turn it is while the others play. The words are `info::log`'s.
 //!
 //! Not a port: the C++ had no windows.
 
 use turbo_ferret::widgets::{ScrollContainer, ScrollMode, TextField};
-use turbo_ferret::{LayoutParams, Rect, Ui, WidgetId};
+use turbo_ferret::{LayoutParams, Rect, TbId, Ui, WidgetId};
 
 use crate::game::Game;
 use crate::gui::build::{self, WindowParts};
@@ -18,6 +20,8 @@ use crate::state::scenario::side_name;
 /// The log's window and its close button.
 pub const LOG_WINDOW_ID: &str = "log_window";
 pub const LOG_CLOSE_ID: &str = "log_close";
+/// The skin of what is new.
+pub const NEW_SKIN: &str = "LogNew";
 
 /// The scrolled list's size at most, and the space between things, in dp.
 const LIST_DP: (i32, i32) = (560, 340);
@@ -25,56 +29,96 @@ const SPACING_DP: i32 = 8;
 /// How far a line after an event's first stands in, in spaces.
 const INDENT: &str = "    ";
 
-/// The log, while it is open: whose it is, and how long the history was
-/// when it was written (a longer one is news, and the log is written again).
+/// The log, while it is open: whose it is, from where in the history it is
+/// new, and how long the history was when it was written (a longer one is
+/// news, and the list is written again).
 pub struct LogWindow {
     parts: WindowParts,
+    status: WidgetId,
+    status_text: String,
     list: WidgetId,
     side: Side,
+    new_from: usize,
     length: usize,
 }
 
 impl LogWindow {
-    /// Open `side`'s log of `game` on `parent` (the root window), placed in
-    /// `area` at `align` (see `build::place`).
+    /// Open `side`'s log of `game` on `parent` (the root window), what came
+    /// after the history was `new_from` long marked new, placed in `area` at
+    /// `align` (see `build::place`).
     pub fn open(
         ui: &mut Ui,
         parent: WidgetId,
         game: &Game,
-        side: Side,
+        (side, new_from): (Side, usize),
         (area, align): (Rect, (f32, f32)),
     ) -> LogWindow {
         let mut name = side_name(side).chars();
         let title = name.next().map_or(String::new(), |c| c.to_uppercase().chain(name).collect::<String>());
         let parts = build::window(ui, parent, LOG_WINDOW_ID, &format!("{title}'s log"));
         let dp = |ui: &Ui, n: i32| ui.dimension_converter().dp_to_px(n);
+        let status = build::heading(ui, parts.content, "");
         build::text(ui, parts.content, "Your battles, the cities you took and lost, who is out: the latest first.");
+        let legend = build::text(ui, parts.content, "What happened since you ended your turn is in this color.");
+        ui.set_skin(legend, TbId::new(NEW_SKIN));
         build::gap(ui, parts.content, dp(ui, SPACING_DP));
 
         // The list, scrolled when it is long; no taller than the area leaves.
-        let room = (area.h - dp(ui, 140)).max(dp(ui, 80));
+        let room = (area.h - dp(ui, 180)).max(dp(ui, 80));
         let (list_w, list_h) = (dp(ui, LIST_DP.0), dp(ui, LIST_DP.1).min(room));
         let scroll = ui.add(parts.content, ScrollContainer::new(ScrollMode::YAuto).with_adapt_content_size(true));
         ui.set_layout_params(scroll, Some(LayoutParams::fixed(list_w, list_h)));
         let list = build::column(ui, scroll, 0);
-        let log = info::log(game, side);
-        if log.is_empty() {
-            build::text(ui, list, "Nothing yet.");
-        }
-        for (round, entries) in &log {
-            build::heading(ui, list, &format!("Round {round}"));
-            for lines in entries {
-                for (i, line) in lines.iter().enumerate() {
-                    let text = if i == 0 { line.clone() } else { format!("{INDENT}{line}") };
-                    build::text(ui, list, &text);
-                }
-            }
-        }
 
         build::gap(ui, parts.content, dp(ui, SPACING_DP));
         build::button(ui, parts.content, LOG_CLOSE_ID, "Close");
+        let mut log = LogWindow { parts, status, status_text: String::new(), list, side, new_from, length: 0 };
+        log.fill(ui, game);
         build::place(ui, parts, area, align);
-        LogWindow { parts, list, side, length: game.history().len() }
+        log
+    }
+
+    /// Write the list from the history.
+    fn fill(&mut self, ui: &mut Ui, game: &Game) {
+        for child in ui.children(self.list).to_vec() {
+            ui.remove(child);
+        }
+        let log = info::log(game, self.side, self.new_from);
+        if log.is_empty() {
+            build::text(ui, self.list, "Nothing yet.");
+        }
+        for (round, entries) in &log {
+            build::heading(ui, self.list, &format!("Round {round}"));
+            for entry in entries {
+                for (i, line) in entry.lines.iter().enumerate() {
+                    let text = if i == 0 { line.clone() } else { format!("{INDENT}{line}") };
+                    let field = build::text(ui, self.list, &text);
+                    if entry.new {
+                        ui.set_skin(field, TbId::new(NEW_SKIN));
+                    }
+                }
+            }
+        }
+        self.length = game.history().len();
+    }
+
+    /// Bring it up to date: `side`'s log, new from `new_from`, as the
+    /// history is now. (Only what changed is written again.)
+    pub fn refresh(&mut self, ui: &mut Ui, game: &Game, side: Side, new_from: usize) {
+        if self.side == side && self.new_from == new_from && self.length == game.history().len() {
+            return;
+        }
+        (self.side, self.new_from) = (side, new_from);
+        self.fill(ui, game);
+        build::refit(ui, self.parts);
+    }
+
+    /// The line on top: whose turn it is, while the others play.
+    pub fn set_status(&mut self, ui: &mut Ui, text: &str) {
+        if self.status_text != text {
+            ui.set_text(self.status, text);
+            self.status_text = text.to_string();
+        }
     }
 
     /// True while the window is open.
@@ -86,14 +130,23 @@ impl LogWindow {
         build::close(ui, self.parts.window);
     }
 
-    /// True if what it says is out of date: the history has grown (or
-    /// shrunk, an undo), or it is another side's turn.
-    pub fn stale(&self, game: &Game, side: Side) -> bool {
-        self.side != side || self.length != game.history().len()
-    }
-
     /// What it says, a line at a time, the round headings among them.
     pub fn lines(&self, ui: &Ui) -> Vec<String> {
         ui.children(self.list).iter().filter_map(|id| ui.get::<TextField>(*id)).map(|t| t.text.clone()).collect()
+    }
+
+    /// The lines of it that are new.
+    pub fn new_lines(&self, ui: &Ui) -> Vec<String> {
+        ui.children(self.list)
+            .iter()
+            .filter(|id| ui.node(**id).is_some_and(|n| n.skin() == TbId::new(NEW_SKIN)))
+            .filter_map(|id| ui.get::<TextField>(*id))
+            .map(|t| t.text.clone())
+            .collect()
+    }
+
+    /// The line on top.
+    pub fn status(&self) -> &str {
+        &self.status_text
     }
 }

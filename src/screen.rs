@@ -657,4 +657,11 @@ pub trait Scene {
     fn confirm_quit(&mut self) -> bool {
         true
     }
+
+    /// A round in one step, for scripts (`turn`): the person's turn ends, the
+    /// others play theirs, the person's next starts. False where there are
+    /// no turns (a tool), or it is nobody's turn to end.
+    fn next_turn(&mut self) -> bool {
+        false
+    }
 }

@@ -26,6 +26,8 @@
 //! - `cursor:ROW:COL`: put the cursor on that hex and center the view on it, as
 //!   far as the map's edges let it (not something a player can do in one step;
 //!   it is for getting to a far corner);
+//! - `turn`: in a game, a round in one step: the turn ends, the others play
+//!   theirs at once, and the next starts (`turn*30` for thirty rounds);
 //! - any step may end in `*N` to run it N times: `left*12`.
 //!
 //! The keys and the pointer go through the UI exactly as the window sends them,
@@ -68,6 +70,7 @@ enum Step {
     MiniScroll(i32, i32),
     Zoom(Hex, bool),
     Pull(i32, i32),
+    Turn,
 }
 
 /// `X`, or modifiers and X joined by `+`: `ctrl+s`.
@@ -143,6 +146,7 @@ fn parse_step(action: &str) -> Result<Step, String> {
         "down" => Step::Key(SpecialKey::Down),
         "enter" => Step::Key(SpecialKey::Enter),
         "esc" => Step::Key(SpecialKey::Esc),
+        "turn" => Step::Turn,
         "space" => Step::Char(' ', Modifiers::NONE),
         "1" => Step::Char('1', Modifiers::NONE),
         "2" => Step::Char('2', Modifiers::NONE),
@@ -183,8 +187,12 @@ fn click(screen: &mut MapScreen, p: Point) {
 fn run_step<S: Scene>(scene: &mut S, action: &str) -> Result<(), String> {
     // The whole step is read before any of it happens.
     let step = parse_step(action)?;
+    if let Step::Turn = step {
+        return if scene.next_turn() { Ok(()) } else { Err("there is no turn to end here".to_string()) };
+    }
     let screen = scene.screen_mut();
     match step {
+        Step::Turn => {}
         Step::Key(key) => {
             screen.ui.key(None, key, Modifiers::NONE, true);
             screen.ui.key(None, key, Modifiers::NONE, false);

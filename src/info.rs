@@ -85,31 +85,33 @@ pub fn record_lines(map: &Map, record: &Record, side: Side) -> Vec<String> {
     }
 }
 
+/// An event in a side's log: its lines, and whether it is new (it came after
+/// the history was the length the log was asked from).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LogEntry {
+    pub new: bool,
+    pub lines: Vec<String>,
+}
+
 /// What the game's history says to `side`, a round at a time, the latest
 /// round first and each round's events in the order they happened: the
-/// round, and each event's lines (`record_lines`). Rounds with nothing for
-/// `side` are left out.
-pub fn log(game: &Game, side: Side) -> Vec<(u32, Vec<Vec<String>>)> {
-    let mut rounds: Vec<(u32, Vec<Vec<String>>)> = Vec::new();
-    for record in game.history() {
+/// round, and each event's lines (`record_lines`), new if it came after the
+/// history was `new_from` long. Rounds with nothing for `side` are left out.
+pub fn log(game: &Game, side: Side, new_from: usize) -> Vec<(u32, Vec<LogEntry>)> {
+    let mut rounds: Vec<(u32, Vec<LogEntry>)> = Vec::new();
+    for (i, record) in game.history().iter().enumerate() {
         let lines = record_lines(&game.map, record, side);
         if lines.is_empty() {
             continue;
         }
+        let entry = LogEntry { new: i >= new_from, lines };
         match rounds.last_mut() {
-            Some((round, entries)) if *round == record.round => entries.push(lines),
-            _ => rounds.push((record.round, vec![lines])),
+            Some((round, entries)) if *round == record.round => entries.push(entry),
+            _ => rounds.push((record.round, vec![entry])),
         }
     }
     rounds.reverse();
     rounds
-}
-
-/// What happened to `side` in the others' turns since the history was
-/// `from` long: the lines of the records about it, oldest first.
-pub fn news(game: &Game, side: Side, from: usize) -> Vec<String> {
-    let records = game.history().get(from..).unwrap_or_default();
-    records.iter().filter(|r| r.turn != side).flat_map(|r| record_lines(&game.map, r, side)).collect()
 }
 
 /// Units by name, counted: "2 Militia, 1 Riders", in the order they first
@@ -227,7 +229,7 @@ pub fn unit_details(map: &Map, unit: &Unit) -> Vec<String> {
     if let Some(kind) = map.units().kind_of(unit) {
         numbers.push_str(&format!("   Price {}", kind.price));
         if kind.commander > 0 {
-            leads = Some(format!("Commands: its stack fights {} stronger; it fights last", kind.commander));
+            leads = Some(format!("Commands: +{} to its stack; fights last", kind.commander));
         }
     }
     lines.push(numbers);
@@ -262,6 +264,29 @@ pub fn production_option(map: &Map, prod: &UnitProd) -> String {
     format!("{}: {}, price {}", kind_name(map, prod), turns(prod.time), prod.cost)
 }
 
+/// What a city can build, in a few words for its button: the unit's name,
+/// and its strength and moves a turn ("Riders  4 · 18").
+pub fn production_button(map: &Map, prod: &UnitProd) -> String {
+    format!("{}  {} \u{b7} {}", kind_name(map, prod), prod.strength, prod.movement)
+}
+
+/// What a city can build, in full: the unit's strength and moves (and what it
+/// does for its stack, a commander); the turns it takes here, its price
+/// here, its upkeep; what each terrain costs it to enter.
+pub fn production_details(map: &Map, prod: &UnitProd) -> Vec<String> {
+    let kind = map.units().kind_named(&prod.basename).and_then(|k| map.units().kind(k));
+    let name = kind_name(map, prod);
+    let mut lines = vec![format!("{name}: strength {}, moves {}", prod.strength, prod.movement)];
+    lines.push(format!("Builds in {}, price {}; upkeep {}", turns(prod.time), prod.cost, prod.upkeep));
+    if let Some(kind) = kind {
+        if kind.commander > 0 {
+            lines.push(format!("Commands: +{} to its stack; fights last", kind.commander));
+        }
+        lines.extend(enters(&kind.cost, 4));
+    }
+    lines
+}
+
 /// What a city is building and how far it has got: "Building Riders, 1 of 3
 /// turns done", or "Building nothing". A unit that is done and still in the
 /// works waits for its price, or for room in the city: "Riders done: they
@@ -286,13 +311,15 @@ pub fn progress_short(map: &Map, city: &City) -> String {
     }
 }
 
-/// Why a unit that is done is not out yet: no room in the city, or no gold.
+/// Why a unit that is done is not out yet: no room in the city (a hex holds
+/// eight units, and a commander besides), or no gold.
 fn waits(map: &Map, city: &City, prod: &UnitProd) -> String {
-    if map.units_at(city.pos).len() >= crate::state::MAX_STACK {
-        "they wait for room".to_string()
-    } else {
-        format!("they wait for {} gold", prod.cost)
-    }
+    let units = map.units();
+    let commander = units.kind_named(&prod.basename).and_then(|k| units.kind(k)).is_some_and(|k| k.commander > 0);
+    let here = map.units_at(city.pos);
+    let leaders = here.iter().filter(|u| map.is_commander(**u)).count();
+    let full = if commander { leaders > 0 } else { here.len() - leaders >= crate::state::MAX_STACK };
+    if full { "they wait for room".to_string() } else { format!("they wait for {} gold", prod.cost) }
 }
 
 /// A side's treasury in two lines, for the sidebar: "Gold 34", and what comes

@@ -52,7 +52,12 @@ fn session_as(side: Side) -> Session {
     let s = session();
     let game = std::mem::replace(&mut { s }.screen.game, common::grassland());
     let setup = Setup::solo(&game.map, Some(side), "passive");
-    Session::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(setup)).unwrap()
+    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(setup)).unwrap();
+    // The computer's turns before the person's (the frames would play them,
+    // the log open), and the person's started.
+    s.wait_for_turn();
+    s.start_turn();
+    s
 }
 
 /// The whole widget in window pixels.
@@ -189,9 +194,10 @@ fn the_player_sets_what_a_city_builds_and_the_turns_build_it() {
     push(&mut s, &build_id(0));
     assert!(pressed(&s, &build_id(0)) && !pressed(&s, BUILD_NOTHING_ID));
     assert_eq!(s.screen.game.map.city_at(WRENFOLD).unwrap().building, Some(0));
-    push(&mut s, "end_turn");
+    // A round: the turn ends, the others play theirs, the next starts.
+    assert!(s.next_turn());
     assert!(says(&s).iter().any(|t| t == "Building Riders, 1 of 2 turns done"), "{:?}", says(&s));
-    push(&mut s, "end_turn");
+    assert!(s.next_turn());
     assert_eq!(s.screen.game.map.units_at(WRENFOLD).len(), 4, "the rider is done");
     assert!(says(&s).iter().any(|t| t == "Garrison: 2 Militia, 2 Riders"), "{:?}", says(&s));
     // The panels under the map show it too: a fourth slot.
@@ -282,4 +288,30 @@ fn the_windows_fit_the_map_and_take_the_wheel_from_it() {
         // And the keyboard is still the map's.
         assert_eq!(s.screen.ui.focused(), Some(s.screen.map_widget()));
     }
+}
+
+#[test]
+fn what_a_city_can_build_shows_its_icon_and_numbers_and_all_about_it_under_the_pointer() {
+    let mut s = session();
+    push(&mut s, CITY_DETAILS_ID);
+    // A button each: the unit's icon, its name, strength and moves.
+    let text = |s: &Session, name: &str| s.screen.ui.text(widget(s, name)).unwrap_or("").to_string();
+    assert_eq!(text(&s, &format!("{}_text", build_id(0))), "Riders  4 \u{b7} 10");
+    assert_eq!(text(&s, &format!("{}_text", build_id(1))), "Militia  2 \u{b7} 8");
+    let icon = widget(&s, &format!("{}_icon", build_id(0)));
+    assert!(s.screen.area(icon).w > 0, "the icon has room");
+    // Nothing under the pointer, nothing built: a hint.
+    assert_eq!(s.city_window().unwrap().details(), ["Point at one: all about it shows here."]);
+    // The pointer on Riders: all about them; the window keeps its size.
+    let before = frame(&s, CITY_WINDOW_ID);
+    let r = s.screen.area(widget(&s, &build_id(0)));
+    common::hover(&mut s, Point::new(r.x + r.w / 2, r.y + r.h / 2));
+    assert_eq!(frame(&s, CITY_WINDOW_ID), before);
+    let details = s.city_window().unwrap().details();
+    assert_eq!(details[..2], ["Riders: strength 4, moves 10", "Builds in 2 turns, price 9; upkeep 0"]);
+    assert!(details[2].starts_with("Enters: grass 2"), "{details:?}");
+    // Away again: what it builds, once it builds something.
+    push(&mut s, &build_id(1));
+    common::hover(&mut s, Point::new(5, 5));
+    assert_eq!(s.city_window().unwrap().details()[0], "Militia: strength 2, moves 8");
 }

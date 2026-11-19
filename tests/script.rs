@@ -129,3 +129,11 @@ fn bad_scripts_say_what_is_wrong() {
     assert!(script::run(&mut s, "left,nonsense,left").is_err());
     assert_eq!(s.screen.game.map.cursor, Hex::new(before.row, before.col - 1));
 }
+
+#[test]
+fn a_turn_step_plays_a_round() {
+    let mut s = session();
+    assert_eq!(s.screen.game.turn(), 1);
+    script::run(&mut s, "turn*2").unwrap();
+    assert_eq!(s.screen.game.turn(), 3);
+}

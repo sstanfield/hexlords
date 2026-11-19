@@ -112,17 +112,22 @@ and the rules use integers, not floats.
    live go in (and take the city), or, if they lost, the defenders stay. An
    attack is a stack: as many units as a hex holds (8 and a commander),
    from one hex or from several.
-   - **An exchange** between strengths `a` (the attacker's) and `b`: each
-     side scores its strength times `10 - chance`, plus a draw from 0 to
-     `chance` times the stronger's strength; the higher score wins, a tie
-     is the defender's. The loser of an exchange takes a hit; a unit dies
-     at its second (`combat::HITS`), and is whole again after the battle.
+   - **An exchange** between strengths `a` (the attacker's) and `b`: `a`
+     wins with the odds `a^k : b^k`, where `k` is `2 × (10 - chance) / 5`.
+     Only the ratio of the strengths counts. The loser of an exchange takes
+     a hit; a unit dies at its second (`combat::HITS`), and is whole again
+     after the battle. (In integers: `k` is one of the two whole numbers
+     around it, drawn in the share that makes the odds right, so every
+     machine fights the same battle.) Before (2026-11-19, first version):
+     each side scored its strength plus luck, and the steep edge that gave
+     the stronger, with walls in full, made cities near fortresses (a full
+     stack of good units took a walled neutral city one time in eight).
    - **How much chance**, 0 to 10, set on the new game screen (or
      `--chance`); **5 unless it is set** (decided). At 0 the stronger always
-     wins. From 5 up any weaker unit may win an exchange; below 5 only one
-     near enough (at 3, a 4 always beats a 2). At 10 strength counts for
-     nothing. A 4 against a 2 wins an exchange 85 times in 100 at 5, 67 at
-     7; a 4 against a 3, 69 at 5.
+     wins (a tie is the defender's). At 5, `k` is 2: a strength twice
+     another's wins an exchange four times in five, 4 against 3 about 64
+     in 100; the less chance, the more strength counts (at 3, 4 against 2
+     about 87; at 7, about 70). At 10 strength counts for nothing.
    - **How a battle goes**, a choice of systems behind one function
      (`combat::fight(attackers, defenders, rules, the game's chance) -> who
      died`), so that more can be added and each played without a window
@@ -137,9 +142,15 @@ and the rules use integers, not floats.
        dear ones behind. Many weak units beat one strong one here, where in
        lines they lose one by one.
    - **Bonuses**, in either system: a defender is 1 stronger on hills and
-     in forests, 2 on mountains, and as much as its city's walls; every
-     unit of a stack with a commander is as much stronger as the commander
-     says (`commander 1`). The attackers get no ground and no walls.
+     in forests, 2 on mountains, and three quarters of a point for each
+     level of its city's walls (a battle's strengths are in quarter points,
+     `combat::QUARTER`); every unit of a stack with a commander is as much
+     stronger as the commander says (`commander 1`). The attackers get no
+     ground and no walls. With chance 5, eight good units take a city held
+     by one behind walls 1 nearly always, the strongest neutral city on the
+     continent (two wardens behind walls 3) about half the time, a side's
+     capital with its captain four times in five; equal stacks in the field
+     are even.
    - **The odds** before an attack (`Game::battle_odds`) are 200 battles
      fought with a chance of their own, so asking does not change the game;
      the line under the map shows them ("attack: 82% likely to win").
@@ -167,8 +178,11 @@ and the rules use integers, not floats.
    `commander <n>` key in `units.txt`, the bonus it gives); a hex holds one
    besides its eight units (the ninth slot under the map); every other unit
    of its stack fights `n` stronger; in lines it fights last. The continent
-   has a captain in each side's first city. Later: they grow with battles
-   won, carry things, lead bigger stacks, are bought differently.
+   has a captain in each side's first city, and those cities can build
+   captains (4 turns, 20 gold), to replace one that is lost; a captain done
+   in a city that has one waits for room. The simple agent builds one when
+   its side has none. Later: they grow with battles won, carry things, lead
+   bigger stacks.
 8. **The end** (decided): a side that has lost all its cities is out of the
    game, and its units with it; the game ends when one side is left. (More
    ways to win can come later: a share of the cities, a number of rounds.)
@@ -229,10 +243,18 @@ thing to happen. Ideas to try, as the rules grow:
   stack button; C and Next city for the cities); End turn could warn of
   stacks that have done nothing.
 - **A log** (built): every battle a side fought, attacking or attacked,
-  with who won and who died; the cities it took and lost; the sides out.
-  The game keeps the history (`Game::history`); the log is what it says to
-  the side at the screen, and the news at the start of a turn is what came
-  since its last. (Fog of war will decide what more a side may hear.)
+  with who won and who died; the cities it took and lost; the units that
+  left it unpaid; the sides out. The game keeps the history
+  (`Game::history`); the log is what it says to the side at the screen.
+  End turn opens it, and while the others play (the computer's turns a
+  little apart, `COMPUTER_TURN_MS`) it fills, what is new in a color of its
+  own, a line on top saying whose turn it is; when the person's turn comes,
+  the button says Start turn, which closes it. (Fog of war will decide what
+  more a side may hear.)
+- **What a city can build, before it is built** (built): the city's window
+  has a button for each, with the unit's icon, name, strength and moves,
+  and all about the one under the pointer (turns, price, upkeep, what each
+  terrain costs it).
 - **Mistakes cost little** (built): a click that is not a move drops the
   selection, Esc drops it too, a drag moves the map rather than a unit, and
   the last order can be taken back (`Order::Undo`), unless chance had a say

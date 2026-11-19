@@ -32,6 +32,9 @@ elements
 	# The headings in windows (the help's sections, a city's).
 	Heading
 		text-color #ffd24a
+	# What is new in the log since the player last ended a turn.
+	LogNew
+		text-color #8fd8ff
 	# A row of a list (the cities): flat, lit under the pointer, the chosen
 	# one marked and in color.
 	ListRow

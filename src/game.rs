@@ -435,9 +435,11 @@ impl Game {
         commanders <= 1 && all().count() - commanders <= MAX_STACK
     }
 
-    /// How strong a unit fights in a battle on `at`: its strength, the best
-    /// bonus of a commander in its stack (`stack`, not itself), and, if it
-    /// defends, the ground's bonus and the walls of a city there.
+    /// How strong a unit fights in a battle on `at`, in quarters of a point
+    /// (`combat::QUARTER`): its strength and the best bonus of a commander in
+    /// its stack (`stack`, not itself), and, if it defends, the ground's
+    /// bonus, and three quarters of a point for each level of the walls of a
+    /// city there.
     pub fn battle_strength(&self, unit: &Unit, at: Hex, defending: bool, stack: &[UnitId]) -> u32 {
         let units = self.map.units();
         let led = stack
@@ -447,13 +449,16 @@ impl Game {
             .map(|kind| kind.commander)
             .max()
             .unwrap_or(0);
-        let mut strength = unit.strength.saturating_add(led);
+        let mut points = unit.strength.saturating_add(led);
         if defending {
-            let ground = self.map.tile(at).map_or(0, |t| combat::ground_bonus(t.kind));
-            let walls = self.map.city_at(at).map_or(0, |c| c.walls);
-            strength = strength.saturating_add(ground).saturating_add(walls);
+            points = points.saturating_add(self.map.tile(at).map_or(0, |t| combat::ground_bonus(t.kind)));
         }
-        strength
+        let mut quarters = points.saturating_mul(combat::QUARTER);
+        if defending {
+            let walls = self.map.city_at(at).map_or(0, |c| c.walls);
+            quarters = quarters.saturating_add(walls.saturating_mul(combat::WALL_QUARTERS));
+        }
+        quarters
     }
 
     /// The two sides of a battle of `attackers` against whoever is on `at`.

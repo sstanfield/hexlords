@@ -48,7 +48,7 @@ done
 | Name | What it does |
 |---|---|
 | `passive` | Ends every turn at once |
-| `simple` | Sets each idle city to build what gives the most strength for its turns, of what its taxes can keep (after its units' upkeep and that of what its cities are already building), and stops the dearest work when they cannot; keeps two units in each of its cities; attacks a city that is not its own, or another side's stack near its free units, with the strongest stack's worth of the free units that can reach it this turn, when the odds are at least 60 in 100 (or 15, when more than a stack can reach it: the first wave); else sends each stack's free units together toward the nearest such city, where they wait for the others |
+| `simple` | Builds a commander where it can when its side has none; sets each idle city to build what gives the most strength for its turns, of what its taxes can keep (after its units' upkeep and that of what its cities are already building), and stops the dearest work when they cannot; keeps two units in each of its cities; attacks a city that is not its own, or another side's stack near its free units, with the strongest stack's worth of the free units that can reach it this turn, when the odds are at least 60 in 100 (or 15, when more than a stack can reach it: the first wave); else sends each stack's free units together toward the nearest such city, where they wait for the others |
 | `cmd:<program> [<argument> ...]` | A program that plays (below) |
 
 A new agent is a type that implements `Agent` and a name in `agents::by_name`.

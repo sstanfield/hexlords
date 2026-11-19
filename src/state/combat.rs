@@ -51,8 +51,14 @@ impl System {
     }
 }
 
-/// How much stronger the ground makes those who defend on it: hills and
-/// forests a little, mountains more. (A city's walls count besides.)
+/// What a battle's strengths are counted in: quarters of a point, so that a
+/// city's walls can count three quarters of a point a level.
+pub const QUARTER: u32 = 4;
+pub const WALL_QUARTERS: u32 = 3;
+
+/// How much stronger the ground makes those who defend on it, in points:
+/// hills and forests a little, mountains more. (A city's walls count
+/// besides, [`WALL_QUARTERS`] a level.)
 pub fn ground_bonus(kind: TileType) -> u32 {
     match kind {
         TileType::Forest | TileType::Hill => 1,
@@ -96,17 +102,33 @@ pub struct Battle {
 }
 
 /// One exchange between strengths `a` (the attacker's) and `b`: true if `a`
-/// wins it. Each side's score is its strength, weighed by how little chance
-/// there is, plus luck, as much as there is chance (on the scale of the
-/// stronger side); the higher score wins, and a tie goes to the defender. At
-/// 0 the stronger always wins; at 10 it is even.
+/// wins it. `a` wins with the odds `a^k : b^k`, where `k` is `2 × (10 -
+/// chance) / 5`: at 5, `k` is 2, and a strength twice another's wins four
+/// times in five; the less chance, the more strength counts. At 0 the
+/// stronger always wins (a tie is the defender's); at 10 it is even. Only
+/// the ratio of the strengths counts, so they can be in any unit.
+///
+/// In integers, so that every machine fights the same battle: `k` is the
+/// whole number below it or the one above, drawn in the share that makes
+/// the odds come out as `k` says.
 pub fn exchange(a: u32, b: u32, chance: u8, rng: &mut Rng) -> bool {
-    let chance = u64::from(chance.min(MAX_CHANCE));
-    let scale = u64::from(a.max(b).max(1));
-    let mut score =
-        |strength: u32| u64::from(strength) * (u64::from(MAX_CHANCE) - chance) + rng.below(chance * scale + 1);
-    let (sa, sb) = (score(a), score(b));
-    sa > sb
+    let chance = chance.min(MAX_CHANCE);
+    if chance == 0 {
+        return a > b;
+    }
+    // k in fifths: 2 × (10 - chance).
+    let fifths = 2 * u32::from(MAX_CHANCE - chance);
+    let k = fifths / 5 + u32::from(rng.below(5) < u64::from(fifths % 5));
+    // Small enough that the powers fit (the ratio is what counts).
+    let (mut a, mut b) = (u64::from(a), u64::from(b));
+    while a.max(b) > 1 << 15 {
+        (a, b) = (a.div_ceil(2), b.div_ceil(2));
+    }
+    let (wa, wb) = (a.pow(k), b.pow(k));
+    if wa + wb == 0 {
+        return false;
+    }
+    rng.below(wa + wb) < wa
 }
 
 /// Fight a battle: `attackers` against `defenders`, until one side is gone.
@@ -219,7 +241,8 @@ mod tests {
         // The middle: the stronger mostly, not always; the more chance, the
         // less strength counts.
         let at = |chance| share(4, 2, chance);
-        assert!((80..=95).contains(&at(5)), "{}", at(5));
+        // At 5, twice as strong wins four times in five (16 : 4).
+        assert!((76..=84).contains(&at(5)), "{}", at(5));
         assert!(
             at(3) >= at(5) && at(5) > at(7) && at(7) > at(9) && at(9) > 50,
             "{} {} {} {}",
@@ -228,8 +251,14 @@ mod tests {
             at(7),
             at(9)
         );
-        // Two near strengths are near even even with little chance.
-        assert!((50..=75).contains(&share(4, 3, 5)), "{}", share(4, 3, 5));
+        // Two near strengths are near even (16 : 9), and the scale does not
+        // matter: only the ratio does.
+        assert!((60..=68).contains(&share(4, 3, 5)), "{}", share(4, 3, 5));
+        assert!((60..=68).contains(&share(40, 30, 5)), "{}", share(40, 30, 5));
+        // At chance 1, k is 3.6: 4 against 3 about 74 in 100; and strengths
+        // too big for the powers are brought down, keeping the ratio.
+        assert!((70..=78).contains(&share(4, 3, 1)), "{}", share(4, 3, 1));
+        assert!((70..=78).contains(&share(4_000_000, 3_000_000, 1)), "{}", share(4_000_000, 3_000_000, 1));
     }
 
     #[test]

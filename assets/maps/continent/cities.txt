@@ -1,9 +1,10 @@
 # The cities of this map: "city <row> <column>", on a hex that is a city (the
 # letter c) in terrain.map. docs/map-format.md says what the lines mean.
 #
-# Four sides start with a city each, and a captain in it; the other five
-# cities are nobody's. "income" is the gold a city brings its holder each
-# turn: the sides' cities 20, the others 8 to 15.
+# Four sides start with a city each, and a captain in it; their cities can
+# build captains, to replace one that is lost. The other five cities are
+# nobody's. "income" is the gold a city brings its holder each turn: the
+# sides' cities 20, the others 8 to 15.
 
 city 13 7
   name     Brindlewick
@@ -13,6 +14,7 @@ city 13 7
   produce  militia 1
   produce  archers 2
   produce  riders 3
+  produce  captain 4
   garrison militia 2
   garrison riders
   garrison captain
@@ -25,6 +27,7 @@ city 19 42
   produce  militia 1
   produce  wardens 2
   produce  archers 2
+  produce  captain 4
   garrison wardens
   garrison archers 2
   garrison captain
@@ -38,6 +41,7 @@ city 35 17
   produce  wardens 2
   # A horse town: its riders cost less than elsewhere.
   produce  riders 3 8
+  produce  captain 4
   garrison militia
   garrison wardens
   garrison riders
@@ -51,6 +55,7 @@ city 38 48
   produce  militia 1
   produce  archers 2
   produce  riders 3
+  produce  captain 4
   garrison archers
   garrison riders 2
   garrison captain

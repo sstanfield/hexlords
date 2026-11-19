@@ -37,6 +37,23 @@ pub fn row_id(i: usize) -> String {
     format!("city_row_{i}")
 }
 
+/// The lines of the details of what a city can build (`info::production_details`).
+pub const DETAIL_LINES: usize = 6;
+/// The size of a unit's icon on its button, in dp.
+const OPTION_ICON_DP: i32 = 28;
+
+/// The resource a button for what a city can build is made from: the unit's
+/// icon and a line of text beside it.
+fn option_resource(i: usize) -> String {
+    let id = build_id(i);
+    format!(
+        "TBButton: id: {id}, is-focusable: 0\n\
+         \tTBLayout: axis: x, spacing: 6, position: center\n\
+         \t\tTBImageWidget: id: {id}_icon\n\
+         \t\tTBTextField: id: {id}_text, text-align: left\n"
+    )
+}
+
 /// The list's size and its minimap's, and the space between things, in dp.
 const LIST_DP: (i32, i32) = (200, 240);
 const MINIMAP_DP: (i32, i32) = (220, 170);
@@ -107,19 +124,23 @@ pub struct CityWindow {
     garrison: Text,
     progress: Text,
     note: Text,
+    /// All about the option under the pointer (or the one it builds).
+    details: Vec<Text>,
     /// The buttons for what it builds, and what each sets.
     builds: Vec<(WidgetId, Option<usize>)>,
 }
 
 impl CityWindow {
     /// Open a city's window on `parent` (the root window), placed in `area`
-    /// at `align` (see `build::place`). `None` if there is no such city.
+    /// at `align` (see `build::place`). `icons` are the pictures of what it
+    /// can build, in its order. `None` if there is no such city.
     pub fn open(
         ui: &mut Ui,
         parent: WidgetId,
         map: &Map,
         id: CityId,
         player: Side,
+        icons: &[ImageHandle],
         (area, align): (Rect, (f32, f32)),
     ) -> Option<Self> {
         let city = map.cities().get(id)?;
@@ -135,8 +156,26 @@ impl CityWindow {
         let options = build::column(ui, content, dp(ui, 2));
         let group = TbId::new("production");
         let mut builds = vec![(build::button(ui, options, BUILD_NOTHING_ID, "Nothing"), None)];
+        let icon_size = dp(ui, OPTION_ICON_DP);
         for (i, prod) in city.units.iter().enumerate() {
-            builds.push((build::button(ui, options, &build_id(i), &info::production_option(map, prod)), Some(i)));
+            // The unit's icon, its name, strength and moves.
+            let id = build_id(i);
+            if ui.inflate(options, &option_resource(i)).is_err() {
+                continue;
+            }
+            let found = |ui: &Ui, name: &str| ui.find(options, TbId::new(name));
+            let (Some(button), Some(icon), Some(text)) =
+                (found(ui, &id), found(ui, &format!("{id}_icon")), found(ui, &format!("{id}_text")))
+            else {
+                continue;
+            };
+            ui.set_layout_params(icon, Some(LayoutParams::fixed(icon_size, icon_size)));
+            if let Some(handle) = icons.get(i) {
+                let handle = handle.clone();
+                ui.with_widget::<ImageWidget, _>(icon, |w, cx| w.set_image(cx, handle));
+            }
+            ui.set_text(text, &info::production_button(map, prod));
+            builds.push((button, Some(i)));
         }
         // As wide as the widest, one under the other, and one of them pressed.
         let width = builds.iter().map(|(b, _)| ui.preferred_size_free(*b).pref.w).max().unwrap_or(0);
@@ -144,11 +183,32 @@ impl CityWindow {
             build::set_width(ui, *button, width);
             ui.set_group_id(*button, group);
         }
+        // All about one of them: the one under the pointer.
+        build::gap(ui, content, dp(ui, 4));
+        let details: Vec<Text> = (0..DETAIL_LINES).map(|_| Text::new(build::text(ui, content, ""))).collect();
+        // As wide as the widest they will say, so that the window does not
+        // change its size as the pointer goes from one option to another.
+        if let Some(first) = details.first() {
+            let mut widest = 0;
+            let hint = ["Point at one: all about it shows here.".to_string()];
+            for line in city.units.iter().flat_map(|p| info::production_details(map, p)).chain(hint) {
+                ui.set_text(first.widget, &line);
+                widest = widest.max(ui.preferred_size_free(first.widget).pref.w);
+            }
+            ui.set_text(first.widget, "");
+            for line in &details {
+                ui.set_layout_params(
+                    line.widget,
+                    Some(LayoutParams { min_w: Some(widest), ..LayoutParams::default() }),
+                );
+            }
+        }
+        build::gap(ui, content, dp(ui, 4));
         let progress = Text::new(build::text(ui, content, ""));
         let note = Text::new(build::text(ui, content, ""));
         build::gap(ui, content, space);
         build::button(ui, content, CITY_CLOSE_ID, "Close");
-        let mut window = CityWindow { parts, city: id, summary, income, garrison, progress, note, builds };
+        let mut window = CityWindow { parts, city: id, summary, income, garrison, progress, note, details, builds };
         window.fill(ui, map, player);
         build::place(ui, parts, area, align);
         Some(window)
@@ -157,6 +217,27 @@ impl CityWindow {
     /// The city it is about.
     pub fn city(&self) -> CityId {
         self.city
+    }
+
+    /// Which of what it can build the pointer is on, if any.
+    pub fn hovered(&self, ui: &Ui) -> Option<usize> {
+        let over = ui.hovered()?;
+        let on = |button: WidgetId| {
+            let mut at = Some(over);
+            while let Some(id) = at {
+                if id == button {
+                    return true;
+                }
+                at = ui.parent(id);
+            }
+            false
+        };
+        self.builds.iter().find(|(button, _)| on(*button)).and_then(|(_, what)| *what)
+    }
+
+    /// What the details under the options say.
+    pub fn details(&self) -> Vec<&str> {
+        self.details.iter().map(|t| t.text.as_str()).filter(|t| !t.is_empty()).collect()
     }
 
     /// True while it is open (its title bar's button closes it too).
@@ -192,6 +273,16 @@ impl CityWindow {
         changed |= self.income.set(ui, &info::income_line(city));
         changed |= self.garrison.set(ui, &info::garrison_line(map, city));
         changed |= self.progress.set(ui, &info::progress_line(map, city));
+        // All about what is under the pointer; else about what it builds.
+        let shown = self.hovered(ui).or(city.building);
+        let details = match shown.and_then(|i| city.units.get(i)) {
+            Some(prod) => info::production_details(map, prod),
+            None if city.units.is_empty() => Vec::new(),
+            None => vec!["Point at one: all about it shows here.".to_string()],
+        };
+        for (i, line) in self.details.iter_mut().enumerate() {
+            changed |= line.set(ui, details.get(i).map_or("", String::as_str));
+        }
         changed |= self.note.set(ui, &note);
         let visibility = if note.is_empty() { Visibility::Gone } else { Visibility::Visible };
         if ui.node(self.note.widget).is_some_and(|n| n.visibility() != visibility) {

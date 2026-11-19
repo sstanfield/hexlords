@@ -63,8 +63,9 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | Two fingers or the wheel over the minimap | The view goes the same way as over the main map, but much farther: a pixel of the minimap for a pixel of the fingers |
 | Arrow keys | Move the cursor; the view follows when the cursor leaves it, and comes back to it if it was moved away |
 | `1` / `2` | Zoom out / in, centered on the cursor |
-| The End turn button ("End red's turn"), or Ctrl+T (Cmd+T) | The side's turn is over: the next side's, the computer's played at once; a turn begins with the side's units' points back and its cities' work |
-| City details, beside the map | The selected hex's city in a window: all about it, and buttons for what it builds (only its holder's work) |
+| The End turn button ("End red's turn"), or Ctrl+T (Cmd+T) | The side's turn is over: your log opens, and shows what the others do while they play their turns (the computer's a little apart; the button says whose turn it waits for); a turn begins with the side's units' points back and its cities' work |
+| Start turn (the same button, when your turn has come), or Ctrl+T | Close the log and play (an order on the map starts the turn too) |
+| City details, beside the map | The selected hex's city in a window: all about it, and a button for each thing it can build, with the unit's icon, strength and moves (only its holder's to press); pointing at one shows all about it: turns, price, upkeep, what each terrain costs it |
 | All cities, My cities | A list of the cities, or of yours, with a minimap that rings the one you choose; open it in full, or go to it |
 | F1, or `?` | The help: every key and what the mouse does (Esc closes it) |
 | Ctrl+Cmd+F, or F11 | Fullscreen on and off (macOS keeps F11 for itself) |

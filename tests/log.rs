@@ -9,7 +9,7 @@ use common::{assets, click, pixel_of, press, type_char, widget};
 use hexgame::game::Game;
 use hexgame::info::{log, record_lines};
 use hexgame::orders::{Event, Order, Record};
-use hexgame::session::{BEGIN_TURN_ID, LOG_ID, Session};
+use hexgame::session::{BEGIN_TURN_ID, END_TURN_ID, LOG_ID, Session};
 use hexgame::setup::Setup;
 use hexgame::state::scenario::{self, Scenario};
 use hexgame::state::{Hex, Side, UnitId};
@@ -92,9 +92,9 @@ fn each_side_reads_what_is_about_it() {
     let last = at(&game, REDHOLD)[0];
     game.map.move_unit(last, Hex::new(5, 7)).unwrap();
     game.apply(Order::Move { units: vec![last], to: BLUEMOOR }).unwrap();
-    let rounds: Vec<u32> = log(&game, Side::Red).iter().map(|(round, _)| *round).collect();
+    let rounds: Vec<u32> = log(&game, Side::Red, 0).iter().map(|(round, _)| *round).collect();
     assert_eq!(rounds, [2, 1]);
-    assert!(log(&game, Side::Green).is_empty());
+    assert!(log(&game, Side::Green, 0).is_empty());
 }
 
 // The screen.
@@ -129,15 +129,29 @@ fn the_log_has_the_battles_you_fought_on_both_sides() {
     assert!(s.notice().is_empty() && !s.log_lines().is_empty());
     press(&mut s, SpecialKey::Esc);
     assert!(s.log_lines().is_empty());
-    // Blue's turn: it attacks Redhold's last levy and takes the city. Red
-    // hears of it when its turn begins, and the log keeps it.
-    s.end_turn();
-    let news = s.notice();
+    // End turn: red's log opens, and says whose turn it is; the button waits.
+    let button = |s: &Session| s.screen.ui.text(widget(s, END_TURN_ID)).unwrap_or("").to_string();
+    push(&mut s, END_TURN_ID);
+    assert_eq!(s.log_status_line(), "Blue is playing...");
+    assert_eq!(button(&s), "Waiting for blue");
+    // A frame: blue plays. It attacks Redhold's last levy and takes the
+    // city, and red's log has it at once, new (red's own attack, before it
+    // ended its turn, is not).
+    s.frame(0);
+    let new = s.log_new_lines();
     assert!(
-        news.iter().any(|l| l.starts_with("Blue attacked you at Redhold") && l.ends_with("you were beaten.")),
-        "{news:?}"
+        new.iter().any(|l| l.starts_with("Blue attacked you at Redhold") && l.ends_with("you were beaten.")),
+        "{new:?}"
     );
-    assert!(news.contains(&"Blue took Redhold from you.".to_string()), "{news:?}");
+    assert!(new.contains(&"Blue took Redhold from you.".to_string()), "{new:?}");
+    assert!(!new.iter().any(|l| l.starts_with("You attacked")), "{new:?}");
+    // Red's turn: the button starts it, and the log closes.
+    assert_eq!(s.log_status_line(), "Your turn: press Start turn when you are ready.");
+    assert_eq!(button(&s), "Start turn");
+    push(&mut s, END_TURN_ID);
+    assert!(s.log_lines().is_empty());
+    assert_eq!(button(&s), "End red's turn");
+    // L opens it again: all of round 1, in order.
     type_char(&mut s, 'l');
     let lines = s.log_lines();
     assert_eq!(lines[0], "Round 1", "{lines:?}");
@@ -191,21 +205,26 @@ fn when_the_last_person_is_out_the_computer_plays_on_a_turn_a_frame() {
     let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(setup)).unwrap();
     let end_turn = |s: &Session| s.screen.ui.state(widget(s, hexgame::session::END_TURN_ID));
     assert!(!end_turn(&s).contains(turbo_ferret::WidgetState::DISABLED));
-    // Blue takes Redhold: red is out, and hears of it; the computer does not
-    // play the rest of the game at once.
+    // Green's turn, then blue's: blue takes Redhold, red is out, and its log
+    // says so; the computer does not play the rest of the game at once.
     s.end_turn();
-    s.pump();
+    s.wait_for_turn();
     assert!(s.screen.game.out().contains(&Side::Red));
     assert_eq!(s.screen.game.winner(), None);
-    assert!(s.notice().contains(&"You are out of the game.".to_string()), "{:?}", s.notice());
-    // The turn is no longer the screen's to end; each frame plays one.
+    assert!(s.log_new_lines().contains(&"You are out of the game.".to_string()), "{:?}", s.log_new_lines());
+    // The turn is no longer the screen's to end; the frames play one each,
+    // a little apart, and the log stays red's.
     assert!(end_turn(&s).contains(turbo_ferret::WidgetState::DISABLED));
-    let now = (s.screen.game.player(), s.screen.game.turn());
+    let turn = |s: &Session| (s.screen.game.player(), s.screen.game.turn());
+    let now = turn(&s);
     s.end_turn();
-    assert_eq!((s.screen.game.player(), s.screen.game.turn()), now);
+    assert_eq!(turn(&s), now);
     s.frame(16);
-    assert_ne!((s.screen.game.player(), s.screen.game.turn()), now);
-    // The log is still red's.
-    type_char(&mut s, 'l');
+    let next = turn(&s);
+    assert_ne!(next, now, "a frame plays a turn");
+    s.frame(32);
+    assert_eq!(turn(&s), next, "but not the next one so soon");
+    s.frame(16 + hexgame::session::COMPUTER_TURN_MS);
+    assert_ne!(turn(&s), next);
     assert!(s.log_lines().iter().any(|l| l == "You are out of the game."), "{:?}", s.log_lines());
 }

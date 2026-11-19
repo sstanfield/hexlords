@@ -104,6 +104,8 @@ fn an_attack_that_loses_dies_and_the_defenders_hold() {
 
 #[test]
 fn the_ground_and_the_walls_make_defenders_stronger() {
+    // Strengths in a battle are in quarters of a point: walls count three
+    // quarters a level.
     let mut game = game("garrison soldiers\n", "walls 2\ngarrison levy\n", |_| {});
     let levy = at(&game, BLUEMOOR)[0];
     let soldiers = at(&game, REDHOLD)[0];
@@ -111,18 +113,22 @@ fn the_ground_and_the_walls_make_defenders_stronger() {
         let unit = game.map.units().get(id).unwrap();
         game.battle_strength(unit, unit.pos(), defending, &[id])
     };
-    // In its city behind walls 2: 1 and 2. Who attacks has no walls.
-    assert_eq!(strength(&game, levy, true), 3);
-    assert_eq!(strength(&game, levy, false), 1);
+    // In its city behind walls 2: 1 and 1 1/2. Who attacks has no walls.
+    assert_eq!(strength(&game, levy, true), 4 + 6);
+    assert_eq!(strength(&game, levy, false), 4);
     // Out on the ground: hills and forests 1, mountains 2, grass nothing.
     for (kind, bonus) in [(TileType::Grass, 0), (TileType::Hill, 1), (TileType::Forest, 1), (TileType::Mountain, 2)] {
         game.map.tile_mut(Hex::new(5, 7)).unwrap().kind = kind;
         let unit = game.map.units().get(soldiers).unwrap();
-        assert_eq!(game.battle_strength(unit, Hex::new(5, 7), true, &[soldiers]), 3 + bonus, "{kind:?}");
+        assert_eq!(game.battle_strength(unit, Hex::new(5, 7), true, &[soldiers]), 4 * (3 + bonus), "{kind:?}");
     }
-    // With no chance, a tie is the defender's: 3 against the levy's 3 behind
-    // its walls loses.
+    // With no chance the stronger wins: 3 beats the levy's 2 1/2 behind
+    // walls 2, and loses to its 3 1/4 behind walls 3.
     let events = game.apply(Order::Move { units: vec![soldiers], to: BLUEMOOR }).unwrap();
+    assert_eq!(battle(&events), (1, 1, 0, 1, true));
+    let mut walled = self::game("garrison soldiers\n", "walls 3\ngarrison levy\n", |_| {});
+    let soldiers = at(&walled, REDHOLD)[0];
+    let events = walled.apply(Order::Move { units: vec![soldiers], to: BLUEMOOR }).unwrap();
     assert_eq!(battle(&events), (1, 1, 1, 0, false));
 }
 
@@ -136,7 +142,8 @@ fn a_commander_leads_its_stack_fights_last_and_has_a_place_of_its_own() {
         game.battle_strength(unit, BLUEMOOR, true, &blue)
     };
     // Every other unit of its stack is 1 stronger; not the captain itself.
-    assert_eq!((strength(levy), strength(soldiers), strength(captain)), (2, 4, 2));
+    // (In quarters of a point.)
+    assert_eq!((strength(levy), strength(soldiers), strength(captain)), (8, 16, 8));
     assert!(game.map.is_commander(captain) && !game.map.is_commander(levy));
     // In lines the captain stands last: red's 3 beats the levy (2), then
     // loses to the soldiers (4), and the captain never fights.
@@ -266,7 +273,7 @@ fn the_screen_tells_the_odds_and_reports_the_battle() {
 #[test]
 fn who_was_attacked_while_they_waited_hears_of_it() {
     // Two people: red attacks blue, and blue hears of it when their turn
-    // begins, behind the cover.
+    // begins, behind the cover: their log opens, the news in its color.
     let mut s =
         session(game("garrison soldiers 3\n", "garrison levy\n", |s| s.set_players("red=person,blue=person").unwrap()));
     let begin = |s: &mut Session| {
@@ -283,10 +290,10 @@ fn who_was_attacked_while_they_waited_hears_of_it() {
     assert!(s.covered() && notice(&s).is_empty(), "nothing shows over the cover");
     begin(&mut s);
     assert_eq!(
-        notice(&s),
+        s.log_new_lines(),
         [
             "Red attacked you at Bluemoor, 3 against 1: you were beaten.",
-            "You lost 1 Levy; they lost nothing.",
+            "    You lost 1 Levy; they lost nothing.",
             "Red took Bluemoor from you."
         ]
     );
@@ -299,7 +306,7 @@ fn who_was_attacked_while_they_waited_hears_of_it() {
         s.frame(frame * 16);
     }
     assert_eq!(s.screen.game.player(), Side::Blue);
-    let news = notice(&s);
+    let news = s.log_new_lines();
     assert!(news.iter().any(|l| l.starts_with("Red attacked you at Bluemoor")), "{news:?}");
 }
 
@@ -309,7 +316,7 @@ fn the_panels_say_what_a_commander_does() {
     let captain = game.map.units().get(at(&game, REDHOLD)[0]).unwrap();
     assert!(hexgame::info::unit_line(&game.map, captain).ends_with(", price 0, commands (+1)"));
     let details = hexgame::info::unit_details(&game.map, captain);
-    assert_eq!(details[2], "Commands: its stack fights 1 stronger; it fights last");
+    assert_eq!(details[2], "Commands: +1 to its stack; fights last");
     assert!(details.len() <= hexgame::session::TIP_LINES, "{details:?}");
 }
 
@@ -380,4 +387,52 @@ fn games_on_the_continent_end() {
     let mut game = game.with_setup(setup);
     let outcome = headless::play(&mut game, 200, &mut |_, _| {}).unwrap();
     assert!(outcome.winner.is_some(), "{}", headless::summary(&outcome));
+}
+
+#[test]
+fn a_good_stack_takes_a_city_and_walls_do_not_make_it_a_fortress() {
+    // With the game's chance (5): eight units, six of them soldiers, against
+    // one soldier behind walls 1 nearly always win; against two behind walls
+    // 3, about as often as not; equal stacks in the field, about even.
+    let red = "garrison soldiers 6\ngarrison levy 2\n";
+    let odds = |blue: &str| {
+        let game = game(red, blue, |s| s.combat.chance = 5);
+        game.battle_odds(&at(&game, REDHOLD), BLUEMOOR).unwrap()
+    };
+    let one = odds("walls 1\ngarrison soldiers\n");
+    let two = odds("walls 3\ngarrison soldiers 2\n");
+    assert!(one >= 90, "{one}");
+    assert!((35..=85).contains(&two), "{two}");
+    let field = {
+        let mut game = game("garrison soldiers 4\n", "", |s| s.combat.chance = 5);
+        let soldiers = game.map.units().kind_named("soldiers").unwrap();
+        for _ in 0..4 {
+            let id = game.map.new_unit_of(Side::Blue, soldiers).unwrap();
+            game.map.place_unit(id, Hex::new(5, 7)).unwrap();
+        }
+        game.battle_odds(&at(&game, REDHOLD), Hex::new(5, 7)).unwrap()
+    };
+    assert!((40..=60).contains(&field), "{field}");
+}
+
+#[test]
+fn a_side_that_lost_its_commander_builds_another() {
+    use hexgame::agents::Agent;
+    let mut game = game_with("produce soldiers 1\nproduce captain 3\ngarrison soldiers 2\n", "", |s| {
+        s.set_players("red=simple").unwrap()
+    });
+    let redhold = game.map.city_at(REDHOLD).unwrap().id;
+    let mut agent = Simple::default();
+    assert_eq!(agent.next_order(&game, Side::Red), Order::Build { city: redhold, what: Some(1) });
+    // With a captain, it builds soldiers.
+    let captain = game.map.units().kind_named("captain").unwrap();
+    let id = game.map.new_unit_of(Side::Red, captain).unwrap();
+    game.map.place_unit(id, REDHOLD).unwrap();
+    let mut agent = Simple::default();
+    assert_eq!(agent.next_order(&game, Side::Red), Order::Build { city: redhold, what: Some(0) });
+    // A captain done in a city that has one waits for room.
+    game.map.set_production(redhold, Some(1));
+    game.map.city_mut(redhold).unwrap().progress = 3;
+    let city = game.map.city_at(REDHOLD).unwrap();
+    assert_eq!(hexgame::info::progress_short(&game.map, city), "Captain: they wait for room");
 }

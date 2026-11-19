@@ -191,9 +191,18 @@ fn between_two_peoples_turns_the_map_is_covered() {
 fn the_computer_plays_its_turn_between_the_persons() {
     let mut s = duel(|s| s.set_players("blue=simple").unwrap());
     s.end_turn();
-    // Blue played (and passed: it has nothing), and it is red's turn again.
+    // Red's log is open while blue plays (the frames play its turn).
+    assert_eq!(s.log_status_line(), "Blue is playing...");
+    s.frame(0);
+    // Blue played (and passed: it has nothing), and it is red's turn again,
+    // to start when red is ready.
     assert_eq!((s.screen.game.player(), s.screen.game.turn()), (Side::Red, 2));
     assert!(!s.covered(), "one person: no cover");
+    assert_eq!(s.screen.ui.text(widget(&s, END_TURN_ID)), Some("Start turn"));
+    s.start_turn();
+    s.pump();
+    assert!(s.log_lines().is_empty());
+    assert_eq!(s.screen.ui.text(widget(&s, END_TURN_ID)), Some("End red's turn"));
 }
 
 #[test]

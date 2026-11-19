@@ -126,4 +126,8 @@ impl Scene for Shell {
     fn confirm_quit(&mut self) -> bool {
         self.scene_mut().confirm_quit()
     }
+
+    fn next_turn(&mut self) -> bool {
+        self.scene_mut().next_turn()
+    }
 }
