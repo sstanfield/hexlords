@@ -1,0 +1,12 @@
+# The new game screen: the chosen map, big, and beside it the minimap and
+# the game's settings (built by src/new_game.rs: the maps, how to play, the
+# order of the turns, who plays each side), with the button that starts it.
+#
+# The map and the minimap get their sizes from the window (NewGame::apply_
+# layout_sizes). Only the map takes the keyboard focus.
+TBLayout: id: main_layout, axis: x, distribution: gravity, distribution-position: left, position: top, spacing: 5
+	MapWidget: id: main_map, is-focusable: 1
+	TBLayout: id: main_sidebar, axis: y, distribution-position: top, position: left, spacing: 5
+		MiniMapWidget: id: mini_map
+		TBLayout: id: settings, axis: y, distribution-position: top, position: left, spacing: 2
+		TBButton: id: start_game, text: Start the game, is-focusable: 0

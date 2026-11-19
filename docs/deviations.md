@@ -13,8 +13,8 @@ says were kept.
 There is no C++ reference build to compare against: milestone M0 (building the
 C++ under Xvfb and capturing screenshots) was skipped at the owner's word, since
 pixel and bug parity with an in-progress demo is not the goal. The Rust build was
-checked by eye against section 2 of the plan; the pictures are in
-`docs/screenshots/`.
+checked by eye against section 2 of the plan, in screenshots of the demo
+(since removed with the demo itself, which the game no longer has).
 
 ## Bugs fixed
 

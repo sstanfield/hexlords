@@ -21,23 +21,37 @@ Nothing is taken from an existing game: the rules and the numbers are ours.
 
 ## Where we are
 
-Built (2026-11-19): the map with terrain and roads; a map's kinds of unit
-(strength, moves, upkeep, price, what each terrain costs to enter); cities
-(holder, walls, what they can build, garrison); units that move within their
-movement points, turn by turn, with up to 2 points carried over; cities that
-build what they are set to, a unit at a time, at the end of each turn; the
-side the screen plays (`Game::player`, the holder of the city the game starts
-in), whose cities it can set to build; a city's own cost for what it builds
-(`produce <unit> <turns> <cost>` in `cities.txt`, else the unit's price). Not
-built: whose turn it is (anyone can move any unit), fighting, taking a city,
-gold, commanders, the end of the game.
+Built (2026-11-19):
+
+- the map with terrain and roads; a map's kinds of unit (strength, moves,
+  upkeep, price, what each terrain costs to enter); cities (holder, walls,
+  what they can build at what cost, garrison);
+- **a new game screen**: the map, the mode (rounds are shown, to come), the
+  order of turns (the same each round, or drawn anew), who plays each side
+  (a person, or the computer); several people play hotseat;
+- **turns**: one side after the other, in the round's order; only that
+  side's units move and its cities can be set; a side's turn begins with
+  its units' points back (up to 2 kept) and its cities' work (from the
+  second round); a screen covers the map between two people's turns;
+- **orders** (`src/orders.rs`) and **events**: everything a side does goes
+  through `Game::apply`, a person's clicks and the computer's alike;
+- **taking cities**: another side's (or nobody's) city with nobody in it is
+  taken by moving in; a unit of another side blocks its hex (until there
+  are battles);
+- **the end**: a side that has lost its last city is out (its units go, in
+  one place, `Game::put_out`, so that this can change); the last side wins;
+- **agents and games without a window** (`docs/agents.md`): the computer's
+  players, `--headless` to play agents against agents, and a text protocol
+  for a program of one's own to play.
+
+Not built: battles, gold, commanders, fog of war, rounds, saved games.
 
 ## One set of rules, two modes
 
 Everything a side does is an **order**, a value: move this stack along this
 path, set this city to build that, split a stack, hold. The rules apply an
-order to the game's state in one place (a `state::rules` module, with no UI),
-and say what came of it as **events** (the stack moved to here, a battle was
+order to the game's state in one place (`Game::apply`, with no UI; the orders
+are in `src/orders.rs`), and say what came of it as **events** (the stack moved to here, a battle was
 fought there, a city changed hands). The modes differ only in *when* the
 orders are applied:
 
@@ -77,16 +91,31 @@ and the rules use integers, not floats.
 3. **Stacks.** A stack is the units on a hex that move together: as far as
    the slowest of them can go. Orders to split a stack and to join two.
 4. **Fighting.** Our own design, kept in a pure `combat` module with tests
-   that run it many times. **Chance is always in it** (decided): the weaker
-   side can win, and either side can lose more, or less, than the numbers
-   foretell. A proposal: a battle is a series of duels between the front
-   units of the two stacks; a duel's odds come from the two strengths, with
-   bonuses for terrain, a city's walls and a commander; the loser of a duel
-   dies; the battle ends when a stack is gone. "Quality beats quantity": a
-   strong unit should win against several weak ones more often than their
-   numbers suggest, but not always. The tests check the odds, run over many
-   seeds (that the stronger side mostly wins, that the weaker sometimes
-   does), and that one seed always gives the same battle.
+   that run it many times, and **made to be experimented with** (decided):
+   - **How much chance**, a setting of the game from 0 to 10, on the new
+     game screen. At 0 there is none: strengths decide who wins and what
+     each side loses, always the same. At 10 strength does little or
+     nothing, and it is all chance. The middle (4 to 7) should be where the
+     game is best; the ends are there to try. A proposal for how: a duel
+     between strengths `a` and `b` is won by `a` with the chance
+     `a^k / (a^k + b^k)`, where `k` falls as the setting rises (infinite at
+     0, so the stronger always wins; 0 at 10, an even chance; about 2 at 5,
+     so a strength of 4 beats 2 four times in five).
+   - **How a battle goes**, a choice of systems behind one interface
+     (`fight(attackers, defenders, the place, the settings, the game's
+     chance) -> what died`), so that more can be added and each played
+     without a window against the others:
+     - *Lines*: each stack stands in a line from its weakest to its
+       strongest; the two at the front fight a duel; the loser dies and the
+       next of its line steps up; it ends when one line is gone.
+     - *Strength against strength*: each exchange, the two stacks' total
+       strengths (with their bonuses) decide the hits each side takes, and
+       a hit falls on a unit of the stack drawn at random, so that cheap
+       units in front do not shield the dear ones behind.
+   - Bonuses for terrain, a city's walls and a commander, in either system.
+   - The tests check the odds over many seeds (the stronger mostly wins,
+     the weaker sometimes, at the middle settings; never at 0), and that one
+     seed always gives the same battle.
 5. **Cities change hands.** A city is taken by moving into it when no enemy
    stands in it (after a battle, or empty). A neutral city has a small
    garrison of its own.
@@ -113,15 +142,16 @@ and the rules use integers, not floats.
 
 ## Turns
 
-- The sides play in an order (the map's, or drawn at the start). A **round**
-  is every side once.
+- The sides play in an order, chosen when the game is set up (decided):
+  always the order of the seats, which the new game screen shows, or one
+  drawn at the start and again after every round. A **round** is every side
+  once. (Built.)
 - A side's turn begins with its cities' work and its gold: income, upkeep,
-  production. (Today production happens at the end of the round for every
-  side; in this mode it moves to the start of each side's turn.)
+  production. (Built for production.)
 - Moving into an enemy stack or city is an attack: the battle is fought then
   and there, and shown.
 - Hotseat: between two people's turns a screen hides the map until the next
-  one says they are there.
+  one says they are there. (Built.)
 
 ## Rounds
 
@@ -144,6 +174,26 @@ and the rules use integers, not floats.
 - Hotseat: each person plans in turn behind the hiding screen; the replay
   is shown to each.
 
+## Easy to play
+
+The owner's concern: late in a big game, managing many stacks and cities
+can become a slog, and what helps most is a clean interface that is easy to
+get around, and good defaults, so that little has to be said for the usual
+thing to happen. Ideas to try, as the rules grow:
+
+- **Orders that last**: "go to" a far hex goes on, turn after turn, until it
+  is there (`Order::Toward` is the first step); a stack follows another.
+- **Rally points**: what a city builds goes on its own to where its holder
+  said.
+- **Production that repeats** until told otherwise (it does), and the lists
+  of cities to see and change all of it in one place (they do).
+- **The next stack with points left**, a key away; End turn warns of stacks
+  that have done nothing.
+- **Sub-orders** (decided: wanted, can wait): what a stack does when
+  something happens in the turn (an enemy comes in sight, it is attacked,
+  a city it passes is empty): attack, stop, go round, carry on; with a
+  default for each, so that most stacks never need one.
+
 ## Multiplayer and the AI
 
 - Hotseat first, in both modes: one screen, the players take turns at it.
@@ -151,8 +201,11 @@ and the rules use integers, not floats.
   rounds send a side's orders once a round. Since the rules are
   deterministic, every machine computes the same game (lockstep), and a
   replay is the orders again.
-- The AI makes orders like a player. A first one: take the nearest weak
-  city, defend one's own, build what is affordable.
+- The AI makes orders like a player (an agent, `docs/agents.md`). The first
+  one, `simple`, builds the cheapest it can, keeps a unit at home and goes
+  for cities it can take. Agents play without a window, against each other,
+  to try the rules and balance the numbers (decided): keep that working for
+  every rule that is added.
 
 ## The order of work (a proposal)
 
@@ -160,10 +213,11 @@ Each step ends playable, with tests and screenshots, and the next builds on
 it; the rules are written once for both modes from the first step.
 
 1. **A new game, players and turns.** A screen to start a game: the map,
-   the mode, who plays each side (a person or nobody, the AI later). Whose
-   turn it is; only that side's units move and its cities build; End turn
-   passes to the next side; hotseat's hiding screen. The session gives
-   orders instead of changing the map.
+   the mode, who plays each side. Whose turn it is; only that side's units
+   move and its cities build; End turn passes to the next side; hotseat's
+   hiding screen. The session gives orders instead of changing the map.
+   Taking empty cities, a side out, the winner; agents and games without a
+   window. **Done (2026-11-19).**
 2. **Stacks, battles and commanders.** Stacks move together; moving into an
    enemy is a battle (turns), with chance in it; units die; cities are
    taken; a commander leads a stack.
@@ -189,10 +243,24 @@ it; the rules are written once for both modes from the first step.
 6. **The end:** a side is out when all its cities are taken; the game ends
    when one side is left.
 
+7. **The order of turns** is a choice when the game is set up: always the
+   same, or drawn anew after every round.
+8. **Sub-orders** for what happens in a turn are wanted, but can wait; what
+   matters more is an interface that is easy, with good defaults (see
+   "Easy to play").
+9. **A side that is out** loses its units, for now; the code keeps the one
+   place where that happens (`WhenOut`, `Game::put_out`), so that other
+   ways can be tried: they join the side that took the last city, they
+   fight on as mercenaries, they have a few turns to take a city back.
+10. **Agents play the game** without a window, so that it can be balanced
+    by playing it many times; that is kept working as the rules grow.
+11. **Combat is to be experimented with**: a setting from no chance at all
+    to nothing but chance, and more than one system (lines of duels,
+    strength against strength).
+
 ## Still open
 
-1. Turns: do the sides play in a fixed order, or one drawn anew each round?
-2. Rounds: can a stack's orders say what to do when it meets an enemy
-   (attack, stop, go round), or is "stop and fight" enough at first?
-3. A side that is out loses its units with its last city (as the proposal
-   above has it): or do they fight on, or go over to nobody?
+1. Rounds: what happens when two stacks meet halfway, and the other cases
+   of the resolution; a sketch is above, to be tried once the battles exist.
+2. Combat: which system and which setting a game starts with, until play
+   says otherwise (proposal: lines, chance 5).

@@ -12,7 +12,7 @@ use std::collections::BinaryHeap;
 use super::hex::Hex;
 use super::map::Map;
 use super::terrain::{MoveCost, TileType};
-use super::units::Unit;
+use super::units::{Side, Unit};
 
 /// The cheapest movement cost from an origin to each hex within a limit.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -48,19 +48,105 @@ impl MoveRange {
     }
 }
 
-/// The hexes `unit` can reach with the movement points it has left.
+/// The hexes `unit` can reach with the movement points it has left, as a unit
+/// of its side ([`passage`]: others' units are in its way, others' cities end
+/// its move).
 ///
 /// The unit may stand on terrain it could not enter (the demo's unit starts on a
 /// mountain): only the hexes it moves into are paid for.
 pub fn compute_range(map: &Map, unit: &Unit) -> MoveRange {
     match map.units().move_cost(unit.move_cost) {
-        Some(costs) => reach(map, unit.pos(), costs, unit.movement),
+        Some(costs) => {
+            let side = unit.side();
+            reach_with(map, unit.pos(), costs, unit.movement, &|hex| passage(map, side, hex))
+        }
         None => MoveRange {
             origin: unit.pos(),
             cols: map.cols(),
             cost: vec![None; usize::from(map.rows()) * usize::from(map.cols())],
         },
     }
+}
+
+/// What a hex is to a unit that would move into it.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Passage {
+    /// It goes in, and on if it has the points.
+    Open,
+    /// It goes in, and its move ends there.
+    Stop,
+    /// It does not go in.
+    Blocked,
+}
+
+/// What a hex is to a unit of `side`. Another side's units are in the way
+/// (until there are battles: `docs/gameplay.md`); another side's city, or
+/// nobody's, with nobody in it, can be gone into, which takes it, and the
+/// move ends there.
+pub fn passage(map: &Map, side: Side, hex: Hex) -> Passage {
+    let others = map.units_at(hex).iter().filter_map(|id| map.units().get(*id)).any(|u| u.side() != side);
+    if others {
+        Passage::Blocked
+    } else if map.city_at(hex).is_some_and(|city| city.side != side) {
+        Passage::Stop
+    } else {
+        Passage::Open
+    }
+}
+
+/// Where `unit` gets to this turn on the cheapest way toward `target`, and
+/// what that costs: the target itself if it is in reach, else the farthest
+/// hex along that way that it can pay for (and that has room for it). `None`
+/// if there is no way there, or it cannot take the first step.
+pub fn step_toward(map: &Map, unit: &Unit, target: Hex) -> Option<(Hex, u32)> {
+    let costs = map.units().move_cost(unit.move_cost)?;
+    let side = unit.side();
+    let cols = usize::from(map.cols());
+    let index = |h: Hex| usize::from(h.row) * cols + usize::from(h.col);
+    let size = usize::from(map.rows()) * cols;
+    let (origin, open) = (unit.pos(), |hex: Hex| passage(map, side, hex));
+    if !map.contains(origin) || !map.contains(target) || target == origin {
+        return None;
+    }
+    // The cheapest way to every hex, and the hex it came from.
+    let mut best: Vec<Option<u32>> = vec![None; size];
+    let mut from: Vec<Option<Hex>> = vec![None; size];
+    best[index(origin)] = Some(0);
+    let mut queue = BinaryHeap::from([Reverse((0u32, origin))]);
+    while let Some(Reverse((spent, hex))) = queue.pop() {
+        if best[index(hex)] != Some(spent) || hex == target {
+            continue;
+        }
+        if hex != origin && open(hex) == Passage::Stop {
+            continue; // a city on the way: the move would end there
+        }
+        for next in map.neighbours(hex) {
+            if open(next) == Passage::Blocked {
+                continue;
+            }
+            let Some(step) = step_cost(map, costs, hex, next) else { continue };
+            let total = spent + u32::from(step);
+            if best[index(next)].is_none_or(|old| total < old) {
+                best[index(next)] = Some(total);
+                from[index(next)] = Some(hex);
+                queue.push(Reverse((total, next)));
+            }
+        }
+    }
+    best[index(target)]?;
+    // Back from the target: the first hex that is paid for, and has room.
+    let mut way = vec![target];
+    while let Some(prev) = from[index(*way.last()?)] {
+        if prev == origin {
+            break;
+        }
+        way.push(prev);
+    }
+    way.into_iter().find_map(|hex| {
+        let cost = best[index(hex)]?;
+        let room = map.units_at(hex).len() < crate::state::MAX_STACK;
+        (cost <= unit.movement && room).then_some((hex, cost))
+    })
 }
 
 /// What a step from `from` to the neighbouring hex `to` costs, or `None` if it
@@ -86,8 +172,13 @@ pub fn step_cost(map: &Map, costs: &MoveCost, from: Hex, to: Hex) -> Option<u16>
 }
 
 /// The cheapest cost from `origin` to every hex that costs at most `limit` to
-/// reach, at the prices in `costs` (see [`step_cost`]).
+/// reach, at the prices in `costs` (see [`step_cost`]), whoever is on the way.
 pub fn reach(map: &Map, origin: Hex, costs: &MoveCost, limit: u32) -> MoveRange {
+    reach_with(map, origin, costs, limit, &|_| Passage::Open)
+}
+
+/// The same, with what each hex is to the one who moves (see [`passage`]).
+pub fn reach_with(map: &Map, origin: Hex, costs: &MoveCost, limit: u32, passage: &dyn Fn(Hex) -> Passage) -> MoveRange {
     let cols = usize::from(map.cols());
     let index = |h: Hex| usize::from(h.row) * cols + usize::from(h.col);
     let mut best: Vec<Option<u32>> = vec![None; usize::from(map.rows()) * cols];
@@ -102,7 +193,13 @@ pub fn reach(map: &Map, origin: Hex, costs: &MoveCost, limit: u32) -> MoveRange 
         if best[index(hex)] != Some(spent) {
             continue; // a cheaper way here was found after this entry was queued
         }
+        if hex != origin && passage(hex) == Passage::Stop {
+            continue; // the move ends here
+        }
         for next in map.neighbours(hex) {
+            if passage(next) == Passage::Blocked {
+                continue;
+            }
             let Some(step) = step_cost(map, costs, hex, next) else { continue };
             let total = spent + u32::from(step);
             if total <= limit && best[index(next)].is_none_or(|old| total < old) {
@@ -119,7 +216,6 @@ pub fn reach(map: &Map, origin: Hex, costs: &MoveCost, limit: u32) -> MoveRange 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::units::Side;
 
     fn cav() -> MoveCost {
         MoveCost {
@@ -412,5 +508,71 @@ mod tests {
         assert!(map.joins_roads(city) && !map.tile(city).unwrap().road);
         assert_eq!(step_cost(&map, &foot(), city, Hex::new(10, 11)), Some(1));
         assert_eq!(step_cost(&map, &foot(), Hex::new(10, 11), city), Some(2));
+    }
+
+    /// A unit of `side` with the cavalry's costs on `hex`.
+    fn rider(map: &mut Map, side: Side, hex: Hex, movement: u32) -> crate::state::UnitId {
+        let cost = map.acquire_move_cost(cav());
+        let id = map.new_unit(side, "Rider", 0, 1, movement, cost);
+        map.place_unit(id, hex).unwrap();
+        id
+    }
+
+    #[test]
+    fn others_units_are_in_the_way_and_others_cities_end_a_move() {
+        let mut map = grass();
+        let me = rider(&mut map, Side::Red, Hex::new(10, 5), 8);
+        // A blue unit two hexes east, a red one north, nobody's city south.
+        rider(&mut map, Side::Blue, Hex::new(10, 7), 8);
+        rider(&mut map, Side::Red, Hex::new(8, 5), 8);
+        let city = map.add_city("Tarn", Hex::new(12, 5), 0).unwrap();
+        let unit = map.units().get(me).unwrap().clone();
+        assert_eq!(passage(&map, Side::Red, Hex::new(10, 7)), Passage::Blocked);
+        assert_eq!(passage(&map, Side::Red, Hex::new(8, 5)), Passage::Open);
+        assert_eq!(passage(&map, Side::Red, Hex::new(12, 5)), Passage::Stop);
+        let range = compute_range(&map, &unit);
+        assert_eq!(range.cost(Hex::new(10, 7)), None, "the blue unit's hex");
+        assert_eq!(range.cost(Hex::new(8, 5)), Some(4), "a red one's is open");
+        assert_eq!(range.cost(Hex::new(6, 5)), Some(8), "and through it");
+        // Into the city (grass, then the city's 1), but not through it: beyond
+        // it is farther round.
+        assert_eq!(range.cost(Hex::new(12, 5)), Some(3));
+        assert!(range.cost(Hex::new(13, 5)).is_none_or(|c| c > 5), "{:?}", range.cost(Hex::new(13, 5)));
+        // A city of its own side is open.
+        map.city_mut(city).unwrap().side = Side::Red;
+        assert_eq!(passage(&map, Side::Red, Hex::new(12, 5)), Passage::Open);
+        let range = compute_range(&map, &unit);
+        assert_eq!(range.cost(Hex::new(13, 5)), Some(5));
+        // Someone in it of another side: in the way.
+        rider(&mut map, Side::Blue, Hex::new(12, 5), 8);
+        assert_eq!(passage(&map, Side::Red, Hex::new(12, 5)), Passage::Blocked);
+    }
+
+    #[test]
+    fn a_far_hex_is_gone_toward_as_far_as_the_points_go() {
+        let mut map = grass();
+        let me = rider(&mut map, Side::Red, Hex::new(10, 2), 6);
+        let unit = map.units().get(me).unwrap().clone();
+        // In reach: there.
+        assert_eq!(step_toward(&map, &unit, Hex::new(10, 4)), Some((Hex::new(10, 4), 4)));
+        // Far: three steps of grass along the way, closer than it was.
+        let (hex, cost) = step_toward(&map, &unit, Hex::new(10, 15)).unwrap();
+        assert_eq!(cost, 6);
+        assert_eq!(hex.distance(Hex::new(10, 15)), Hex::new(10, 2).distance(Hex::new(10, 15)) - 3);
+        // Round what is in the way.
+        rider(&mut map, Side::Blue, Hex::new(10, 3), 6);
+        let (hex, _) = step_toward(&map, &unit, Hex::new(10, 4)).unwrap();
+        assert_ne!(hex, Hex::new(10, 3));
+        // No way: a target beyond water it cannot cross, or in the way itself.
+        for row in 0..20 {
+            map.tile_mut(Hex::new(row, 8)).unwrap().kind = TileType::Water;
+        }
+        assert_eq!(step_toward(&map, &unit, Hex::new(10, 15)), None);
+        assert_eq!(step_toward(&map, &unit, Hex::new(10, 3)), None);
+        assert_eq!(step_toward(&map, &unit, Hex::new(10, 2)), None, "where it is");
+        // Without points it goes nowhere.
+        map.unit_mut(me).unwrap().movement = 1;
+        let tired = map.units().get(me).unwrap().clone();
+        assert_eq!(step_toward(&map, &tired, Hex::new(10, 6)), None);
     }
 }

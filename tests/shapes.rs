@@ -5,7 +5,6 @@
 mod common;
 
 use common::{assets, click, press};
-use hexgame::game::Game;
 use hexgame::render::{CITY_SIDES, HexVariant, MapGeometry, Marks, RANGE_OVERLAY};
 use hexgame::script;
 use hexgame::session::Session;
@@ -31,9 +30,10 @@ fn patterned(rows: u16, cols: u16) -> Map {
     map
 }
 
-/// The game on an all-grass map of this shape, in the demo's window.
+/// The game on an all-grass map of this shape (a rider in its middle), at
+/// 1024 x 768.
 fn session_on(rows: u16, cols: u16) -> Session {
-    let game = Game::on_map(Map::new(rows, cols, TileType::Grass).unwrap());
+    let game = common::rider_on(Map::new(rows, cols, TileType::Grass).unwrap());
     Session::with_game(&assets(), Size::new(1024, 768), 96, game).expect("the session starts")
 }
 
@@ -111,7 +111,7 @@ fn neighbours_stay_on_the_map_and_know_each_other() {
 #[test]
 fn a_unit_moves_on_a_map_of_any_shape() {
     for (rows, cols) in SHAPES {
-        let mut game = Game::on_map(Map::new(rows, cols, TileType::Grass).unwrap());
+        let mut game = common::rider_on(Map::new(rows, cols, TileType::Grass).unwrap());
         let start = game.map.cursor;
         assert_eq!(start, Hex::new(rows / 2, cols / 2), "{rows} x {cols}: the unit starts in the middle");
         game.select_hex(start);

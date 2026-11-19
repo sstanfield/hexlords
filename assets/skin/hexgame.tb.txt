@@ -50,3 +50,7 @@ elements
 		text-color #ffd24a
 		cut 7
 		bitmap item_selected.png
+	# What covers the window between two people's turns (hotseat), so that
+	# neither sees the other's map.
+	Cover
+		background-color #26282bff

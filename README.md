@@ -1,11 +1,10 @@
 # HexGame
 
-A hex map strategy game foundation in Rust. It is a port of the C++
-[hexGame](https://github.com/sstanfield/hexGame) engine demo: a 100 x 100 map of
-flat-topped hexes, one unit that can be selected and moved within its movement
-range, zoom, and a minimap. The UI is
-[Turbo Ferret](https://github.com/sstanfield/turbo-ferret) and the graphics go
-through [miniquad](https://github.com/not-fl3/miniquad).
+A hex map strategy game in Rust, of cities, stacks of units and sides that
+take turns. It began as a port of the C++
+[hexGame](https://github.com/sstanfield/hexGame) engine demo, and goes its own
+way. The UI is [Turbo Ferret](https://github.com/sstanfield/turbo-ferret) and
+the graphics go through [miniquad](https://github.com/not-fl3/miniquad).
 
 ![A map in the game](docs/screenshots/continent.png)
 
@@ -29,7 +28,8 @@ direction. So far:
 ## Build and run
 
 ```sh
-cargo run
+cargo run                                   # the new game screen
+cargo run -- --map assets/maps/continent    # a game on the continent at once, against the computer
 ```
 
 Rust 1.86 or newer. The only dependencies are miniquad and Turbo Ferret (fetched
@@ -57,7 +57,7 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | Two fingers or the wheel over the minimap | The view goes the same way as over the main map, but much farther: a pixel of the minimap for a pixel of the fingers |
 | Arrow keys | Move the cursor; the view follows when the cursor leaves it, and comes back to it if it was moved away |
 | `1` / `2` | Zoom out / in, centered on the cursor |
-| The End turn button, or Ctrl+T (Cmd+T) | The turn is over: every unit has its movement points back, and every city works a turn on what it builds |
+| The End turn button ("End red's turn"), or Ctrl+T (Cmd+T) | The side's turn is over: the next side's, the computer's played at once; a turn begins with the side's units' points back and its cities' work |
 | City details, beside the map | The selected hex's city in a window: all about it, and buttons for what it builds (only its holder's work) |
 | All cities, My cities | A list of the cities, or of yours, with a minimap that rings the one you choose; open it in full, or go to it |
 | Esc | Close the window on top (the help first) |
@@ -85,22 +85,44 @@ it can build, in how many turns, at what price.
 
 ![The list of cities and a city in full](docs/screenshots/cities.png)
 
-The game plays one side, the holder of the city it starts in: those are "my
-cities", and only those can be set to build. Every unit can still be moved,
-whoever's it is: whose turn it is, fighting and gold are rules still to come
-([docs/gameplay.md](docs/gameplay.md)).
+**A new game** starts on its own screen: the map (the preview beside the
+settings can be looked over like the game's), how to play (turns; rounds are
+to come), the order of the turns (the same each round, or drawn anew), and
+who plays each side, a person or the computer. Several people take turns at
+one screen (hotseat): between two people's turns a screen hides the map
+until the next one says they are there.
+
+![The new game screen](docs/screenshots/new_game.png)
+
+The sides play one after the other. On a side's turn only its units move and
+only its cities can be set to build ("my cities"); End turn passes to the
+next side, and the computer plays its sides' turns at once. A side's turn
+begins with its units' points back and its cities' work. A city of another
+side, or nobody's, with nobody in it, is taken by moving into it; a unit of
+another side blocks its hex (there are no battles yet). A side that loses
+its last city is out, and the last side left wins. Fighting and gold are
+rules still to come ([docs/gameplay.md](docs/gameplay.md)).
 
 ## Options
 
 ```
-hexgame [--map <file.map or map directory>] [--script <steps>] [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
+hexgame [--map <file.map or map directory>] [--players <side>=<who>,...] [--order fixed|drawn] [--seed <n>]
+        [--headless [--rounds <n>] [--log]] [--script <steps>] [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
 ```
 
-- `--map <file.map or map directory>`: play on this map instead of the demo's
-  (the format is in `docs/map-format.md`). A map directory brings its own
-  units and cities, and the view starts on the first city with a garrison. A
-  single terrain file has none: the demo's unit starts on the land nearest
-  its middle.
+Without `--map` the window opens on the new game screen.
+
+- `--map <file.map or map directory>`: play this map at once (the format is
+  in `docs/map-format.md`): one person plays the side of the first city with
+  a garrison, where the view starts, and the computer the others.
+- `--players red=person,blue=simple`: who plays which side: `person`, or an
+  agent of the computer's (`passive`, `simple`, `cmd:<program>`).
+- `--order fixed|drawn`: the sides play in the same order each round, or one
+  drawn anew; `--seed <n>`: the seed of the game's chance.
+- `--headless`: no window: the computer plays every side of `--map` until one
+  side is left or `--rounds` (200) have gone by, and says how it went
+  (`--log`: and all that happened). [docs/agents.md](docs/agents.md) says
+  more, and how a program of one's own plays a side.
 - `--assets <dir>`: where the assets are. Without it: `../assets` next to the
   executable if that exists, else `assets` in the source tree (so `cargo run`
   works).
@@ -121,10 +143,9 @@ hexgame [--map <file.map or map directory>] [--script <steps>] [--assets <dir>] 
   step.
 
 ```sh
-cargo run -- --screenshot shot.png --script "enter,1,1"     # the unit's range, zoomed out
-cargo run -- --screenshot corner.png --script "cursor:0:0"  # the map's top left corner
-cargo run -- --map assets/maps/example.map                  # the example island
-cargo run -- --map assets/maps/continent                    # a whole map: roads, nine cities, four sides
+cargo run -- --map assets/maps/continent --screenshot shot.png --script "enter,1"   # a unit's range, zoomed out
+cargo run -- --map assets/maps/continent --players green=person    # two people, red and green
+cargo run --release -- --headless --map assets/maps/continent --seed 7   # the computer against itself
 ```
 
 ## The map editor

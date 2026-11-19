@@ -596,7 +596,7 @@ mod tests {
 
     #[test]
     fn the_start_view_is_grass_with_a_mountain_diagonal_and_one_unit() {
-        let game = Game::demo();
+        let game = crate::game::grassland();
         let view = view_at(START);
         let g = geometry(&game, &view);
         let visible = view.visible_hexes().count();
@@ -620,7 +620,7 @@ mod tests {
 
     #[test]
     fn hexes_are_placed_by_the_view() {
-        let game = Game::demo();
+        let game = crate::game::grassland();
         let view = view_at(START);
         let g = geometry(&game, &view);
         let (wf, hf) = view.factors();
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn the_cursor_hex_has_the_red_border_and_the_others_black() {
-        let mut game = Game::demo();
+        let mut game = crate::game::grassland();
         game.set_cursor(Hex::new(50, 52));
         let view = view_at(START);
         let g = geometry(&game, &view);
@@ -666,7 +666,7 @@ mod tests {
 
     #[test]
     fn a_unit_is_a_disc_of_its_sides_color_and_its_picture_on_the_hex() {
-        let game = Game::demo();
+        let game = crate::game::grassland();
         let view = view_at(START);
         let g = geometry(&game, &view);
         // The unit stands on a mountain: its picture is laid on the same seven
@@ -917,7 +917,7 @@ mod tests {
 
     #[test]
     fn the_overlay_covers_the_selected_units_range() {
-        let mut game = Game::demo();
+        let mut game = crate::game::grassland();
         game.select_hex(START);
         let view = view_at(START);
         let g = geometry(&game, &view);
@@ -939,7 +939,7 @@ mod tests {
 
     #[test]
     fn edge_hexes_use_the_clipped_models() {
-        let game = Game::demo();
+        let game = crate::game::grassland();
         let view = view_at(Hex::new(0, 0));
         let g = geometry(&game, &view);
         let find = |hex: Hex| {
@@ -972,7 +972,7 @@ mod tests {
     fn the_widest_view_fits_sixteen_bit_indices() {
         // Plan, section 3.4: at the widest zoom the layers stay far below 65,536
         // vertices each, so each is one draw call.
-        let mut game = Game::demo();
+        let mut game = crate::game::grassland();
         game.select_hex(START);
         let mut view = view_at(START);
         while view.zoom_out() {}
@@ -988,7 +988,7 @@ mod tests {
 
     #[test]
     fn rebuilding_replaces_the_last_frame() {
-        let game = Game::demo();
+        let game = crate::game::grassland();
         let view = view_at(START);
         let mut g = MapGeometry::new();
         g.build(&game.map, &view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex), front: None });

@@ -2,8 +2,8 @@
 
 A map is plain text. It comes in two sizes:
 
-- **A file**, `name.map`: the terrain and the roads. Enough to draw a map and
-  walk the demo's one unit over it.
+- **A file**, `name.map`: the terrain and the roads. Enough to draw a map, to
+  look at and to edit; with no sides on it, there is nothing to play.
 - **A directory**, `name/`: the same terrain file, plus the kinds of unit the
   map has and its cities, and pictures of its own if it wants them. A whole
   map, which the game starts on with its cities and their garrisons.
@@ -137,7 +137,7 @@ and ruins cost what grass costs. A road is never dearer than the ground under
 it.
 
 The game has no kinds of unit of its own: a map brings them. (A map with none,
-or a single terrain file, gets the demo's one rider, to have something to move.)
+or a single terrain file, has no units, and nobody to play it.)
 
 ## The cities: `cities.txt`
 

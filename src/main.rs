@@ -1,6 +1,15 @@
-//! HexGame in a window.
+//! HexGame in a window, or without one.
 //!
-//! Options:
+//! Without `--map` the window opens on the new game screen. Options:
+//! - `--map <file or directory>`: play this map at once (one person, the first
+//!   side; the computer plays the others);
+//! - `--players red=person,blue=simple`: who plays which side (`person`, or an
+//!   agent: `passive`, `simple`, `cmd:<program>`);
+//! - `--order fixed|drawn`: the sides play in the same order each round, or
+//!   one drawn anew; `--seed <n>`: the seed of the game's chance;
+//! - `--headless`: no window: the computer plays every side of `--map` until
+//!   one is left or `--rounds <n>` (200) have gone by, then says how it went
+//!   (`--log`: and everything that happened on the way);
 //! - `--assets <dir>`: use this asset directory;
 //! - `--frames <n>`: quit after drawing `n` frames (a smoke test);
 //! - `--screenshot <file>`: draw a frame into a PNG file and quit (the last frame
@@ -14,21 +23,36 @@ use std::path::PathBuf;
 
 use hexgame::app::{self, OPTIONS_USAGE, Options, WINDOW_SIZE, WINDOW_TITLE, WindowSpec};
 use hexgame::game::Game;
+use hexgame::headless;
+use hexgame::new_game::COMPUTER;
 use hexgame::script;
 use hexgame::session::Session;
+use hexgame::setup::{Controller, Setup, TurnOrder};
+use hexgame::shell::Shell;
 
 /// The command line.
 #[derive(Clone, Debug, Default)]
 struct Args {
     window: Options,
-    /// `--map <file or directory>`: play on this map instead of the demo's.
+    /// `--map <file or directory>`: play this map at once.
     map: Option<PathBuf>,
     /// `--script <steps>`: input to play before the first frame (see `script`).
     script: Option<String>,
+    /// `--players <side>=<who>,...`
+    players: Option<String>,
+    /// `--order fixed|drawn`
+    order: Option<TurnOrder>,
+    seed: Option<u64>,
+    headless: bool,
+    rounds: Option<u32>,
+    log: bool,
 }
 
 fn usage() -> String {
-    format!("usage: hexgame [--map <file.map or map directory>] [--script <steps>] {OPTIONS_USAGE}")
+    format!(
+        "usage: hexgame [--map <file.map or map directory>] [--players <side>=<person|agent>,...] [--order fixed|drawn] \
+         [--seed <n>] [--headless [--rounds <n>] [--log]] [--script <steps>] {OPTIONS_USAGE}"
+    )
 }
 
 fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
@@ -42,6 +66,24 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
         match arg.as_str() {
             "--map" => parsed.map = Some(PathBuf::from(value("a map")?)),
             "--script" => parsed.script = Some(value("steps")?),
+            "--players" => parsed.players = Some(value("who plays which side")?),
+            "--order" => {
+                parsed.order = Some(match value("fixed or drawn")?.as_str() {
+                    "fixed" => TurnOrder::Fixed,
+                    "drawn" => TurnOrder::Drawn,
+                    other => return Err(format!("--order: \"{other}\" is not fixed or drawn")),
+                })
+            }
+            "--seed" => {
+                let n = value("a number")?;
+                parsed.seed = Some(n.parse().map_err(|_| format!("--seed: \"{n}\" is not a number"))?);
+            }
+            "--rounds" => {
+                let n = value("a number")?;
+                parsed.rounds = Some(n.parse().map_err(|_| format!("--rounds: \"{n}\" is not a number"))?);
+            }
+            "--headless" => parsed.headless = true,
+            "--log" => parsed.log = true,
             "-h" | "--help" => return Err(String::new()),
             _ => return Err(format!("unknown option {arg}")),
         }
@@ -60,30 +102,73 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let Args { window, map, script } = args;
+    let Args { window, map, script, players, order, seed, headless, rounds, log } = args;
     // A map that cannot be read ends the run before a window opens.
-    let game = match map {
-        Some(path) => match Game::load(&path) {
+    let game = match &map {
+        Some(path) => match Game::load(path) {
             Ok((game, warnings)) => {
                 for warning in warnings {
                     eprintln!("hexgame: --map: {}: {warning}", path.display());
                 }
-                game
+                Some(game)
             }
             Err(e) => {
                 eprintln!("hexgame: --map: {e}");
                 std::process::exit(1);
             }
         },
-        None => Game::demo(),
+        None => None,
     };
+    // How the game is set up: one person (the first side; without a window,
+    // nobody), the computer for the others, and what the options say.
+    let game = match game {
+        Some(game) => {
+            let person = game.setup().seats.iter().find(|s| s.controller == Controller::Person).map(|s| s.side);
+            let mut setup = Setup::solo(&game.map, person, COMPUTER);
+            if headless {
+                setup.seats.iter_mut().for_each(|seat| seat.controller = Controller::Computer(COMPUTER.to_string()));
+            }
+            if let Some(spec) = &players {
+                if let Err(e) = setup.set_players(spec) {
+                    eprintln!("hexgame: --players: {e}");
+                    std::process::exit(2);
+                }
+            }
+            setup.order = order.unwrap_or(setup.order);
+            setup.seed = seed.unwrap_or(setup.seed);
+            Some(game.with_setup(setup))
+        }
+        None => None,
+    };
+    if headless {
+        let Some(mut game) = game else {
+            eprintln!("hexgame: --headless needs a --map");
+            std::process::exit(2);
+        };
+        let mut print = |_: &Game, line: &str| {
+            if log {
+                println!("{line}");
+            }
+        };
+        match headless::play(&mut game, rounds.unwrap_or(200), &mut print) {
+            Ok(outcome) => print!("{}", headless::summary(&outcome)),
+            Err(e) => {
+                eprintln!("hexgame: --headless: {e}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     let spec = WindowSpec { program: "hexgame", title: WINDOW_TITLE, size: WINDOW_SIZE };
     app::run(spec, window, move |assets, viewport, dpi| {
-        let mut session = Session::with_game(assets, viewport, dpi, game)?;
+        let mut shell = match game {
+            Some(game) => Shell::playing(assets, Session::with_game(assets, viewport, dpi, game)?),
+            None => Shell::new_game(assets, viewport, dpi, None)?,
+        };
         if let Some(steps) = &script {
-            script::run(&mut session, steps).map_err(|e| format!("--script: {e}"))?;
+            script::run(&mut shell, steps).map_err(|e| format!("--script: {e}"))?;
         }
-        Ok(session)
+        Ok(shell)
     });
 }
 
@@ -111,6 +196,19 @@ mod tests {
         assert_eq!(o.window.screenshot, Some(PathBuf::from("shot.png")));
         assert_eq!(o.script.as_deref(), Some("enter,1"));
         assert_eq!(o.map, Some(PathBuf::from("maps/one.map")));
+    }
+
+    #[test]
+    fn the_games_options() {
+        let o =
+            parse(&["--headless", "--map", "m", "--players", "red=simple", "--order", "drawn", "--seed", "9"]).unwrap();
+        assert!(o.headless && !o.log);
+        assert_eq!((o.players.as_deref(), o.order, o.seed), (Some("red=simple"), Some(TurnOrder::Drawn), Some(9)));
+        let o = parse(&["--rounds", "5", "--log", "--order", "fixed"]).unwrap();
+        assert_eq!((o.rounds, o.log, o.order), (Some(5), true, Some(TurnOrder::Fixed)));
+        assert_eq!(parse(&["--order", "sometimes"]).unwrap_err(), "--order: \"sometimes\" is not fixed or drawn");
+        assert_eq!(parse(&["--seed", "x"]).unwrap_err(), "--seed: \"x\" is not a number");
+        assert_eq!(parse(&["--rounds"]).unwrap_err(), "--rounds needs a number");
     }
 
     #[test]

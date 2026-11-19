@@ -1,13 +1,21 @@
-//! The game the player sees: the map, the selected unit and where it can go.
+//! The game: the map, whose turn it is, and the rules that carry out the
+//! sides' orders (`orders`); and what the person at the screen has selected
+//! and where it can go.
 //!
-//! C++: src/Application.cpp Application::Application (the demo map),
-//! src/render/maprender.cpp MapRenderer::selectHex, moveUp, moveDown, and the
+//! C++: src/render/maprender.cpp MapRenderer::selectHex, moveUp, moveDown, and the
 //! cursor keys of src/gui/mapwidget.cpp MapWidget::OnEvent
 
 use std::path::{Path, PathBuf};
 
-use crate::state::scenario::{self, Scenario};
-use crate::state::{Direction, Hex, Map, MoveCost, MoveRange, Side, TileType, UnitId, compute_range};
+use crate::orders::{Event, Order};
+use crate::setup::{Controller, Setup, TurnOrder, WhenOut};
+use crate::state::scenario::{self, Scenario, side_name};
+use crate::state::{
+    CityId, Direction, Hex, Map, MoveRange, Rng, Side, TileType, Unit, UnitId, compute_range, step_toward,
+};
+
+/// The agent that passes its turns: the computer's, when nothing else is said.
+pub const PASSIVE: &str = "passive";
 
 /// What `Game::select_hex` did.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -31,32 +39,87 @@ pub struct Game {
     /// The map's own asset directory, if it brought one: a picture found
     /// there is drawn instead of the game's of the same path.
     pub assets: Option<PathBuf>,
-    turn: u32,
-    /// The side this screen plays: whose cities are "my cities", whose
-    /// production can be set. (Whose turn it is, and the other sides' players,
-    /// are rules still to come: `docs/gameplay.md`.)
-    player: Side,
+    /// How the game was set up: the mode, who plays which side.
+    setup: Setup,
+    /// This round's order of the sides' turns.
+    order: Vec<Side>,
+    /// Whose turn it is: an index into `order`.
+    current: usize,
+    /// The round: every side once. 1 at the start.
+    round: u32,
+    rng: Rng,
+    /// The sides that are out, in the order they went.
+    out: Vec<Side>,
+    winner: Option<Side>,
 }
 
 impl Game {
+    /// A game on `map` for one person (the first side), the computer passing
+    /// the others' turns; see [`Game::start`].
     pub fn new(map: Map) -> Game {
-        let player = first_side(&map);
-        Game { map, selected: None, range: None, range_revision: 0, assets: None, turn: 1, player }
+        let setup = Setup::solo(&map, None, PASSIVE);
+        Game::start(map, setup)
     }
 
-    /// The side this screen plays.
+    /// The game on `map`, set up as `setup` says: the first side's turn of the
+    /// first round. (A side whose turn comes first may be the computer's: whoever
+    /// runs the game plays it, `agents::play_computers`.)
+    pub fn start(map: Map, setup: Setup) -> Game {
+        let mut rng = Rng::new(setup.seed);
+        let mut order: Vec<Side> = setup.seats.iter().map(|seat| seat.side).collect();
+        if setup.order == TurnOrder::Drawn {
+            rng.shuffle(&mut order);
+        }
+        Game {
+            map,
+            selected: None,
+            range: None,
+            range_revision: 0,
+            assets: None,
+            setup,
+            order,
+            current: 0,
+            round: 1,
+            rng,
+            out: Vec::new(),
+            winner: None,
+        }
+    }
+
+    /// The side whose turn it is (on a map without sides, nobody's).
     pub fn player(&self) -> Side {
-        self.player
+        self.order.get(self.current).copied().unwrap_or(Side::Grey)
     }
 
-    /// Play another side.
-    pub fn set_player(&mut self, side: Side) {
-        self.player = side;
+    /// How the game was set up.
+    pub fn setup(&self) -> &Setup {
+        &self.setup
+    }
+
+    /// Who plays a side, if it is in the game.
+    pub fn controller(&self, side: Side) -> Option<&Controller> {
+        self.setup.controller(side)
+    }
+
+    /// This round's order of turns.
+    pub fn order(&self) -> &[Side] {
+        &self.order
+    }
+
+    /// The sides that are out of the game.
+    pub fn out(&self) -> &[Side] {
+        &self.out
+    }
+
+    /// The side that won, once only one is left.
+    pub fn winner(&self) -> Option<Side> {
+        self.winner
     }
 
     /// The game on a map that was read from its files, with its cities and
     /// its units. The cursor starts on the first city that has a garrison (or
-    /// the first city, or the middle of the map).
+    /// the first city, or the middle of the map); its holder is the one
+    /// person's side, and the computer passes the others' turns.
     pub fn from_scenario(scenario: Scenario) -> Game {
         let Scenario { mut map, assets, .. } = scenario;
         let start = map
@@ -68,95 +131,168 @@ impl Game {
         if let Some(hex) = start {
             map.cursor = hex;
         }
-        // The player is the side whose city the cursor starts on.
-        let player = start.and_then(|hex| map.city_at(hex)).map(|c| c.side).filter(|side| *side != Side::Grey);
-        let mut game = Game { assets, ..Game::new(map) };
-        if let Some(side) = player {
-            game.player = side;
-        }
-        game
+        let person = start.and_then(|hex| map.city_at(hex)).map(|c| c.side).filter(|side| *side != Side::Grey);
+        let setup = Setup::solo(&map, person, PASSIVE);
+        Game { assets, ..Game::start(map, setup) }
     }
 
     /// Read a map (a `.map` file or a map directory, `docs/map-format.md`)
-    /// and start the game on it. A map that brings no units gets the demo's
-    /// one (see [`Game::on_map`]). Also returns what the reader warns of.
+    /// and start the game on it. Also returns what the reader warns of.
     pub fn load(path: &Path) -> Result<(Game, Vec<String>), String> {
         let scenario = scenario::load(path).map_err(|e| e.to_string())?;
         let warnings = scenario.warnings.clone();
-        let game = if scenario.map.units().iter().next().is_some() {
-            Game::from_scenario(scenario)
-        } else {
-            let assets = scenario.assets.clone();
-            Game { assets, ..Game::on_map(scenario.map) }
-        };
-        Ok((game, warnings))
+        Ok((Game::from_scenario(scenario), warnings))
     }
 
-    /// The turn that is being played: 1 at the start.
+    /// The same game started over with another setup (the new game screen's).
+    pub fn with_setup(self, setup: Setup) -> Game {
+        let Game { map, assets, .. } = self;
+        Game { assets, ..Game::start(map, setup) }
+    }
+
+    /// The round that is being played: 1 at the start.
     pub fn turn(&self) -> u32 {
-        self.turn
+        self.round
     }
 
-    /// The turn is over: every unit of every side gets its movement points
-    /// back for the next (see `Units::reset_move_points`), every city that
-    /// builds something works a turn on it (`Map::produce`), and nothing is
-    /// selected. (There are no rules for whose turn it is yet, or for what
-    /// a unit costs: `docs/gameplay.md`.)
-    pub fn end_turn(&mut self) {
-        for side in Side::PLAYERS.into_iter().chain([Side::Grey]) {
-            self.map.reset_move_points(side);
-        }
-        // The cities' work: what is done stands in its city, with all its moves.
-        for side in Side::PLAYERS {
-            self.map.produce(side);
-        }
-        self.deselect();
-        self.turn += 1;
+    /// The side whose turn it is has done: the next side's turn (see
+    /// [`Order::EndTurn`]). Nothing is selected.
+    pub fn end_turn(&mut self) -> Vec<Event> {
+        self.apply(Order::EndTurn).unwrap_or_default()
     }
 
-    /// The demo: a 100 x 100 grass map with a mountain diagonal and one cavalry
-    /// unit in the middle (which is on the diagonal, so it stands on a mountain it
-    /// could not enter). C++: Application::Application
-    pub fn demo() -> Game {
-        let mut map = Map::new(100, 100, TileType::Grass).expect("100 x 100 is a valid map size");
-        for i in 0..100 {
-            if let Some(tile) = map.tile_mut(Hex::new(i, i)) {
-                tile.kind = TileType::Mountain;
+    /// Carry out an order of the side whose turn it is, or say why not. The
+    /// one way the game goes on: a person's clicks and the computer's agents
+    /// both come here.
+    pub fn apply(&mut self, order: Order) -> Result<Vec<Event>, String> {
+        if let Some(side) = self.winner {
+            return Err(format!("the game is over: {} won", side_name(side)));
+        }
+        let side = self.player();
+        match order {
+            Order::Move { unit, to } => self.move_unit(side, unit, to),
+            Order::Toward { unit, to } => {
+                let u = self.own_unit(side, unit)?;
+                let (hex, _) = step_toward(&self.map, u, to).ok_or("there is no way there")?;
+                self.move_unit(side, unit, hex)
             }
+            Order::Build { city, what } => {
+                let holder = self.map.cities().get(city).map(|c| c.side).ok_or("there is no such city")?;
+                if holder != side {
+                    return Err(format!("only {} sets what it builds", side_name(holder)));
+                }
+                if !self.map.set_production(city, what) {
+                    return Err("it cannot build that".to_string());
+                }
+                Ok(Vec::new())
+            }
+            Order::EndTurn => Ok(self.next_turn()),
         }
-        add_demo_unit(&mut map, Hex::new(50, 50));
-        Game::new(map)
     }
 
-    /// The demo on a map of your own (`--map`): the same cavalry unit, on the
-    /// hex nearest the middle of the map that it can stand on, with the cursor
-    /// on it. A map that is all water and mountains gets no unit.
-    pub fn on_map(mut map: Map) -> Game {
-        let middle = Hex::new(map.rows() / 2, map.cols() / 2);
-        let costs = demo_costs();
-        let can_stand = |map: &Map, hex: Hex| map.tile(hex).is_some_and(|t| costs.entry(t.kind).is_some());
-        // Breadth first from the middle: the first hex found is a nearest one.
-        let mut seen = vec![false; usize::from(map.rows()) * usize::from(map.cols())];
-        let index = |hex: Hex| usize::from(hex.row) * usize::from(map.cols()) + usize::from(hex.col);
-        let mut queue = std::collections::VecDeque::from([middle]);
-        seen[index(middle)] = true;
-        let mut start = None;
-        while let Some(hex) = queue.pop_front() {
-            if can_stand(&map, hex) {
-                start = Some(hex);
-                break;
-            }
-            for next in map.neighbours(hex) {
-                if !std::mem::replace(&mut seen[index(next)], true) {
-                    queue.push_back(next);
+    /// One of `side`'s units, or why not.
+    fn own_unit(&self, side: Side, id: UnitId) -> Result<&Unit, String> {
+        let unit = self.map.units().get(id).ok_or("there is no such unit")?;
+        if unit.side() != side {
+            return Err(format!("it is {}'s, and {}'s turn", side_name(unit.side()), side_name(side)));
+        }
+        Ok(unit)
+    }
+
+    /// A unit of `side` goes to a hex it can reach, and pays for it; a city
+    /// of another side with nobody in it is taken.
+    fn move_unit(&mut self, side: Side, id: UnitId, to: Hex) -> Result<Vec<Event>, String> {
+        let unit = self.own_unit(side, id)?;
+        let from = unit.pos();
+        let cost = compute_range(&self.map, unit).cost(to).ok_or("it cannot get there this turn")?;
+        self.map.move_unit(id, to).map_err(|_| "there is no room there".to_string())?;
+        if let Some(unit) = self.map.unit_mut(id) {
+            unit.movement = unit.movement.saturating_sub(cost);
+        }
+        if self.selected == Some(id) {
+            self.deselect();
+        }
+        let mut events = vec![Event::Moved { unit: id, from, to, cost }];
+        if let Some((city, holder)) = self.map.city_at(to).filter(|c| c.side != side).map(|c| (c.id, c.side)) {
+            events.extend(self.take(city, holder, side));
+        }
+        Ok(events)
+    }
+
+    /// `by` takes a city from `from`: it starts its work over, and a side
+    /// that has lost its last city is out.
+    fn take(&mut self, city: CityId, from: Side, by: Side) -> Vec<Event> {
+        if let Some(c) = self.map.city_mut(city) {
+            c.side = by;
+        }
+        self.map.set_production(city, None);
+        let mut events = vec![Event::Taken { city, from, by }];
+        if from != Side::Grey && !self.map.cities().iter().any(|c| c.side == from) {
+            events.extend(self.put_out(from));
+        }
+        events
+    }
+
+    /// A side is out of the game, and its units with it (`WhenOut`); if one
+    /// side is left, it has won.
+    fn put_out(&mut self, side: Side) -> Vec<Event> {
+        if self.out.contains(&side) {
+            return Vec::new();
+        }
+        self.out.push(side);
+        match self.setup.when_out {
+            WhenOut::Disband => {
+                let units: Vec<UnitId> = self.map.units().of_side(side).map(|u| u.id()).collect();
+                for unit in units {
+                    self.map.kill_unit(unit);
                 }
             }
         }
-        if let Some(hex) = start {
-            add_demo_unit(&mut map, hex);
-            map.cursor = hex;
+        let mut events = vec![Event::Out { side }];
+        let left: Vec<Side> = self.order.iter().copied().filter(|s| !self.out.contains(s)).collect();
+        if let [last] = left[..] {
+            self.winner = Some(last);
+            events.push(Event::Won { side: last });
         }
-        Game::new(map)
+        events
+    }
+
+    /// The next side's turn: after the last of the round, the first of the
+    /// next (in a new order, if it is drawn). From the second round on, a
+    /// side's turn begins with its units' points back (with up to 2 they kept)
+    /// and its cities' work.
+    fn next_turn(&mut self) -> Vec<Event> {
+        self.deselect();
+        if self.order.is_empty() {
+            self.round += 1;
+            return Vec::new();
+        }
+        // The sides still in; the game is over before none are.
+        for _ in 0..self.order.len() * 2 {
+            self.current += 1;
+            if self.current >= self.order.len() {
+                self.current = 0;
+                self.round += 1;
+                if self.setup.order == TurnOrder::Drawn {
+                    self.rng.shuffle(&mut self.order);
+                }
+            }
+            if !self.out.contains(&self.order[self.current]) {
+                break;
+            }
+        }
+        let side = self.player();
+        let mut events = vec![Event::Began { side, round: self.round }];
+        if self.round > 1 {
+            self.map.reset_move_points(side);
+            for unit in self.map.produce(side) {
+                let city = self.map.units().get(unit).and_then(|u| self.map.city_at(u.pos())).map(|c| c.id);
+                if let Some(city) = city {
+                    events.push(Event::Built { city, unit });
+                }
+            }
+        }
+        events
     }
 
     pub fn selected(&self) -> Option<UnitId> {
@@ -181,9 +317,10 @@ impl Game {
 
     /// Select one unit by name (a row of a stack was chosen): it is the one a
     /// chosen hex will move. False, and nothing changes, if there is no such
-    /// unit any more.
+    /// unit any more, or it is not the side's whose turn it is.
     pub fn select_unit(&mut self, id: UnitId) -> bool {
-        self.select(id)
+        let own = self.map.units().get(id).is_some_and(|u| u.side() == self.player());
+        own && self.select(id)
     }
 
     fn select(&mut self, id: UnitId) -> bool {
@@ -214,9 +351,10 @@ impl Game {
     /// The player chose a hex (a click, or Enter at the cursor).
     ///
     /// - A unit is selected and this is its hex: deselect it.
-    /// - A unit is selected and it can reach the hex: it moves there, pays the
-    ///   cost and is deselected.
-    /// - Nothing is selected and the hex has units: select the first.
+    /// - A unit is selected and it can reach the hex: it moves there
+    ///   (`Order::Move`: it pays the cost, it may take a city) and is deselected.
+    /// - Nothing is selected and the hex has units of the side whose turn it
+    ///   is: select the first of them.
     ///
     /// C++: MapRenderer::selectHex. There a selected unit could go to any hex that
     /// the flood fill had not reached, mountains included, for free; here it stays
@@ -224,7 +362,11 @@ impl Game {
     pub fn select_hex(&mut self, hex: Hex) -> SelectOutcome {
         self.refresh();
         let Some(id) = self.selected else {
-            return match self.map.units_at(hex).first().copied() {
+            let side = self.player();
+            let units = self.map.units();
+            let first =
+                self.map.units_at(hex).iter().copied().find(|id| units.get(*id).is_some_and(|u| u.side() == side));
+            return match first {
                 Some(first) if self.select(first) => SelectOutcome::Selected(first),
                 _ => SelectOutcome::Nothing,
             };
@@ -235,11 +377,8 @@ impl Game {
             return SelectOutcome::Deselected;
         }
         let Some(cost) = self.range.as_ref().and_then(|r| r.cost(hex)) else { return SelectOutcome::Nothing };
-        if cost > unit.movement || self.map.move_unit(id, hex).is_err() {
+        if cost > unit.movement || self.apply(Order::Move { unit: id, to: hex }).is_err() {
             return SelectOutcome::Nothing; // a full stack, for one
-        }
-        if let Some(unit) = self.map.unit_mut(id) {
-            unit.movement -= cost;
         }
         self.deselect();
         SelectOutcome::Moved { unit: id, cost }
@@ -272,15 +411,6 @@ impl Game {
 
 /// A hex's terrain in words, with its road: "grass, road", "water, bridge",
 /// "mountain, pass".
-/// The side a game on this map is played as, until it is told otherwise: the
-/// holder of the first city that has one, else the side of the first unit,
-/// else red.
-fn first_side(map: &Map) -> Side {
-    let holder = map.cities().iter().map(|c| c.side).find(|side| *side != Side::Grey);
-    let unit = || map.units().iter().map(|u| u.side()).find(|side| *side != Side::Grey);
-    holder.or_else(unit).unwrap_or(Side::Red)
-}
-
 pub fn describe_terrain(kind: TileType, road: bool) -> String {
     let road = match (road, kind) {
         (false, _) => "",
@@ -291,9 +421,18 @@ pub fn describe_terrain(kind: TileType, road: bool) -> String {
     format!("{}{road}", kind.name())
 }
 
-/// What the demo's cavalry pays to enter each terrain. C++: Application::Application
-fn demo_costs() -> MoveCost {
-    MoveCost {
+/// A game for tests (it was the C++ demo's): 100 x 100 grass with a mountain
+/// diagonal, and one black rider in the middle, which stands on the diagonal
+/// (a mountain it could not enter).
+#[cfg(test)]
+pub(crate) fn grassland() -> Game {
+    let mut map = Map::new(100, 100, TileType::Grass).expect("100 x 100 is a valid map size");
+    for i in 0..100 {
+        if let Some(tile) = map.tile_mut(Hex::new(i, i)) {
+            tile.kind = TileType::Mountain;
+        }
+    }
+    let costs = crate::state::MoveCost {
         grass: 2,
         forest: 4,
         swamp: 5,
@@ -305,14 +444,12 @@ fn demo_costs() -> MoveCost {
         bridge: 1,
         road: 2,
         city: 1,
-    }
-}
-
-/// C++: Application::Application
-fn add_demo_unit(map: &mut Map, hex: Hex) {
-    let cost = map.acquire_move_cost(demo_costs());
-    let cav = map.new_unit(Side::Black, "Test Cav", 3, 5, 20, cost);
-    map.place_unit(cav, hex).expect("a hex of a new map is free");
+    };
+    let cost = map.acquire_move_cost(costs);
+    let rider = map.new_unit(Side::Black, "Test Cav", 3, 5, 20, cost);
+    map.place_unit(rider, Hex::new(50, 50)).expect("a hex of a new map is free");
+    map.cursor = Hex::new(50, 50);
+    Game::new(map)
 }
 
 #[cfg(test)]
@@ -323,41 +460,8 @@ mod tests {
     const START: Hex = Hex::new(50, 50);
 
     #[test]
-    fn a_map_of_your_own_gets_the_demo_unit_near_its_middle() {
-        // Grass: the unit is in the middle, and the cursor on it.
-        let game = Game::on_map(Map::new(30, 50, TileType::Grass).unwrap());
-        let middle = Hex::new(15, 25);
-        assert_eq!(game.map.cursor, middle);
-        let &[id] = game.map.units_at(middle) else { panic!("one unit in the middle") };
-        assert_eq!(game.map.units().get(id).unwrap().name, "Test Cav");
-
-        // A lake in the middle: the unit stands on its shore, as near as can be.
-        let mut map = Map::new(30, 50, TileType::Grass).unwrap();
-        let mut lake = vec![middle];
-        for _ in 0..3 {
-            for hex in lake.clone() {
-                lake.extend(map.neighbours(hex));
-            }
-        }
-        for hex in &lake {
-            map.tile_mut(*hex).unwrap().kind = TileType::Water;
-        }
-        let game = Game::on_map(map);
-        let start = game.map.cursor;
-        assert_eq!(game.map.units_at(start).len(), 1);
-        assert_eq!(game.map.tile(start).unwrap().kind, TileType::Grass);
-        assert!(game.map.neighbours(start).any(|n| lake.contains(&n)), "{start} is on the shore");
-        assert_eq!(game.map.units().iter().count(), 1);
-
-        // Nowhere to stand: no unit, and the cursor stays in the middle.
-        let game = Game::on_map(Map::new(20, 20, TileType::Water).unwrap());
-        assert_eq!(game.map.units().iter().count(), 0);
-        assert_eq!(game.map.cursor, Hex::new(10, 10));
-    }
-
-    #[test]
-    fn the_demo_state() {
-        let game = Game::demo();
+    fn the_grassland_state() {
+        let game = grassland();
         let map = &game.map;
         assert_eq!((map.rows(), map.cols()), (100, 100));
         assert_eq!(map.cursor, START);
@@ -383,7 +487,7 @@ mod tests {
     /// what it has left, and that it ends deselected.
     #[test]
     fn select_move_deselect() {
-        let mut game = Game::demo();
+        let mut game = grassland();
         let &[id] = game.map.units_at(START) else { panic!() };
         assert_eq!(game.select_hex(START), SelectOutcome::Selected(id));
         assert_eq!(game.selected(), Some(id));
@@ -412,7 +516,7 @@ mod tests {
 
     #[test]
     fn a_unit_cannot_go_where_it_cannot_reach() {
-        let mut game = Game::demo();
+        let mut game = grassland();
         let &[id] = game.map.units_at(START) else { panic!() };
         game.select_hex(START);
         // The C++ teleported to all three of these for free (deviation D2).
@@ -428,7 +532,7 @@ mod tests {
 
     #[test]
     fn the_range_is_everything_within_twenty_points() {
-        let mut game = Game::demo();
+        let mut game = grassland();
         game.select_hex(START);
         let range = game.range().unwrap();
         // Ten grass steps in a straight line, and no further.
@@ -444,14 +548,14 @@ mod tests {
 
     #[test]
     fn empty_hexes_select_nothing() {
-        let mut game = Game::demo();
+        let mut game = grassland();
         assert_eq!(game.select_hex(Hex::new(10, 10)), SelectOutcome::Nothing);
         assert!(game.selected().is_none());
     }
 
     #[test]
     fn a_full_stack_refuses_the_move_and_keeps_the_selection() {
-        let mut game = Game::demo();
+        let mut game = grassland();
         let &[cav] = game.map.units_at(START) else { panic!() };
         let cost = game.map.units().get(cav).unwrap().move_cost;
         let target = Hex::new(50, 51);
@@ -468,7 +572,7 @@ mod tests {
 
     #[test]
     fn the_first_unit_of_a_stack_is_selected() {
-        let mut game = Game::demo();
+        let mut game = grassland();
         let &[cav] = game.map.units_at(START) else { panic!() };
         let cost = game.map.units().get(cav).unwrap().move_cost;
         let second = game.map.new_unit(Side::Black, "Second", 1, 1, 8, cost);
@@ -483,7 +587,7 @@ mod tests {
 
     #[test]
     fn a_selected_unit_that_dies_is_forgotten() {
-        let mut game = Game::demo();
+        let mut game = grassland();
         let &[cav] = game.map.units_at(START) else { panic!() };
         game.select_hex(START);
         game.map.kill_unit(cav);
@@ -493,7 +597,7 @@ mod tests {
 
     #[test]
     fn a_new_unit_in_a_dead_units_slot_does_not_inherit_the_selection() {
-        let mut game = Game::demo();
+        let mut game = grassland();
         let &[cav] = game.map.units_at(START) else { panic!() };
         let cost = game.map.units().get(cav).unwrap().move_cost;
         game.select_hex(START);
@@ -514,7 +618,7 @@ mod tests {
 
     #[test]
     fn the_range_follows_changes_made_behind_the_games_back() {
-        let mut game = Game::demo();
+        let mut game = grassland();
         let &[cav] = game.map.units_at(START) else { panic!() };
         game.select_hex(START);
         assert!(game.can_move_to(Hex::new(50, 51)));
@@ -550,7 +654,7 @@ mod tests {
 
     #[test]
     fn the_cursor_stops_at_the_edges() {
-        let mut game = Game::demo();
+        let mut game = grassland();
         assert!(game.move_cursor(Direction::Left));
         assert!(game.move_cursor(Direction::Up));
         assert_eq!(game.map.cursor, Hex::new(49, 49));
@@ -617,7 +721,7 @@ mod tests {
     }
 
     #[test]
-    fn a_map_without_units_gets_the_demos() {
+    fn a_map_is_loaded_as_it_is() {
         let dir = std::env::temp_dir().join(format!("hexgame-game-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("bare/assets")).unwrap();
@@ -625,12 +729,14 @@ mod tests {
         std::fs::write(dir.join("bare/terrain.map"), &terrain).unwrap();
         std::fs::write(dir.join("plain.map"), terrain.replacen("gg", "cg", 1)).unwrap();
 
+        // Terrain alone: no units, and no sides to play.
         let (game, warnings) = Game::load(&dir.join("bare")).unwrap();
-        assert_eq!(game.map.units().iter().count(), 1);
+        assert_eq!(game.map.units().iter().count(), 0);
+        assert!(game.setup().seats.is_empty());
         assert_eq!(game.assets, Some(dir.join("bare/assets")));
         assert!(warnings.is_empty());
         let (game, warnings) = Game::load(&dir.join("plain.map")).unwrap();
-        assert_eq!(game.map.units().iter().count(), 1);
+        assert_eq!(game.map.units().iter().count(), 0);
         assert_eq!(warnings, ["the city tile at (0, 0) has no entry in cities.txt".to_string()]);
         assert!(game.assets.is_none());
         let e = Game::load(&dir.join("none.map")).err().unwrap();
@@ -648,12 +754,18 @@ mod tests {
         let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
         let mut game = Game::from_scenario(Scenario { map, assets: None, warnings });
         assert_eq!(game.player(), Side::Green, "Birch has the garrison: the game starts there");
-        game.set_player(Side::Blue);
+        assert_eq!(game.controller(Side::Green), Some(&Controller::Person));
+        assert_eq!(game.controller(Side::Blue), Some(&Controller::Computer(PASSIVE.to_string())));
+        // Then blue's turn.
+        game.end_turn();
         assert_eq!(game.player(), Side::Blue);
-        // The demo plays its one unit's side.
-        assert_eq!(Game::demo().player(), Side::Black);
-        // A map of nobody's: red.
-        assert_eq!(Game::new(Map::new(20, 20, TileType::Grass).unwrap()).player(), Side::Red);
+        // A map without cities: the sides with units.
+        assert_eq!(grassland().player(), Side::Black);
+        // A map without sides: nobody's turn, and the turns go by.
+        let mut empty = Game::new(Map::new(20, 20, TileType::Grass).unwrap());
+        assert_eq!(empty.player(), Side::Grey);
+        empty.end_turn();
+        assert_eq!((empty.player(), empty.turn()), (Side::Grey, 2));
     }
 
     #[test]

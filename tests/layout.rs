@@ -42,9 +42,10 @@ fn the_layout_at_1024_by_768() {
     assert_eq!(s.screen.minimap_rect(), Rect::new(824, 0, 200, 231));
     // The button is under the minimap, at its own size.
     let button = window_rect(&s, "end_turn");
-    assert!(button.y >= 231 + 5 && button.h < 60 && button.w < 100, "{button:?}");
+    assert!(button.y >= 231 + 5 && button.h < 60 && button.w < 200, "{button:?}");
     assert!(sidebar.x <= button.x && button.right() <= sidebar.right(), "{button:?}");
-    assert_eq!(s.screen.ui.text(widget(&s, "end_turn")), Some("End turn"));
+    // It says whose turn it ends: the demo's one side's.
+    assert_eq!(s.screen.ui.text(widget(&s, "end_turn")), Some("End black's turn"));
     assert_eq!(window_rect(&s, "map_column"), Rect::new(0, 0, 819, 768));
     widget(&s, "hex_panel");
     // The status line is under the map, as wide as it, and the panel ends at
@@ -344,6 +345,6 @@ fn f11_and_ctrl_cmd_f_ask_for_fullscreen_and_alt_f_is_consumed() {
 #[test]
 fn missing_assets_are_an_error_that_names_the_directory() {
     let nowhere = assets().join("no-such-directory");
-    let err = Session::new(&nowhere, Size::new(1024, 768), 96).err().expect("no skin there");
+    let err = Session::with_game(&nowhere, Size::new(1024, 768), 96, common::grassland()).err().expect("no skin there");
     assert!(err.contains("skin") && err.contains("no-such-directory"), "{err}");
 }

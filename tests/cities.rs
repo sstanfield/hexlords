@@ -6,12 +6,14 @@
 mod common;
 
 use common::{assets, click, pixel_of, press, widget};
+use hexgame::city_windows::CityList;
 use hexgame::city_windows::{
     BUILD_NOTHING_ID, CITY_CLOSE_ID, CITY_WINDOW_ID, LIST_CLOSE_ID, LIST_DETAILS_ID, LIST_GOTO_ID, LIST_WINDOW_ID,
     build_id, row_id,
 };
 use hexgame::game::Game;
 use hexgame::session::{ALL_CITIES_ID, CITY_DETAILS_ID, MY_CITIES_ID, Session};
+use hexgame::setup::Setup;
 use hexgame::state::scenario::{self, Scenario};
 use hexgame::state::{Hex, Side};
 use turbo_ferret::widgets::{ImageWidget, Window};
@@ -42,6 +44,15 @@ fn session_at(w: i32, h: i32, dpi: i32) -> Session {
 
 fn session() -> Session {
     session_at(1024, 768, 96)
+}
+
+/// The same game, with a person playing `side` and the computer passing the
+/// others' turns.
+fn session_as(side: Side) -> Session {
+    let s = session();
+    let game = std::mem::replace(&mut { s }.screen.game, common::grassland());
+    let setup = Setup::solo(&game.map, Some(side), "passive");
+    Session::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(setup)).unwrap()
 }
 
 /// The whole widget in window pixels.
@@ -124,9 +135,11 @@ fn my_cities_lists_the_players_with_what_they_build() {
     push(&mut s, ALL_CITIES_ID);
     assert_eq!(s.city_list().unwrap().rows().len(), 3);
     // A side with no city has a word for it.
-    s.screen.game.set_player(Side::Purple);
-    push(&mut s, MY_CITIES_ID);
-    assert!(s.city_list().unwrap().rows().is_empty());
+    push(&mut s, ALL_CITIES_ID);
+    let root = s.screen.root_window();
+    let area = s.screen.map_rect();
+    let list = CityList::open(&mut s.screen.ui, root, &s.screen.game.map, true, Side::Purple, (area, (0.0, 0.0)));
+    assert!(list.rows().is_empty());
     let says: Vec<String> =
         descendants(&s, LIST_WINDOW_ID).into_iter().filter_map(|id| s.screen.ui.text(id).map(str::to_string)).collect();
     assert!(says.iter().any(|t| t == "You hold no city."), "{says:?}");
@@ -201,9 +214,12 @@ fn only_the_holder_sets_what_a_city_builds() {
     assert!(says.iter().any(|t| t == "Only blue sets what it builds."), "{says:?}");
     push(&mut s, &build_id(0));
     assert_eq!(s.screen.game.map.city_at(HIGHCLIFF).unwrap().building, None);
-    // Played as blue, it can.
-    s.screen.game.set_player(Side::Blue);
-    s.frame(16);
+    // When a person plays blue, on blue's turn, they can.
+    let mut s = session_as(Side::Blue);
+    assert_eq!(s.screen.game.player(), Side::Blue, "green, the computer, has passed");
+    push(&mut s, ALL_CITIES_ID);
+    push(&mut s, &row_id(2));
+    push(&mut s, LIST_DETAILS_ID);
     assert!(!disabled(&s, &build_id(0)));
     push(&mut s, &build_id(0));
     assert_eq!(s.screen.game.map.city_at(HIGHCLIFF).unwrap().building, Some(0));

@@ -10,10 +10,14 @@ there is a documented map format (`docs/map-format.md`: terrain, roads, the
 map's own kinds of unit, its cities), which the game plays with `--map`; a map
 editor (`tools/mapeditor`); and the tiles, the roads and the units' signs are
 drawn by a program (`tools/assetgen`, `docs/tiles.md`). Units move turn by
-turn, and cities build what their holder sets; there are no rules for
-fighting, gold or whose turn it is yet. **`docs/gameplay.md` is the plan for
-the rules**: two modes (turns one side after the other, and rounds where all
-sides give orders at once) on one set of rules made of orders.
+turn, one side after the other (a new game screen sets the game up: who
+plays each side, a person or the computer, hotseat for several people), and
+cities build what their holder sets; an empty city is taken by moving in, a
+side that has lost its cities is out. There are no battles or gold yet.
+**`docs/gameplay.md` is the plan for the rules**: two modes (turns one side
+after the other, and rounds where all sides give orders at once) on one set
+of rules made of orders. The computer's players are agents, which also play
+without a window (`docs/agents.md`).
 
 **The C++ is history, not a specification.** The owner's word (2026-11-18):
 the port is done and the game now goes its own way, so nothing has to match the
@@ -31,12 +35,14 @@ touching the rules.
 | Path | What |
 |---|---|
 | `src/state/` | Map, tiles, roads, units and their kinds, cities, movement range; `scenario`, the reader of a map's files. No UI, no graphics |
-| `src/game.rs` | `Game`: the map plus the selected unit and its range; the demo setup; `select_hex` |
+| `src/game.rs`, `src/orders.rs`, `src/setup.rs` | `Game`: the map, whose turn it is, and the rules: `Game::apply` carries out an `Order` and says what came of it (`Event`s); the selected unit and its range for the screen. `Setup`: a game before it starts (the mode, the order of turns, who plays each side, the seed) |
+| `src/agents.rs`, `src/headless.rs` | The computer's players (`Agent`: `passive`, `simple`, `cmd:<program>` over a text protocol); a game played without a window (`--headless`) |
 | `src/view.rs`, `src/minimap_view.rs` | Pure math: zoom, scale factors, visible hexes, picking, panning, recentering; the minimap's fit and marker |
 | `src/render/` | miniquad drawing: hex meshes, shaders, textures, the map and minimap renderers, the PNG writer; the units' icons for the panels (`unit_icon`, on the CPU) |
 | `src/gui/` | Turbo Ferret widgets: `MapWidget`, `MiniMapWidget`, `RootWindow`. They record commands; they hold no game state. `build`: windows made from code (the help, the cities') |
 | `src/platform.rs` | What miniquad leaves out: bringing the window to the front on macOS (the crate's one `unsafe` block) |
 | `src/screen.rs` | `MapScreen`: the `Ui`, a map and the two views together, with no window: what the game and the tools share. `Scene`: what the window can run |
+| `src/new_game.rs`, `src/shell.rs` | The new game screen (a scene on a map screen of its own), and the window's scene from it to the game and back |
 | `src/session.rs`, `src/info.rs`, `src/city_windows.rs` | `Session`: the game on a map screen (its layout, what a click and Enter do, the panels around the map: the stack's slots, the box the pointer opens over a unit, the city). `info`: what the panels say, as plain functions of the game's state. `city_windows`: a city in full, where its holder sets what it builds, and the lists of cities. Tests drive all three |
 | `src/script.rs` | Scripted input (`--script`) for any scene, for screenshots and tests |
 | `src/app.rs`, `src/main.rs` | The miniquad window (`App<S: Scene>`, `app::run`): forwards input to the scene, draws the frame. `main.rs` is the game's command line |
@@ -64,11 +70,12 @@ members. Without `--all` and `--workspace` the tools are skipped.)
 Other useful ones:
 
 ```sh
-cargo run                                   # the game in a window
+cargo run                                   # the new game screen, in a window
 cargo run -- --frames 30                    # smoke test: draws 30 frames and quits
-cargo run -- --screenshot target/shot.png   # draws the start view into a PNG and quits
-cargo run -- --screenshot target/shot.png --script "enter,1,1,cursor:0:0"   # after some input
+cargo run -- --map assets/maps/continent --screenshot target/shot.png   # draws the start view into a PNG and quits
+cargo run -- --map assets/maps/continent --screenshot target/shot.png --script "enter,1,cursor:0:0"   # after some input
 cargo run -- --map assets/maps/example.map  # the game on a map file
+cargo run --release -- --headless --map assets/maps/continent --seed 7 --log   # agents against agents, no window
 cargo run -p mapeditor -- assets/maps/example.map                # the map editor
 cargo run -p mapeditor -- --check assets/maps/*.map              # report on map files, no window
 cargo run -p mapeditor -- x.map --screenshot target/ed.png --script "press:brush_7,key:w"
@@ -168,6 +175,15 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
   the roads and cities around it: `Map::road_links` for drawing,
   `movement::step_cost` for what a step along one costs. A bridge is a road
   on water and a pass a road on a mountain; nothing else says so.
+- **Orders are the one way the game goes on.** A person's clicks and the
+  computer's agents alike give orders (`src/orders.rs`), and `Game::apply`
+  carries them out under the rules, or refuses them with a reason, and says
+  what came of them as events. A new rule goes there, not into the session
+  or an agent. The rules are **deterministic**: their chance comes from the
+  game's own generator (`state::Rng`, seeded by the setup), never from the
+  clock or another source, so a seed and a set of orders always make the
+  same game. Keep the agents and `--headless` working for every rule: they
+  are how the game is balanced.
 - **One way to change the map:** `Map` owns its units and cities, and they
   change only through its methods (`new_unit`, `place_unit`, `move_unit`,
   `kill_unit`, `unit_mut`, `tile_mut`, `add_city` ...), which keep the tiles'

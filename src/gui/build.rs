@@ -27,6 +27,8 @@ use turbo_ferret::{Axis, Gravity, LayoutParams, Rect, TbId, Ui, WidgetId};
 
 /// The skin of a heading: a color of its own (`assets/skin/hexgame.tb.txt`).
 pub const HEADING_SKIN: &str = "Heading";
+/// The skin of a cover: opaque.
+pub const COVER_SKIN: &str = "Cover";
 
 /// A window and the column its content goes in.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -54,14 +56,15 @@ pub fn column(ui: &mut Ui, parent: WidgetId, spacing: i32) -> WidgetId {
     stack(ui, parent, Axis::Y, spacing)
 }
 
-/// A layout of widgets side by side, from the left, `spacing` pixels apart.
+/// A layout of widgets side by side, from the left, `spacing` pixels apart,
+/// their middles in a line (a word beside a button).
 pub fn row(ui: &mut Ui, parent: WidgetId, spacing: i32) -> WidgetId {
     stack(ui, parent, Axis::X, spacing)
 }
 
 fn stack(ui: &mut Ui, parent: WidgetId, axis: Axis, spacing: i32) -> WidgetId {
     let mut layout = Layout::new(axis);
-    layout.position = LayoutPosition::LeftTop;
+    layout.position = if axis == Axis::X { LayoutPosition::Center } else { LayoutPosition::LeftTop };
     layout.distribution_position = LayoutDistributionPosition::LeftTop;
     layout.spacing = Some(spacing);
     ui.add(parent, layout)
@@ -132,14 +135,43 @@ pub fn refit(ui: &mut Ui, parts: WindowParts) {
     ui.set_rect(parts.content, inside);
 }
 
+/// A screen over the whole of `parent` (the root window: the map and the
+/// panels), opaque, with the id `id` and its content in its middle: what
+/// hotseat play shows between two people's turns. Fill its `content`.
+pub fn cover(ui: &mut Ui, parent: WidgetId, id: &str) -> WindowParts {
+    let mut layout = Layout::new(Axis::Y);
+    layout.position = LayoutPosition::Center;
+    layout.distribution_position = LayoutDistributionPosition::Center;
+    let cover = ui.add(parent, layout);
+    ui.set_id(cover, TbId::new(id));
+    ui.set_skin(cover, TbId::new(COVER_SKIN));
+    let content = column(ui, cover, 0);
+    let mut parts = WindowParts { window: cover, content };
+    stretch_cover(ui, &mut parts);
+    parts
+}
+
+/// Make a cover as big as its parent again (the window changed size).
+pub fn stretch_cover(ui: &mut Ui, parts: &mut WindowParts) {
+    if let Some(parent) = ui.parent(parts.window) {
+        let all = Rect::from_size(ui.rect(parent).size());
+        ui.set_rect(parts.window, all);
+    }
+}
+
 /// True while a window is there (its close button removes it).
 pub fn is_open(ui: &Ui, window: WidgetId) -> bool {
     ui.node(window).is_some()
 }
 
-/// Close a window, if it is there.
+/// Close a window (or a cover), if it is there.
 pub fn close(ui: &mut Ui, window: WidgetId) {
-    if is_open(ui, window) {
+    if !is_open(ui, window) {
+        return;
+    }
+    if ui.get::<Window>(window).is_some() {
         ui.close_window(window);
+    } else {
+        ui.remove(window);
     }
 }

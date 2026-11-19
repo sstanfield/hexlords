@@ -20,13 +20,17 @@ use std::path::Path;
 use turbo_ferret::widgets::ImageWidget;
 use turbo_ferret::{ImageHandle, LayoutParams, Modifiers, Point, Rect, Size, TbId, Visibility, WidgetId};
 
+use crate::agents::{self, Agents};
 use crate::city_windows::{self, CityList, CityOrder, CityWindow};
 use crate::game::Game;
+use crate::gui::build::{self, WindowParts};
 use crate::gui::{MapCommand, MapKey, RootCommand};
 use crate::help::{HelpSection, command_key};
 use crate::info;
 use crate::render::{AssetDirs, unit_icon};
 use crate::screen::{MapScreen, Scene};
+use crate::setup::Controller;
+use crate::state::scenario::side_name;
 use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Side, UnitId};
 
 /// The layout, relative to the asset directory.
@@ -55,6 +59,13 @@ pub const END_TURN_ID: &str = "end_turn";
 pub const ALL_CITIES_ID: &str = "all_cities";
 pub const MY_CITIES_ID: &str = "my_cities";
 pub const CITY_DETAILS_ID: &str = "city_details";
+/// The cover between two people's turns, and its button.
+pub const COVER_ID: &str = "turn_cover";
+pub const BEGIN_TURN_ID: &str = "begin_turn";
+/// The window that says who won, and its buttons.
+pub const GAME_OVER_ID: &str = "game_over";
+pub const NEW_GAME_ID: &str = "new_game";
+pub const GAME_OVER_CLOSE_ID: &str = "game_over_close";
 /// Where the windows go on the map: the list in its left part, a city in its
 /// right, a third of the way down (see `gui::build::place`).
 const LIST_ALIGN: (f32, f32) = (0.0, 0.33);
@@ -173,16 +184,22 @@ pub struct Session {
     /// The windows about cities, while they are open.
     city_window: Option<CityWindow>,
     city_list: Option<CityList>,
+    end_turn: Line,
+    /// The computer's players.
+    agents: Agents,
+    /// What covers the map between two people's turns, while it does.
+    cover: Option<WindowParts>,
+    /// The side of the person who played last.
+    last_person: Option<Side>,
+    /// The window that says who won, once it is open.
+    game_over: Option<WindowParts>,
+    /// A new game was asked for (the game over window's button).
+    wants_new_game: bool,
 }
 
 impl Session {
     /// Set up the UI for a window of `viewport` pixels at `dpi` with the skin and
-    /// the layout from the asset directory, and start the demo game.
-    pub fn new(assets: &Path, viewport: Size, dpi: i32) -> Result<Session, String> {
-        Session::with_game(assets, viewport, dpi, Game::demo())
-    }
-
-    /// The same, playing `game`.
+    /// the layout from the asset directory, playing `game`.
     pub fn with_game(assets: &Path, viewport: Size, dpi: i32, game: Game) -> Result<Session, String> {
         let dirs = AssetDirs::new(assets, game.assets.as_deref());
         let mut screen = MapScreen::new(assets, viewport, dpi, LAYOUT, game)?;
@@ -198,6 +215,7 @@ impl Session {
         let lines = |screen: &MapScreen, name: &str, n: usize| -> Result<Vec<Line>, String> {
             (0..n).map(|i| Line::find(screen, &format!("{name}_{i}"))).collect()
         };
+        let agents = Agents::for_game(&screen.game)?;
         let tip = find(&screen, UNIT_TIP_ID)?;
         // The box is over the map, and the pointer goes through it.
         screen.ui.set_ignore_input(tip, true);
@@ -219,12 +237,95 @@ impl Session {
             city_lists: find(&screen, "city_lists")?,
             city_window: None,
             city_list: None,
+            end_turn: Line::find(&screen, END_TURN_ID)?,
+            agents,
+            cover: None,
+            last_person: None,
+            game_over: None,
+            wants_new_game: false,
             screen,
         };
         session.apply_layout_sizes();
+        // The computer's turns that come before the first person's.
+        session.turn_passed();
         session.refresh();
         session.screen.settle();
         Ok(session)
+    }
+
+    /// The person whose turn it is has done: the next side's turn, then the
+    /// computer's, until a person's.
+    pub fn end_turn(&mut self) {
+        if self.cover.is_some() || self.screen.game.winner().is_some() {
+            return;
+        }
+        self.screen.game.end_turn();
+        self.turn_passed();
+    }
+
+    /// A turn has passed: the computer plays its sides' turns, as far as the
+    /// next person's (a round at most, if nobody is a person); and when that
+    /// person is not the one who played last, the map is covered until they
+    /// say they are there.
+    fn turn_passed(&mut self) {
+        agents::play_computers(&mut self.screen.game, &mut self.agents);
+        let game = &self.screen.game;
+        let side = game.player();
+        let person = game.controller(side) == Some(&Controller::Person);
+        if person && game.winner().is_none() && game.setup().people() > 1 && self.last_person != Some(side) {
+            self.open_cover(side);
+        }
+        if person {
+            self.last_person = Some(side);
+        }
+        // The panels are about the hex the cursor is on.
+        self.shown = self.screen.game.map.cursor;
+    }
+
+    /// Cover the map until `side`'s person says they are there.
+    fn open_cover(&mut self, side: Side) {
+        self.close_top_window();
+        self.close_top_window();
+        let root = self.screen.root_window();
+        let ui = &mut self.screen.ui;
+        let parts = build::cover(ui, root, COVER_ID);
+        let name = side_name(side);
+        let mut chars = name.chars();
+        let title = chars.next().map_or(String::new(), |c| c.to_uppercase().chain(chars).collect::<String>());
+        build::heading(ui, parts.content, &format!("{title}'s turn"));
+        let space = ui.dimension_converter().dp_to_px(SPACING_DP * 2);
+        build::gap(ui, parts.content, space);
+        build::button(ui, parts.content, BEGIN_TURN_ID, &format!("Begin {name}'s turn"));
+        self.cover = Some(parts);
+        self.screen.settle();
+    }
+
+    /// True while the map is covered between two people's turns.
+    pub fn covered(&self) -> bool {
+        self.cover.is_some()
+    }
+
+    /// True once a new game was asked for (the shell starts the new game
+    /// screen).
+    pub fn wants_new_game(&self) -> bool {
+        self.wants_new_game
+    }
+
+    /// The game is over: a window says who won.
+    fn open_game_over(&mut self, winner: Side) {
+        let root = self.screen.root_window();
+        let area = self.window_area();
+        let ui = &mut self.screen.ui;
+        let parts = build::window(ui, root, GAME_OVER_ID, "Game over");
+        let round = self.screen.game.turn();
+        build::heading(ui, parts.content, &format!("{} wins, in round {round}.", side_name(winner)));
+        let space = ui.dimension_converter().dp_to_px(SPACING_DP * 2);
+        build::gap(ui, parts.content, space);
+        let buttons = build::row(ui, parts.content, space);
+        build::button(ui, buttons, NEW_GAME_ID, "New game");
+        build::button(ui, buttons, GAME_OVER_CLOSE_ID, "Look at the map");
+        build::place(ui, parts, area, (0.5, 0.4));
+        self.game_over = Some(parts);
     }
 
     /// Size everything from the window's size: the map is 80% of the width and
@@ -412,6 +513,15 @@ impl Session {
         }
         let details = if city.is_empty() { Visibility::Gone } else { Visibility::Visible };
         set_visibility(&mut self.screen, self.city_details, details);
+        // The button says whose turn it ends (on a map without sides, nobody's).
+        let label = match self.screen.game.player() {
+            Side::Grey => "End turn".to_string(),
+            side => format!("End {}'s turn", side_name(side)),
+        };
+        self.end_turn.set(&mut self.screen, &label);
+        if let (Some(winner), None) = (self.screen.game.winner(), self.game_over) {
+            self.open_game_over(winner);
+        }
         self.refresh_windows();
     }
 
@@ -589,10 +699,19 @@ impl Session {
     pub fn resize(&mut self, viewport: Size) {
         self.screen.ui.set_viewport(viewport);
         self.apply_layout_sizes();
+        if let Some(cover) = &mut self.cover {
+            build::stretch_cover(&mut self.screen.ui, cover);
+        }
     }
 
-    /// One frame of host work before drawing (see `MapScreen::frame`).
+    /// One frame of host work before drawing (see `MapScreen::frame`). In a
+    /// game the computer plays alone, a round of it a frame.
     pub fn frame(&mut self, now_ms: u64) {
+        let game = &self.screen.game;
+        let nobody = game.controller(game.player()) != Some(&Controller::Person);
+        if nobody && game.winner().is_none() && self.cover.is_none() {
+            self.turn_passed();
+        }
         self.screen.frame(now_ms);
         self.refresh();
     }
@@ -608,6 +727,19 @@ impl Session {
     /// Apply what the widgets recorded since the last call. The host calls this
     /// after every input event it forwards to the UI.
     pub fn pump(&mut self) {
+        // While the map is covered, only the cover's button counts.
+        if self.cover.is_some() {
+            self.screen.take_map_commands();
+            for command in self.screen.pump_shared() {
+                if command == RootCommand::Click(TbId::new(BEGIN_TURN_ID)) {
+                    if let Some(cover) = self.cover.take() {
+                        build::close(&mut self.screen.ui, cover.window);
+                    }
+                }
+            }
+            self.refresh();
+            return;
+        }
         for command in self.screen.take_map_commands() {
             // Esc closes the help if it is open, and else the window on top.
             if command == MapCommand::Key(MapKey::Esc) && !self.screen.help_open() {
@@ -628,13 +760,19 @@ impl Session {
         }
         for command in self.screen.pump_shared() {
             match command {
-                RootCommand::Click(id) if id == TbId::new(END_TURN_ID) => self.screen.game.end_turn(),
+                RootCommand::Click(id) if id == TbId::new(END_TURN_ID) => self.end_turn(),
                 // Ctrl+T (Cmd+T) ends the turn too. C++: main.cpp (the
                 // commented-out Ctrl+T)
                 RootCommand::Key(ch, mods)
                     if ch.eq_ignore_ascii_case(&'t') && mods.intersects(Modifiers::CTRL | Modifiers::SUPER) =>
                 {
-                    self.screen.game.end_turn();
+                    self.end_turn();
+                }
+                RootCommand::Click(id) if id == TbId::new(NEW_GAME_ID) => self.wants_new_game = true,
+                RootCommand::Click(id) if id == TbId::new(GAME_OVER_CLOSE_ID) => {
+                    if let Some(window) = self.game_over {
+                        build::close(&mut self.screen.ui, window.window);
+                    }
                 }
                 RootCommand::Click(id) if self.window_click(id) => {}
                 // A unit's slot: that unit is the selected one.

@@ -84,6 +84,20 @@ impl HexSide {
 }
 
 impl Hex {
+    /// How many steps apart two hexes are, the fewest it takes to go from one
+    /// to the other over the hexes in between (what is on them aside).
+    pub fn distance(self, other: Hex) -> u32 {
+        // As axial coordinates: the column, and the row moved up by half the
+        // column (an odd column sits half a hex higher).
+        let axial = |h: Hex| {
+            let (r, c) = (i32::from(h.row), i32::from(h.col));
+            (c, r - (c + (c & 1)) / 2)
+        };
+        let ((q1, r1), (q2, r2)) = (axial(self), axial(other));
+        let (dq, dr) = (q1 - q2, r1 - r2);
+        ((dq.abs() + dr.abs() + (dq + dr).abs()) / 2) as u32
+    }
+
     /// The position across a side, as signed (row, col), on the map or not.
     /// An odd column sits half a hex higher, so its neighbours to the east
     /// and west are in its own row and the row above; an even column's are in
@@ -208,5 +222,26 @@ mod tests {
         assert_eq!(Hex::new(5, 5).toward(HexSide::North), (4, 5));
         assert_eq!(HexSide::NorthWest.opposite(), HexSide::SouthEast);
         assert_eq!(HexSide::ALL.map(HexSide::index), [0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn a_neighbour_is_one_step_and_steps_add_up() {
+        for hex in [Hex::new(5, 4), Hex::new(5, 5), Hex::new(0, 0)] {
+            assert_eq!(hex.distance(hex), 0);
+            for side in HexSide::ALL {
+                let (r, c) = hex.toward(side);
+                if r < 0 || c < 0 {
+                    continue;
+                }
+                assert_eq!(hex.distance(Hex::new(r as u16, c as u16)), 1, "{hex} {side:?}");
+            }
+        }
+        // Straight down a column, and across columns, which zigzag.
+        assert_eq!(Hex::new(2, 3).distance(Hex::new(9, 3)), 7);
+        assert_eq!(Hex::new(5, 0).distance(Hex::new(5, 6)), 6);
+        assert_eq!(Hex::new(5, 0).distance(Hex::new(2, 6)), 6);
+        assert_eq!(Hex::new(5, 0).distance(Hex::new(1, 6)), 7);
+        // Either way round.
+        assert_eq!(Hex::new(11, 2).distance(Hex::new(3, 17)), Hex::new(3, 17).distance(Hex::new(11, 2)));
     }
 }

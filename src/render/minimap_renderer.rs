@@ -241,7 +241,6 @@ mod tests {
     fn is_place(kind: TileType) -> bool {
         matches!(kind, TileType::Temple | TileType::Ruin | TileType::City)
     }
-    use crate::game::Game;
 
     fn mini() -> MiniMapView {
         let mut v = MiniMapView::new(100, 100);
@@ -284,7 +283,7 @@ mod tests {
 
     #[test]
     fn a_minimap_hex_has_its_terrains_color_and_its_place() {
-        let game = Game::demo();
+        let game = crate::game::grassland();
         let view = mini();
         let grass = minimap_hex(&game.map, &view, Hex::new(10, 11));
         assert!(grass.iter().all(|v| v.color == [0.37, 0.56, 0.22, 1.0]));
@@ -302,7 +301,7 @@ mod tests {
 
     #[test]
     fn every_minimap_hex_is_inside_the_widget() {
-        let game = Game::demo();
+        let game = crate::game::grassland();
         let view = mini();
         for row in 0..100 {
             for col in 0..100 {

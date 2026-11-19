@@ -4,21 +4,59 @@
 
 use std::path::PathBuf;
 
+use hexgame::game::Game;
 use hexgame::session::Session;
-use hexgame::state::Hex;
+use hexgame::state::{Hex, Map, MoveCost, Side, TileType};
 use turbo_ferret::{Modifiers, Point, Size, SpecialKey, TbId, WidgetId};
 
 pub fn assets() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")
 }
 
-/// The demo in a 1024 x 768 window at 96 DPI.
+/// The grassland (`grassland`) in a 1024 x 768 window at 96 DPI.
 pub fn session() -> Session {
     session_at(1024, 768, 96)
 }
 
 pub fn session_at(w: i32, h: i32, dpi: i32) -> Session {
-    Session::new(&assets(), Size::new(w, h), dpi).expect("the session starts")
+    Session::with_game(&assets(), Size::new(w, h), dpi, grassland()).expect("the session starts")
+}
+
+/// A game on `map` with one black rider in its middle (grass 2, 20 moves),
+/// and the cursor on it.
+pub fn rider_on(mut map: Map) -> Game {
+    let middle = Hex::new(map.rows() / 2, map.cols() / 2);
+    let cost = map.acquire_move_cost(MoveCost { grass: 2, ..MoveCost::default() });
+    let rider = map.new_unit(Side::Black, "Rider", 3, 5, 20, cost);
+    map.place_unit(rider, middle).unwrap();
+    map.cursor = middle;
+    Game::new(map)
+}
+
+/// The tests' map (it was the C++ demo's): 100 x 100 grass with a mountain
+/// diagonal, and one black rider ("Test Cav", 5 strong, 20 moves) in the
+/// middle, on the diagonal (a mountain it could not enter), with the cursor.
+pub fn grassland() -> Game {
+    let mut map = Map::new(100, 100, TileType::Grass).unwrap();
+    for i in 0..100 {
+        map.tile_mut(Hex::new(i, i)).unwrap().kind = TileType::Mountain;
+    }
+    let costs = MoveCost {
+        grass: 2,
+        forest: 4,
+        swamp: 5,
+        desert: 3,
+        hill: 4,
+        bridge: 1,
+        road: 2,
+        city: 1,
+        ..MoveCost::default()
+    };
+    let cost = map.acquire_move_cost(costs);
+    let rider = map.new_unit(Side::Black, "Test Cav", 3, 5, 20, cost);
+    map.place_unit(rider, Hex::new(50, 50)).unwrap();
+    map.cursor = Hex::new(50, 50);
+    Game::new(map)
 }
 
 /// The widget with this id in the layout.

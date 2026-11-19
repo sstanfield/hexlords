@@ -1,4 +1,4 @@
-//! Cities and what they can produce. The demo has no cities; the next phases do.
+//! Cities and what they can produce.
 //!
 //! C++: src/state/city.h, src/state/city.cpp (UnitProd, City, CityManager)
 
