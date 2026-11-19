@@ -214,11 +214,14 @@ impl MapScreen {
         (x.abs() < 1.0 && y.abs() < 1.0 && r.contains(p)).then_some(p)
     }
 
-    /// The window pixel of a hex on the minimap.
+    /// The window pixel of a hex on the minimap: the one its middle is on, or
+    /// the minimap's last pixel that way where the middle is on the map's very
+    /// edge (the last row's even columns are cut through their middle).
     pub fn minimap_pixel(&self, hex: Hex) -> Point {
         let [x, y] = self.mini_view.to_ndc(self.mini_view.hex_center(hex));
         let r = self.minimap_rect();
-        Point::new(r.x + ((x + 1.0) / 2.0 * r.w as f32) as i32, r.y + ((1.0 - y) / 2.0 * r.h as f32) as i32)
+        let within = |from: i32, share: f32, len: i32| from + ((share * len as f32) as i32).clamp(0, (len - 1).max(0));
+        Point::new(within(r.x, (x + 1.0) / 2.0, r.w), within(r.y, (1.0 - y) / 2.0, r.h))
     }
 
     /// What the map widget recorded since the last call, oldest first.

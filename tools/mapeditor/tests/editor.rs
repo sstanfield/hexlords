@@ -441,6 +441,67 @@ fn new_makes_a_map_of_the_asked_size_in_the_chosen_terrain() {
 }
 
 #[test]
+fn wide_and_tall_maps_are_made_painted_saved_and_read_back() {
+    for (rows, cols) in [(20u16, 90u16), (90, 20), (27, 41)] {
+        let path = temp_file(&format!("editor_{rows}x{cols}.map"));
+        let mut e = editor();
+        let (rows_field, cols_field) = (widget(&e, "new_rows"), widget(&e, "new_cols"));
+        e.screen.ui.set_text(rows_field, &rows.to_string());
+        e.screen.ui.set_text(cols_field, &cols.to_string());
+        push(&mut e, "new");
+        assert_eq!((e.map().rows(), e.map().cols()), (rows, cols));
+        e.frame(16);
+
+        // Paint the four corners, each with another terrain: jump there (the
+        // minimap gets to within a hex), point at the hex, press the letter.
+        let corners = [
+            (Hex::new(0, 0), 'w', TileType::Water),
+            (Hex::new(0, cols - 1), 'f', TileType::Forest),
+            (Hex::new(rows - 1, 0), 'd', TileType::Desert),
+            (Hex::new(rows - 1, cols - 1), 'm', TileType::Mountain),
+        ];
+        for (corner, letter, _) in corners {
+            let p = e.screen.minimap_pixel(corner);
+            click(&mut e, p);
+            assert!(e.map().cursor.row.abs_diff(corner.row) <= 1 && e.map().cursor.col.abs_diff(corner.col) <= 1);
+            let p = pixel(&e, corner.row, corner.col);
+            e.screen.ui.pointer_move(p, Modifiers::NONE);
+            e.pump();
+            assert_eq!(e.map().cursor, corner, "{rows} x {cols}");
+            type_char(&mut e, letter);
+        }
+        for (corner, _, terrain) in corners {
+            assert_eq!(kind(&e, corner.row, corner.col), terrain, "{rows} x {cols}: {corner}");
+        }
+        assert_eq!(count(&e, TileType::Grass), usize::from(rows) * usize::from(cols) - 4);
+
+        // The file has the shape, the report on it agrees, and it reads back.
+        set_file(&mut e, &path);
+        push(&mut e, "save");
+        assert!(e.message().starts_with("Saved "), "{}", e.message());
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(
+            (lines[0], lines[1], lines.len()),
+            (rows.to_string().as_str(), cols.to_string().as_str(), usize::from(rows) + 2)
+        );
+        assert!(lines[2].starts_with('w') && lines[2].ends_with('f') && lines[2].len() == usize::from(cols));
+        assert!(lines[lines.len() - 1].starts_with('d') && lines[lines.len() - 1].ends_with('m'));
+        let report = mapeditor::check::check(&text).unwrap();
+        assert_eq!((report.rows, report.cols, report.warnings.len()), (rows, cols, 0));
+
+        let mut other = editor();
+        set_file(&mut other, &path);
+        push(&mut other, "open");
+        assert_eq!((other.map().rows(), other.map().cols()), (rows, cols));
+        for (corner, _, terrain) in corners {
+            assert_eq!(kind(&other, corner.row, corner.col), terrain, "{rows} x {cols}: {corner}");
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[test]
 fn unsaved_changes_are_not_thrown_away_at_the_first_asking() {
     let path = temp_file("editor_discard.map");
     let mut e = editor();
