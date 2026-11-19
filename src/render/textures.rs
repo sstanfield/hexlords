@@ -6,6 +6,8 @@
 use miniquad::{
     FilterMode, MipmapFilterMode, RenderingBackend, TextureFormat, TextureId, TextureKind, TextureParams, TextureWrap,
 };
+use std::path::{Path, PathBuf};
+
 use turbo_ferret::image::{Limits, png};
 use turbo_ferret::{Image, ResourceLoader};
 
@@ -14,6 +16,48 @@ use turbo_ferret::{Image, ResourceLoader};
 pub fn load_image(loader: &mut dyn ResourceLoader, path: &str) -> Result<Image, String> {
     let bytes = loader.load(path).map_err(|e| e.to_string())?;
     png::decode(&bytes, &Limits::DEFAULT).map_err(|e| format!("{path}: {e}"))
+}
+
+/// Where the map's pictures are looked for: a map's own asset directory first,
+/// if it brought one, then the game's. So a map replaces a picture by having a
+/// file of the same path (`docs/map-format.md`).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AssetDirs {
+    dirs: Vec<PathBuf>,
+}
+
+impl AssetDirs {
+    pub fn new(game: &Path, map: Option<&Path>) -> AssetDirs {
+        AssetDirs { dirs: map.into_iter().chain([game]).map(Path::to_path_buf).collect() }
+    }
+
+    /// The file a path (relative to an asset directory, `/` between its
+    /// parts) names: in the first directory that has it.
+    pub fn find(&self, path: &str) -> Option<PathBuf> {
+        self.dirs
+            .iter()
+            .map(|dir| path.split('/').fold(dir.clone(), |file, part| file.join(part)))
+            .find(|f| f.is_file())
+    }
+
+    /// Read and decode a PNG file to straight-alpha RGBA, top row first.
+    pub fn image(&self, path: &str) -> Result<Image, String> {
+        let file = self.find(path).ok_or_else(|| {
+            let dirs: Vec<String> = self.dirs.iter().map(|d| d.display().to_string()).collect();
+            format!("{path}: no such file (assets: {})", dirs.join(", "))
+        })?;
+        let bytes = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+        let image = png::decode(&bytes, &Limits::DEFAULT).map_err(|e| format!("{}: {e}", file.display()))?;
+        if image.size.w <= 0 || image.size.h <= 0 {
+            return Err(format!("{}: an empty image", file.display()));
+        }
+        Ok(image)
+    }
+
+    /// Load a PNG file as a texture.
+    pub fn texture(&self, ctx: &mut dyn RenderingBackend, path: &str, sampling: Sampling) -> Result<TextureId, String> {
+        Ok(upload(ctx, &self.image(path)?, sampling))
+    }
 }
 
 /// How a texture is read when it is drawn at another size than its own.
@@ -142,5 +186,31 @@ mod tests {
         // Not a PNG.
         let err = load_image(&mut loader, "skin/skin.tb.txt").unwrap_err();
         assert!(err.contains("skin.tb.txt"), "{err}");
+    }
+
+    #[test]
+    fn a_maps_own_pictures_come_before_the_games() {
+        let game = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        let own = std::env::temp_dir().join(format!("hexgame-assets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&own);
+        std::fs::create_dir_all(own.join("units")).unwrap();
+        // The map's "militia" is the game's water tile.
+        std::fs::copy(game.join("tiles/water_tile.png"), own.join("units/militia.png")).unwrap();
+
+        let plain = AssetDirs::new(&game, None);
+        let with_map = AssetDirs::new(&game, Some(&own));
+        assert_ne!(plain, with_map);
+        assert_eq!(plain.find("units/militia.png"), Some(game.join("units/militia.png")));
+        assert_eq!(with_map.find("units/militia.png"), Some(own.join("units/militia.png")));
+        assert_eq!(plain.image("units/militia.png").unwrap().size.w, 128);
+        assert_eq!(with_map.image("units/militia.png").unwrap().size.w, 256);
+        // What the map does not have is the game's.
+        assert_eq!(with_map.find("tiles/grass_tile.png"), Some(game.join("tiles/grass_tile.png")));
+        assert_eq!(with_map.find("units/none.png"), None);
+        let e = with_map.image("units/none.png").unwrap_err();
+        assert!(e.starts_with("units/none.png: no such file"), "{e}");
+        let e = plain.image("layouts/main.tb.txt").unwrap_err();
+        assert!(e.contains("main.tb.txt"), "{e}");
+        std::fs::remove_dir_all(&own).unwrap();
     }
 }

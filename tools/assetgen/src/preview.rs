@@ -5,10 +5,13 @@
 //! A map here is its rows of letters, as in a map file
 //! (`docs/map-format.md`), and it is drawn the way the game draws one: odd
 //! columns half a hex higher, y at [`ASPECT`] of x, a black border around
-//! each hex.
+//! each hex, and over that the road of a hex whose letter is a capital,
+//! joined to the roads and cities around it.
 
 use crate::ASPECT;
 use crate::noise::{plain, unit};
+use crate::overlay;
+use crate::road;
 use crate::scatter::Features;
 use crate::shapes::length;
 use crate::terrain::Terrain;
@@ -21,6 +24,42 @@ pub type Letters = Vec<Vec<u8>>;
 pub struct TileSet {
     pub size: usize,
     pub tiles: Vec<Vec<u8>>,
+    /// The roads' pictures at the same size: every shape of `road::shapes`
+    /// over land, then every shape over water. Empty: roads are not drawn.
+    pub roads: Vec<Vec<u8>>,
+}
+
+/// The roads' pictures for a [`TileSet`].
+pub fn road_set(size: usize) -> Vec<Vec<u8>> {
+    let shapes = road::shapes();
+    let land = shapes.iter().map(|shape| overlay::render(size, road::ROAD_RIM, &road::road(*shape)));
+    let water = shapes.iter().map(|shape| overlay::render(size, road::BRIDGE_RIM, &road::bridge(*shape)));
+    land.chain(water).collect()
+}
+
+/// The hex across a side of the hex at (row, col): the sides clockwise from
+/// the top, odd columns half a hex higher.
+fn across(row: i32, col: i32, side: usize) -> (i32, i32) {
+    let upper = if col.rem_euclid(2) == 1 { row - 1 } else { row };
+    match side {
+        0 => (row - 1, col),
+        1 => (upper, col + 1),
+        2 => (upper + 1, col + 1),
+        3 => (row + 1, col),
+        4 => (upper + 1, col - 1),
+        _ => (upper, col - 1),
+    }
+}
+
+/// The sides of a hex across which a road goes on: the neighbour's letter is
+/// a capital, or it is a city.
+fn road_links(map: &[Vec<u8>], row: i32, col: i32) -> u8 {
+    let joins = |(r, c): (i32, i32)| {
+        let letter =
+            usize::try_from(r).ok().and_then(|r| map.get(r)).and_then(|line| line.get(usize::try_from(c).ok()?));
+        letter.is_some_and(|l| l.is_ascii_uppercase() || *l == b'c')
+    };
+    (0..road::SIDES).filter(|side| joins(across(row, col, *side))).fold(0, |mask, side| mask | (1 << side))
 }
 
 /// How a map is drawn.
@@ -70,7 +109,7 @@ pub fn draw_map(map: &[Vec<u8>], set: &TileSet, shot: Shot) -> Vec<u8> {
             let on_map = row >= 0 && col >= 0 && (row as usize) < map.len() && (col as usize) < map[0].len();
             if on_map {
                 let letter = map[row as usize][col as usize];
-                let terrain = Terrain::from_letter(letter as char).unwrap_or(Terrain::Grass);
+                let terrain = Terrain::from_letter(letter.to_ascii_lowercase() as char).unwrap_or(Terrain::Grass);
                 let tx = (((lx + 1.0) / 2.0 * size as f32) as usize).min(size - 1);
                 let ty = (((ly + 1.0) / 2.0 * size as f32) as usize).min(size - 1);
                 let texel = &set.tiles[terrain.index()][(ty * size + tx) * 4..];
@@ -80,6 +119,19 @@ pub fn draw_map(map: &[Vec<u8>], set: &TileSet, shot: Shot) -> Vec<u8> {
                 }
                 if border && d > BORDER_FROM {
                     color = [0, 0, 0];
+                }
+                // The road goes over the border, into the next hex. The
+                // places' pictures are not painted over: roads run up to them.
+                let place = matches!(terrain, Terrain::City | Terrain::Temple | Terrain::Ruin);
+                if letter.is_ascii_uppercase() && !place && !set.roads.is_empty() {
+                    let (shape, turns) = road::shape_of(road_links(map, row, col));
+                    let index = road::shapes().iter().position(|s| *s == shape).unwrap_or(0);
+                    let picture = &set.roads[index + if terrain == Terrain::Water { set.roads.len() / 2 } else { 0 }];
+                    // The shape's picture, turned: `ly` grows downward here.
+                    let (qx, qy) = road::turn(lx, -ly, turns);
+                    let tx = (((qx + 1.0) / 2.0 * size as f32) as usize).min(size - 1);
+                    let ty = (((1.0 - qy) / 2.0 * size as f32) as usize).min(size - 1);
+                    color = overlay::over(color, &picture[(ty * size + tx) * 4..]);
                 }
             }
             let o = (py * w + px) * 4;
@@ -181,14 +233,16 @@ pub struct Previews {
     pub maps: Vec<(&'static str, String)>,
 }
 
-/// The mixed map of the near previews: every terrain, in patches.
+/// The mixed map of the near previews: every terrain, in patches, with a
+/// road from city to city, a branch west over a bridge and one north over a
+/// mountain pass.
 const NEAR: [&str; 9] = [
-    "wwwwwggffffhhm",
-    "wwwwgggfffhhmm",
-    "wwwggcggffhmmm",
-    "wwgggggtghhmmh",
-    "wwsssgggddhhhg",
-    "wwssggrgdddcgg",
+    "wwwwwggffffHhm",
+    "wwwwgggfffhHmm",
+    "WwwgGcGgffhMmm",
+    "wWGGggGtghhMmh",
+    "wwsssgGgddhHhg",
+    "wwssggrGDDDcgg",
     "wwwsggggddddgg",
     "wwwwgggdddgggf",
     "wwwwwwggddggff",
@@ -201,8 +255,13 @@ pub const FAR: (usize, usize, u32) = (46, 72, 7);
 /// drawn with tiles of about the size a hex has in it: 128 pixels near, 256
 /// in the close-up, 32 far away, 64 for the seams.
 pub fn previews(features: &Features) -> Previews {
-    let set = |size: usize| TileSet { size, tiles: render_all(size, Edge::Cutout, features) };
-    let (tiny, small, large, huge) = (set(32), set(64), set(128), set(256));
+    let set = |size: usize, roads: bool| TileSet {
+        size,
+        tiles: render_all(size, Edge::Cutout, features),
+        roads: if roads { road_set(size) } else { Vec::new() },
+    };
+    // Only the near map has roads.
+    let (tiny, small, large, huge) = (set(32, false), set(64, false), set(128, true), set(256, true));
     let picture = |name, map: &[Vec<u8>], set: &TileSet, shot: Shot| Picture {
         name,
         w: shot.w,
@@ -241,7 +300,7 @@ mod tests {
     /// is (10 * i, 0, 200), opaque.
     fn flat_set(size: usize) -> TileSet {
         let tiles = (0..10).map(|i| [10 * i as u8, 0, 200, 255].repeat(size * size)).collect();
-        TileSet { size, tiles }
+        TileSet { size, tiles, roads: Vec::new() }
     }
 
     fn pixel(rgba: &[u8], w: usize, x: usize, y: usize) -> [u8; 3] {
@@ -313,5 +372,54 @@ mod tests {
         let map: Letters = vec![b"gfh".to_vec(), b"sdm".to_vec()];
         assert_eq!(map_text(&map), "2\n3\ngfh\nsdm\n");
         assert_eq!(middle(&map), (1.5, 0.5));
+    }
+
+    #[test]
+    fn a_capital_letter_gets_a_road_that_joins_its_neighbours() {
+        // A road along the top row from a city, and a bridge at its end.
+        let map: Letters = vec![b"cGGW".to_vec(), b"gggw".to_vec()];
+        // (0, 1) is in an odd column: the city is to its south-west, the road
+        // goes on to its south-east.
+        assert_eq!(road_links(&map, 0, 1), 0b010100);
+        // (0, 2), in an even one: from the north-west on to the north-east.
+        assert_eq!(road_links(&map, 0, 2), 0b100010);
+        assert_eq!(road_links(&map, 0, 3), 0b010000, "the bridge ends here");
+        assert_eq!(road_links(&map, 1, 1), 0b100011, "beside the road: three of its neighbours join roads");
+
+        let (w, h, scale) = (240, 200, 24.0);
+        let mut set = flat_set(16);
+        set.roads = road_set(16);
+        let shot = Shot { w, h, scale, center: (2.25, 0.5), border: true };
+        let picture = draw_map(&map, &set, shot);
+        // A point of the map in the picture: model units, y downward.
+        let at = |mx: f32, my: f32| {
+            let (x, y) = (w as f32 / 2.0 + (mx - 2.25) * scale, h as f32 / 2.0 + (my - 0.5) * scale * ASPECT);
+            pixel(&picture, w, x as usize, y as usize)
+        };
+        // The middle of hex (row, col) in the model.
+        let middle = |row: usize, col: usize| (1.5 * col as f32, 2.0 * row as f32 - (col % 2) as f32);
+        let (grass, water) = ([0, 0, 200], [60, 0, 200]);
+        // The bridge's end is in the middle of its hex; the hex below is water.
+        let (x, y) = middle(0, 3);
+        assert_ne!(at(x, y), water);
+        let (x, y) = middle(1, 3);
+        assert_eq!(at(x, y), water);
+        // The road crosses from (0, 1) to (0, 2) through the middle of their
+        // side, over the border; beside the road the hexes are grass.
+        let ((ax, ay), (bx, by)) = (middle(0, 1), middle(0, 2));
+        let crossing = at((ax + bx) / 2.0, (ay + by) / 2.0);
+        assert!(crossing != grass && crossing != [0, 0, 0], "{crossing:?}");
+        let (x, y) = middle(1, 1);
+        assert_eq!(at(x, y), grass);
+        // The city has no road painted on it, and the grass hex's own middle
+        // is clear of the bend that passes through it.
+        let (x, y) = middle(0, 0);
+        assert_eq!(at(x, y), [70, 0, 200]);
+        // Without the pictures nothing is drawn.
+        set.roads.clear();
+        let plain = draw_map(&map, &set, shot);
+        let (x, y) = middle(0, 3);
+        let (px, py) = (w as f32 / 2.0 + (x - 2.25) * scale, h as f32 / 2.0 + (y - 0.5) * scale * ASPECT);
+        assert_eq!(pixel(&plain, w, px as usize, py as usize), water);
     }
 }

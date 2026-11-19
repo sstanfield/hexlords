@@ -86,8 +86,10 @@ fn characters_drags_and_buttons() {
     assert_eq!(s.screen.game.map.cursor, Hex::new(50, 53));
 
     // `press:` clicks a widget by its id.
-    script::run(&mut s, "press:button").unwrap();
-    assert_eq!(s.screen.game.map.cursor, Hex::new(50, 53), "the button does nothing yet");
+    assert_eq!(s.screen.game.turn(), 1);
+    script::run(&mut s, "press:end_turn").unwrap();
+    assert_eq!(s.screen.game.turn(), 2, "the button ends the turn");
+    assert_eq!(s.screen.game.map.cursor, Hex::new(50, 53));
     // A count goes with the last `*` only, so that `*` itself can be typed.
     script::run(&mut s, "key:**2").unwrap();
 }

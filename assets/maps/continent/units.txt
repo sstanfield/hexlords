@@ -1,0 +1,46 @@
+# The kinds of unit of this map. docs/map-format.md says what the lines mean.
+#
+# "enter" is what a step onto each terrain costs, in movement points; a
+# terrain that is left out cannot be entered. "road" and "bridge" are a step
+# along a road, over land and over water.
+
+unit militia
+  name     Militia
+  image    units/militia.png
+  strength 2
+  moves    10
+  upkeep   1
+  price    4
+  enter    grass 2, forest 3, hill 4, swamp 5, desert 3
+  enter    city 1, road 1, bridge 1
+
+unit wardens
+  name     Wardens
+  image    units/wardens.png
+  strength 4
+  moves    8
+  upkeep   2
+  price    8
+  enter    grass 2, forest 4, hill 4, swamp 6, desert 4
+  enter    city 1, road 1, bridge 1
+
+unit archers
+  name     Archers
+  image    units/archers.png
+  strength 3
+  moves    10
+  upkeep   2
+  price    6
+  enter    grass 2, forest 2, hill 3, swamp 5, desert 3
+  enter    city 1, road 1, bridge 1
+
+# Fast on open ground and on roads, slow in rough country, and no good in a swamp.
+unit riders
+  name     Riders
+  image    units/riders.png
+  strength 4
+  moves    18
+  upkeep   3
+  price    10
+  enter    grass 2, forest 5, hill 5, desert 3
+  enter    city 1, road 1, bridge 1

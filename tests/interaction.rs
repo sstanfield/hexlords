@@ -282,3 +282,58 @@ fn the_overlay_and_the_minimap_follow_changes_to_the_map() {
     assert!(s.screen.game.selected().is_none() && s.screen.game.range().is_none());
     assert!(!s.screen.take_minimap_dirty());
 }
+
+#[test]
+fn the_status_line_says_what_is_under_the_cursor_and_the_turn_ends() {
+    use hexgame::game::Game;
+    use hexgame::session::Session;
+    use hexgame::state::scenario;
+    use turbo_ferret::{Modifiers, Size};
+
+    let mut rows = vec!["g".repeat(20); 20];
+    rows[10] = "ggggggggcGGWGggggggg".to_string();
+    let terrain = format!("20\n20\n{}\n", rows.join("\n"));
+    let units = "unit riders\nname Riders\nimage units/riders.png\nmoves 10\nenter grass 2, city 1, road 1, bridge 1\n";
+    let cities = "city 10 8\nname Wrenfold\nside green\nwalls 1\nproduce riders 2\ngarrison riders\n";
+    let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+    let game = Game::from_scenario(scenario::Scenario { map, assets: None, warnings });
+    let mut s = Session::with_game(&common::assets(), Size::new(1024, 768), 96, game).unwrap();
+
+    // The cursor starts on the city with the garrison.
+    let city = Hex::new(10, 8);
+    assert_eq!(
+        s.status(),
+        "Turn 1  |  row 10, column 8: city  |  Wrenfold (green), walls 1, builds riders (2)  |  Riders (green) 10/10"
+    );
+    assert_eq!(s.screen.ui.text(common::widget(&s, "status")), Some(s.status()));
+
+    // Select the rider and send it over the bridge: four steps along the road.
+    let p = pixel_of(&s, city);
+    click(&mut s, p);
+    assert!(s.screen.game.selected().is_some());
+    let far = Hex::new(10, 12);
+    let p = pixel_of(&s, far);
+    hover(&mut s, p);
+    assert_eq!(s.status(), "Turn 1  |  row 10, column 12: grass, road");
+    let p = pixel_of(&s, far);
+    click(&mut s, p);
+    assert_eq!(s.status(), "Turn 1  |  row 10, column 12: grass, road  |  Riders (green) 6/10");
+    let p = pixel_of(&s, Hex::new(10, 11));
+    hover(&mut s, p);
+    assert_eq!(s.status(), "Turn 1  |  row 10, column 11: water, bridge");
+
+    // Ctrl+T ends the turn, and so does the button: the rider has its points back.
+    s.screen.ui.key(Some('T'), SpecialKey::None, Modifiers::CTRL, true);
+    s.pump();
+    assert_eq!(s.screen.game.turn(), 2);
+    let p = pixel_of(&s, far);
+    hover(&mut s, p);
+    assert_eq!(s.status(), "Turn 2  |  row 10, column 12: grass, road  |  Riders (green) 12/10");
+    let button = s.screen.area(common::widget(&s, "end_turn"));
+    click(&mut s, Point::new(button.x + button.w / 2, button.y + button.h / 2));
+    assert_eq!(s.screen.game.turn(), 3);
+    // A plain t is nobody's key.
+    s.screen.ui.key(Some('t'), SpecialKey::None, Modifiers::NONE, true);
+    s.pump();
+    assert_eq!(s.screen.game.turn(), 3);
+}

@@ -1,0 +1,78 @@
+# The cities of this map: "city <row> <column>", on a hex that is a city (the
+# letter c) in terrain.map. docs/map-format.md says what the lines mean.
+#
+# Four sides start with a city each; the other five cities are nobody's.
+
+city 13 7
+  name     Brindlewick
+  side     red
+  walls    2
+  produce  militia 1
+  produce  archers 2
+  produce  riders 3
+  garrison militia 2
+  garrison riders
+
+city 19 42
+  name     Eskerfall
+  side     green
+  walls    2
+  produce  militia 1
+  produce  wardens 2
+  produce  archers 2
+  garrison wardens
+  garrison archers 2
+
+city 35 17
+  name     Hollinstead
+  side     yellow
+  walls    2
+  produce  militia 1
+  produce  wardens 2
+  produce  riders 3
+  garrison militia
+  garrison wardens
+  garrison riders
+
+city 38 48
+  name     Kestrelby
+  side     blue
+  walls    2
+  produce  militia 1
+  produce  archers 2
+  produce  riders 3
+  garrison archers
+  garrison riders 2
+
+city 11 23
+  name     Cendermoor
+  walls    1
+  produce  militia 1
+  produce  archers 3
+  garrison militia
+
+city 17 29
+  name     Dunmarrow
+  walls    1
+  produce  militia 2
+  produce  wardens 3
+  garrison wardens
+
+city 22 11
+  name     Fenwyke
+  produce  militia 2
+  garrison militia
+
+city 25 32
+  name     Gorsehaven
+  walls    3
+  produce  wardens 2
+  produce  riders 4
+  garrison wardens 2
+
+city 31 25
+  name     Ivelmouth
+  walls    1
+  produce  militia 1
+  produce  riders 4
+  garrison militia

@@ -1,10 +1,14 @@
-//! `assetgen`: draw the terrain tiles and write them as PNG files.
+//! `assetgen`: draw the terrain tiles, the roads and the units' signs, and
+//! write them as PNG files.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use assetgen::icons::{self, Icon};
+use assetgen::overlay;
 use assetgen::png::encode_rgba;
 use assetgen::preview::previews;
+use assetgen::road;
 use assetgen::scatter::Features;
 use assetgen::terrain::Terrain;
 use assetgen::tile::{Edge, SIZES, atlas, render_all};
@@ -12,17 +16,22 @@ use assetgen::tile::{Edge, SIZES, atlas, render_all};
 const USAGE: &str = "\
 usage: assetgen [--out <dir>] [--size <pixels>] [--cutout] [--atlas] [--previews <dir>]
 
-Draws the ten terrain tiles and writes them as <dir>/<terrain>_tile.png.
+Draws the game's pictures and writes them into an asset directory:
+  tiles/<terrain>_tile.png          the ten terrains
+  roads/road_NN.png, bridge_NN.png  a road over land and over water, in each
+                                    of its 14 shapes
+  units/<name>.png                  the units' signs
 
-  --out <dir>        where the tiles go (default: assets/tiles, the game's)
-  --size <pixels>    the side of a tile (default: 256, what the game ships)
-  --cutout           leave what is outside the hex transparent (the game's
-                     tiles are filled to the corners; see docs/tiles.md)
-  --atlas            also write atlas.png and atlas.txt: all tiles in one image
-  --previews <dir>   also draw maps with the tiles into <dir>, to look at them";
+  --out <dir>        the asset directory (default: assets, the game's)
+  --size <pixels>    the side of a tile and of a road (default: 256, what the
+                     game ships; the signs are half that)
+  --cutout           leave what is outside the hex transparent in the tiles
+                     (the game's are filled to the corners; see docs/tiles.md)
+  --atlas            also write tiles/atlas.png and atlas.txt: all tiles in one
+  --previews <dir>   also draw maps with the pictures into <dir>, to look at";
 
-/// The game's tiles, when run from the repository's root.
-const DEFAULT_OUT: &str = "assets/tiles";
+/// The game's assets, when run from the repository's root.
+const DEFAULT_OUT: &str = "assets";
 const DEFAULT_SIZE: usize = 256;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -84,19 +93,42 @@ fn make_dir(dir: &Path) -> Result<(), String> {
 
 fn run(args: &Args) -> Result<(), String> {
     let features = Features::new();
-    make_dir(&args.out)?;
     let size = args.size;
+
+    let dir = args.out.join("tiles");
+    make_dir(&dir)?;
     let tiles = render_all(size, args.edge, &features);
     for (terrain, tile) in Terrain::ALL.into_iter().zip(&tiles) {
-        write_png(&args.out.join(format!("{}_tile.png", terrain.name())), size, size, tile)?;
+        write_png(&dir.join(format!("{}_tile.png", terrain.name())), size, size, tile)?;
     }
-    println!("wrote {} tiles of {size} x {size} pixels to {}", tiles.len(), args.out.display());
+    println!("wrote {} tiles of {size} x {size} pixels to {}", tiles.len(), dir.display());
     if args.atlas {
         let atlas = atlas(&tiles, size, "atlas.png");
-        write_png(&args.out.join("atlas.png"), atlas.w, atlas.h, &atlas.rgba)?;
-        write(&args.out.join("atlas.txt"), atlas.text.as_bytes())?;
-        println!("wrote atlas.png ({} x {}) and atlas.txt to {}", atlas.w, atlas.h, args.out.display());
+        write_png(&dir.join("atlas.png"), atlas.w, atlas.h, &atlas.rgba)?;
+        write(&dir.join("atlas.txt"), atlas.text.as_bytes())?;
+        println!("wrote atlas.png ({} x {}) and atlas.txt to {}", atlas.w, atlas.h, dir.display());
     }
+
+    let dir = args.out.join("roads");
+    make_dir(&dir)?;
+    let shapes = road::shapes();
+    for shape in &shapes {
+        let land = overlay::render(size, road::ROAD_RIM, &road::road(*shape));
+        write_png(&dir.join(road::file_name(false, *shape)), size, size, &land)?;
+        let water = overlay::render(size, road::BRIDGE_RIM, &road::bridge(*shape));
+        write_png(&dir.join(road::file_name(true, *shape)), size, size, &water)?;
+    }
+    println!("wrote {} roads and as many bridges to {}", shapes.len(), dir.display());
+
+    let dir = args.out.join("units");
+    make_dir(&dir)?;
+    let side = (size / 2).max(*SIZES.start());
+    for icon in Icon::ALL {
+        let picture = overlay::render(side, icons::OUTLINE, &|x, y| icon.ink(x, y));
+        write_png(&dir.join(format!("{}.png", icon.name())), side, side, &picture)?;
+    }
+    println!("wrote {} units' signs of {side} x {side} pixels to {}", Icon::ALL.len(), dir.display());
+
     if let Some(dir) = &args.previews {
         make_dir(dir)?;
         let previews = previews(&features);
@@ -145,7 +177,7 @@ mod tests {
         let args = parse(&[]).unwrap().unwrap();
         assert_eq!(
             args,
-            Args { out: PathBuf::from("assets/tiles"), size: 256, edge: Edge::Filled, atlas: false, previews: None }
+            Args { out: PathBuf::from("assets"), size: 256, edge: Edge::Filled, atlas: false, previews: None }
         );
     }
 
@@ -182,28 +214,37 @@ mod tests {
     }
 
     #[test]
-    fn a_run_writes_the_tiles_the_atlas_and_the_previews() {
+    fn a_run_writes_the_tiles_the_roads_the_signs_the_atlas_and_the_previews() {
         let dir = std::env::temp_dir().join(format!("assetgen-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let args = Args {
-            out: dir.join("tiles"),
+            out: dir.join("assets"),
             size: 16,
             edge: Edge::Filled,
             atlas: true,
             previews: Some(dir.join("look")),
         };
         run(&args).unwrap();
+        let is_png = |path: PathBuf| std::fs::read(&path).map(|bytes| bytes[1..4] == *b"PNG").unwrap_or(false);
         for terrain in Terrain::ALL {
-            let bytes = std::fs::read(dir.join("tiles").join(format!("{}_tile.png", terrain.name()))).unwrap();
-            assert_eq!(bytes[1..4], *b"PNG");
+            assert!(is_png(dir.join("assets/tiles").join(format!("{}_tile.png", terrain.name()))));
         }
-        assert!(std::fs::read_to_string(dir.join("tiles/atlas.txt")).unwrap().starts_with("# atlas.png 100x40:"));
-        assert!(dir.join("tiles/atlas.png").is_file());
+        assert!(
+            std::fs::read_to_string(dir.join("assets/tiles/atlas.txt")).unwrap().starts_with("# atlas.png 100x40:")
+        );
+        assert!(is_png(dir.join("assets/tiles/atlas.png")));
+        for name in ["road_00.png", "road_09.png", "road_63.png", "bridge_00.png", "bridge_09.png", "bridge_63.png"] {
+            assert!(is_png(dir.join("assets/roads").join(name)), "{name}");
+        }
+        assert_eq!(std::fs::read_dir(dir.join("assets/roads")).unwrap().count(), 28);
+        for name in ["militia.png", "wardens.png", "archers.png", "riders.png"] {
+            assert!(is_png(dir.join("assets/units").join(name)), "{name}");
+        }
         for name in ["near.png", "near_no_border.png", "closeup.png", "far.png", "seams.png", "far.map"] {
             assert!(dir.join("look").join(name).is_file(), "{name}");
         }
         // Somewhere that cannot be a directory: an error that names it.
-        let bad = Args { out: dir.join("tiles/atlas.txt/x"), ..args };
+        let bad = Args { out: dir.join("assets/tiles/atlas.txt"), ..args };
         assert!(run(&bad).unwrap_err().contains("atlas.txt"));
         std::fs::remove_dir_all(&dir).unwrap();
     }

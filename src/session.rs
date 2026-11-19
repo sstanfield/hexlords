@@ -7,10 +7,10 @@
 
 use std::path::Path;
 
-use turbo_ferret::Size;
+use turbo_ferret::{LayoutParams, Modifiers, Size, TbId, WidgetId};
 
 use crate::game::Game;
-use crate::gui::{MapCommand, MapKey};
+use crate::gui::{MapCommand, MapKey, RootCommand};
 use crate::screen::{MapScreen, Scene};
 use crate::state::Hex;
 
@@ -22,9 +22,17 @@ pub const LAYOUT: &str = "layouts/main.tb.txt";
 const MAP_SHARE: (f32, f32) = (0.8, 0.7);
 /// The space between widgets in the layout, in dp (`spacing: 5` in the layout).
 const SPACING_DP: i32 = 5;
+/// The status line's height, in dp.
+const STATUS_DP: i32 = 24;
+/// The button that ends the turn, and the line under the map.
+pub const END_TURN_ID: &str = "end_turn";
+pub const STATUS_ID: &str = "status";
 
 pub struct Session {
     pub screen: MapScreen,
+    status_line: WidgetId,
+    /// What the status line shows now.
+    status: String,
 }
 
 impl Session {
@@ -37,8 +45,13 @@ impl Session {
     /// The same, playing `game`.
     pub fn with_game(assets: &Path, viewport: Size, dpi: i32, game: Game) -> Result<Session, String> {
         let screen = MapScreen::new(assets, viewport, dpi, LAYOUT, game)?;
-        let mut session = Session { screen };
+        let status_line = screen
+            .ui
+            .find(screen.ui.root(), TbId::new(STATUS_ID))
+            .ok_or(format!("{LAYOUT}: no widget with id {STATUS_ID}"))?;
+        let mut session = Session { screen, status_line, status: String::new() };
         session.apply_layout_sizes();
+        session.refresh();
         session.screen.settle();
         Ok(session)
     }
@@ -52,6 +65,23 @@ impl Session {
         let map_w = (w as f32 * MAP_SHARE.0).floor() as i32;
         let map_h = (h as f32 * MAP_SHARE.1).floor() as i32;
         self.screen.set_map_sizes(Size::new(map_w, map_h), Size::new(w - map_w - spacing, h - map_h));
+        let status_h = self.screen.ui.dimension_converter().dp_to_px(STATUS_DP);
+        self.screen.ui.set_layout_params(self.status_line, Some(LayoutParams::fixed(map_w, status_h)));
+    }
+
+    /// The status line's text: the turn, and what is on the hex under the cursor.
+    pub fn status(&self) -> &str {
+        &self.status
+    }
+
+    /// Bring the status line up to date.
+    fn refresh(&mut self) {
+        let game = &self.screen.game;
+        let status = format!("Turn {}  |  {}", game.turn(), game.describe(game.map.cursor));
+        if status != self.status {
+            self.screen.ui.set_text(self.status_line, &status);
+            self.status = status;
+        }
     }
 
     /// The window was resized.
@@ -63,6 +93,7 @@ impl Session {
     /// One frame of host work before drawing (see `MapScreen::frame`).
     pub fn frame(&mut self, now_ms: u64) {
         self.screen.frame(now_ms);
+        self.refresh();
     }
 
     /// Apply what the widgets recorded since the last call. The host calls this
@@ -84,8 +115,21 @@ impl Session {
                 _ => {}
             }
         }
-        // Nothing in the game's layout has a meaning yet beyond the map.
-        self.screen.pump_shared();
+        for command in self.screen.pump_shared() {
+            // The button, or Ctrl+T (Cmd+T): the turn is over.
+            // C++: main.cpp (the commented-out Ctrl+T)
+            let end_turn = match command {
+                RootCommand::Click(id) => id == TbId::new(END_TURN_ID),
+                RootCommand::Key(ch, mods) => {
+                    ch.eq_ignore_ascii_case(&'t') && mods.intersects(Modifiers::CTRL | Modifiers::SUPER)
+                }
+                _ => false,
+            };
+            if end_turn {
+                self.screen.game.end_turn();
+            }
+        }
+        self.refresh();
     }
 }
 

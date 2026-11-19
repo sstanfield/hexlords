@@ -10,6 +10,8 @@ TBLayout: id: main_layout, axis: y, distribution: gravity, distribution-position
 		MapWidget: id: main_map, is-focusable: 1
 		TBLayout: id: main_sidebar, axis: y, distribution-position: top, spacing: 5
 			MiniMapWidget: id: mini_map
-			TBButton: id: button, text: SLS, is-focusable: 0
-	# Nothing yet: the room under the map.
+			TBButton: id: end_turn, text: End turn, is-focusable: 0
+	# Under the map: what is on the hex under the cursor (Session sets its size
+	# and its text).
 	TBLayout: id: main_layout2, axis: x, spacing: 5
+		TBTextField: id: status, text-align: left

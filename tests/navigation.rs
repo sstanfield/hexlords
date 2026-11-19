@@ -101,7 +101,7 @@ fn two_fingers_on_the_minimap_move_the_view_the_way_they_do_on_the_map() {
 fn the_wheel_is_the_uis_everywhere_else() {
     let mut s = session();
     let view = s.screen.view.clone();
-    let button = middle(s.screen.area(widget(&s, "button")));
+    let button = middle(s.screen.area(widget(&s, "end_turn")));
     assert!(!s.screen.scroll(button, 50.0, 50.0));
     assert!(!s.screen.zoom_at(button, true));
     assert!(!s.screen.zoom_target(button));

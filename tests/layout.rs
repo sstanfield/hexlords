@@ -35,14 +35,18 @@ fn the_layout_at_1024_by_768() {
     assert_eq!(window_rect(&s, "mini_map"), Rect::new(824, 0, 200, 231));
     assert_eq!(s.screen.minimap_rect(), Rect::new(824, 0, 200, 231));
     // The button is under the minimap, at its own size.
-    let button = window_rect(&s, "button");
+    let button = window_rect(&s, "end_turn");
     assert!(button.y >= 231 + 5 && button.h < 60 && button.w < 100, "{button:?}");
     assert!(sidebar.x <= button.x && button.right() <= sidebar.right(), "{button:?}");
-    assert_eq!(s.screen.ui.text(widget(&s, "button")), Some("SLS"));
+    assert_eq!(s.screen.ui.text(widget(&s, "end_turn")), Some("End turn"));
     widget(&s, "main_layout1");
     widget(&s, "main_layout2");
+    // The status line is under the map, as wide as it.
+    let status = window_rect(&s, "status");
+    assert_eq!((status.x, status.w), (0, 819), "{status:?}");
+    assert!(status.y >= 537 + 5 && status.h >= 20, "{status:?}");
     // Nothing reaches outside the window.
-    for name in ["main_layout1", "main_sidebar", "mini_map", "button", "main_map"] {
+    for name in ["main_layout1", "main_sidebar", "mini_map", "end_turn", "main_map", "status"] {
         let r = window_rect(&s, name);
         assert!(r.x >= 0 && r.y >= 0 && r.right() <= 1024 && r.bottom() <= 768, "{name}: {r:?}");
     }
@@ -59,7 +63,7 @@ fn the_widgets_are_the_games_own() {
     assert_eq!(s.screen.root_window(), widget(&s, "RootWindow"));
     // The map has the keyboard from the start, and nothing else can take it.
     assert_eq!(s.screen.ui.focused(), Some(s.screen.map_widget()));
-    for name in ["mini_map", "button", "RootWindow", "main_layout"] {
+    for name in ["mini_map", "end_turn", "RootWindow", "main_layout"] {
         let id = widget(&s, name);
         assert!(!s.screen.ui.set_focus(id), "{name} takes the focus");
     }
@@ -79,7 +83,7 @@ fn the_layout_in_framebuffer_pixels_on_a_hidpi_screen() {
     assert_eq!(s.screen.map_rect(), Rect::new(0, 0, 1638, 1075));
     // The spacing is 5 dp, which is 10 pixels here.
     assert_eq!(s.screen.minimap_rect(), Rect::new(1648, 0, 400, 461));
-    let button = window_rect(&s, "button");
+    let button = window_rect(&s, "end_turn");
     assert!(button.right() <= 2048 && button.h > 40, "{button:?}");
 }
 
@@ -206,7 +210,7 @@ fn the_wheel_does_nothing() {
 #[test]
 fn the_keyboard_stays_with_the_map() {
     let mut s = session();
-    let button = window_rect(&s, "button");
+    let button = window_rect(&s, "end_turn");
     // The minimap, the button, the empty sidebar and the strip under the map.
     for p in [Point::new(900, 100), Point::new(button.x + 5, button.y + 5), Point::new(900, 600), Point::new(300, 700)]
     {
@@ -221,7 +225,7 @@ fn the_keyboard_stays_with_the_map() {
 #[test]
 fn the_button_does_nothing() {
     let mut s = session();
-    let b = window_rect(&s, "button");
+    let b = window_rect(&s, "end_turn");
     let before = (s.screen.view.clone(), s.screen.game.map.cursor);
     click(&mut s, Point::new(b.x + b.w / 2, b.y + b.h / 2));
     assert_eq!((s.screen.view.clone(), s.screen.game.map.cursor), before);
@@ -231,7 +235,7 @@ fn the_button_does_nothing() {
 #[test]
 fn clicks_on_buttons_and_unused_keys_reach_the_host() {
     let mut s = session();
-    let b = window_rect(&s, "button");
+    let b = window_rect(&s, "end_turn");
     s.screen.ui.pointer_move(Point::new(b.x + b.w / 2, b.y + b.h / 2), Modifiers::NONE);
     s.screen.ui.pointer_down(Point::new(b.x + b.w / 2, b.y + b.h / 2), 1, Modifiers::NONE);
     s.screen.ui.pointer_up(Point::new(b.x + b.w / 2, b.y + b.h / 2), Modifiers::NONE);
@@ -248,7 +252,7 @@ fn clicks_on_buttons_and_unused_keys_reach_the_host() {
     assert_eq!(
         s.screen.pump_shared(),
         [
-            RootCommand::Click(tbid!("button")),
+            RootCommand::Click(tbid!("end_turn")),
             RootCommand::Key('g', Modifiers::NONE),
             RootCommand::Key('s', Modifiers::CTRL),
             RootCommand::Special(SpecialKey::Tab, Modifiers::SHIFT),

@@ -16,7 +16,7 @@ use turbo_ferret_miniquad::{InputAdapter, MiniquadClipboard, MiniquadRenderer, w
 use crate::paths::asset_root;
 use crate::platform;
 use crate::render::textures::texture_params;
-use crate::render::{MapRenderer, Marks, MiniMapRenderer, Pipelines, gl_rect, png_out};
+use crate::render::{AssetDirs, MapRenderer, Marks, MiniMapRenderer, Pipelines, gl_rect, png_out};
 use crate::screen::Scene;
 
 /// The game window's size at start, in logical pixels. C++: main.cpp
@@ -167,6 +167,8 @@ impl Wheel {
 const SCREENSHOT_FRAME: u64 = 2;
 
 pub struct App<S: Scene> {
+    /// The game's asset directory.
+    assets: PathBuf,
     scene: S,
     /// Turbo Ferret's renderer. It owns the miniquad context, which the game's
     /// own renderers borrow from it.
@@ -207,9 +209,10 @@ impl<S: Scene> App<S> {
         // The game's own pipelines and textures live on the renderer's context.
         let ctx = renderer.context_mut();
         let pipelines = Pipelines::new(ctx).map_err(|e| format!("shader: {e}"))?;
-        let map_renderer = MapRenderer::new(ctx, &mut *ui.services_mut().loader)
-            .map_err(|e| format!("{e} (assets: {})", assets.display()))?;
+        let dirs = AssetDirs::new(&assets, scene.screen().game.assets.as_deref());
+        let map_renderer = MapRenderer::new(ctx, dirs)?;
         Ok(App {
+            assets,
             scene,
             renderer,
             pipelines,
@@ -263,6 +266,14 @@ impl<S: Scene> App<S> {
         let scene = &self.scene;
         let screen = scene.screen();
         let ctx = self.renderer.context_mut();
+
+        // Another map may have been opened, with pictures of its own.
+        let dirs = AssetDirs::new(&self.assets, screen.game.assets.as_deref());
+        if dirs != *self.map_renderer.dirs() {
+            if let Err(e) = self.map_renderer.set_dirs(ctx, dirs) {
+                eprintln!("{}: the map's assets: {e}", self.program);
+            }
+        }
 
         // The minimap's picture is drawn into its own target, before the frame's
         // pass begins.

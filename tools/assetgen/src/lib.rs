@@ -20,6 +20,9 @@
 //! - [`scatter`]: the trees, peaks, reeds ... strewn over a tile.
 //! - [`terrain`]: the ten terrains, one function each.
 //! - [`tile`]: a terrain as a tile image; the atlas.
+//! - [`overlay`]: pictures that let the tile show through.
+//! - [`road`]: roads and bridges, in the 14 shapes a hex's road can have.
+//! - [`icons`]: the units' pictures.
 //! - [`preview`]: maps drawn with the tiles, to look at them without the game.
 //!
 //! It began as a prototype outside the repository (a `tiles/assetgen` crate
@@ -28,9 +31,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod icons;
 pub mod noise;
+pub mod overlay;
 pub mod png;
 pub mod preview;
+pub mod road;
 pub mod scatter;
 pub mod shapes;
 pub mod terrain;

@@ -13,13 +13,15 @@ pub mod map_renderer;
 pub mod mesh;
 pub mod minimap_renderer;
 pub mod png_out;
+pub mod roads;
 pub mod shaders;
 pub mod textures;
 
 pub use hex_mesh::HexVariant;
-pub use map_renderer::{MapGeometry, MapRenderer, Marks, RANGE_OVERLAY, tile_image};
+pub use map_renderer::{MapGeometry, MapRenderer, Marks, RANGE_OVERLAY, side_color, tile_image};
 pub use minimap_renderer::MiniMapRenderer;
 pub use shaders::Pipelines;
+pub use textures::AssetDirs;
 
 use turbo_ferret::Rect;
 
