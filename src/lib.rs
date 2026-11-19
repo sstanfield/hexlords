@@ -36,6 +36,7 @@ pub mod gui;
 pub mod headless;
 pub mod help;
 pub mod info;
+pub mod log_window;
 pub mod minimap_view;
 pub mod new_game;
 pub mod orders;

@@ -47,7 +47,7 @@ done
 | Name | What it does |
 |---|---|
 | `passive` | Ends every turn at once |
-| `simple` | Sets each idle city to build what gives the most strength for its turns; keeps two units in each of its cities; attacks a city that is not its own with every free unit that can reach it this turn, when the odds are at least 60 in 100; else sends each stack's free units together toward the nearest such city, where they wait for the others |
+| `simple` | Sets each idle city to build what gives the most strength for its turns, and stops its cities when it has two stacks' worth of units for each (until there is gold); keeps two units in each of its cities; attacks a city that is not its own, or another side's stack near its free units, with the strongest stack's worth of the free units that can reach it this turn, when the odds are at least 60 in 100 (or 15, when more than a stack can reach it: the first wave); else sends each stack's free units together toward the nearest such city, where they wait for the others |
 | `cmd:<program> [<argument> ...]` | A program that plays (below) |
 
 A new agent is a type that implements `Agent` and a name in `agents::by_name`.
@@ -106,8 +106,8 @@ A line each, in the order they are to be carried out:
 
 | Order | What it does |
 |---|---|
-| `move <units> <row> <col>` | Move to a hex every one of the units can reach this turn; into another side's units, an attack |
-| `toward <units> <row> <col>` | Move together as far as the slowest gets this turn on its cheapest way to that hex |
+| `move <units> <row> <col>` | Move to a hex every one of the units can reach this turn; into another side's units, an attack (by 8 units and a commander at most) |
+| `toward <units> <row> <col>` | Move together as far as the slowest gets this turn on its cheapest way to that hex, and where there is room for all of them |
 | `build <row> <col> <index or none>` | Set what a city of its side builds |
 | `undo` | Take back the order before, if it can be (not a battle, nor one that put a side out) |
 | `end` | The turn is over (the end of the output says so too) |

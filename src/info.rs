@@ -6,7 +6,7 @@
 //! Not a port: the C++ had no panels.
 
 use crate::game::{Game, describe_terrain};
-use crate::orders::Event;
+use crate::orders::{Event, Record};
 use crate::state::scenario::side_name;
 use crate::state::{City, Hex, Map, MoveCost, Side, Unit, UnitProd};
 
@@ -41,51 +41,93 @@ pub fn cursor_line(game: &Game) -> String {
     parts.join("  |  ")
 }
 
-/// A battle, a line at a time, for the one who fought it: who attacked whom
-/// where, with how many, what each side lost, and who won (and the city, if
-/// one was taken). Nothing for an event that is not a battle.
-pub fn battle_lines(map: &Map, events: &[Event]) -> Vec<String> {
-    let mut lines = Vec::new();
-    for event in events {
-        if let Event::Battle { at, attacker, defender, attackers, defenders, attackers_lost, defenders_lost, won } =
-            event
+/// What a record of the game's history (`Game::history`) says to `side`, a
+/// line or two: a battle it fought, as the attacker or the defender, with who
+/// died; a city it took or lost; a side out of the game, the winner. Nothing
+/// if it is not about `side` (the other sides' battles and cities, the units
+/// built).
+pub fn record_lines(map: &Map, record: &Record, side: Side) -> Vec<String> {
+    match &record.event {
+        Event::Battle { at, attacker, defender, attackers, defenders, won, dead, .. }
+            if *attacker == side || *defender == side =>
         {
-            let (a, d) = (side_name(*attacker), who(*defender));
-            lines.push(sentence(&format!("{a} attacked {d} at {}, {attackers} against {defenders}.", place(map, *at))));
-            lines.push(sentence(&format!("{a} lost {attackers_lost}, {d} {defenders_lost}.")));
-            lines.push(sentence(&if *won { format!("{a} won.") } else { format!("{d} held.") }));
+            let place = place(map, *at);
+            let first = if *attacker == side {
+                let how = if *won { "won" } else { "lost" };
+                format!("You attacked {} at {place}, {attackers} against {defenders}, and {how}.", whose(*defender))
+            } else {
+                let how = if *won { "you were beaten" } else { "you held" };
+                format!(
+                    "{} attacked you at {place}, {attackers} against {defenders}: {how}.",
+                    sentence(side_name(*attacker))
+                )
+            };
+            let ours: Vec<&str> = dead.iter().filter(|(s, _)| *s == side).map(|(_, n)| n.as_str()).collect();
+            let theirs: Vec<&str> = dead.iter().filter(|(s, _)| *s != side).map(|(_, n)| n.as_str()).collect();
+            vec![first, format!("You lost {}; they lost {}.", counted(&ours), counted(&theirs))]
         }
-        if let Event::Taken { city, by, .. } = event {
-            if let Some(city) = map.cities().get(*city) {
-                lines.push(sentence(&format!("{} took {}.", side_name(*by), city.name)));
+        Event::Taken { city, from, by } if *by == side || *from == side => {
+            let name = map.cities().get(*city).map_or("a city".to_string(), |c| c.name.clone());
+            if *by == side {
+                vec![format!("You took {name} from {}.", who(*from))]
+            } else {
+                vec![format!("{} took {name} from you.", sentence(side_name(*by)))]
             }
         }
+        Event::Out { side: out } if *out == side => vec!["You are out of the game.".to_string()],
+        Event::Out { side: out } => vec![format!("{} is out of the game.", sentence(side_name(*out)))],
+        Event::Won { side: winner } if *winner == side => vec!["You have won the game.".to_string()],
+        Event::Won { side: winner } => vec![format!("{} has won the game.", sentence(side_name(*winner)))],
+        _ => Vec::new(),
     }
-    lines
 }
 
-/// What happened to `side` while others played, in a line, if the event was
-/// about it: a battle it fought, a city it lost, a side that is out.
-pub fn news_line(map: &Map, event: &Event, side: Side) -> Option<String> {
-    let line = match event {
-        Event::Battle { at, attacker, defender, attackers_lost, defenders_lost, won, .. } if *defender == side => {
-            let how = if *won { "lost it" } else { "held" };
-            let (by, at) = (side_name(*attacker), place(map, *at));
-            format!("{by} attacked you at {at}: you {how}, losing {defenders_lost}; they lost {attackers_lost}.")
+/// What the game's history says to `side`, a round at a time, the latest
+/// round first and each round's events in the order they happened: the
+/// round, and each event's lines (`record_lines`). Rounds with nothing for
+/// `side` are left out.
+pub fn log(game: &Game, side: Side) -> Vec<(u32, Vec<Vec<String>>)> {
+    let mut rounds: Vec<(u32, Vec<Vec<String>>)> = Vec::new();
+    for record in game.history() {
+        let lines = record_lines(&game.map, record, side);
+        if lines.is_empty() {
+            continue;
         }
-        Event::Battle { at, attacker, defender, attackers_lost, defenders_lost, won, .. } if *attacker == side => {
-            let how = if *won { "won" } else { "lost" };
-            let (whom, at) = (who(*defender), place(map, *at));
-            format!("You attacked {whom} at {at}: you {how}, losing {attackers_lost}; they lost {defenders_lost}.")
+        match rounds.last_mut() {
+            Some((round, entries)) if *round == record.round => entries.push(lines),
+            _ => rounds.push((record.round, vec![lines])),
         }
-        Event::Taken { city, from, by } if *from == side => {
-            let name = map.cities().get(*city).map_or("a city".to_string(), |c| c.name.clone());
-            format!("{} took {name} from you.", side_name(*by))
+    }
+    rounds.reverse();
+    rounds
+}
+
+/// What happened to `side` in the others' turns since the history was
+/// `from` long: the lines of the records about it, oldest first.
+pub fn news(game: &Game, side: Side, from: usize) -> Vec<String> {
+    let records = game.history().get(from..).unwrap_or_default();
+    records.iter().filter(|r| r.turn != side).flat_map(|r| record_lines(&game.map, r, side)).collect()
+}
+
+/// Units by name, counted: "2 Militia, 1 Riders", in the order they first
+/// come; "nothing" for none.
+fn counted(names: &[&str]) -> String {
+    let mut counts: Vec<(&str, usize)> = Vec::new();
+    for name in names {
+        match counts.iter_mut().find(|(n, _)| n == name) {
+            Some((_, count)) => *count += 1,
+            None => counts.push((name, 1)),
         }
-        Event::Out { side: out } if *out != side => format!("{} is out of the game.", side_name(*out)),
-        _ => return None,
-    };
-    Some(sentence(&line))
+    }
+    if counts.is_empty() {
+        return "nothing".to_string();
+    }
+    counts.iter().map(|(name, count)| format!("{count} {name}")).collect::<Vec<_>>().join(", ")
+}
+
+/// Another side's units, in a sentence: "blue", or "nobody's units".
+fn whose(side: Side) -> String {
+    if side == Side::Grey { "nobody's units".to_string() } else { side_name(side).to_string() }
 }
 
 /// Where a battle was: its city's name, or the hex.

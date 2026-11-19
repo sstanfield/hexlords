@@ -25,6 +25,10 @@ const BLUEMOOR: Hex = Hex::new(5, 9);
 /// off with nobody in it (so taking Bluemoor does not end the game). Every
 /// side is passive, the battles have no chance, unless `setup` says otherwise.
 fn game(red: &str, blue: &str, setup: impl FnOnce(&mut Setup)) -> Game {
+    game_with(red, blue, setup)
+}
+
+fn game_with(red: &str, blue: &str, setup: impl FnOnce(&mut Setup)) -> Game {
     let mut rows = vec!["g".repeat(20); 20];
     rows[5] = "gggggcgggcgggggggggg".to_string();
     rows[15] = "gggggggggggggggcgggg".to_string();
@@ -247,7 +251,11 @@ fn the_screen_tells_the_odds_and_reports_the_battle() {
     click(&mut s, p);
     assert_eq!(
         notice(&s),
-        ["Red attacked blue at Bluemoor, 3 against 1.", "Red lost 0, blue 1.", "Red won.", "Red took Bluemoor."]
+        [
+            "You attacked blue at Bluemoor, 3 against 1, and won.",
+            "You lost nothing; they lost 1 Levy.",
+            "You took Bluemoor from blue."
+        ]
     );
     // Esc closes it.
     press(&mut s, SpecialKey::Esc);
@@ -276,7 +284,11 @@ fn who_was_attacked_while_they_waited_hears_of_it() {
     begin(&mut s);
     assert_eq!(
         notice(&s),
-        ["Red attacked you at Bluemoor: you lost it, losing 1; they lost 0.", "Red took Bluemoor from you."]
+        [
+            "Red attacked you at Bluemoor, 3 against 1: you were beaten.",
+            "You lost 1 Levy; they lost nothing.",
+            "Red took Bluemoor from you."
+        ]
     );
     // The computer's attacks too.
     let mut s = session(game("garrison soldiers 4\n", "garrison levy\n", |s| {
@@ -299,4 +311,93 @@ fn the_panels_say_what_a_commander_does() {
     let details = hexgame::info::unit_details(&game.map, captain);
     assert_eq!(details[2], "Commands: its stack fights 1 stronger; it fights last");
     assert!(details.len() <= hexgame::session::TIP_LINES, "{details:?}");
+}
+
+#[test]
+fn an_attack_is_a_stack_at_most() {
+    // Nine soldiers on two hexes: one too many to attack together; eight
+    // and a captain may.
+    let mut game = game("garrison soldiers 5\n", "garrison levy\n", |_| {});
+    let kind = |game: &Game, name: &str| game.map.units().kind_named(name).unwrap();
+    let mut red = at(&game, REDHOLD);
+    for _ in 0..4 {
+        let id = game.map.new_unit_of(Side::Red, kind(&game, "soldiers")).unwrap();
+        game.map.place_unit(id, Hex::new(5, 6)).unwrap();
+        red.push(id);
+    }
+    let refused = game.apply(Order::Move { units: red.clone(), to: BLUEMOOR }).unwrap_err();
+    assert_eq!(refused, "at most 8 units and a commander attack together");
+    let captain = game.map.new_unit_of(Side::Red, kind(&game, "captain")).unwrap();
+    game.map.place_unit(captain, Hex::new(5, 6)).unwrap();
+    red.pop();
+    red.push(captain);
+    assert_eq!(battle(&game.apply(Order::Move { units: red, to: BLUEMOOR }).unwrap()).0, 9);
+}
+
+#[test]
+fn a_stack_goes_toward_somewhere_only_as_far_as_all_of_it_fits() {
+    // Three soldiers toward the east; on the way, as far as they can go, a
+    // hex with seven of red's levies has room for one more: they stop short.
+    let mut game = game("garrison soldiers 3\n", "", |_| {});
+    let levy = game.map.units().kind_named("levy").unwrap();
+    let far = Hex::new(5, 11); // six grass steps from Redhold: all 12 points
+    for _ in 0..7 {
+        let id = game.map.new_unit_of(Side::Red, levy).unwrap();
+        game.map.place_unit(id, far).unwrap();
+    }
+    let red = at(&game, REDHOLD);
+    game.apply(Order::Toward { units: red.clone(), to: Hex::new(5, 18) }).unwrap();
+    let there = game.map.units().get(red[0]).unwrap().pos();
+    assert!(there != far && there != REDHOLD, "{there}");
+    assert_eq!(at(&game, there), red, "all three, together");
+}
+
+#[test]
+fn the_simple_agent_attacks_stacks_in_the_field_and_stops_building_at_enough() {
+    // A blue levy out on the grass beside red's soldiers: red goes for it
+    // (Bluemoor is too strong for it, Farwater too far).
+    let mut game = game("garrison soldiers 4\n", "garrison soldiers 8\n", |s| s.set_players("red=simple").unwrap());
+    let levy = game.map.units().kind_named("levy").unwrap();
+    let blue = game.map.new_unit_of(Side::Blue, levy).unwrap();
+    game.map.place_unit(blue, Hex::new(8, 5)).unwrap();
+    let mut agents = hexgame::agents::Agents::for_game(&game).unwrap();
+    let report = hexgame::agents::play_turn(&mut game, agents.get_mut(Side::Red).unwrap());
+    assert!(
+        report.events.iter().any(|e| matches!(e, Event::Battle { at, won: true, .. } if *at == Hex::new(8, 5))),
+        "{:?}",
+        report.events
+    );
+    // A side with enough units for its cities builds nothing more.
+    let mut game =
+        game_with("produce soldiers 1\ngarrison soldiers 8\ngarrison captain\n", "garrison soldiers 8\n", |s| {
+            s.set_players("red=simple").unwrap()
+        });
+    let soldiers = game.map.units().kind_named("soldiers").unwrap();
+    for i in 0..(Simple::ENOUGH - 9) as u16 {
+        let id = game.map.new_unit_of(Side::Red, soldiers).unwrap();
+        game.map.place_unit(id, Hex::new(10 + i / 8, 1 + i % 8)).unwrap();
+    }
+    let redhold = game.map.city_at(REDHOLD).unwrap().id;
+    game.map.set_production(redhold, Some(0));
+    // Its first order: Redhold stops.
+    let mut agent = Simple::default();
+    use hexgame::agents::Agent;
+    assert_eq!(agent.next_order(&game, Side::Red), Order::Build { city: redhold, what: None });
+    // One unit fewer, and it would build.
+    let one = at(&game, Hex::new(11, 1))[0];
+    game.map.kill_unit(one);
+    assert_ne!(agent.next_order(&game, Side::Red), Order::Build { city: redhold, what: None });
+}
+
+#[test]
+fn games_on_the_continent_end() {
+    // The agents against each other on the example map, with the game's
+    // defaults: someone wins.
+    let (game, _) = Game::load(&common::assets().join("maps/continent")).unwrap();
+    let mut setup = Setup::solo(&game.map, None, "simple");
+    setup.seats.iter_mut().for_each(|seat| seat.controller = Controller::Computer("simple".to_string()));
+    setup.seed = 2;
+    let mut game = game.with_setup(setup);
+    let outcome = headless::play(&mut game, 200, &mut |_, _| {}).unwrap();
+    assert!(outcome.winner.is_some(), "{}", headless::summary(&outcome));
 }

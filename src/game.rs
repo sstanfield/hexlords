@@ -7,13 +7,13 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::orders::{Event, Order};
+use crate::orders::{Event, Order, Record};
 use crate::setup::{Controller, Setup, TurnOrder, WhenOut};
 use crate::state::combat::{self, Fighter};
 use crate::state::scenario::{self, Scenario, side_name};
 use crate::state::{
     CityId, Direction, Hex, MAX_STACK, Map, MoveRange, Rng, Side, TileType, Unit, UnitId, compute_range, hostile,
-    step_toward,
+    step_toward_with,
 };
 
 /// The agent that passes its turns: the computer's, when nothing else is said.
@@ -87,8 +87,13 @@ pub struct Game {
     /// The round: every side once. 1 at the start.
     round: u32,
     rng: Rng,
-    /// The last order, if it can be taken back.
+    /// The last order, if it can be taken back, and how long the history
+    /// was before it.
     undo: Option<Undo>,
+    undo_mark: usize,
+    /// What has happened: the battles, the cities that changed hands, the
+    /// sides that went out (`Game::history`).
+    history: Vec<Record>,
     /// The sides that are out, in the order they went.
     out: Vec<Side>,
     winner: Option<Side>,
@@ -125,6 +130,8 @@ impl Game {
             out: Vec::new(),
             winner: None,
             undo: None,
+            undo_mark: 0,
+            history: Vec::new(),
         }
     }
 
@@ -215,11 +222,31 @@ impl Game {
         if order == Order::Undo {
             return self.take_back(side, last);
         }
+        let (round, mark) = (self.round, self.history.len());
         let done = self.carry_out(side, order);
-        if done.is_err() {
-            self.undo = last; // nothing changed: it can still be taken back
+        match &done {
+            Ok(events) => {
+                self.remember(round, side, events);
+                self.undo_mark = mark;
+            }
+            Err(_) => self.undo = last, // nothing changed: it can still be taken back
         }
         done
+    }
+
+    /// Keep what an order of `turn`'s, in `round`, did that is worth keeping:
+    /// not the moves (there are too many, and they say little afterwards), the
+    /// turns' beginnings, or an undo.
+    fn remember(&mut self, round: u32, turn: Side, events: &[Event]) {
+        let kept = events.iter().filter(|e| !matches!(e, Event::Moved { .. } | Event::Began { .. } | Event::Undone));
+        self.history.extend(kept.map(|event| Record { round, turn, event: event.clone() }));
+    }
+
+    /// What has happened in the game, oldest first: every battle, every city
+    /// taken, every unit built, every side out, and the winner, with the
+    /// round and whose turn it was. An order that was taken back is not in it.
+    pub fn history(&self) -> &[Record] {
+        &self.history
     }
 
     /// True if the last order can be taken back (`Order::Undo`).
@@ -240,7 +267,9 @@ impl Game {
                     }
                 }
                 let lead = lead.ok_or("no units")?;
-                let (hex, _) = step_toward(&self.map, lead, to).ok_or("there is no way there")?;
+                // As far as there is room for all of them.
+                let room = |hex: Hex| self.fits(hex, &units);
+                let (hex, _) = step_toward_with(&self.map, lead, to, &room).ok_or("there is no way there")?;
                 let map = &self.map;
                 let coming: Vec<UnitId> = units
                     .iter()
@@ -268,6 +297,7 @@ impl Game {
 
     /// Take back the last order (`last`), which is `side`'s, this turn.
     fn take_back(&mut self, side: Side, last: Option<Undo>) -> Result<Vec<Event>, String> {
+        let mark = self.undo_mark;
         match last.ok_or("there is nothing to undo")? {
             Undo::Moved { units, to, stacks, taken } => {
                 for (id, _, _) in &units {
@@ -303,6 +333,8 @@ impl Game {
                 }
             }
         }
+        // What it did never happened.
+        self.history.truncate(mark);
         Ok(vec![Event::Undone])
     }
 
@@ -345,6 +377,10 @@ impl Game {
         }
         let mut events = Vec::new();
         if hostile(&self.map, side, to) {
+            // An attack is a stack: as many as a hex holds, from wherever.
+            if !self.fits(Hex::new(u16::MAX, u16::MAX), &ids) {
+                return Err(format!("at most {MAX_STACK} units and a commander attack together"));
+            }
             let (won, battle) = self.battle(side, &ids, to);
             events.push(battle);
             if !won {
@@ -387,7 +423,8 @@ impl Game {
         }
     }
 
-    /// True if `ids` all have room on `to` together (with who is there).
+    /// True if `ids` all have room on `to` together (with who is there; on a
+    /// hex off the map, nobody is).
     fn fits(&self, to: Hex, ids: &[UnitId]) -> bool {
         let here: Vec<UnitId> = self.map.units_at(to).iter().copied().filter(|u| !ids.contains(u)).collect();
         let all = || here.iter().chain(ids);
@@ -452,6 +489,8 @@ impl Game {
         let defender = d.first().map_or(Side::Grey, |f| f.unit.side);
         let battle = combat::fight(&a, &d, &self.setup.combat, &mut self.rng);
         let lost = |s: Side| battle.dead.iter().filter(|u| u.side == s).count();
+        let units = self.map.units();
+        let dead = battle.dead.iter().filter_map(|id| units.get(*id)).map(|u| (u.side(), u.name.clone())).collect();
         let event = Event::Battle {
             at,
             attacker: side,
@@ -461,6 +500,7 @@ impl Game {
             attackers_lost: lost(side),
             defenders_lost: lost(defender),
             won: battle.attackers_won,
+            dead,
         };
         for unit in &battle.dead {
             self.map.kill_unit(*unit);

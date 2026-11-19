@@ -17,7 +17,7 @@ use crate::game::Game;
 use crate::orders::{Event, Order};
 use crate::setup::Controller;
 use crate::state::scenario::{side_name, side_named};
-use crate::state::{Hex, Side, UnitId, compute_range, step_toward};
+use crate::state::{Hex, MAX_STACK, Side, UnitId, compute_range, step_toward};
 
 /// What a side's agent is asked for.
 pub trait Agent {
@@ -148,8 +148,30 @@ pub struct Simple {
 impl Simple {
     /// How many units stay in each of its cities.
     pub const KEEP: usize = 2;
-    /// The odds, in percent, it attacks at.
+    /// The odds, in percent, it attacks at; and at which it attacks with
+    /// more than a stack in reach, the first of several.
     pub const DARE: u32 = 60;
+    pub const WEAR: u32 = 15;
+    /// It stops building when it has this many units for each of its cities
+    /// (until there is gold to say when to stop).
+    pub const ENOUGH: usize = 2 * (MAX_STACK + 1);
+}
+
+/// Of these units, as many as attack together (a hex's worth: the
+/// strongest [`MAX_STACK`] and a commander), the strongest first.
+fn strongest_stack(game: &Game, mut units: Vec<UnitId>) -> Vec<UnitId> {
+    let map = &game.map;
+    units.sort_by_key(|id| std::cmp::Reverse(map.units().get(*id).map_or(0, |u| u.strength)));
+    let (mut soldiers, mut leader) = (0, false);
+    units.retain(|id| {
+        if map.is_commander(*id) {
+            !std::mem::replace(&mut leader, true)
+        } else {
+            soldiers += 1;
+            soldiers <= MAX_STACK
+        }
+    });
+    units
 }
 
 impl Agent for Simple {
@@ -159,8 +181,15 @@ impl Agent for Simple {
             self.done.clear();
         }
         let map = &game.map;
-        let idle = map.cities().iter().find(|c| c.side == side && c.building.is_none() && !c.units.is_empty());
-        if let Some(city) = idle {
+        let held = map.cities().iter().filter(|c| c.side == side).count();
+        if map.units().of_side(side).count() >= Simple::ENOUGH * held {
+            // Enough: its cities build nothing more for now.
+            if let Some(city) = map.cities().iter().find(|c| c.side == side && c.building.is_some()) {
+                return Order::Build { city: city.id, what: None };
+            }
+        } else if let Some(city) =
+            map.cities().iter().find(|c| c.side == side && c.building.is_none() && !c.units.is_empty())
+        {
             let best = city
                 .units
                 .iter()
@@ -187,13 +216,29 @@ impl Agent for Simple {
         // An attack: all the free units that can get to a target this turn,
         // from wherever they are, if together they are likely to win.
         let ranges: Vec<_> = free.iter().map(|u| (u.id(), compute_range(map, u))).collect();
-        for target in &targets {
+        // The cities first; then the other sides' stacks out in the field
+        // near its free units (in the way, it may be).
+        let mut field: Vec<Hex> = map
+            .units()
+            .iter()
+            .filter(|u| u.side() != side && map.contains(u.pos()) && map.city_at(u.pos()).is_none())
+            .map(|u| u.pos())
+            .filter(|h| free.iter().any(|u| u.pos().distance(*h) <= 4))
+            .collect();
+        field.sort_by_key(|h| (h.row, h.col));
+        field.dedup();
+        for target in targets.iter().chain(&field) {
             let able: Vec<UnitId> =
                 ranges.iter().filter(|(_, r)| r.cost(*target).is_some()).map(|(id, _)| *id).collect();
+            let more = able.len();
+            let able = strongest_stack(game, able);
             if able.is_empty() {
                 continue;
             }
-            if game.battle_odds(&able, *target).unwrap_or(100) >= Simple::DARE {
+            // Likely to win; or with more than a stack to send, likely
+            // enough to wear the defenders down for the next.
+            let odds = game.battle_odds(&able, *target).unwrap_or(100);
+            if odds >= Simple::DARE || (more > able.len() && odds >= Simple::WEAR) {
                 self.done.extend(able.iter().copied());
                 return Order::Move { units: able, to: *target };
             }

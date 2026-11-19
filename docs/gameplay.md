@@ -105,7 +105,9 @@ and the rules use integers, not floats.
    that run it many times): our own design, **made to be experimented
    with** (decided). Units sent into another side's units attack them; the
    two stacks fight until one is gone; the dead are gone; the attackers that
-   live go in (and take the city), or, if they lost, the defenders stay.
+   live go in (and take the city), or, if they lost, the defenders stay. An
+   attack is a stack: as many units as a hex holds (8 and a commander),
+   from one hex or from several.
    - **An exchange** between strengths `a` (the attacker's) and `b`: each
      side scores its strength times `10 - chance`, plus a draw from 0 to
      `chance` times the stronger's strength; the higher score wins, a tie
@@ -215,6 +217,11 @@ thing to happen. Ideas to try, as the rules grow:
 - **The next stack with points left**, a key away (built: N, and the Next
   stack button; C and Next city for the cities); End turn could warn of
   stacks that have done nothing.
+- **A log** (built): every battle a side fought, attacking or attacked,
+  with who won and who died; the cities it took and lost; the sides out.
+  The game keeps the history (`Game::history`); the log is what it says to
+  the side at the screen, and the news at the start of a turn is what came
+  since its last. (Fog of war will decide what more a side may hear.)
 - **Mistakes cost little** (built): a click that is not a move drops the
   selection, Esc drops it too, a drag moves the map rather than a unit, and
   the last order can be taken back (`Order::Undo`), unless chance had a say

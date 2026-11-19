@@ -45,6 +45,9 @@ pub enum Event {
         /// The attackers won: the defenders are gone, and the attackers that
         /// live stand on the hex (a `Moved` each follows).
         won: bool,
+        /// Who died, in the order they fell: each one's side and name (the
+        /// units themselves are gone).
+        dead: Vec<(Side, String)>,
     },
     /// A side's unit went into another's (or nobody's) city with nobody in it.
     Taken {
@@ -72,4 +75,13 @@ pub enum Event {
     Won {
         side: Side,
     },
+}
+
+/// Something that happened, as the game keeps it (`Game::history`): the
+/// event, the round, and the side whose turn it was.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Record {
+    pub round: u32,
+    pub turn: Side,
+    pub event: Event,
 }

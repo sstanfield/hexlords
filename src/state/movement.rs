@@ -105,6 +105,13 @@ pub fn hostile(map: &Map, side: Side, hex: Hex) -> bool {
 /// hex along that way that it can pay for (and that has room for it). `None`
 /// if there is no way there, or it cannot take the first step.
 pub fn step_toward(map: &Map, unit: &Unit, target: Hex) -> Option<(Hex, u32)> {
+    step_toward_with(map, unit, target, &|hex| map.has_room(hex, unit.id()))
+}
+
+/// [`step_toward`], where `room` says which hexes have room (for a stack
+/// that goes along with `unit`, say). Another side's units always have
+/// room: going in is an attack.
+pub fn step_toward_with(map: &Map, unit: &Unit, target: Hex, room: &dyn Fn(Hex) -> bool) -> Option<(Hex, u32)> {
     let costs = map.units().move_cost(unit.move_cost)?;
     let side = unit.side();
     let cols = usize::from(map.cols());
@@ -150,7 +157,7 @@ pub fn step_toward(map: &Map, unit: &Unit, target: Hex) -> Option<(Hex, u32)> {
     }
     way.into_iter().find_map(|hex| {
         let cost = best[index(hex)]?;
-        let room = hostile(map, side, hex) || map.has_room(hex, unit.id());
+        let room = hostile(map, side, hex) || room(hex);
         (cost <= unit.movement && room).then_some((hex, cost))
     })
 }

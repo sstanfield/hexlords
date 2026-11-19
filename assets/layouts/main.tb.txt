@@ -35,6 +35,9 @@ TBLayout: id: main_layout, axis: x, distribution: gravity, distribution-position
 		TBLayout: id: next_row, axis: x, spacing: 5
 			TBButton: id: next_stack, text: Next stack, is-focusable: 0, squeezable: 1
 			TBButton: id: next_city, text: Next city, is-focusable: 0, squeezable: 1
+		# What the game's history says to the player: its battles, the cities
+		# it took and lost (Session opens it).
+		TBButton: id: log, text: Log, is-focusable: 0
 		# The city on the selected hex, a line at a time, and a button that
 		# opens it in full (Session shows it when there is a city).
 		TBLayout: id: city_panel, axis: y, distribution-position: top, position: left, spacing: 0

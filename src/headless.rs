@@ -88,7 +88,7 @@ pub fn event_line(game: &Game, event: &Event) -> String {
         }
         Event::Built { city: id, unit } => format!("{} builds {}", city(*id), agents::unit_name(*unit)),
         Event::Began { side, round } => format!("round {round}: {}'s turn", side_name(*side)),
-        Event::Battle { at, attacker, defender, attackers, defenders, attackers_lost, defenders_lost, won } => {
+        Event::Battle { at, attacker, defender, attackers, defenders, attackers_lost, defenders_lost, won, .. } => {
             let (a, d) = (side_name(*attacker), side_name(*defender));
             let winner = if *won { a } else { d };
             format!(

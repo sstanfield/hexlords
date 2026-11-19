@@ -27,7 +27,8 @@ use crate::gui::build::{self, WindowParts};
 use crate::gui::{MapCommand, MapKey, RootCommand};
 use crate::help::{HelpSection, command_key};
 use crate::info;
-use crate::orders::{Event, Order};
+use crate::log_window::{self, LogWindow};
+use crate::orders::Order;
 use crate::render::{AssetDirs, unit_icon};
 use crate::screen::{MapScreen, Scene};
 use crate::setup::Controller;
@@ -63,6 +64,8 @@ pub const ALL_CITIES_ID: &str = "all_cities";
 pub const UNDO_ID: &str = "undo";
 pub const NEXT_STACK_ID: &str = "next_stack";
 pub const NEXT_CITY_ID: &str = "next_city";
+/// The button that opens the log (`log_window`).
+pub const LOG_ID: &str = "log";
 pub const MY_CITIES_ID: &str = "my_cities";
 pub const CITY_DETAILS_ID: &str = "city_details";
 /// The cover between two people's turns, and its button.
@@ -170,6 +173,7 @@ fn help_section() -> HelpSection {
             (&undo, "Take back the last move or city order (not a battle)"),
             ("N,  or  Next stack", "Select the next stack that can still move (Shift+N: the one before)"),
             ("C,  or  Next city", "Go to your next city (Shift+C: the one before)"),
+            ("L,  or  Log", "Your battles, with who won and who died, and the cities you took and lost"),
             (&end_turn, "End the turn: units get their moves back, cities work on what they build"),
             ("City details", "All about the selected city; set what it builds"),
             ("All cities, My cities", "A list of cities: see where one is, go to it, open it"),
@@ -200,8 +204,13 @@ pub struct Session {
     turn_row: WidgetId,
     next_row: WidgetId,
     undo: WidgetId,
-    /// How many lines of news the last order made (an undo takes them back).
-    last_news: usize,
+    /// The log, while it is open.
+    log: Option<LogWindow>,
+    /// How far each person at this screen has read the game's history: their
+    /// news, at the start of their turn, is what came after; and those told
+    /// they are out.
+    seen: Vec<(Side, usize)>,
+    told_out: Vec<Side>,
     /// The hex of the stack Next stack went to last.
     cycled: Option<Hex>,
     /// The windows about cities, while they are open.
@@ -219,9 +228,8 @@ pub struct Session {
     /// A new game was asked for (the game over window's button).
     wants_new_game: bool,
     /// The window of a few lines (a battle's report, the news), while it is
-    /// open; and the news kept for the people at this screen until their turn.
+    /// open.
     notice: Option<WindowParts>,
-    news: Vec<(Side, String)>,
 }
 
 impl Session {
@@ -266,7 +274,9 @@ impl Session {
             turn_row: find(&screen, "turn_row")?,
             next_row: find(&screen, "next_row")?,
             undo: find(&screen, UNDO_ID)?,
-            last_news: 0,
+            log: None,
+            seen: Vec::new(),
+            told_out: Vec::new(),
             cycled: None,
             city_window: None,
             city_list: None,
@@ -277,7 +287,6 @@ impl Session {
             game_over: None,
             wants_new_game: false,
             notice: None,
-            news: Vec::new(),
             screen,
         };
         session.apply_layout_sizes();
@@ -291,12 +300,14 @@ impl Session {
     /// The person whose turn it is has done: the next side's turn, then the
     /// computer's, until a person's.
     pub fn end_turn(&mut self) {
-        if self.cover.is_some() || self.screen.game.winner().is_some() {
+        let game = &self.screen.game;
+        // Only a person's turn is the screen's to end (once nobody here is in
+        // the game, the computer plays on by itself).
+        let person = game.controller(game.player()) == Some(&Controller::Person);
+        if self.cover.is_some() || game.winner().is_some() || !person {
             return;
         }
-        let side = self.screen.game.player();
-        let events = self.screen.game.end_turn();
-        self.record(&events, side);
+        self.screen.game.end_turn();
         self.turn_passed();
     }
 
@@ -314,16 +325,17 @@ impl Session {
                 break;
             }
             let Some(agent) = self.agents.get_mut(side) else { break };
-            let report = agents::play_turn(&mut self.screen.game, agent);
-            self.record(&report.events, side);
-            if self
-                .screen
-                .game
-                .order()
-                .iter()
-                .all(|s| !matches!(self.screen.game.controller(*s), Some(Controller::Person)))
-            {
-                break; // nobody plays at this screen: a turn a frame
+            agents::play_turn(&mut self.screen.game, agent);
+            if !self.people_in_play() {
+                break; // nobody here plays any more: a turn a frame
+            }
+        }
+        // The last person here went out in the computer's turns: they hear
+        // of it, once.
+        if !self.people_in_play() {
+            if let Some(side) = self.last_person.filter(|s| !self.told_out.contains(s)) {
+                self.told_out.push(side);
+                self.show_news_to(side);
             }
         }
         let game = &self.screen.game;
@@ -344,8 +356,8 @@ impl Session {
 
     /// Cover the map until `side`'s person says they are there.
     fn open_cover(&mut self, side: Side) {
-        self.close_top_window();
-        self.close_top_window();
+        // Nothing of the last person's stays open for the next to see.
+        while self.close_top_window() {}
         let root = self.screen.root_window();
         let ui = &mut self.screen.ui;
         let parts = build::cover(ui, root, COVER_ID);
@@ -587,6 +599,10 @@ impl Session {
             side => format!("End {}'s turn", side_name(side)),
         };
         self.end_turn.set(&mut self.screen, &label);
+        // It is a person's to press, on their turn.
+        let game = &self.screen.game;
+        let theirs = game.controller(game.player()) == Some(&Controller::Person) && game.winner().is_none();
+        self.screen.ui.set_disabled(self.end_turn.widget, !theirs);
         // Undo is there while there is something to take back.
         let undo = self.screen.game.can_undo();
         self.screen.ui.set_disabled(self.undo, !undo);
@@ -599,6 +615,13 @@ impl Session {
     /// The windows about cities: forget those that were closed, and bring the
     /// others up to date.
     fn refresh_windows(&mut self) {
+        // The log says what the history says now, to the player of now.
+        let viewer = self.viewer();
+        match &self.log {
+            Some(log) if !log.is_open(&self.screen.ui) => self.log = None,
+            Some(log) if log.stale(&self.screen.game, viewer) => self.open_log(),
+            _ => {}
+        }
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
         if let Some(window) = &mut self.city_window {
             if !window.is_open(ui) || !window.refresh(ui, &game.map, game.player()) {
@@ -671,6 +694,12 @@ impl Session {
                 return true;
             }
         }
+        if let Some(log) = self.log.take() {
+            if log.is_open(ui) {
+                log.close(ui);
+                return true;
+            }
+        }
         if let Some(window) = self.city_window.take() {
             window.close(ui);
             return true;
@@ -687,9 +716,7 @@ impl Session {
         match order {
             CityOrder::SetProduction(id, what) => {
                 // An order: only the city's holder, if that is the player.
-                if self.screen.game.apply(Order::Build { city: id, what }).is_ok() {
-                    self.last_news = 0;
-                }
+                let _ = self.screen.game.apply(Order::Build { city: id, what });
             }
             CityOrder::Details(id) => self.open_city(id),
             CityOrder::GoTo(id) => {
@@ -798,16 +825,56 @@ impl Session {
     /// from now on.
     fn choose(&mut self, hex: Hex) {
         let side = self.screen.game.player();
-        match self.screen.game.select_hex(hex) {
-            SelectOutcome::Fought(events) => {
-                let lines = info::battle_lines(&self.screen.game.map, &events);
-                self.open_notice("Battle", &lines);
-                self.record(&events, side);
-            }
-            SelectOutcome::Moved { events, .. } => self.record(&events, side),
-            _ => {}
+        let before = self.screen.game.history().len();
+        if let SelectOutcome::Fought(_) = self.screen.game.select_hex(hex) {
+            // The report: what the history says of it to the attacker.
+            let game = &self.screen.game;
+            let records = game.history().get(before..).unwrap_or_default();
+            let lines: Vec<String> = records.iter().flat_map(|r| info::record_lines(&game.map, r, side)).collect();
+            self.open_notice("Battle", &lines);
         }
         self.shown = hex;
+    }
+
+    /// Open the log (the Log button, L), or close it if it is open.
+    pub fn toggle_log(&mut self) {
+        if let Some(log) = self.log.take() {
+            if log.is_open(&self.screen.ui) {
+                log.close(&mut self.screen.ui);
+                return;
+            }
+        }
+        self.open_log();
+    }
+
+    fn open_log(&mut self) {
+        if self.covered() {
+            return;
+        }
+        if let Some(old) = self.log.take() {
+            old.close(&mut self.screen.ui);
+        }
+        let root = self.screen.root_window();
+        let area = self.window_area();
+        let side = self.viewer();
+        self.log = Some(LogWindow::open(&mut self.screen.ui, root, &self.screen.game, side, (area, (0.5, 0.3))));
+        self.screen.settle();
+    }
+
+    /// Whose log the screen shows: the person whose turn it is, or, in the
+    /// computer's turns, the person who played last.
+    fn viewer(&self) -> Side {
+        let game = &self.screen.game;
+        let side = game.player();
+        if game.controller(side) == Some(&Controller::Person) { side } else { self.last_person.unwrap_or(side) }
+    }
+
+    /// What the log says, while it is open (none while it is closed).
+    pub fn log_lines(&self) -> Vec<String> {
+        self.log
+            .as_ref()
+            .filter(|log| log.is_open(&self.screen.ui))
+            .map_or(Vec::new(), |log| log.lines(&self.screen.ui))
     }
 
     /// Take back the last order (the Undo button, Ctrl+Z): the units go back
@@ -816,9 +883,6 @@ impl Session {
         if self.covered() || self.screen.game.apply(Order::Undo).is_err() {
             return;
         }
-        // What it told the others is untold.
-        let kept = self.news.len().saturating_sub(std::mem::take(&mut self.last_news));
-        self.news.truncate(kept);
         let game = &mut self.screen.game;
         if let Some(pos) = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos()) {
             game.set_cursor(pos);
@@ -856,27 +920,30 @@ impl Session {
         self.shown = hex;
     }
 
-    /// Keep what `actor` did that is news to the others who play at this
-    /// screen: a battle they fought, a city they lost.
-    fn record(&mut self, events: &[Event], actor: Side) {
-        let game = &self.screen.game;
-        let before = self.news.len();
-        for seat in game.setup().seats.iter().filter(|s| s.controller == Controller::Person && s.side != actor) {
-            for event in events {
-                if let Some(line) = info::news_line(&game.map, event, seat.side) {
-                    self.news.push((seat.side, line));
-                }
-            }
-        }
-        self.last_news = self.news.len() - before;
+    /// A person's turn begins (they are at the screen): what happened to
+    /// them in the others' turns since they last read the history, in a
+    /// window, if anything did. (All of it stays in the log.)
+    fn show_news(&mut self) {
+        self.show_news_to(self.screen.game.player());
     }
 
-    /// A person's turn begins (they are at the screen): what happened to
-    /// them since their last, in a window, if anything did.
-    fn show_news(&mut self) {
-        let side = self.screen.game.player();
-        let lines: Vec<String> = self.news.iter().filter(|(s, _)| *s == side).map(|(_, l)| l.clone()).collect();
-        self.news.retain(|(s, _)| *s != side);
+    /// True while a side that a person plays at this screen is still in the
+    /// game.
+    fn people_in_play(&self) -> bool {
+        let game = &self.screen.game;
+        game.order().iter().any(|s| !game.out().contains(s) && game.controller(*s) == Some(&Controller::Person))
+    }
+
+    fn show_news_to(&mut self, side: Side) {
+        let length = self.screen.game.history().len();
+        let from = match self.seen.iter_mut().find(|(s, _)| *s == side) {
+            Some((_, seen)) => std::mem::replace(seen, length),
+            None => {
+                self.seen.push((side, length));
+                0
+            }
+        };
+        let lines = info::news(&self.screen.game, side, from);
         if !lines.is_empty() {
             self.open_notice("While you waited", &lines);
         }
@@ -970,12 +1037,19 @@ impl Session {
                 }
                 RootCommand::Click(id) if id == TbId::new(NEXT_STACK_ID) => self.next_stack(false),
                 RootCommand::Click(id) if id == TbId::new(NEXT_CITY_ID) => self.next_city(false),
+                RootCommand::Click(id) if id == TbId::new(LOG_ID) => self.toggle_log(),
+                RootCommand::Click(id) if id == TbId::new(log_window::LOG_CLOSE_ID) => {
+                    if let Some(log) = self.log.take() {
+                        log.close(&mut self.screen.ui);
+                    }
+                }
                 RootCommand::Key(ch, mods) if !mods.intersects(Modifiers::CTRL | Modifiers::SUPER | Modifiers::ALT) => {
                     match ch {
                         'n' => self.next_stack(false),
                         'N' => self.next_stack(true),
                         'c' => self.next_city(false),
                         'C' => self.next_city(true),
+                        'l' | 'L' => self.toggle_log(),
                         _ => {}
                     }
                 }

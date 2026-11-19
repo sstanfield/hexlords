@@ -53,6 +53,7 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | Undo, or Ctrl+Z (Cmd+Z) | Take back the last move or city order, unless it was a battle (chance had a say) or put a side out: the units are back where they were, with their points, selected |
 | Next stack, or N (Shift+N: back) | Select the next of your stacks that can still move, and look at it |
 | Next city, or C (Shift+C: back) | Look at your next city (and drop the selection) |
+| Log, or L | Your log: every battle you fought, attacking or attacked, with who won and who died on each side; the cities you took and lost; who is out. The latest round first |
 | Point at a unit under the map | A box over it says all about the unit: its side, numbers, and what each terrain costs it to enter |
 | Click a unit under the map | Take that unit into the selection, or leave it out (a unit of another hex starts a new one): the reach of those selected shows on the map, and the line under the units is about them |
 | Two fingers on a trackpad, or the mouse wheel, over the map | The map moves with the fingers (a wheel moves it up and down, and sideways with Shift) |
@@ -106,16 +107,20 @@ only its cities can be set to build ("my cities"); End turn passes to the
 next side, and the computer plays its sides' turns at once. A side's turn
 begins with its units' points back and its cities' work. A city of another
 side, or nobody's, with nobody in it, is taken by moving into it. Units sent
-into another side's units attack them: the two stacks fight until one is
-gone, and if the attackers win they go in (and take the city, if it is one).
+into another side's units attack them, as many as a hex holds (from one hex
+or several): the two stacks fight until one is gone, and if the attackers
+win they go in (and take the city, if it is one).
 Strength counts, and so do chance, the ground (hills and forests 1, mountains
 2), a city's walls and a commander, who makes every other unit of its stack 1
 stronger (or as much as its kind says). A window says how a battle went;
 what was done to a person while others played is told when their turn
-begins. A side that loses its last city is out, and the last side left
+begins, and the log keeps all of it. When the last person is out, the
+computer plays on, a turn a frame, to the end. A side that loses its last city is out, and the last side left
 wins. Gold is a rule still to come ([docs/gameplay.md](docs/gameplay.md)).
 
 ![A battle, and the window that says how it went](docs/screenshots/battle.png)
+
+![A side's log: the battles it fought and the cities it lost](docs/screenshots/log.png)
 
 ## Options
 
