@@ -9,7 +9,10 @@ use turbo_ferret::{Ctx, Event, EventKind, Modifiers, SpecialKey, TbId, Widget};
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum RootCommand {
     Quit,
+    /// F11, or Ctrl+Cmd+F (macOS keeps F11 for itself).
     ToggleFullscreen,
+    /// F1, or `?`: open or close the help window.
+    Help,
     /// A click on the widget with this id that nothing consumed: a button.
     Click(TbId),
     /// A character key went down and nothing consumed it. With the map focused
@@ -42,7 +45,9 @@ impl Widget for RootWindow {
 
     /// C++: RootWidget::OnEvent. Three changes: plain `f` and `q` are not swallowed
     /// (deviation D9), Cmd+Q quits as well as Ctrl+Q (D16), and F11 asks for a
-    /// real fullscreen switch where the C++ called a stub (D17).
+    /// real fullscreen switch where the C++ called a stub (D17). Since then:
+    /// Ctrl+Cmd+F switches fullscreen too (macOS's own key for it: the system
+    /// takes F11 there), and F1 or `?` asks for the help.
     fn on_event(&mut self, cx: &mut Ctx, ev: &Event) -> bool {
         if ev.kind == EventKind::Click {
             if let Some(id) = cx.node(ev.target).map(|n| n.id()).filter(|id| *id != TbId::NONE) {
@@ -57,10 +62,23 @@ impl Widget for RootWindow {
             self.commands.push(RootCommand::ToggleFullscreen);
             return true;
         }
+        if ev.special == SpecialKey::F1 {
+            self.commands.push(RootCommand::Help);
+            return true;
+        }
+        let command = ev.mods.intersects(Modifiers::CTRL | Modifiers::SUPER);
         match ev.key.map(|c| c.to_ascii_lowercase()) {
+            Some('f') if ev.mods.contains(Modifiers::CTRL | Modifiers::SUPER) && !ev.mods.contains(Modifiers::ALT) => {
+                self.commands.push(RootCommand::ToggleFullscreen);
+                true
+            }
+            Some('?') if !command && !ev.mods.contains(Modifiers::ALT) => {
+                self.commands.push(RootCommand::Help);
+                true
+            }
             // C++: `nextFullscreen`, a stub that does nothing.
             Some('f') if ev.mods.contains(Modifiers::ALT) => true,
-            Some('q') if ev.mods.intersects(Modifiers::CTRL | Modifiers::SUPER) => {
+            Some('q') if command => {
                 self.commands.push(RootCommand::Quit);
                 true
             }

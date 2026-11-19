@@ -55,7 +55,8 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | Arrow keys | Move the cursor; the view follows when the cursor leaves it, and comes back to it if it was moved away |
 | `1` / `2` | Zoom out / in, centered on the cursor |
 | The End turn button, or Ctrl+T (Cmd+T) | The turn is over: every unit has its movement points back |
-| F11 | Fullscreen on and off |
+| F1, or `?` | The help: every key and what the mouse does (Esc closes it) |
+| Ctrl+Cmd+F, or F11 | Fullscreen on and off (macOS keeps F11 for itself) |
 | Ctrl+Q (or Cmd+Q) | Quit |
 
 A unit is a disc in its side's color with the sign of its kind. A city shows
@@ -205,7 +206,8 @@ live window there. The map editor has only been driven by tests and scripted
 screenshots: nobody has used its live window yet. **Linux and Windows have not been run**: CI
 (`.github/workflows/ci.yml`) builds and tests on all three, and has itself not
 run yet. Things to try by hand on each: the mouse (hover, click to select and
-move), the keys above, resizing the window, a HiDPI and a plain screen, F11.
+move), the keys above, resizing the window, a HiDPI and a plain screen, F11
+and F1.
 
 ## Licences
 

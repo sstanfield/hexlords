@@ -112,9 +112,14 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
 - **One window host, many scenes:** the game and each tool are a `Scene` on a
   `MapScreen`, run by the same `App`. What every window needs (the map
   widgets, the cursor and zoom keys, the minimap, quit and fullscreen, the
-  screenshot mode, scripts) goes into `MapScreen`, `App` or `script`, not into
-  one scene. A layout file for a map screen has widgets with the ids
-  `main_layout`, `main_map` and `mini_map`.
+  help window, the screenshot mode, scripts) goes into `MapScreen`, `App` or
+  `script`, not into one scene. A layout file for a map screen has widgets
+  with the ids `main_layout`, `main_map` and `mini_map`.
+- **The help says every key** (F1 or `?`, `src/help.rs`): the keys every
+  window shares are in `help::map_section` and `help::window_section`, and a
+  scene gives its own with `MapScreen::set_help`. A new key or click goes into
+  the help in the same change. macOS keeps F11 (and often F1) for itself:
+  every key of the window has another that works there (Ctrl+Cmd+F, `?`).
 - **Moving the map is the screen's business:** the wheel, a trackpad's two
   fingers and a drag with the right or the middle button never reach a
   widget. `App` turns miniquad's numbers into pixels (`app::Wheel`, which

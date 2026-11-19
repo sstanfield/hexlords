@@ -184,10 +184,11 @@ fn the_map_records_its_keys_and_consumes_them() {
         assert!(s.screen.ui.key(None, special, Modifiers::NONE, false), "{special:?} up is consumed");
         assert_eq!(map_commands(&mut s), [], "a release records nothing");
     }
-    // Esc is consumed, down and up, and does nothing.
+    // Esc is consumed, down and up; it closes the help, if it is open, and
+    // does nothing else.
     assert!(down(&mut s, SpecialKey::Esc));
     assert!(s.screen.ui.key(None, SpecialKey::Esc, Modifiers::NONE, false));
-    assert_eq!(map_commands(&mut s), []);
+    assert_eq!(map_commands(&mut s), [MapCommand::Key(MapKey::Esc)]);
 
     // 1 and 2 zoom.
     assert!(s.screen.ui.key(Some('1'), SpecialKey::None, Modifiers::NONE, true));
@@ -317,15 +318,23 @@ fn cmd_q_quits_too() {
 }
 
 #[test]
-fn f11_asks_for_fullscreen_and_alt_f_is_consumed() {
+fn f11_and_ctrl_cmd_f_ask_for_fullscreen_and_alt_f_is_consumed() {
     let mut s = session();
     assert!(s.screen.ui.key(None, SpecialKey::F11, Modifiers::NONE, true));
     assert!(!s.screen.ui.key(None, SpecialKey::F11, Modifiers::NONE, false));
     s.pump();
     assert_eq!(s.screen.take_fullscreen_toggles(), 1);
     assert_eq!(s.screen.take_fullscreen_toggles(), 0);
+    // Ctrl+Cmd+F too: macOS takes F11 for itself, and that is its own key
+    // for fullscreen. Ctrl+F or Cmd+F alone is not it.
+    assert!(s.screen.ui.key(Some('f'), SpecialKey::None, Modifiers::CTRL | Modifiers::SUPER, true));
+    s.pump();
+    assert_eq!(s.screen.take_fullscreen_toggles(), 1);
+    assert!(!s.screen.ui.key(Some('f'), SpecialKey::None, Modifiers::CTRL, true));
+    assert!(!s.screen.ui.key(Some('f'), SpecialKey::None, Modifiers::SUPER, true));
     // Alt+F did nothing in the C++ either (its handler was a stub).
     assert!(s.screen.ui.key(Some('f'), SpecialKey::None, Modifiers::ALT, true));
+    assert!(s.screen.ui.key(Some('f'), SpecialKey::None, Modifiers::ALT | Modifiers::CTRL | Modifiers::SUPER, true));
     assert!(!s.screen.ui.key(Some('f'), SpecialKey::None, Modifiers::NONE, true));
     s.pump();
     assert_eq!(s.screen.take_fullscreen_toggles(), 0);

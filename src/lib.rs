@@ -12,6 +12,7 @@
 //! - [`render`]: drawing with miniquad; the geometry is built without a GPU.
 //! - [`screen`]: the UI, a map and its views together, without a window: what
 //!   the game and the tools share (tests drive it).
+//! - [`help`]: what the help window says (every window has one, on F1).
 //! - [`session`]: the game on a map screen.
 //! - [`script`]: scripted input, for screenshots and tests.
 //! - [`app`]: the window (a miniquad `EventHandler`) that runs a scene.
@@ -23,6 +24,7 @@
 pub mod app;
 pub mod game;
 pub mod gui;
+pub mod help;
 pub mod info;
 pub mod minimap_view;
 pub mod paths;

@@ -9,7 +9,8 @@
 //! minimap through the widgets, and what the widgets never see (the wheel, a
 //! trackpad's two fingers, a drag with the right button) through
 //! [`MapScreen::scroll`], [`MapScreen::zoom_at`] and [`MapScreen::grab`],
-//! which the window calls.
+//! which the window calls. So is the help window (F1, or `?`): every key, the
+//! ones all windows share and the scene's own ([`MapScreen::set_help`]).
 //!
 //! C++: src/Application.cpp Application (the Turbo Badger setup and the frame),
 //! src/gui/mapwidget.cpp MapWidget::OnEvent (the cursor and zoom keys)
@@ -17,12 +18,16 @@
 use std::path::Path;
 
 use turbo_ferret::font::DEFAULT_FONT;
+use turbo_ferret::layout::stack::{LayoutDistributionPosition, LayoutPosition};
+use turbo_ferret::widgets::{Button, Layout, ResizeFit, TextAlign, TextField, Window, WindowSettings};
 use turbo_ferret::{
-    Config, FontDesc, FsLoader, Gravity, LayoutParams, Point, Rect, Services, Size, Ui, WidgetId, tbid,
+    Axis, Config, FontDesc, FsLoader, Gravity, LayoutParams, Point, Rect, Services, Size, SpecialKey, TbId, Ui,
+    WidgetId, tbid,
 };
 
 use crate::game::Game;
 use crate::gui::{self, MapCommand, MapKey, MapWidget, MiniMapCommand, MiniMapWidget, RootCommand, RootWindow};
+use crate::help::{self, HelpSection};
 use crate::minimap_view::MiniMapView;
 use crate::render::RANGE_OVERLAY;
 use crate::state::{Direction, Hex};
@@ -34,6 +39,14 @@ use crate::view::MapView;
 pub const MAIN_LAYOUT_ID: &str = "main_layout";
 pub const MAP_ID: &str = "main_map";
 pub const MINIMAP_ID: &str = "mini_map";
+/// The help window, and its button that closes it.
+pub const HELP_ID: &str = "help_window";
+pub const HELP_CLOSE_ID: &str = "help_close";
+/// The help's headings are drawn with this skin element (a color of their own).
+const HELP_HEADING_SKIN: &str = "HelpHeading";
+/// The space between the help's columns, and between its sections, in dp.
+const HELP_COLUMN_DP: i32 = 16;
+const HELP_SECTION_DP: i32 = 8;
 
 pub struct MapScreen {
     pub ui: Ui,
@@ -55,6 +68,10 @@ pub struct MapScreen {
     terrain_seen: u64,
     /// Where the pointer holds the main map (see [`MapScreen::grab`]).
     grab: Option<Point>,
+    /// The scene's own sections of the help, between the map's and the window's.
+    help_sections: Vec<HelpSection>,
+    /// The help window, while it is open.
+    help: Option<WidgetId>,
 }
 
 /// One of the screen's two maps.
@@ -129,7 +146,105 @@ impl MapScreen {
             minimap_dirty: true,
             terrain_seen,
             grab: None,
+            help_sections: Vec::new(),
+            help: None,
         })
+    }
+
+    /// The scene's own sections of the help (its keys and clicks), shown
+    /// between the map's and the window's. Takes effect the next time the help
+    /// opens.
+    pub fn set_help(&mut self, sections: Vec<HelpSection>) {
+        self.help_sections = sections;
+    }
+
+    /// Everything the help window says, section by section.
+    pub fn help(&self) -> Vec<HelpSection> {
+        help::sections(&self.help_sections)
+    }
+
+    /// True while the help window is open.
+    pub fn help_open(&self) -> bool {
+        self.help.is_some_and(|id| self.ui.node(id).is_some())
+    }
+
+    /// Open the help window, or close it if it is open.
+    pub fn toggle_help(&mut self) {
+        if self.help_open() {
+            self.close_help();
+        } else {
+            self.open_help();
+        }
+    }
+
+    /// Close the help window, if it is open.
+    pub fn close_help(&mut self) {
+        if let Some(id) = self.help.take() {
+            if self.ui.node(id).is_some() {
+                self.ui.close_window(id);
+            }
+        }
+    }
+
+    /// A window in the middle of the screen with every key: a column of what to
+    /// press and one of what it does, under a heading for each section, and a
+    /// button that closes it. It takes nothing from the map: the keyboard stays
+    /// there, and a click beside the window goes to whatever is under it.
+    fn open_help(&mut self) {
+        let dp = |ui: &Ui, dp: i32| ui.dimension_converter().dp_to_px(dp);
+        let mut window = Window::new("Help").with_settings(WindowSettings::TITLEBAR | WindowSettings::CLOSE_BUTTON);
+        window.animate = false;
+        let ui = &mut self.ui;
+        let win = ui.add(self.root_window, window);
+        ui.set_id(win, TbId::new(HELP_ID));
+        let mut column = Layout::new(Axis::Y);
+        column.position = LayoutPosition::LeftTop;
+        column.distribution_position = LayoutDistributionPosition::LeftTop;
+        column.spacing = Some(0);
+        let content = ui.add(win, column);
+        ui.set_gravity(content, Gravity::ALL);
+        let text = |ui: &mut Ui, parent: WidgetId, text: &str| {
+            let mut field = TextField::new(text);
+            field.align = TextAlign::Left;
+            ui.add(parent, field)
+        };
+        let mut keys = Vec::new();
+        for (i, section) in help::sections(&self.help_sections).iter().enumerate() {
+            if i > 0 {
+                let gap = ui.add(content, Layout::new(Axis::X));
+                ui.set_layout_params(gap, Some(LayoutParams::fixed(1, dp(ui, HELP_SECTION_DP))));
+            }
+            let heading = text(ui, content, &section.title);
+            ui.set_skin(heading, TbId::new(HELP_HEADING_SKIN));
+            for (press, what) in &section.rows {
+                let mut row = Layout::new(Axis::X);
+                row.position = LayoutPosition::LeftTop;
+                row.distribution_position = LayoutDistributionPosition::LeftTop;
+                row.spacing = Some(dp(ui, HELP_COLUMN_DP));
+                let row = ui.add(content, row);
+                keys.push(text(ui, row, press));
+                text(ui, row, what);
+            }
+        }
+        let gap = ui.add(content, Layout::new(Axis::X));
+        ui.set_layout_params(gap, Some(LayoutParams::fixed(1, dp(ui, HELP_SECTION_DP))));
+        let close = ui.add(content, Button::new("Close"));
+        ui.set_id(close, TbId::new(HELP_CLOSE_ID));
+        ui.set_focusable(close, false);
+        // The keys' column is as wide as its widest.
+        let width = keys.iter().map(|key| ui.preferred_size_free(*key).pref.w).max().unwrap_or(0);
+        for key in keys {
+            let mut lp = LayoutParams::default();
+            lp.set_width(width);
+            ui.set_layout_params(key, Some(lp));
+        }
+        let bounds = Rect::from_size(ui.rect(self.root_window).size());
+        let r = ui.fit_content_rect(win, ResizeFit::Preferred);
+        ui.set_rect(win, r.center_in(&bounds).move_in(&bounds).clip(&bounds));
+        // The content goes under the title, inside the window's padding.
+        let inside = ui.padding_rect(win);
+        ui.set_rect(content, inside);
+        self.help = Some(win);
     }
 
     /// Show another map: the views start over, on its cursor.
@@ -274,6 +389,7 @@ impl MapScreen {
                     }
                 }
                 MapKey::Enter => {}
+                MapKey::Esc => self.close_help(),
             },
             MapCommand::Release => {}
         }
@@ -419,6 +535,10 @@ impl MapScreen {
             match command {
                 RootCommand::Quit => self.quit = true,
                 RootCommand::ToggleFullscreen => self.fullscreen_toggles += 1,
+                RootCommand::Help => self.toggle_help(),
+                // The help's button, and Esc while it is open, close it.
+                RootCommand::Click(id) if id == TbId::new(HELP_CLOSE_ID) => self.close_help(),
+                RootCommand::Special(SpecialKey::Esc, _) if self.help_open() => self.close_help(),
                 other => rest.push(other),
             }
         }

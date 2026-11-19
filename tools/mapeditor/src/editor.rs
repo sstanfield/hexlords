@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use hexgame::game::{Game, describe_terrain};
 use hexgame::gui::{MapCommand, MapKey, RootCommand};
+use hexgame::help::{HelpSection, command_key};
 use hexgame::screen::{MapScreen, Scene};
 use hexgame::state::{Hex, Map, TileType, scenario};
 use turbo_ferret::{LayoutParams, Modifiers, Point, Size, SpecialKey, TbId, WidgetId, tbid};
@@ -89,6 +90,24 @@ struct Widgets {
     redo: WidgetId,
 }
 
+/// The editor's keys and clicks, for the help window (F1).
+fn help_section() -> HelpSection {
+    let cmd = command_key();
+    let (save, undo, redo) = (format!("{cmd}+S"), format!("{cmd}+Z"), format!("{cmd}+Shift+Z  or  {cmd}+Y"));
+    HelpSection::new(
+        "Editing",
+        &[
+            ("A terrain's letter", "Choose it, and paint it at the cursor (the buttons say which)"),
+            ("Click or drag on the map", "Use the tool: paint, fill, lay a road or take one up"),
+            ("Enter  or  Space", "Use the tool at the cursor"),
+            ("[  /  ]", "A smaller  /  bigger brush"),
+            (&save, "Save"),
+            (&undo, "Undo"),
+            (&redo, "Redo"),
+        ],
+    )
+}
+
 pub struct Editor {
     pub screen: MapScreen,
     widgets: Widgets,
@@ -125,7 +144,8 @@ impl Editor {
     /// the layout from the asset directory, editing `map`, which came from (or
     /// will be saved to) `path`.
     pub fn new(assets: &Path, viewport: Size, dpi: i32, map: Map, path: Option<PathBuf>) -> Result<Editor, String> {
-        let screen = MapScreen::new(assets, viewport, dpi, LAYOUT, Game::new(map))?;
+        let mut screen = MapScreen::new(assets, viewport, dpi, LAYOUT, Game::new(map))?;
+        screen.set_help(vec![help_section()]);
         let find = |name: &str| {
             screen.ui.find(screen.ui.root(), TbId::new(name)).ok_or(format!("{LAYOUT}: no widget with id {name}"))
         };

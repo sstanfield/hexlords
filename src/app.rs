@@ -443,14 +443,21 @@ impl<S: Scene> EventHandler for App<S> {
     }
 
     fn char_event(&mut self, character: char, keymods: KeyMods, repeat: bool) {
+        // A held `?` must not open and close the help on every repeat.
+        if repeat && character == '?' {
+            return;
+        }
         self.tick();
         self.input.char_event(&mut self.scene.screen_mut().ui, character, keymods, repeat);
         self.after_input();
     }
 
     fn key_down_event(&mut self, keycode: KeyCode, keymods: KeyMods, repeat: bool) {
-        // A held F11 must not flip fullscreen on every repeat of the key.
-        if repeat && keycode == KeyCode::F11 {
+        // A held key that switches something on and off (F11 or Ctrl+Cmd+F for
+        // fullscreen, F1 for the help: see `RootWindow`) must not flip it on
+        // every repeat of the key.
+        let fullscreen = keycode == KeyCode::F11 || (keycode == KeyCode::F && keymods.ctrl && keymods.logo);
+        if repeat && (fullscreen || keycode == KeyCode::F1) {
             return;
         }
         self.tick();

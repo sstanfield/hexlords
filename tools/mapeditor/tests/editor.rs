@@ -821,3 +821,24 @@ fn the_format_page_shows_the_example_map() {
     assert_eq!((report.rows, report.cols), (20, 30));
     assert!(report.counts.iter().all(|n| *n > 0), "{:?}", report.counts);
 }
+
+#[test]
+fn f1_opens_the_editors_help() {
+    let mut e = editor();
+    special(&mut e, SpecialKey::F1);
+    assert!(e.screen.help_open());
+    let help = e.screen.help();
+    let titles: Vec<&str> = help.iter().map(|section| section.title.as_str()).collect();
+    assert_eq!(titles, ["The map", "Editing", "The window"]);
+    let editing = &help[1].rows;
+    assert!(editing.iter().any(|(keys, what)| keys.ends_with("+S") && what == "Save"), "{editing:?}");
+    // A letter is still a terrain while the help is open, and `?` is not one.
+    type_char(&mut e, 'w');
+    assert_eq!(e.map().tile(e.map().cursor).unwrap().kind, TileType::Water);
+    type_char(&mut e, '?');
+    assert!(!e.screen.help_open());
+    // Esc closes it too.
+    special(&mut e, SpecialKey::F1);
+    special(&mut e, SpecialKey::Esc);
+    assert!(!e.screen.help_open());
+}

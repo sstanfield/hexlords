@@ -15,6 +15,8 @@ pub enum MapKey {
     Down,
     /// Enter: choose the hex under the cursor.
     Enter,
+    /// Esc: close what is open over the map (the help).
+    Esc,
     /// `1`
     ZoomOut,
     /// `2`
@@ -99,7 +101,7 @@ impl Widget for MapWidget {
                     (SpecialKey::Up, _) => MapKey::Up,
                     (SpecialKey::Down, _) => MapKey::Down,
                     (SpecialKey::Enter, _) => MapKey::Enter,
-                    (SpecialKey::Esc, _) => return true,
+                    (SpecialKey::Esc, _) => MapKey::Esc,
                     (SpecialKey::None, Some('1')) => MapKey::ZoomOut,
                     (SpecialKey::None, Some('2')) => MapKey::ZoomIn,
                     _ => return false,

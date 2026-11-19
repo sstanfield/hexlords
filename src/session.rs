@@ -21,6 +21,7 @@ use turbo_ferret::{ImageHandle, LayoutParams, Modifiers, Point, Rect, Size, TbId
 
 use crate::game::Game;
 use crate::gui::{MapCommand, MapKey, RootCommand};
+use crate::help::{HelpSection, command_key};
 use crate::info;
 use crate::render::{AssetDirs, unit_icon};
 use crate::screen::{MapScreen, Scene};
@@ -122,6 +123,20 @@ impl Slot {
     }
 }
 
+/// The game's keys and clicks, for the help window (F1).
+fn help_section() -> HelpSection {
+    let end_turn = format!("End turn,  or  {}+T", command_key());
+    HelpSection::new(
+        "The game",
+        &[
+            ("Click a hex,  or  Enter", "Choose it: select its first unit, or send the selected one there"),
+            ("Point at a unit below", "All about it"),
+            ("Click a unit below", "Select it"),
+            (&end_turn, "End the turn: every unit gets its moves back"),
+        ],
+    )
+}
+
 pub struct Session {
     pub screen: MapScreen,
     /// The hex the panels are about: the one last chosen on the map.
@@ -152,6 +167,7 @@ impl Session {
     pub fn with_game(assets: &Path, viewport: Size, dpi: i32, game: Game) -> Result<Session, String> {
         let dirs = AssetDirs::new(assets, game.assets.as_deref());
         let mut screen = MapScreen::new(assets, viewport, dpi, LAYOUT, game)?;
+        screen.set_help(vec![help_section()]);
         let stack_row = find(&screen, STACK_ID)?;
         let mut slots = Vec::with_capacity(STACK_SLOTS);
         for i in 0..STACK_SLOTS {

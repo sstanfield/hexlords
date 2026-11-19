@@ -29,3 +29,6 @@ elements
 		cut 16
 		expand 12
 		padding 8 10
+	# The headings of the help window's sections.
+	HelpHeading
+		text-color #ffd24a
