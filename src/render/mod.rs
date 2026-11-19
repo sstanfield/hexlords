@@ -1,5 +1,6 @@
 //! Drawing with miniquad: the hex models, the shaders, the textures, and the
-//! renderers of the main map and the minimap.
+//! renderers of the main map and the minimap; and, on the CPU, the units'
+//! icons for the panels (`unit_icon`).
 //!
 //! The geometry is built on the CPU by code that needs no GPU (`hex_mesh`,
 //! `MapGeometry`, `minimap_hex`), so `cargo test` covers it; only the code that
@@ -16,12 +17,14 @@ pub mod png_out;
 pub mod roads;
 pub mod shaders;
 pub mod textures;
+pub mod unit_icon;
 
 pub use hex_mesh::HexVariant;
 pub use map_renderer::{MapGeometry, MapRenderer, Marks, RANGE_OVERLAY, side_color, tile_image};
 pub use minimap_renderer::MiniMapRenderer;
 pub use shaders::Pipelines;
 pub use textures::AssetDirs;
+pub use unit_icon::unit_icon;
 
 use turbo_ferret::Rect;
 

@@ -167,12 +167,34 @@ fn the_views_reach_every_corner() {
                 assert!(s.screen.game.map.contains(s.screen.game.map.cursor), "{rows} x {cols}: {key:?}");
             }
         }
-        // Scrolling far enough stops with the far corner in the middle.
+        // Scrolling far enough stops with the far corner in the widget's
+        // corner: the widget's edges on the map's (or, along an axis where the
+        // map is smaller than the widget, the map in its middle).
+        let edges = |s: &Session| {
+            let ([x, y], (hw, hh)) = (s.screen.view.middle(), s.screen.view.half_extent());
+            [x - hw, x + hw, y + hh, y - hh]
+        };
+        // The widget from `a` to `b` over the map from `lo` to `hi`, at the
+        // map's edge `edge` (one of the two).
+        let stops = |a: f32, b: f32, lo: f32, hi: f32, edge: f32| {
+            if b - a > hi - lo {
+                ((a + b) / 2.0 - (lo + hi) / 2.0).abs() < 1e-2
+            } else {
+                (a - edge).abs() < 1e-2 || (b - edge).abs() < 1e-2
+            }
+        };
+        let (map_right, map_bottom) = (1.5 * f32::from(cols - 1) + 0.5, -2.0 * f32::from(rows - 1));
         let p = Point::new(mini.x - 300, mini.y + 100);
         assert!(s.screen.scroll(p, -1.0e6, -1.0e6), "{rows} x {cols}: the pointer is on the main map");
-        assert_eq!(s.screen.view.center(), Hex::new(rows - 1, cols - 1), "{rows} x {cols}");
+        let [left, right, top, bottom] = edges(&s);
+        assert!(stops(left, right, -0.5, map_right, map_right), "{rows} x {cols}: {:?}", edges(&s));
+        assert!(stops(bottom, top, map_bottom, 1.0, map_bottom), "{rows} x {cols}: {:?}", edges(&s));
+        assert!(s.screen.view.shows(Hex::new(rows - 1, cols - 2)), "{rows} x {cols}");
         assert!(s.screen.scroll(p, 1.0e6, 1.0e6));
-        assert_eq!(s.screen.view.center(), Hex::new(0, 0), "{rows} x {cols}");
+        let [left, right, top, bottom] = edges(&s);
+        assert!(stops(left, right, -0.5, map_right, -0.5), "{rows} x {cols}: {:?}", edges(&s));
+        assert!(stops(bottom, top, map_bottom, 1.0, 1.0), "{rows} x {cols}: {:?}", edges(&s));
+        assert!(s.screen.view.shows(Hex::new(0, 0)), "{rows} x {cols}");
         // What is in view is on the map, at every zoom.
         for _ in 0..5 {
             assert!(s.screen.view.visible_hexes().all(|v| s.screen.game.map.contains(v.hex)), "{rows} x {cols}");
@@ -207,8 +229,12 @@ fn the_maps_edges_are_cut_straight_on_all_four_sides() {
         geometry.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
         let drawn: usize = TileType::ALL.into_iter().map(|kind| geometry.terrain(kind).vertex_count()).sum();
         assert_eq!(drawn, view.visible_hexes().count() * 7, "{rows} x {cols}");
-        // Nothing is drawn right of the last column's cut or below the last row's.
-        let [right, bottom] = view.to_ndc([0.5, 0.0]);
+        // Nothing is drawn right of the last column's cut or below the last
+        // row's: half a unit right of the last column's middle, and through the
+        // middle of the last row's even columns.
+        let right = view.hex_center(Hex::new(last_row, last_col))[0] + 0.5;
+        let bottom = view.hex_center(Hex::new(last_row, 0))[1];
+        let [right, bottom] = view.to_ndc([right, bottom]);
         for kind in TileType::ALL {
             for mesh in geometry.terrain(kind).meshes() {
                 for v in &mesh.vertices {

@@ -29,11 +29,11 @@ the C++ demo and is no longer binding).
 | `src/state/` | Map, tiles, roads, units and their kinds, cities, movement range; `scenario`, the reader of a map's files. No UI, no graphics |
 | `src/game.rs` | `Game`: the map plus the selected unit and its range; the demo setup; `select_hex` |
 | `src/view.rs`, `src/minimap_view.rs` | Pure math: zoom, scale factors, visible hexes, picking, panning, recentering; the minimap's fit and marker |
-| `src/render/` | miniquad drawing: hex meshes, shaders, textures, the map and minimap renderers, the PNG writer |
+| `src/render/` | miniquad drawing: hex meshes, shaders, textures, the map and minimap renderers, the PNG writer; the units' icons for the panels (`unit_icon`, on the CPU) |
 | `src/gui/` | Turbo Ferret widgets: `MapWidget`, `MiniMapWidget`, `RootWindow`. They record commands; they hold no game state |
 | `src/platform.rs` | What miniquad leaves out: bringing the window to the front on macOS (the crate's one `unsafe` block) |
 | `src/screen.rs` | `MapScreen`: the `Ui`, a map and the two views together, with no window: what the game and the tools share. `Scene`: what the window can run |
-| `src/session.rs`, `src/info.rs` | `Session`: the game on a map screen (its layout, what a click and Enter do, the panels around the map). `info`: what the panels say, as plain functions of the game's state. Tests drive both |
+| `src/session.rs`, `src/info.rs` | `Session`: the game on a map screen (its layout, what a click and Enter do, the panels around the map: the stack's slots, the box the pointer opens over a unit, the city). `info`: what the panels say, as plain functions of the game's state. Tests drive both |
 | `src/script.rs` | Scripted input (`--script`) for any scene, for screenshots and tests |
 | `src/app.rs`, `src/main.rs` | The miniquad window (`App<S: Scene>`, `app::run`): forwards input to the scene, draws the frame. `main.rs` is the game's command line |
 | `tools/mapeditor/` | The map editor, a workspace member on the game's library: `Editor` (a scene: the sidebar, painting, files), `brush`, `history` (undo), `check` (`--check`) |
@@ -123,6 +123,10 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
   The view goes the same way on both maps (the owner tried the other and
   found it backwards): the map follows the fingers on the main map, and on
   the minimap the view's marker goes against them, at the minimap's scale.
+  The view stops at the map's edges: `MapView::set_middle` keeps the widget
+  on the map (a map smaller than the widget along an axis sits in its
+  middle), whatever moved it (a scroll, a zoom, a resize, the cursor), so
+  nothing past the edge is shown.
 - **The pictures are generated** (`docs/tiles.md`): `assets/tiles`,
   `assets/roads` and the signs in `assets/units` hold what
   `cargo run -p assetgen --release` writes and nothing else, and tests draw

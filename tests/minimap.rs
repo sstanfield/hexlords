@@ -32,9 +32,14 @@ fn a_click_on_the_minimap_goes_there() {
     for target in [Hex::new(20, 80), Hex::new(75, 10), Hex::new(50, 50), Hex::new(5, 5)] {
         let p = s.screen.minimap_pixel(target);
         click(&mut s, p);
-        assert!(near(s.screen.view.center(), target), "the view is at {}, not {target}", s.screen.view.center());
-        // The cursor goes along, so the keys carry on from there.
-        assert_eq!(s.screen.game.map.cursor, s.screen.view.center());
+        // The cursor goes there, so the keys carry on from there, and the
+        // view shows it: in its middle, as far as the map's edges let it.
+        let cursor = s.screen.game.map.cursor;
+        assert!(near(cursor, target), "the cursor is at {cursor}, not {target}");
+        assert!(s.screen.view.shows(cursor), "{target}");
+        if target == Hex::new(50, 50) {
+            assert_eq!(s.screen.view.center(), cursor);
+        }
     }
     // It selects nothing and keeps the zoom.
     assert!(s.screen.game.selected().is_none());
@@ -45,12 +50,15 @@ fn a_click_on_the_minimap_goes_there() {
 fn the_corners_of_the_minimap_are_the_corners_of_the_map() {
     let mut s = session();
     let r = s.screen.minimap_rect();
-    click(&mut s, Point::new(r.x, r.y));
-    assert_eq!(s.screen.view.center(), Hex::new(0, 0));
-    click(&mut s, Point::new(r.right() - 1, r.bottom() - 1));
-    assert_eq!(s.screen.view.center(), Hex::new(99, 99));
-    click(&mut s, Point::new(r.right() - 1, r.y));
-    assert_eq!(s.screen.view.center(), Hex::new(0, 99));
+    for (p, corner) in [
+        (Point::new(r.x, r.y), Hex::new(0, 0)),
+        (Point::new(r.right() - 1, r.bottom() - 1), Hex::new(99, 99)),
+        (Point::new(r.right() - 1, r.y), Hex::new(0, 99)),
+    ] {
+        click(&mut s, p);
+        assert_eq!(s.screen.game.map.cursor, corner);
+        assert!(s.screen.view.shows(corner), "{corner}");
+    }
 }
 
 #[test]
@@ -76,11 +84,12 @@ fn a_drag_on_the_minimap_scrolls_the_map() {
     let r = s.screen.minimap_rect();
     s.screen.ui.pointer_move(Point::new(r.x - 300, r.y + r.h / 2), Modifiers::NONE);
     s.pump();
-    assert_eq!(s.screen.view.center().col, 0);
-    assert_eq!(s.screen.game.map.cursor, s.screen.view.center());
+    assert_eq!(s.screen.game.map.cursor.col, 0);
+    assert!(s.screen.view.shows(s.screen.game.map.cursor));
     s.screen.ui.pointer_move(Point::new(r.x + r.w / 2, r.bottom() + 400), Modifiers::NONE);
     s.pump();
-    assert_eq!(s.screen.view.center().row, 99);
+    assert_eq!(s.screen.game.map.cursor.row, 99);
+    assert!(s.screen.view.shows(s.screen.game.map.cursor));
 
     // After the release, moves over the minimap do nothing.
     let last = s.screen.minimap_pixel(Hex::new(70, 60));

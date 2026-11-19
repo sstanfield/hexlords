@@ -4,3 +4,28 @@ elements
 	# The chosen button of a group (a terrain, a tool) says so in color.
 	TBButton.pressed
 		text-color #ffd24a
+	# A unit's slot in the stack under the map: a button with less padding,
+	# so that nine of them fit under the map. The selected unit's is pressed.
+	UnitSlot
+		text-color #fefefe
+		bitmap button.png
+		cut 17
+		expand 7
+		padding 4 4
+		overrides
+			element UnitSlot.pressed
+				state pressed
+	UnitSlot.pressed
+		text-color #ffd24a
+		bitmap button_pressed.png
+		cut 17
+		expand 7
+		content-ofs-x 1
+		content-ofs-y 1
+	# The box about the unit under the pointer: a window's look, so the map
+	# under it does not show through.
+	UnitTip
+		bitmap window.png
+		cut 16
+		expand 12
+		padding 8 10

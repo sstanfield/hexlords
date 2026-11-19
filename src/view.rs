@@ -26,9 +26,15 @@ pub const START_ZOOM: usize = 1;
 #[allow(clippy::excessive_precision)] // the C++ constant, digit for digit
 pub const HEX_HEIGHT_ADJUST: f32 = 0.863_309_35;
 
-/// The width and height factors for a widget of `w` x `h` pixels at `scale`: the
-/// longer side is scaled down so that hexes keep their shape.
-/// C++: MapRenderer::updateMapDimensions
+/// How many pixels a model unit is across at scale 1 on a 96 DPI screen. A hex
+/// is 2 units wide, so at the start zoom (0.1) it is 53.7 pixels: the size it
+/// had in the C++ demo's map at 1024 x 768, where the scale was a share of the
+/// map widget's shorter side (537 pixels).
+pub const UNIT_PIXELS: f32 = 268.5;
+
+/// The width and height factors for a widget of `w` x `h` pixels at `scale` that
+/// fits its content: the longer side is scaled down so that hexes keep their
+/// shape (the minimap, at scale 1). C++: MapRenderer::updateMapDimensions
 pub fn factors(w: i32, h: i32, scale: f32) -> (f32, f32) {
     let (wf, hf) = if w <= 0 || h <= 0 {
         (scale, scale) // no size yet
@@ -38,6 +44,19 @@ pub fn factors(w: i32, h: i32, scale: f32) -> (f32, f32) {
         (scale, w as f32 / h as f32 * scale)
     };
     (wf, hf * HEX_HEIGHT_ADJUST)
+}
+
+/// The width and height factors of the main map, a widget of `w` x `h` pixels
+/// at `scale` on a screen of `dpi`: a hex is as many pixels across whatever the
+/// widget's size, so a larger widget shows more of the map. (The C++ scaled the
+/// map to the widget's shorter side, as `factors` does, so a taller window
+/// showed bigger hexes and no more of them.)
+pub fn view_factors(w: i32, h: i32, scale: f32, dpi: i32) -> (f32, f32) {
+    if w <= 0 || h <= 0 {
+        return factors(w, h, scale); // no size yet
+    }
+    let unit = scale * UNIT_PIXELS * dpi.max(1) as f32 / 96.0;
+    (2.0 * unit / w as f32, 2.0 * unit / h as f32 * HEX_HEIGHT_ADJUST)
 }
 
 /// The (row, col) of the hex that contains a point of the endless grid, in grid
@@ -95,25 +114,37 @@ pub struct MapView {
     /// hex here, at most 0.75 across and 1 up or down.
     offset: [f32; 2],
     size: (i32, i32),
+    /// The screen's dots per inch: a hex is that much bigger in pixels.
+    dpi: i32,
     wf: f32,
     hf: f32,
 }
 
 impl MapView {
-    /// A view of a `rows` x `cols` map centered on `center`, with no size yet.
+    /// A view of a `rows` x `cols` map centered on `center`, with no size yet, on
+    /// a 96 DPI screen.
     pub fn new(rows: u16, cols: u16, center: Hex) -> MapView {
         let (wf, hf) = factors(0, 0, ZOOM_LEVELS[START_ZOOM]);
-        MapView { rows, cols, zoom_level: START_ZOOM, center, offset: [0.0, 0.0], size: (0, 0), wf, hf }
+        MapView { rows, cols, zoom_level: START_ZOOM, center, offset: [0.0, 0.0], size: (0, 0), dpi: 96, wf, hf }
+    }
+
+    /// The screen has `dpi` dots per inch (192 on a 2x screen): hexes are that
+    /// many pixels bigger.
+    pub fn set_dpi(&mut self, dpi: i32) {
+        self.dpi = dpi.max(1);
+        self.update_factors();
+        self.keep_inside();
     }
 
     /// The widget's size in pixels changed. C++: MapRenderer::resizeMap
     pub fn resize(&mut self, w: i32, h: i32) {
         self.size = (w, h);
         self.update_factors();
+        self.keep_inside();
     }
 
     fn update_factors(&mut self) {
-        (self.wf, self.hf) = factors(self.size.0, self.size.1, ZOOM_LEVELS[self.zoom_level]);
+        (self.wf, self.hf) = view_factors(self.size.0, self.size.1, ZOOM_LEVELS[self.zoom_level], self.dpi);
     }
 
     pub fn size(&self) -> (i32, i32) {
@@ -141,6 +172,7 @@ impl MapView {
         }
         self.zoom_level -= 1;
         self.update_factors();
+        self.keep_inside();
         true
     }
 
@@ -151,13 +183,46 @@ impl MapView {
         }
         self.zoom_level += 1;
         self.update_factors();
+        self.keep_inside();
         true
     }
 
-    /// Put a hex in the middle of the widget. C++: MapRenderer::setMapDisplayCenter
+    /// Put a hex in the middle of the widget, as far as the map's edges let
+    /// it get there (see [`MapView::set_middle`]). C++: MapRenderer::setMapDisplayCenter
     pub fn center_on(&mut self, hex: Hex) {
         self.center = hex;
         self.offset = [0.0, 0.0];
+        self.keep_inside();
+    }
+
+    /// Move the middle back to where the widget shows only the map, if a new
+    /// size, zoom or center took it past.
+    fn keep_inside(&mut self) {
+        let [x, y] = self.middle();
+        self.set_middle(x, y);
+    }
+
+    /// Where the middle may be, in grid coordinates (x from and to, y from and
+    /// to): wherever the widget shows the map and nothing past it. The map is
+    /// drawn as a rectangle (its edge hexes are cut, `HexVariant`), from
+    /// x = -0.5 to 1.5 * the last column + 0.5, and from y = 1 down to -2 * the
+    /// last row. Along an axis where the widget is larger than the map, the
+    /// middle is the map's. Without a size yet, any hex can be the middle.
+    fn middle_bounds(&self) -> ([f32; 2], [f32; 2]) {
+        let (last_col, last_row) = (f32::from(self.cols.saturating_sub(1)), f32::from(self.rows.saturating_sub(1)));
+        let (half_w, half_h) = self.half_extent();
+        if self.size.0 <= 0 || self.size.1 <= 0 || !half_w.is_finite() || !half_h.is_finite() {
+            return ([0.0, 1.5 * last_col], [-2.0 * last_row, 0.0]);
+        }
+        let span = |from: f32, to: f32, half: f32| {
+            if to - from >= 2.0 * half {
+                [from + half, to - half]
+            } else {
+                let middle = (from + to) / 2.0;
+                [middle, middle]
+            }
+        };
+        (span(-0.5, 1.5 * last_col + 0.5, half_w), span(-2.0 * last_row, 1.0, half_h))
     }
 
     /// The middle of the widget in grid coordinates (see [`hex_at`]).
@@ -165,18 +230,20 @@ impl MapView {
         [1.5 * f32::from(self.center.col) + self.offset[0], self.offset[1] - 2.0 * f32::from(self.center.row)]
     }
 
-    /// Put a point of the grid in the middle of the widget, or the point of the
-    /// map nearest to it: the middle never leaves the map. (A point that is not
-    /// a number is no place to go, and the view stays.)
+    /// Put a point of the grid in the middle of the widget, or the nearest
+    /// point that leaves no space past the map's edges in the widget (the
+    /// middle of the map, along an axis where the widget is larger than the
+    /// map). (A point that is not a number is no place to go, and the view
+    /// stays.)
     pub fn set_middle(&mut self, x: f32, y: f32) {
         if !x.is_finite() || !y.is_finite() {
             return;
         }
         let (last_col, last_row) = (self.cols.saturating_sub(1), self.rows.saturating_sub(1));
-        let x = x.clamp(0.0, 1.5 * f32::from(last_col));
-        let y = y.clamp(-2.0 * f32::from(last_row), 0.0);
-        let col = ((x / 1.5).round() as u16).min(last_col);
-        let row = ((-y / 2.0).round() as u16).min(last_row);
+        let ([x_from, x_to], [y_from, y_to]) = self.middle_bounds();
+        let (x, y) = (x.clamp(x_from, x_to), y.clamp(y_from, y_to));
+        let col = ((x / 1.5).round().max(0.0) as u16).min(last_col);
+        let row = ((-y / 2.0).round().max(0.0) as u16).min(last_row);
         self.center = Hex::new(row, col);
         self.offset = [x - 1.5 * f32::from(col), y + 2.0 * f32::from(row)];
     }
@@ -307,7 +374,8 @@ impl MapView {
 
     /// The cursor took a step in direction `dir`: if that took it out of the part
     /// of the map the view counts as shown, center the view on the cursor along
-    /// that axis. Returns true if the view moved.
+    /// that axis (as far as the map's edges let it). Returns true if the view
+    /// moved.
     ///
     /// C++: MapWidget::OnEvent (left, right), MapRenderer::moveUp, moveDown. Those
     /// compared unsigned numbers, so near the left and top edges the bound wrapped
@@ -322,13 +390,16 @@ impl MapView {
             Direction::Up => row < center_row - half_rows,
             Direction::Down => row > center_row + half_rows,
         };
-        if out {
-            match dir {
-                Direction::Left | Direction::Right => (self.center.col, self.offset[0]) = (cursor.col, 0.0),
-                Direction::Up | Direction::Down => (self.center.row, self.offset[1]) = (cursor.row, 0.0),
-            }
+        if !out {
+            return false;
         }
-        out
+        let before = (self.center, self.offset);
+        match dir {
+            Direction::Left | Direction::Right => (self.center.col, self.offset[0]) = (cursor.col, 0.0),
+            Direction::Up | Direction::Down => (self.center.row, self.offset[1]) = (cursor.row, 0.0),
+        }
+        self.keep_inside();
+        before != (self.center, self.offset)
     }
 
     /// Where a hex's border starts, as the rim weight of a fragment (0 at the
@@ -373,6 +444,34 @@ mod tests {
         assert!(close(wf, 0.1) && close(hf, 0.1 * HEX_HEIGHT_ADJUST));
         let (wf, hf) = factors(-5, 100, 0.1);
         assert!(wf.is_finite() && hf.is_finite());
+    }
+
+    #[test]
+    fn a_hex_is_as_big_whatever_the_widgets_size() {
+        // A hex is 2 units: wf * w pixels wide and hf * h high, 53.7 by 46.4 at
+        // the start zoom, at any size.
+        for (w, h) in [(W, H), (819, 624), (300, 900), (2048, 600), (1, 1)] {
+            let (wf, hf) = view_factors(w, h, 0.1, 96);
+            assert!((wf * w as f32 - 53.7).abs() < 1e-3, "{w}x{h}: {}", wf * w as f32);
+            assert!((hf * h as f32 - 53.7 * HEX_HEIGHT_ADJUST).abs() < 1e-3, "{w}x{h}");
+        }
+        // In the demo's map at 1024 x 768 that is what the C++ had.
+        let (old, new) = (factors(W, H, 0.1), view_factors(W, H, 0.1, 96));
+        assert!(close(old.0, new.0) && close(old.1, new.1), "{old:?} {new:?}");
+        // Twice the dots per inch, twice the pixels.
+        let (wf, _) = view_factors(1638, 1074, 0.1, 192);
+        assert!((wf * 1638.0 - 107.4).abs() < 1e-2);
+        // No size yet: finite numbers.
+        let (wf, hf) = view_factors(0, 0, 0.1, 96);
+        assert!(wf.is_finite() && hf.is_finite());
+        // So a larger widget shows more of the map, and a 2x screen as much as
+        // a 1x one of half its pixels.
+        let mut v = view();
+        let (rows, cols) = (v.rows_displayed(), v.cols_displayed());
+        v.resize(W * 2, H * 2);
+        assert!(v.rows_displayed() >= 2 * rows && v.cols_displayed() >= 2 * cols);
+        v.set_dpi(192);
+        assert_eq!((v.rows_displayed(), v.cols_displayed()), (rows, cols));
     }
 
     #[test]
@@ -469,7 +568,9 @@ mod tests {
                             }
                         }
                     }
-                    assert!(touching > 0 && visible.len() <= touching + touching / 2 + 80, "{w}x{h}: {touching}");
+                    // (The list has a row and a column more each side than it
+                    // needs: in a widget two rows high that doubles it.)
+                    assert!(touching > 0 && visible.len() <= 2 * touching + 80, "{w}x{h}: {touching}");
                     for vh in &visible {
                         assert_eq!(vh.center, v.hex_center(vh.hex));
                     }
@@ -485,7 +586,7 @@ mod tests {
         v.center_on(Hex::new(0, 0));
         let visible: Vec<Hex> = v.visible_hexes().map(|vh| vh.hex).collect();
         assert!(visible.contains(&Hex::new(0, 0)));
-        assert!(!visible.is_empty() && visible.len() < view().visible_hexes().count());
+        assert!(!visible.is_empty() && visible.len() <= view().visible_hexes().count());
         v.center_on(Hex::new(99, 99));
         assert!(v.visible_hexes().any(|vh| vh.hex == Hex::new(99, 99)));
         assert!(v.visible_hexes().all(|vh| vh.hex.row < 100 && vh.hex.col < 100));
@@ -618,41 +719,49 @@ mod tests {
     #[test]
     fn the_cut_off_parts_of_edge_hexes_pick_nothing() {
         let mut v = view();
-        v.center_on(Hex::new(0, 0));
-        let pick = |v: &MapView, x: f32, y: f32| {
-            let [nx, ny] = v.to_ndc([x, y]);
+        // A point given from a hex's center, in model units.
+        let pick = |v: &MapView, hex: Hex, x: f32, y: f32| {
+            let [cx, cy] = v.hex_center(hex);
+            let [nx, ny] = v.to_ndc([cx + x, cy + y]);
             v.pick(nx, ny)
         };
+        v.center_on(Hex::new(0, 0));
+        let corner = Hex::new(0, 0);
         // Column 0 loses its left point: left of x = -0.5 is off the map.
-        assert_eq!(pick(&v, -0.4, 0.0), Some(Hex::new(0, 0)));
-        assert_eq!(pick(&v, -0.6, 0.0), None);
-        // Row 0's odd columns lose their top half: above y = 1 is off the map.
-        assert_eq!(pick(&v, 1.5, 0.9), Some(Hex::new(0, 1)));
-        assert_eq!(pick(&v, 1.5, 1.1), None);
-        assert_eq!(pick(&v, 0.0, 0.9), Some(Hex::new(0, 0)));
-        assert_eq!(pick(&v, 0.0, 1.1), None);
+        assert_eq!(pick(&v, corner, -0.4, 0.0), Some(corner));
+        assert_eq!(pick(&v, corner, -0.6, 0.0), None);
+        // Row 0's odd columns lose their top half: above y = 1 is off the map
+        // (hex (0, 1) is centered one unit above hex (0, 0)).
+        assert_eq!(pick(&v, corner, 1.5, 0.9), Some(Hex::new(0, 1)));
+        assert_eq!(pick(&v, corner, 1.5, 1.1), None);
+        assert_eq!(pick(&v, corner, 0.0, 0.9), Some(corner));
+        assert_eq!(pick(&v, corner, 0.0, 1.1), None);
 
         v.center_on(Hex::new(99, 99));
-        // The view's middle is one unit below hex (99, 99)'s center (an odd column).
-        // The last column loses its right point, and the map ends at the middle of
-        // the last row's even columns, which is the bottom of its odd ones.
-        assert_eq!(pick(&v, 0.4, 0.5), Some(Hex::new(99, 99)));
-        assert_eq!(pick(&v, 0.6, 0.5), None);
-        assert_eq!(pick(&v, -1.5, 0.1), Some(Hex::new(99, 98)));
-        assert_eq!(pick(&v, -1.5, -0.1), None);
-        assert_eq!(pick(&v, 0.0, -0.1), None);
+        let corner = Hex::new(99, 99);
+        // The last column loses its right point, and the map ends at the middle
+        // of the last row's even columns, which is the bottom of its odd ones
+        // (hex (99, 99) is centered one unit above that).
+        assert_eq!(pick(&v, corner, 0.4, -0.5), Some(corner));
+        assert_eq!(pick(&v, corner, 0.6, -0.5), None);
+        assert_eq!(pick(&v, corner, -1.5, -0.9), Some(Hex::new(99, 98)));
+        assert_eq!(pick(&v, corner, -1.5, -1.1), None);
+        assert_eq!(pick(&v, corner, 0.0, -1.1), None);
     }
 
     #[test]
     fn pick_is_none_off_the_map() {
         let mut v = view();
         v.center_on(Hex::new(0, 0));
-        assert_eq!(v.pick(0.0, 0.0), Some(Hex::new(0, 0)));
-        assert_eq!(v.pick(-0.5, 0.0), None, "left of column 0");
-        assert_eq!(v.pick(0.0, 0.5), None, "above row 0");
+        // The view goes no further than the map's corner: just inside the
+        // widget's top left corner is hex (0, 0), and past it is no hex.
+        assert_eq!(v.pick(-0.99, 0.99), Some(Hex::new(0, 0)));
+        assert_eq!(v.pick(-1.01, 0.5), None, "left of column 0");
+        assert_eq!(v.pick(-0.5, 1.01), None, "above row 0");
         v.center_on(Hex::new(99, 99));
-        assert_eq!(v.pick(0.5, 0.0), None, "right of the last column");
-        assert_eq!(v.pick(0.0, -0.5), None, "below the last row");
+        assert_eq!(v.pick(0.99, -0.99), Some(Hex::new(99, 99)));
+        assert_eq!(v.pick(1.01, 0.0), None, "right of the last column");
+        assert_eq!(v.pick(0.0, -1.01), None, "below the last row");
     }
 
     #[test]
@@ -723,11 +832,12 @@ mod tests {
         // the edge it wrapped to a huge value and every step recentered.
         let mut v = view();
         v.center_on(Hex::new(3, 4));
+        let start = v.center();
         assert!(!v.keep_cursor_visible(Hex::new(3, 3), Direction::Left));
         assert!(!v.keep_cursor_visible(Hex::new(3, 0), Direction::Left));
         assert!(!v.keep_cursor_visible(Hex::new(2, 4), Direction::Up));
         assert!(!v.keep_cursor_visible(Hex::new(0, 4), Direction::Up));
-        assert_eq!(v.center(), Hex::new(3, 4));
+        assert_eq!(v.center(), start);
     }
 
     /// The widget's normalized device coordinates of a pixel's middle.
@@ -758,17 +868,95 @@ mod tests {
         assert_eq!(v.middle(), [76.5, -100.0]);
     }
 
+    /// The widget's edges in grid coordinates: left, right, top, bottom.
+    fn edges(v: &MapView) -> [f32; 4] {
+        let ([x, y], (hw, hh)) = (v.middle(), v.half_extent());
+        [x - hw, x + hw, y + hh, y - hh]
+    }
+
     #[test]
     fn a_pan_stops_at_the_maps_edges() {
         let mut v = view();
+        // The map is drawn from x = -0.5 to 1.5 * 99 + 0.5 and from y = 1 down
+        // to -2 * 99: the widget's edges stop at the map's.
         assert!(v.pan(-1000.0, 1000.0));
-        assert_eq!((v.center(), v.middle()), (Hex::new(0, 0), [0.0, 0.0]));
+        let [left, _, top, _] = edges(&v);
+        assert!(close(left, -0.5) && close(top, 1.0), "{:?}", edges(&v));
         assert!(!v.pan(-1.0, 1.0), "already in the corner");
         assert!(v.pan(1000.0, -1000.0));
-        assert_eq!((v.center(), v.middle()), (Hex::new(99, 99), [148.5, -198.0]));
+        let [_, right, _, bottom] = edges(&v);
+        assert!((right - 149.0).abs() < 1e-4 && (bottom + 198.0).abs() < 1e-4, "{:?}", edges(&v));
         // Not a number: not a move.
+        let there = v.middle();
         assert!(!v.pan(f32::NAN, 0.0) && !v.pan(0.0, f32::INFINITY));
-        assert_eq!(v.middle(), [148.5, -198.0]);
+        assert_eq!(v.middle(), there);
+    }
+
+    #[test]
+    fn the_view_shows_nothing_past_the_maps_edges() {
+        // Whatever the size, the zoom and where it was told to go, the widget
+        // shows only the map; along an axis where the map is smaller than the
+        // widget, the map is in its middle.
+        for (rows, cols) in [(100, 100), (20, 20), (20, 600), (600, 20), (37, 91)] {
+            for (w, h) in [(W, H), (300, 900), (2048, 600), (40, 2000)] {
+                for target in [Hex::new(0, 0), Hex::new(rows - 1, cols - 1), Hex::new(rows / 2, 0), Hex::new(3, 2)] {
+                    let mut v = MapView::new(rows, cols, target);
+                    v.resize(w, h);
+                    loop {
+                        for step in 0..4 {
+                            match step {
+                                0 => v.center_on(target),
+                                1 => {
+                                    v.pan(-3.3, 7.7);
+                                }
+                                2 => {
+                                    // Out and back, at a point off the middle.
+                                    if v.zoom_about(0.7, -0.4, false) {
+                                        v.zoom_about(0.7, -0.4, true);
+                                    }
+                                }
+                                _ => {
+                                    v.keep_cursor_visible(target, Direction::Up);
+                                }
+                            }
+                            let [left, right, top, bottom] = edges(&v);
+                            let (map_r, map_b) = (1.5 * f32::from(cols - 1) + 0.5, -2.0 * f32::from(rows - 1));
+                            let what = format!("{rows}x{cols} map, {w}x{h}, {target}, level {}", v.zoom_level());
+                            if right - left <= map_r + 0.5 {
+                                assert!(left >= -0.5 - 1e-3 && right <= map_r + 1e-3, "{what}: {left} {right}");
+                            } else {
+                                assert!(((left + right) / 2.0 - (map_r - 0.5) / 2.0).abs() < 1e-3, "{what}");
+                            }
+                            if top - bottom <= 1.0 - map_b {
+                                assert!(top <= 1.0 + 1e-3 && bottom >= map_b - 1e-3, "{what}: {top} {bottom}");
+                            } else {
+                                assert!(((top + bottom) / 2.0 - (1.0 + map_b) / 2.0).abs() < 1e-3, "{what}");
+                            }
+                        }
+                        if !v.zoom_out() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_new_size_or_zoom_keeps_the_view_on_the_map() {
+        let mut v = view();
+        v.center_on(Hex::new(0, 0));
+        let corner = edges(&v);
+        // Wider: the view moves right, so its left edge stays on the map's.
+        v.resize(W * 2, H);
+        assert!(close(edges(&v)[0], -0.5) && close(edges(&v)[2], 1.0), "{:?} {corner:?}", edges(&v));
+        // Narrower again: the middle stays where it is, which is on the map.
+        v.resize(W, H);
+        let [left, _, top, _] = edges(&v);
+        assert!(left >= -0.5 && left > corner[0] && close(top, 1.0), "{:?} {corner:?}", edges(&v));
+        v.center_on(Hex::new(0, 0));
+        v.zoom_out();
+        assert!(close(edges(&v)[0], -0.5) && close(edges(&v)[2], 1.0), "{:?}", edges(&v));
     }
 
     #[test]
@@ -851,11 +1039,13 @@ mod tests {
         let mut about = view();
         about.zoom_about(0.0, 0.0, false);
         assert_eq!(plain, about);
-        // In a corner of the map the middle cannot follow: it stays on the map.
+        // In a corner of the map the middle cannot follow: the widget's edges
+        // stay on the map's.
         let mut v = view();
         v.center_on(Hex::new(0, 0));
         assert!(v.zoom_about(0.9, -0.9, false));
-        assert_eq!(v.middle(), [0.0, 0.0]);
+        let [left, _, top, _] = edges(&v);
+        assert!(close(left, -0.5) && close(top, 1.0), "{:?}", edges(&v));
     }
 
     #[test]

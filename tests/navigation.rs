@@ -59,12 +59,24 @@ fn the_map_stops_at_its_edges() {
     for _ in 0..40 {
         assert!(s.screen.scroll(p, 500.0, 500.0), "at the edge the wheel is still the map's");
     }
-    assert_eq!(s.screen.view.middle(), [0.0, 0.0]);
-    assert_eq!(s.screen.game.map.cursor, Hex::new(0, 0));
+    // The widget's edges are on the map's (x from -0.5, y down from 1), and
+    // the cursor is the hex under the pointer.
+    let edges = |s: &hexgame::session::Session| {
+        let ([x, y], (hw, hh)) = (s.screen.view.middle(), s.screen.view.half_extent());
+        [x - hw, x + hw, y + hh, y - hh]
+    };
+    let [left, _, top, _] = edges(&s);
+    assert!((left + 0.5).abs() < 1e-3 && (top - 1.0).abs() < 1e-3, "{:?}", edges(&s));
+    let r = s.screen.map_rect();
+    let under = s.screen.view.pick_pixel(p.x - r.x, p.y - r.y, r.w, r.h);
+    assert_eq!(Some(s.screen.game.map.cursor), under);
+    assert!(s.screen.view.shows(Hex::new(0, 0)));
     for _ in 0..40 {
         s.screen.scroll(p, -500.0, -500.0);
     }
-    assert_eq!(s.screen.view.center(), Hex::new(99, 99));
+    let [_, right, _, bottom] = edges(&s);
+    assert!((right - 149.0).abs() < 1e-3 && (bottom + 198.0).abs() < 1e-3, "{:?}", edges(&s));
+    assert!(s.screen.view.shows(Hex::new(99, 99)));
 }
 
 #[test]

@@ -10,6 +10,10 @@ use hexgame::session::Session;
 use hexgame::state::{Hex, Map, TileType};
 use turbo_ferret::{Modifiers, Point, Rect, Size, SpecialKey, tbid};
 
+/// The height of the panel under the map and the space above it, at 96 DPI:
+/// four lines, the stack's slots and the spaces between them.
+const PANEL_96: i32 = 144;
+
 fn map_commands(s: &mut Session) -> Vec<MapCommand> {
     let map = s.screen.map_widget();
     s.screen.ui.with_widget::<MapWidget, _>(map, |w, _| w.take_commands()).expect("the map widget")
@@ -26,12 +30,14 @@ fn the_layout_at_1024_by_768() {
     let s = session();
     assert_eq!(window_rect(&s, "RootWindow"), Rect::new(0, 0, 1024, 768));
     assert_eq!(window_rect(&s, "main_layout"), Rect::new(0, 0, 1024, 768));
-    // The map: 80% of the width, 70% of the height, in the top left corner.
-    assert_eq!(window_rect(&s, "main_map"), Rect::new(0, 0, 819, 537));
-    assert_eq!(s.screen.map_rect(), Rect::new(0, 0, 819, 537));
-    // The sidebar is right of it, after the spacing, and the minimap tops it.
+    // The map: 80% of the width and all the height the panel under it
+    // leaves, in the top left corner.
+    assert_eq!(window_rect(&s, "main_map"), Rect::new(0, 0, 819, 768 - PANEL_96));
+    assert_eq!(s.screen.map_rect(), Rect::new(0, 0, 819, 624));
+    // The sidebar is right of it, after the spacing, as tall as the window,
+    // and the minimap tops it.
     let sidebar = window_rect(&s, "main_sidebar");
-    assert_eq!((sidebar.x, sidebar.y, sidebar.w), (824, 0, 200));
+    assert_eq!((sidebar.x, sidebar.y, sidebar.w, sidebar.h), (824, 0, 200, 768));
     assert_eq!(window_rect(&s, "mini_map"), Rect::new(824, 0, 200, 231));
     assert_eq!(s.screen.minimap_rect(), Rect::new(824, 0, 200, 231));
     // The button is under the minimap, at its own size.
@@ -39,14 +45,15 @@ fn the_layout_at_1024_by_768() {
     assert!(button.y >= 231 + 5 && button.h < 60 && button.w < 100, "{button:?}");
     assert!(sidebar.x <= button.x && button.right() <= sidebar.right(), "{button:?}");
     assert_eq!(s.screen.ui.text(widget(&s, "end_turn")), Some("End turn"));
-    widget(&s, "main_layout1");
-    widget(&s, "main_layout2");
-    // The status line is under the map, as wide as it.
+    assert_eq!(window_rect(&s, "map_column"), Rect::new(0, 0, 819, 768));
+    widget(&s, "hex_panel");
+    // The status line is under the map, as wide as it, and the panel ends at
+    // the window's bottom edge.
     let status = window_rect(&s, "status");
-    assert_eq!((status.x, status.w), (0, 819), "{status:?}");
-    assert!(status.y >= 537 + 5 && status.h >= 20, "{status:?}");
+    assert_eq!(status, Rect::new(0, 624 + 5, 819, 24));
+    assert_eq!(window_rect(&s, "unit_line").bottom(), 768);
     // Nothing reaches outside the window.
-    for name in ["main_layout1", "main_sidebar", "mini_map", "end_turn", "main_map", "status"] {
+    for name in ["map_column", "main_sidebar", "mini_map", "end_turn", "main_map", "status", "hex_panel"] {
         let r = window_rect(&s, name);
         assert!(r.x >= 0 && r.y >= 0 && r.right() <= 1024 && r.bottom() <= 768, "{name}: {r:?}");
     }
@@ -72,7 +79,7 @@ fn the_widgets_are_the_games_own() {
 #[test]
 fn the_views_have_the_widgets_sizes() {
     let s = session();
-    assert_eq!(s.screen.view.size(), (819, 537));
+    assert_eq!(s.screen.view.size(), (819, 624));
     assert_eq!(s.screen.mini_view.size(), (200, 231));
 }
 
@@ -80,7 +87,8 @@ fn the_views_have_the_widgets_sizes() {
 fn the_layout_in_framebuffer_pixels_on_a_hidpi_screen() {
     // A 1024 x 768 window on a 2x screen: everything is in the 2048 x 1536 pixels.
     let s = session_at(2048, 1536, 192);
-    assert_eq!(s.screen.map_rect(), Rect::new(0, 0, 1638, 1075));
+    // (The panel is 289 pixels here, a pixel more than twice its 96 DPI height.)
+    assert_eq!(s.screen.map_rect(), Rect::new(0, 0, 1638, 1247));
     // The spacing is 5 dp, which is 10 pixels here.
     assert_eq!(s.screen.minimap_rect(), Rect::new(1648, 0, 400, 461));
     let button = window_rect(&s, "end_turn");
@@ -94,9 +102,9 @@ fn the_layout_follows_the_window() {
     assert!(!s.screen.take_minimap_dirty());
     s.resize(Size::new(1280, 800));
     s.frame(16);
-    assert_eq!(s.screen.map_rect(), Rect::new(0, 0, 1024, 560));
+    assert_eq!(s.screen.map_rect(), Rect::new(0, 0, 1024, 800 - PANEL_96));
     assert_eq!(s.screen.minimap_rect(), Rect::new(1029, 0, 251, 240));
-    assert_eq!(s.screen.view.size(), (1024, 560));
+    assert_eq!(s.screen.view.size(), (1024, 656));
     assert_eq!(s.screen.mini_view.size(), (251, 240));
     // A new size means a new minimap picture.
     assert!(s.screen.take_minimap_dirty());
@@ -111,9 +119,10 @@ fn odd_window_sizes_do_not_break_the_layout() {
         let mut s = session_at(w, h, 96);
         s.frame(16);
         let (map, mini) = (s.screen.map_rect(), s.screen.minimap_rect());
-        // Nothing has a negative size, and the map is its share of the window.
+        // Nothing has a negative size, and the map is its share of the width
+        // and what the panel leaves of the height.
         assert!(map.w >= 0 && map.h >= 0 && mini.w >= 0 && mini.h >= 0, "{w}x{h}: {map:?} {mini:?}");
-        assert_eq!((map.w, map.h), ((w as f32 * 0.8) as i32, (h as f32 * 0.7) as i32), "{w}x{h}");
+        assert_eq!((map.w, map.h), ((w as f32 * 0.8) as i32, (h - PANEL_96).max(0)), "{w}x{h}");
         assert_eq!(s.screen.view.size(), (map.w, map.h));
         assert_eq!(s.screen.mini_view.size(), (mini.w, mini.h));
         // The views give finite numbers at any size, the center hex is drawn,
@@ -133,7 +142,7 @@ fn odd_window_sizes_do_not_break_the_layout() {
 #[test]
 fn the_map_records_pointer_moves_presses_and_clicks() {
     let mut s = session();
-    let size = Size::new(819, 537);
+    let size = Size::new(819, 624);
     s.screen.ui.pointer_move(Point::new(100, 50), Modifiers::NONE);
     assert_eq!(map_commands(&mut s), [MapCommand::Hover(Point::new(100, 50), size)]);
 
@@ -271,8 +280,9 @@ fn another_map_starts_the_views_over() {
     map.cursor = Hex::new(3, 55);
     s.screen.set_game(Game::new(map));
     assert!(s.screen.take_minimap_dirty(), "the minimap shows the new map");
-    assert_eq!(s.screen.view.center(), Hex::new(3, 55));
-    assert_eq!(s.screen.view.size(), (819, 537));
+    // The view starts on the new cursor, as far as the map's edges let it.
+    assert!(s.screen.view.shows(Hex::new(3, 55)), "{}", s.screen.view.center());
+    assert_eq!(s.screen.view.size(), (819, 624));
     assert_eq!(s.screen.mini_view.size(), (200, 231));
     // Both views know the new map's size: its far corner is on them.
     let p = s.screen.minimap_pixel(Hex::new(29, 59));

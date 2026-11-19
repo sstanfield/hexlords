@@ -1,6 +1,7 @@
-//! What the panels say: the selected hex and its units under the map, the
-//! selected city beside it, the line about the hex under the cursor. Words
-//! only, from the game's state; `session` puts them into widgets.
+//! What the panels say: the line about the hex under the cursor; the selected
+//! hex, its units' numbers under their icons, the selected unit in a line and
+//! any unit in full (the box the pointer opens); the selected city beside the
+//! map. Words only, from the game's state; `session` puts them into widgets.
 //!
 //! Not a port: the C++ had no panels.
 
@@ -54,10 +55,27 @@ pub fn hex_title(map: &Map, hex: Hex) -> String {
     title
 }
 
-/// A unit in a few words, for its row in the stack: its name, its strength,
-/// the movement points it has left of those it gets a turn.
-pub fn unit_brief(unit: &Unit) -> String {
-    format!("{}   str {}   mv {}/{}", unit.name, unit.strength, unit.movement, unit.base_move_points)
+/// A unit in numbers, under its icon in the stack: its strength, and the
+/// movement points it has left of those it gets a turn ("4 · 7/10").
+pub fn unit_numbers(unit: &Unit) -> String {
+    format!("{} \u{b7} {}/{}", unit.strength, unit.movement, unit.base_move_points)
+}
+
+/// The selected unit in a line: who it is, its numbers, and its price.
+pub fn unit_line(map: &Map, unit: &Unit) -> String {
+    let mut line = format!(
+        "{} ({}): strength {}, moves {}/{}, upkeep {}",
+        unit.name,
+        side_name(unit.side()),
+        unit.strength,
+        unit.movement,
+        unit.base_move_points,
+        unit.upkeep
+    );
+    if let Some(kind) = map.units().kind_of(unit) {
+        line.push_str(&format!(", price {}", kind.price));
+    }
+    line
 }
 
 /// What each terrain costs to enter, in words, a few to a line: "grass 2,
@@ -77,8 +95,8 @@ fn enters(cost: &MoveCost, per_line: usize) -> Vec<String> {
     lines
 }
 
-/// Everything about a unit, a line at a time: who it is, its numbers, and
-/// what every terrain costs it to enter.
+/// Everything about a unit, a line at a time (the box over its icon): who it
+/// is, its numbers, and what every terrain costs it to enter.
 pub fn unit_details(map: &Map, unit: &Unit) -> Vec<String> {
     let mut lines = vec![format!("{} ({})", unit.name, side_name(unit.side()))];
     let mut numbers = format!(
@@ -193,13 +211,14 @@ mod tests {
     }
 
     #[test]
-    fn a_unit_in_brief_and_in_full() {
+    fn a_unit_in_numbers_in_a_line_and_in_full() {
         let mut game = game();
         let city = Hex::new(5, 5);
         let ids = game.map.units_at(city).to_vec();
         let unit = |game: &Game, i: usize| game.map.units().get(ids[i]).unwrap().clone();
-        assert_eq!(unit_brief(&unit(&game, 0)), "Riders   str 4   mv 10/10");
-        assert_eq!(unit_brief(&unit(&game, 2)), "Militia   str 2   mv 8/8");
+        assert_eq!(unit_numbers(&unit(&game, 0)), "4 \u{b7} 10/10");
+        assert_eq!(unit_numbers(&unit(&game, 2)), "2 \u{b7} 8/8");
+        assert_eq!(unit_line(&game.map, &unit(&game, 0)), "Riders (blue): strength 4, moves 10/10, upkeep 3, price 9");
         assert_eq!(
             unit_details(&game.map, &unit(&game, 0)),
             [
@@ -221,12 +240,14 @@ mod tests {
         // After a move the points that are left show.
         game.select_hex(city);
         game.select_hex(Hex::new(5, 8));
-        assert_eq!(unit_brief(&unit(&game, 0)), "Riders   str 4   mv 7/10");
+        assert_eq!(unit_numbers(&unit(&game, 0)), "4 \u{b7} 7/10");
+        assert!(unit_line(&game.map, &unit(&game, 0)).contains("moves 7/10"));
         // A unit made by hand has no kind, and so no price; one that enters
         // nothing says so.
         let cost = game.map.acquire_move_cost(MoveCost::default());
         let stone = game.map.new_unit(Side::Grey, "Stone", 0, 9, 1, cost);
         let stone = game.map.units().get(stone).unwrap().clone();
+        assert_eq!(unit_line(&game.map, &stone), "Stone (neutral): strength 9, moves 1/1, upkeep 0");
         assert_eq!(
             unit_details(&game.map, &stone),
             ["Stone (neutral)", "Strength 9   Moves 1/1   Upkeep 0", "Enters nothing"]

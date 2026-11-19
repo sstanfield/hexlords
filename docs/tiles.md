@@ -122,7 +122,15 @@ disc**: within 0.45 of the middle, where the hex is 1 from its middle to its
 points (in a 128 pixel picture, within 29 pixels of the middle sideways and
 33 up and down). Its transparent pixels have the outline's color, for the
 same reason as the roads'. A city that has an owner flies a small disc of the
-owner's color at its upper right.
+owner's color at its upper right. A city shows its own picture, never a unit's:
+its garrison is a small pip for each unit, in the unit's color, in rows of
+four over the gate at the bottom of the tile, so keep that part of a city
+plain enough for them to show.
+
+In the panel under the map the same picture is the unit's icon, on a round
+disc: what is drawn of it is scaled to fit inside the disc's ring, wherever it
+lies in its square, so a picture of a map's own that fills its square (as
+`default_unit.png` does) shows whole.
 
 ## No seams
 

@@ -12,6 +12,8 @@
 //!   second and let go (both have to be in view);
 //! - `minimap:ROW:COL`: click on that hex of the minimap (the main map goes there);
 //! - `press:ID`: click the middle of the widget with that id (a button);
+//! - `point:ID`: point at the middle of that widget (what is shown while the
+//!   pointer is on it shows);
 //! - `scroll:DX:DY`: two fingers on a trackpad (or the wheel) with the pointer
 //!   in the middle of the main map: the map moves DX pixels right and DY down
 //!   (`scroll:-200:0` shows what is to the right);
@@ -20,8 +22,9 @@
 //! - `zoomin:ROW:COL`, `zoomout:ROW:COL`: Ctrl and the wheel with the pointer on
 //!   that hex of the main map (it has to be in view; it stays under the pointer);
 //! - `pull:DX:DY`: drag the main map by its middle with the right button;
-//! - `cursor:ROW:COL`: put the cursor on that hex and center the view on it (not
-//!   something a player can do in one step; it is for getting to a far corner);
+//! - `cursor:ROW:COL`: put the cursor on that hex and center the view on it, as
+//!   far as the map's edges let it (not something a player can do in one step;
+//!   it is for getting to a far corner);
 //! - any step may end in `*N` to run it N times: `left*12`.
 //!
 //! The keys and the pointer go through the UI exactly as the window sends them,
@@ -58,6 +61,7 @@ enum Step {
     Drag(Hex, Hex),
     MiniMap(Hex),
     Press(String),
+    Point(String),
     Cursor(Hex),
     Scroll(i32, i32),
     MiniScroll(i32, i32),
@@ -102,6 +106,9 @@ fn parse_step(action: &str) -> Result<Step, String> {
     }
     if let Some(id) = action.strip_prefix("press:") {
         return if id.is_empty() { Err("needs a widget id".to_string()) } else { Ok(Step::Press(id.to_string())) };
+    }
+    if let Some(id) = action.strip_prefix("point:") {
+        return if id.is_empty() { Err("needs a widget id".to_string()) } else { Ok(Step::Point(id.to_string())) };
     }
     let mut parts = action.split(':');
     let name = parts.next().unwrap_or("");
@@ -211,6 +218,11 @@ fn run_step<S: Scene>(scene: &mut S, action: &str) -> Result<(), String> {
             let widget = screen.ui.find(screen.ui.root(), TbId::new(&id)).ok_or(format!("no widget with id {id}"))?;
             let p = middle(screen.area(widget));
             click(screen, p);
+        }
+        Step::Point(id) => {
+            let widget = screen.ui.find(screen.ui.root(), TbId::new(&id)).ok_or(format!("no widget with id {id}"))?;
+            let p = middle(screen.area(widget));
+            screen.ui.pointer_move(p, Modifiers::NONE);
         }
         Step::Scroll(dx, dy) => {
             let p = middle(screen.map_rect());

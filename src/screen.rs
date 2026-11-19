@@ -112,7 +112,8 @@ impl MapScreen {
         }
 
         let (rows, cols) = (game.map.rows(), game.map.cols());
-        let view = MapView::new(rows, cols, game.map.cursor);
+        let mut view = MapView::new(rows, cols, game.map.cursor);
+        view.set_dpi(ui.dimension_converter().dp_to_px(96));
         let mini_view = MiniMapView::new(rows, cols);
         let terrain_seen = game.map.terrain_revision();
         Ok(MapScreen {
@@ -135,6 +136,7 @@ impl MapScreen {
     pub fn set_game(&mut self, game: Game) {
         let (rows, cols) = (game.map.rows(), game.map.cols());
         self.view = MapView::new(rows, cols, game.map.cursor);
+        self.view.set_dpi(self.ui.dimension_converter().dp_to_px(96));
         self.mini_view = MiniMapView::new(rows, cols);
         self.terrain_seen = game.map.terrain_revision();
         self.game = game;
@@ -206,9 +208,18 @@ impl MapScreen {
     }
 
     /// The window pixel in the middle of a hex of the main map, if that is inside
-    /// the map's rectangle.
+    /// the map's rectangle. Of a hex cut in half at the map's top or bottom edge
+    /// (row 0's odd columns, the last row's even ones), whose middle is on the
+    /// edge, the middle of the half that is drawn.
     pub fn hex_pixel(&self, hex: Hex) -> Option<Point> {
-        let [x, y] = self.view.to_ndc(self.view.hex_center(hex));
+        let [x, mut y] = self.view.hex_center(hex);
+        let odd = hex.col % 2 == 1;
+        if hex.row == 0 && odd {
+            y -= 0.5;
+        } else if hex.row + 1 == self.game.map.rows() && !odd {
+            y += 0.5;
+        }
+        let [x, y] = self.view.to_ndc([x, y]);
         let r = self.map_rect();
         let p = Point::new(r.x + ((x + 1.0) / 2.0 * r.w as f32) as i32, r.y + ((1.0 - y) / 2.0 * r.h as f32) as i32);
         (x.abs() < 1.0 && y.abs() < 1.0 && r.contains(p)).then_some(p)

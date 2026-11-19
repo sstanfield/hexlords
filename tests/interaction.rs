@@ -150,14 +150,15 @@ fn the_view_follows_the_cursor_when_it_leaves() {
     assert_eq!((s.screen.game.map.cursor, s.screen.view.center()), (Hex::new(50, 41), START));
     press(&mut s, SpecialKey::Left);
     assert_eq!((s.screen.game.map.cursor, s.screen.view.center()), (Hex::new(50, 40), Hex::new(50, 40)));
-    // 11 rows count as shown: five steps down stay, the sixth leaves. Only the
+    // 13 rows count as shown: six steps down stay, the seventh leaves. Only the
     // row of the center changes.
-    for _ in 0..5 {
+    assert_eq!(s.screen.view.rows_displayed(), 13);
+    for _ in 0..6 {
         press(&mut s, SpecialKey::Down);
     }
     assert_eq!(s.screen.view.center(), Hex::new(50, 40));
     press(&mut s, SpecialKey::Down);
-    assert_eq!((s.screen.game.map.cursor, s.screen.view.center()), (Hex::new(56, 40), Hex::new(56, 40)));
+    assert_eq!((s.screen.game.map.cursor, s.screen.view.center()), (Hex::new(57, 40), Hex::new(57, 40)));
 }
 
 #[test]
@@ -168,10 +169,16 @@ fn the_cursor_stops_at_the_map_edge_and_the_view_does_not_jump() {
         press(&mut s, SpecialKey::Up);
     }
     assert_eq!(s.screen.game.map.cursor, Hex::new(0, 0));
-    // The view came along in steps and now rests near the corner. More presses
-    // against the edge change nothing (the C++ recentered on every one).
+    // The view came along in steps and now rests in the corner, its edges on
+    // the map's. More presses against the edge change nothing (the C++
+    // recentered on every one).
+    let edges = |s: &hexgame::session::Session| {
+        let ([x, y], (hw, hh)) = (s.screen.view.middle(), s.screen.view.half_extent());
+        [x - hw, x + hw, y + hh, y - hh]
+    };
+    let [left, _, top, _] = edges(&s);
+    assert!((left + 0.5).abs() < 1e-3 && (top - 1.0).abs() < 1e-3, "{:?}", edges(&s));
     let center = s.screen.view.center();
-    assert!(center.row <= 5 && center.col <= 9, "{center}");
     for _ in 0..5 {
         press(&mut s, SpecialKey::Left);
         press(&mut s, SpecialKey::Up);
@@ -182,7 +189,8 @@ fn the_cursor_stops_at_the_map_edge_and_the_view_does_not_jump() {
         press(&mut s, SpecialKey::Down);
     }
     assert_eq!(s.screen.game.map.cursor, Hex::new(99, 99));
-    assert!(s.screen.view.center().row >= 94 && s.screen.view.center().col >= 90, "{}", s.screen.view.center());
+    let [_, right, _, bottom] = edges(&s);
+    assert!((right - 149.0).abs() < 1e-3 && (bottom + 198.0).abs() < 1e-3, "{:?}", edges(&s));
 }
 
 #[test]

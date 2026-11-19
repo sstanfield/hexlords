@@ -280,14 +280,24 @@ mod tests {
     #[test]
     fn the_marker_is_clamped_to_the_widget() {
         let v = mini(100, 100, W, H);
+        // The main view in the map's corner (as far as it goes): the marker is
+        // in the minimap's.
         let [left, bottom, right, top] = v.marker(&main_view(Hex::new(0, 0)));
-        assert_eq!(top, 1.0);
+        assert!(top <= 1.0 && top > 0.95, "{top}");
         assert!(left >= -1.0 && right > left && bottom < top && bottom >= -1.0);
         let mut far = main_view(Hex::new(99, 99));
         while far.zoom_out() {}
         let m = v.marker(&far);
         assert!(m.iter().all(|c| (-1.0..=1.0).contains(c)), "{m:?}");
-        assert_eq!(m[1], -1.0);
+        // A main view larger than its map reaches past the minimap's edges:
+        // the marker stops at them.
+        let small = mini(20, 20, W, H);
+        let mut wide = MapView::new(20, 20, Hex::new(10, 10));
+        wide.resize(819, 537);
+        while wide.zoom_out() {}
+        let m = small.marker(&wide);
+        assert!(m.iter().all(|c| (-1.0..=1.0).contains(c)), "{m:?}");
+        assert!(m.contains(&1.0) && m.contains(&-1.0), "{m:?}");
     }
     #[test]
     fn picking_a_hex_on_the_minimap() {

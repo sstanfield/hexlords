@@ -48,10 +48,15 @@ fn clicks_and_hovers_aim_at_hexes() {
 #[test]
 fn cursor_jumps_and_centers_the_view() {
     let mut s = session();
+    script::run(&mut s, "cursor:50:30").unwrap();
+    assert_eq!((s.screen.game.map.cursor, s.screen.view.center()), (Hex::new(50, 30), Hex::new(50, 30)));
+    // In a corner the view goes as far as the map's edges let it.
     script::run(&mut s, "cursor:0:0").unwrap();
-    assert_eq!((s.screen.game.map.cursor, s.screen.view.center()), (Hex::new(0, 0), Hex::new(0, 0)));
+    assert_eq!(s.screen.game.map.cursor, Hex::new(0, 0));
+    assert!(s.screen.view.shows(Hex::new(0, 0)) && s.screen.view.center() != Hex::new(0, 0));
     script::run(&mut s, "cursor:99:99,left").unwrap();
-    assert_eq!((s.screen.game.map.cursor, s.screen.view.center()), (Hex::new(99, 98), Hex::new(99, 99)));
+    assert_eq!(s.screen.game.map.cursor, Hex::new(99, 98));
+    assert!(s.screen.view.shows(Hex::new(99, 99)));
 }
 
 #[test]

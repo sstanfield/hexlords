@@ -45,7 +45,8 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 |---|---|
 | Move the pointer over the map | The hex under it becomes the cursor (red border) |
 | Click a hex, or Enter at the cursor | The hex is the selected one: the panels are about it. With no unit selected: select the first unit on the hex, which shows where it can go (red tint). With a unit selected: move it to the hex if it can reach it, or deselect it if this is its own hex |
-| Click a unit's button under the map | Select that unit of the stack: its reach shows on the map, and everything about it beside the buttons |
+| Point at a unit under the map | A box over it says all about the unit: its side, numbers, and what each terrain costs it to enter |
+| Click a unit under the map | Select that unit of the stack: its reach shows on the map, and the line under the units is about it |
 | Two fingers on a trackpad, or the mouse wheel, over the map | The map moves with the fingers (a wheel moves it up and down, and sideways with Shift) |
 | Drag with the right or the middle button | Pulls the map along with the pointer |
 | Ctrl (or Cmd) and the wheel or two fingers | Zoom in and out; what is under the pointer stays under it |
@@ -57,18 +58,22 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | F11 | Fullscreen on and off |
 | Ctrl+Q (or Cmd+Q) | Quit |
 
-A unit is a disc in its side's color with the sign of its kind; a city that
-has an owner flies a small disc of the owner's color.
+A unit is a disc in its side's color with the sign of its kind. A city shows
+itself, not the units in it: a small disc of its owner's color if it has one,
+and a pip for each unit of its garrison in that unit's color (the selected
+unit's ringed in gold). The map stops at its edges: the view never shows
+what is past them.
 
 **Under the map** the first line says the turn and what is under the cursor
 (with what it would cost the selected unit to go there). Below it is the
-selected hex, the one last clicked: its terrain and road, and a button for
-every unit that stands on it, with the unit's strength and the movement
-points it has left (`mv 6/10`). A button selects its unit, and beside the
-buttons is all about the selected unit: its side, strength, moves, upkeep and
-price, and what every terrain costs it to enter. **Under the minimap** is the
-selected hex's city: its name, who holds it, its walls and garrison, and what
-it builds, in how many turns, at what price.
+selected hex, the one last clicked: its terrain and road, and its units in
+the stack's order, nine places in a row (eight units and one to spare), each
+the unit's icon with its strength and the movement points it has left
+(`4 · 6/10`). Pointing at one opens a box with all about it; clicking it
+selects it, and the last line is about the selected unit. The map takes all
+the room the panel leaves. **Under the minimap** is the selected hex's city:
+its name, who holds it, its walls and garrison, and what it builds, in how
+many turns, at what price.
 
 Every unit can be moved, whoever's it is: whose turn it is, fighting and
 building are rules still to come.
@@ -96,6 +101,7 @@ hexgame [--map <file.map or map directory>] [--script <steps>] [--assets <dir>] 
   `1`, `2`, `key:X` (any character; `key:ctrl+s` with modifiers),
   `click:ROW:COL`, `hover:ROW:COL`, `drag:ROW:COL:ROW:COL`, `minimap:ROW:COL`
   (click the minimap there), `press:ID` (click the widget with that id),
+  `point:ID` (point at it),
   `scroll:DX:DY` (two fingers on the map: it moves that many pixels right and
   down), `miniscroll:DX:DY` (the same on the minimap), `zoomin:ROW:COL` and
   `zoomout:ROW:COL` (Ctrl and the wheel over that hex), `pull:DX:DY` (a drag
