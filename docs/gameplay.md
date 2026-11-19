@@ -12,6 +12,9 @@ two, since they feel very different, above all with several players:
 - **Rounds** ("we go"): every side gives all its orders for the round, without
   seeing the others'; then the round plays out at once, for everyone.
 
+The players choose the mode when a game starts, on any map (decided,
+2026-11-19).
+
 The feel stays the one of section 8: 1990s fantasy strategy on a map of
 cities, cheap troops against dear ones, gold from cities, stacks of eight.
 Nothing is taken from an existing game: the rules and the numbers are ours.
@@ -24,8 +27,10 @@ Built (2026-11-19): the map with terrain and roads; a map's kinds of unit
 movement points, turn by turn, with up to 2 points carried over; cities that
 build what they are set to, a unit at a time, at the end of each turn; the
 side the screen plays (`Game::player`, the holder of the city the game starts
-in), whose cities it can set to build. Not built: whose turn it is (anyone
-can move any unit), fighting, taking a city, gold, the end of the game.
+in), whose cities it can set to build; a city's own cost for what it builds
+(`produce <unit> <turns> <cost>` in `cities.txt`, else the unit's price). Not
+built: whose turn it is (anyone can move any unit), fighting, taking a city,
+gold, commanders, the end of the game.
 
 ## One set of rules, two modes
 
@@ -72,24 +77,39 @@ and the rules use integers, not floats.
 3. **Stacks.** A stack is the units on a hex that move together: as far as
    the slowest of them can go. Orders to split a stack and to join two.
 4. **Fighting.** Our own design, kept in a pure `combat` module with tests
-   that run it many times. A proposal: a battle is a series of duels between
-   the front units of the two stacks; a duel's odds come from the two
-   strengths, with bonuses for terrain, a city's walls and (later) a
-   commander; the loser of a duel dies; the battle ends when a stack is gone.
-   "Quality beats quantity": a strong unit should win against several weak
-   ones more often than their numbers suggest.
+   that run it many times. **Chance is always in it** (decided): the weaker
+   side can win, and either side can lose more, or less, than the numbers
+   foretell. A proposal: a battle is a series of duels between the front
+   units of the two stacks; a duel's odds come from the two strengths, with
+   bonuses for terrain, a city's walls and a commander; the loser of a duel
+   dies; the battle ends when a stack is gone. "Quality beats quantity": a
+   strong unit should win against several weak ones more often than their
+   numbers suggest, but not always. The tests check the odds, run over many
+   seeds (that the stronger side mostly wins, that the weaker sometimes
+   does), and that one seed always gives the same battle.
 5. **Cities change hands.** A city is taken by moving into it when no enemy
    stands in it (after a battle, or empty). A neutral city has a small
    garrison of its own.
 6. **Gold.** Every city brings in gold each turn; what a city builds is paid
    for (proposal: when it is finished, or it waits); every unit costs its
-   upkeep each turn; a side that cannot pay loses units.
-7. **The end.** A side with no city and no unit is out; the game ends when
-   one side is left (more conditions later: a share of the cities, a number
-   of turns).
-8. **Fog of war.** A side sees what is near its units and cities. Rounds
+   upkeep each turn; a side that cannot pay loses units. **The price is the
+   city's** (decided): what its `produce` line says, or, if it says nothing,
+   the unit's `price`. (The unit's price is also what it would cost in a
+   city that is given a new kind to build, later.)
+7. **Commanders**, in the first version of the rules (decided), even if
+   they do little at first. A proposal: a kind of unit is a commander (a
+   `commander` key in `units.txt`); a stack has at most one, in a place of
+   its own (the ninth slot under the map is kept for it); in a battle it
+   gives its stack better odds; it fights last. Later: they grow with
+   battles won, carry things, lead bigger stacks.
+8. **The end** (decided): a side that has lost all its cities is out of the
+   game, and its units with it; the game ends when one side is left. (More
+   ways to win can come later: a share of the cities, a number of rounds.)
+9. **Fog of war.** A side sees what is near its units and cities. Rounds
    need it far more than turns do.
-9. **Saved games.** The state and the orders, in text, like the maps.
+10. **Saved games.** The state and the orders, in text, like the maps.
+11. **Movement points.** A unit that does not use all its points keeps up
+    to 2 of them for the next turn (decided: as now, from the C++).
 
 ## Turns
 
@@ -139,31 +159,40 @@ and the rules use integers, not floats.
 Each step ends playable, with tests and screenshots, and the next builds on
 it; the rules are written once for both modes from the first step.
 
-1. **Players and turns.** Whose turn it is; only that side's units move and
-   its cities build; End turn passes to the next side; hotseat's hiding
-   screen. The session gives orders instead of changing the map.
-2. **Stacks and battles.** Stacks move together; moving into an enemy is a
-   battle (turns); units die; cities are taken.
-3. **Gold.** Income, prices, upkeep; a treasury in the sidebar.
-4. **The end, and an AI.** A side that has lost; the winner; a first AI.
+1. **A new game, players and turns.** A screen to start a game: the map,
+   the mode, who plays each side (a person or nobody, the AI later). Whose
+   turn it is; only that side's units move and its cities build; End turn
+   passes to the next side; hotseat's hiding screen. The session gives
+   orders instead of changing the map.
+2. **Stacks, battles and commanders.** Stacks move together; moving into an
+   enemy is a battle (turns), with chance in it; units die; cities are
+   taken; a commander leads a stack.
+3. **Gold.** Income, the cities' prices, upkeep; a treasury in the sidebar.
+4. **The end, and an AI.** A side that has lost its cities is out; the last
+   one wins; a first AI.
 5. **Fog of war.**
 6. **Rounds.** Planned paths, "done", the resolution, the replay.
 7. **Saves, then the network.**
 
-## Questions for the owner
+## Decided (2026-11-19, the owner's word)
 
-1. Is the mode chosen when a game starts (both on every map), or can a map
-   say which it is for?
-2. Turns: a fixed order of the sides, or drawn anew each round?
-3. Fighting: should chance decide (strength-weighted odds), or should the
-   stronger stack always win (with the losses decided by the numbers)?
-4. A city's `produce` line has a cost and the unit's kind has a price: is
-   the city's cost what is paid (so a city can build a kind cheaper or
-   dearer)? Is it paid at the start or at the end?
-5. The 2 movement points that carry over to the next turn (from the C++):
-   keep them?
-6. Commanders or heroes: in the first version of the rules, or later?
-7. How does a game end: the last side standing, a share of the cities, a
-   number of rounds?
-8. Rounds: should a stack's orders be able to say what to do when it meets
-   an enemy (attack, stop, go round), or is "stop and fight" enough at first?
+1. **The mode** is chosen by the players when a game starts.
+2. **Fighting** always has chance in it: the weaker side may win, or do
+   more harm than was to be expected.
+3. **A city's cost** for what it builds is its own (the third number of its
+   `produce` line); if it gives none, the unit's `price`. The unit's price
+   will also serve when a city is given a new kind to build.
+4. **Movement points:** up to 2 that are not used carry over to the next
+   turn.
+5. **Commanders** come in the first version of the rules, if only with a
+   little to do.
+6. **The end:** a side is out when all its cities are taken; the game ends
+   when one side is left.
+
+## Still open
+
+1. Turns: do the sides play in a fixed order, or one drawn anew each round?
+2. Rounds: can a stack's orders say what to do when it meets an enemy
+   (attack, stop, go round), or is "stop and fight" enough at first?
+3. A side that is out loses its units with its last city (as the proposal
+   above has it): or do they fight on, or go over to nobody?
