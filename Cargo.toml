@@ -30,6 +30,12 @@ miniquad = "=0.4.11" # the version turbo-ferret-miniquad is built against
 turbo-ferret = { git = "https://github.com/sstanfield/turbo-ferret", rev = "a37cb83" }
 turbo-ferret-miniquad = { git = "https://github.com/sstanfield/turbo-ferret", rev = "a37cb83" }
 
+# The tests make many random maps (mapgen), all arithmetic: built a little
+# optimized, they run in seconds, not minutes. (Builds for running the game
+# are as they were.)
+[profile.test]
+opt-level = 1
+
 # The tile generator is all arithmetic: a test draws every tile again to
 # compare it with the ones in `assets/tiles`, which unoptimized takes a minute.
 [profile.dev.package.assetgen]

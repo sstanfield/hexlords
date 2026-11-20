@@ -179,6 +179,7 @@ pub fn rivers(g: &mut Gen, cfg: &Config) {
             if water(*h) {
                 continue;
             }
+            g.river.set(*h, true);
             let width = match 3 * i / n.max(1) {
                 0 => 1,
                 1 => 2,
@@ -194,6 +195,7 @@ pub fn rivers(g: &mut Gen, cfg: &Config) {
             for b in beside.into_iter().take(width as usize - 1) {
                 g.terrain.set(b, TileType::Water);
                 g.fresh.set(b, true);
+                g.river.set(b, true);
             }
         }
     }

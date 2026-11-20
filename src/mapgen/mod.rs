@@ -27,10 +27,12 @@
 
 pub mod biomes;
 pub mod check;
+pub mod cities;
 pub mod cleanup;
 pub mod config;
 pub mod grid;
 pub mod land;
+pub mod names;
 pub mod noise;
 pub mod preview;
 pub mod reach;
@@ -63,6 +65,13 @@ pub struct Gen {
     pub rivers: Vec<Vec<crate::state::Hex>>,
     /// The rivers' and the lakes' water (the sea's rebalance leaves it be).
     pub fresh: Grid<bool>,
+    /// The rivers' water alone (crossed by bridges, where lakes are not).
+    pub river: Grid<bool>,
+    /// The water ships sail to the sea on (the sea, and rivers into it).
+    pub navigable: Grid<bool>,
+    /// The cities (`cities`), and how fair their sharing out came to be.
+    pub cities: Vec<cities::City>,
+    pub fairness: Vec<cities::Fair>,
 }
 
 impl Gen {
@@ -76,6 +85,10 @@ impl Gen {
             island: Grid::new(rows, cols, false),
             rivers: Vec::new(),
             fresh: Grid::new(rows, cols, false),
+            river: Grid::new(rows, cols, false),
+            navigable: Grid::new(rows, cols, false),
+            cities: Vec::new(),
+            fairness: Vec::new(),
         }
     }
 
@@ -97,14 +110,45 @@ pub struct Generated {
     pub state: Gen,
     /// The units template's text, copied into the map.
     pub units: String,
+    /// How many seeds were tried before this map (its config has its own).
+    pub attempts: u32,
 }
 
 /// Make a map: `units` is the units template's text (`template` names it, for
-/// what is said of it).
+/// what is said of it). A map whose cities will not share out fairly is
+/// made again from another seed (the seed and the try, scrambled: not the
+/// next seed, which a batch makes too), at most `attempts` times; the map's
+/// config says the seed that made it (which makes it again at the first
+/// try), and how many tries it took. If none was fair, the fairest is given,
+/// and says what is unfair.
 pub fn generate(config: &Config, units: &str, template: &str) -> Result<Generated, String> {
     let plan = config.plan()?;
     let kinds = parse_units(units).map_err(|e| format!("{template}: {e}"))?;
     config.check_units(&kinds, template)?;
+    let mut best: Option<(usize, Generated)> = None;
+    for attempt in 0..config.attempts.max(1) {
+        let mut cfg = config.clone();
+        if attempt > 0 {
+            cfg.seed = rng::mix(config.seed ^ rng::mix(u64::from(attempt)));
+        }
+        let mut made = make(&cfg, &plan, (&kinds, units))?;
+        made.attempts = attempt + 1;
+        let unfair = made.state.fairness.iter().filter(|f| !f.ok()).count();
+        if best.as_ref().is_none_or(|(u, _)| unfair < *u) {
+            best = Some((unfair, made));
+        }
+        if unfair == 0 {
+            break;
+        }
+    }
+    let (_, mut made) = best.ok_or("no map was made")?;
+    made.attempts = made.attempts.max(1);
+    Ok(made)
+}
+
+/// One map, from `cfg`'s seed.
+fn make(config: &Config, plan: &Plan, (kinds, units): (&[crate::state::UnitKind], &str)) -> Result<Generated, String> {
+    let plan = plan.clone();
     let hexes = usize::from(plan.rows) * usize::from(plan.cols);
     let water = (config.water.clamp(0.0, 0.95) * hexes as f64).round() as usize;
     // The rivers and lakes take water of their own: the sea is made smaller
@@ -126,7 +170,10 @@ pub fn generate(config: &Config, units: &str, template: &str) -> Result<Generate
     land::rebalance_sea(&mut g, water);
     biomes::biomes(&mut g, config);
     cleanup::cleanup(&mut g, config);
-    Ok(Generated { config: config.clone(), plan, state: g, units: units.to_string() })
+    cities::cities(&mut g, config, &plan, kinds)?;
+    // The mix again, round the room made for the cities.
+    cleanup::quotas(&mut g, config);
+    Ok(Generated { config: config.clone(), plan, state: g, units: units.to_string(), attempts: 1 })
 }
 
 impl Generated {
@@ -147,7 +194,42 @@ impl Generated {
 
     /// `cities.txt`.
     pub fn cities_text(&self) -> String {
-        "# The cities of a generated map (docs/map-format.md): none yet.\n".to_string()
+        let mut out = "# The cities of a generated map (docs/map-format.md).\n".to_string();
+        for c in &self.state.cities {
+            out.push_str(&format!("\ncity {} {}\n  name     {}\n", c.hex.row, c.hex.col, c.name));
+            if c.side != crate::state::Side::Grey {
+                out.push_str(&format!("  side     {}\n", crate::state::scenario::side_name(c.side)));
+            }
+            out.push_str(&format!("  walls    {}\n  income   {}\n", c.walls, c.income));
+            for (id, turns) in &c.produce {
+                out.push_str(&format!("  produce  {id} {turns}\n"));
+            }
+            for (id, n) in &c.garrison {
+                out.push_str(&format!("  garrison {id} {n}\n"));
+            }
+        }
+        out
+    }
+
+    /// What the preview marks on each city: at sea, in the air, a port.
+    pub fn city_marks(&self) -> Vec<preview::CityMark> {
+        let g = &self.state;
+        self.state
+            .cities
+            .iter()
+            .map(|c| preview::CityMark {
+                sea: c.reach == reach::ReachClass::Sea,
+                air: c.reach == reach::ReachClass::Air,
+                port: c.produce.iter().any(|(id, _)| {
+                    self.kinds().iter().any(|k| k.id == *id && reach::movement_class(k) == reach::MoveClass::Naval)
+                }) && g.terrain.neighbours(c.hex).any(|n| *g.terrain.get(n) == TileType::Water),
+            })
+            .collect()
+    }
+
+    /// The units template's kinds.
+    pub fn kinds(&self) -> Vec<crate::state::UnitKind> {
+        parse_units(&self.units).unwrap_or_default()
     }
 
     /// `mapgen.txt`: the config, seed, size and cities and all, that makes

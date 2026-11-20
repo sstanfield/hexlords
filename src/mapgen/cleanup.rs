@@ -108,16 +108,23 @@ fn score(g: &Gen, t: TileType, h: Hex) -> f64 {
 }
 
 /// Each land terrain on its quota: one over gives its worst hexes to grass;
-/// one under takes the best grass beside it (or anywhere).
+/// one under takes the best grass beside it (or anywhere). A city and the
+/// hexes round it are left as they are.
 pub fn quotas(g: &mut Gen, cfg: &Config) {
+    let snap0 = g.terrain.clone();
+    let free =
+        |h: Hex| *snap0.get(h) != TileType::City && !snap0.neighbours(h).any(|n| *snap0.get(n) == TileType::City);
     let land = g.terrain.cells().iter().filter(|t| **t != TileType::Water).count();
     for (i, t) in [(2, TileType::Hill), (3, TileType::Forest), (4, TileType::Swamp), (5, TileType::Desert)] {
         let want = (cfg.mix[i] / 100.0 * land as f64).round() as usize;
         let snap = g.terrain.clone();
         let have = snap.cells().iter().filter(|k| **k == t).count();
         if have > want {
-            let worst: Vec<(usize, f64)> =
-                snap.hexes().filter(|h| *snap.get(*h) == t).map(|h| (snap.index(h), -score(g, t, h))).collect();
+            let worst: Vec<(usize, f64)> = snap
+                .hexes()
+                .filter(|h| *snap.get(*h) == t && free(*h))
+                .map(|h| (snap.index(h), -score(g, t, h)))
+                .collect();
             for j in top(&worst, have - want) {
                 g.terrain.cells_mut()[j] = TileType::Grass;
             }
@@ -125,11 +132,11 @@ pub fn quotas(g: &mut Gen, cfg: &Config) {
             let beside = |h: Hex| snap.neighbours(h).any(|n| *snap.get(n) == t);
             let mut best: Vec<(usize, f64)> = snap
                 .hexes()
-                .filter(|h| *snap.get(*h) == TileType::Grass && beside(*h))
+                .filter(|h| *snap.get(*h) == TileType::Grass && beside(*h) && free(*h))
                 .map(|h| (snap.index(h), score(g, t, h)))
                 .collect();
             if best.len() < want - have {
-                let more = snap.hexes().filter(|h| *snap.get(*h) == TileType::Grass && !beside(*h));
+                let more = snap.hexes().filter(|h| *snap.get(*h) == TileType::Grass && !beside(*h) && free(*h));
                 best.extend(more.map(|h| (snap.index(h), score(g, t, h) - 10.0)));
             }
             for j in top(&best, want - have) {

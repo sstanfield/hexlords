@@ -197,14 +197,30 @@ fn write(made: &Generated, dir: &Path, picture: bool, layers: bool) -> Result<(I
     let stats = Stats::of(&map);
     let metrics = score::terrain(&made.config, &stats);
     let misses: Vec<&str> = metrics.iter().filter(|m| !m.ok()).map(|m| m.name.as_str()).collect();
+    let tries = if made.attempts > 1 {
+        format!(" (made from seed {}, try {})", made.config.seed, made.attempts)
+    } else {
+        String::new()
+    };
     let summary = format!(
-        "score {:.2}{}",
+        "score {:.2}{tries}{}",
         score::score(&metrics),
         if misses.is_empty() { String::new() } else { format!("; misses {}", misses.join(", ")) }
     );
-    let text = format!("{}\nthe targets:\n{}", stats.report(), score::table(&metrics));
+    let fair: Vec<String> = made
+        .state
+        .fairness
+        .iter()
+        .map(|f| {
+            format!("  {:<56} {:>6.2}  (at most {})  {}", f.name, f.value, f.limit, if f.ok() { "ok" } else { "MISS" })
+        })
+        .collect();
+    let unfair: Vec<&str> = made.state.fairness.iter().filter(|f| !f.ok()).map(|f| f.name.as_str()).collect();
+    let summary = if unfair.is_empty() { summary } else { format!("{summary}; unfair: {}", unfair.join(", ")) };
+    let text =
+        format!("{}\nthe targets:\n{}\nfairness:\n{}\n", stats.report(), score::table(&metrics), fair.join("\n"));
     put("stats.txt", text.as_bytes())?;
-    let img = preview::preview(&map, PREVIEW, &[]);
+    let img = preview::preview(&map, PREVIEW, &made.city_marks());
     if picture {
         put("preview.png", &img.png())?;
     }

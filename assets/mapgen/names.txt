@@ -1,0 +1,9 @@
+# The syllables mapgen builds city names from: our own, made up for this
+# game, not taken from any other. A name is two or three syllables (an onset,
+# a vowel, now and then a coda), and sometimes one of the endings; a capital
+# takes one of the grand endings.
+onsets  b bl br c cl cr d dr f fl fr g gl gr h j k l m n p pl pr r s sc sk sl sp st sw t th tr v w wr
+vowels  a e i o u a e o a ai ea ei ou oa y
+codas   n r l m s t d k ll rn rd ld nd st nt sk lt
+endings ford mere holt gard ton wick dale by stead burn well moor cliff brook marsh ridge fell den
+grand   hold keep gate crown spire haven garde mount throne

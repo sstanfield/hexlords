@@ -34,7 +34,8 @@ const BACKGROUND: Rgb = [0, 0, 0];
 const ROAD: Rgb = [60, 45, 30];
 const BRIDGE: Rgb = [150, 95, 45];
 const PASS: Rgb = [240, 240, 240];
-const CITY: Rgb = [250, 250, 250];
+const CITY: Rgb = [205, 205, 205];
+const DIGIT: Rgb = [250, 250, 250];
 const RING: Rgb = [20, 18, 16];
 const TEMPLE: Rgb = [240, 200, 60];
 const RUIN: Rgb = [120, 75, 40];
@@ -199,8 +200,10 @@ pub fn preview(map: &Map, s: f64, marks: &[CityMark]) -> Image {
             img.square(at, half + 0.8, RING);
             img.square(at, half, CITY);
         } else {
-            img.square(at, half + 2.0, RING);
-            img.square(at, half + 1.0, byte(side_color(city.side)));
+            // A capital: bigger, in its side's colour, ringed twice.
+            img.square(at, half + 3.5, CITY);
+            img.square(at, half + 2.5, RING);
+            img.square(at, half + 1.5, byte(side_color(city.side)));
         }
         if mark.sea {
             img.dot(at, half * 0.5, byte(terrain_color(TileType::Water)));
@@ -254,7 +257,7 @@ fn number(img: &mut Image, n: u64, (x, y): (i64, i64), scale: i64) {
                     for sy in 0..scale {
                         for sx in 0..scale {
                             let px = x + (i as i64 * 4 + col) * scale + sx;
-                            img.put(px, y + row as i64 * scale + sy, CITY);
+                            img.put(px, y + row as i64 * scale + sy, DIGIT);
                         }
                     }
                 }
