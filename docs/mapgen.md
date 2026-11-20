@@ -13,12 +13,13 @@ That map is not in the repository and never will be; only its aggregate
 numbers are used.
 
 **Where it stands.** Built: the ruler (stats, reach, check), the skeleton
-(knobs, presets, sizes, files, pictures) and the terrain (land and water,
+(knobs, presets, sizes, files, pictures), the terrain (land and water,
 mountains and hills, rivers and lakes, forest, swamp, desert, grass,
-cleanup). To come, in order: cities (capitals, neutrals, sea and air
-cities, fairness, names, production); temples and ruins; roads, bridges and
-passes; scoring with retries. Until cities come, a generated map has terrain only:
-the game opens it, but there is nobody to play.
+cleanup) and the cities (capitals, neutrals, sea and air cities, fairness,
+names, walls, what they build and who stands in them). To come, in order:
+temples and ruins; roads, bridges and passes; the rest of scoring. **Until
+the roads bring bridges, a river is a wall to every walker**: the game
+plays a generated map, but armies on either side of a river never meet.
 
 ## Commands
 
@@ -94,17 +95,24 @@ archipelago; cities only ships reach; the units template needs a ship).
 | `roughness` | 0.5 | 0 smooth to 1 ragged |
 | `range_style` | `ridges` | long ranges, or `massifs`, round lumps |
 | `hill_ring` | 0.85 | the share of mountain edges that border hills |
+| `city_min_gap` | 0.38 x the square root of the density, at least 4 (5 at `normal`) | the least hex distance between cities |
+| `city_gap_target` | 0.6 x the square root of the density (8) | the middle distance between neighbours aimed at |
+| `coastal_cities` | 0.25 | the share of cities by the water aimed at |
+| `edge_margin` | 2 | no city nearer the map's edge |
+| `walls` | `3:8 4:58 5:18 6:16` | the neutral cities' walls and their shares, percent; capitals get the highest |
+| `sea_cities`, `sea_city_count` | off, 0.04 of the cities | cities on islands only ships reach; the units template needs a ship |
+| `fly_cities`, `fly_city_count` | off, one for every 40 cities (1 to 3) | cities in mountain rings only flyers reach; the template needs a flyer |
+| `ports`, `ports_per_side` | `auto`, 1 | cities by water that reaches the sea build the template's ship |
+| `fairness` | `normal` | `off`, `loose`, `normal`, `strict` (below) |
+| `attempts` | 30 | maps made before the fairest is given |
 
 Of size, cities and density, two given say the third (`size` and `cities`:
 the density; `size` alone: the cities at the density; neither: the size for
 the cities). It warns of a density outside 100 to 300, or fewer than 3
 cities a side. The knobs of the stages to come (cities, sites, roads,
 fairness, ships and flyers, retries) are read and written already, and do
-nothing yet: `city_min_gap`, `city_gap_target`,
-`coastal_cities`, `edge_margin`, `walls`, `temples`, `ruins`,
-`site_city_gap`, `site_gap`, `roads`, `road_loops`, `bridges`, `max_bridge`,
-`passes`, `sea_cities`, `sea_city_count`, `fly_cities`, `fly_city_count`,
-`ports`, `ports_per_side`, `fairness`, `symmetry`, `attempts`, `accept`. A
+nothing yet: `temples`, `ruins`, `site_city_gap`, `site_gap`, `roads`,
+`road_loops`, `bridges`, `max_bridge`, `passes`, `symmetry`, `accept`. A
 checkbox on with a units template that has no such unit stops the generator
 with an error that says so.
 
@@ -151,6 +159,56 @@ with an error that says so.
    mountains stay; some lone trees too), then each terrain back on its
    quota.
 
+6. **Cities** (`cities.rs`). Travel is the reference unit's on foot (grass
+   2, forest 4, hill and swamp 5, desert 3), a river crossed as if bridged.
+   - **Capitals**: of the grass well in from the edges, off the water, open
+     around and with land enough within 3 turns, a spread sample; from a
+     few starts, the farthest points by travel, then swaps that make the
+     set better: as far apart as can be, with each one's share of the land
+     and its way to its nearest enemy within what fairness allows.
+   - **Neutral cities**: a Poisson disc from the capitals (grass liked best,
+     the water's edge more while the cities by it are fewer than
+     `coastal_cities`), then more in the emptiest places or fewer where
+     crowded, to the count; three passes moving each a hex toward the middle
+     of its cell.
+   - **At sea and in the air** (the checkboxes): cities on the islands
+     raised for them, the first of each by the water; and neutral cities
+     three turns from every capital, in or by a range, ringed by mountains
+     two hexes out (the mountains taken from ranges' edges elsewhere).
+   - **Fairness**: while the neutral cities are shared out unfairly (the
+     table below), the side with the most gives up the city it holds most
+     narrowly and the side with the fewest gets one in its emptiest place;
+     likewise within 3 turns of the capitals, and for ports. What only the
+     capitals can change is left to six tries of capitals, and what the
+     terrain will not allow to a new map: the seed and the try scrambled
+     (`mapgen.txt` says the seed that made it), at most `attempts` times.
+   - **Room**: a mountain beside a city becomes a hill, a swamp grass, and
+     three of its neighbours at least are grass; the mix is put back round
+     them.
+   - **Records**: a name from our own syllables (`assets/mapgen/names.txt`;
+     a capital's with a grand ending), its holder (a capital's side, in the
+     order black, white, red, green, blue, orange, yellow, purple), walls
+     (a capital the highest of `walls`; a neutral drawn from it, one more by
+     the water or in the hills), taxes (a capital 20, a neutral 4 and twice
+     its walls), what it builds (from the template by role: a capital its
+     two cheapest, its fastest and its commander; a city in the hills its
+     two strongest; the others the cheapest and one more; a port the
+     template's ship; a city in the air a flyer first, now and then a strong
+     one too), and its garrison (a capital its commander and three of what
+     it builds, a neutral half its walls of the cheapest).
+
+Fairness, by level (`fairness`); travel by the cheapest way, a river
+crossed:
+
+| Measure | loose | normal | strict |
+|---|---|---|---|
+| Neutral cities in each capital's cell, most less fewest | 3 | 2 | 1 |
+| Neutral cities within 3 turns of each capital, most less fewest | 2 | 1 | 1 |
+| Land in each cell, most over least | 1.5 | 1.3 | 1.15 |
+| The way to the nearest enemy capital, longest over shortest | 1.5 | 1.3 | 1.15 |
+| Ports in each cell (that has water a ship reaches the sea on), most less fewest; and none short of `ports_per_side` | 3 | 2 | 1 |
+| Cities at sea nearest one capital | 2 | 1 | 1 |
+
 Every stage uses only `+ - * /`, `floor` and `sqrt` where results pick
 terrain (no `sin`, `exp` or `powf`, whose last bits differ between
 platforms), breaks ties by the hex's index, and draws its chance from its own
@@ -166,7 +224,12 @@ each terrain keeps to itself, on average, within 0.08 of the target map's
 0.87); no land walled in by mountains. Over 10 medium seeds, every river runs
 from its source to water, one hex beside the next, all of it water at the
 end; a good part of the water is narrow. Tiny maps come within twice the
-tolerance, on the whole.
+tolerance, on the whole. Over 20 medium seeds the cities are as many as
+asked, a capital a side, apart and off the edge, named each its own, and
+shared out fairly at `normal` (a few take a second or third map).
+
+The tests make many maps; they are built a little optimized (`[profile.test]
+opt-level = 1` in `Cargo.toml`), or they would take minutes.
 
 `tests/mapgen_target.rs` holds the ruler to the target map's numbers. It
 reads the map from `MAPGEN_TARGET_DIR` and is ignored unless asked for:
