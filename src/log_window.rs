@@ -23,6 +23,11 @@ pub const LOG_CLOSE_ID: &str = "log_close";
 /// The skin of what is new.
 pub const NEW_SKIN: &str = "LogNew";
 
+/// The Watch button of the battle of the history's record `record`.
+pub fn watch_id(record: usize) -> String {
+    format!("watch_{record}")
+}
+
 /// The scrolled list's size at most, and the space between things, in dp.
 const LIST_DP: (i32, i32) = (560, 340);
 const SPACING_DP: i32 = 8;
@@ -40,6 +45,8 @@ pub struct LogWindow {
     side: Side,
     new_from: usize,
     length: usize,
+    /// The Watch buttons of the battles, and the record each plays.
+    watch: Vec<(TbId, usize)>,
 }
 
 impl LogWindow {
@@ -72,7 +79,8 @@ impl LogWindow {
 
         build::gap(ui, parts.content, dp(ui, SPACING_DP));
         build::button(ui, parts.content, LOG_CLOSE_ID, "Close");
-        let mut log = LogWindow { parts, status, status_text: String::new(), list, side, new_from, length: 0 };
+        let mut log =
+            LogWindow { parts, status, status_text: String::new(), list, side, new_from, length: 0, watch: Vec::new() };
         log.fill(ui, game);
         build::place(ui, parts, area, align);
         log
@@ -83,18 +91,29 @@ impl LogWindow {
         for child in ui.children(self.list).to_vec() {
             ui.remove(child);
         }
+        self.watch.clear();
         let log = info::log(game, self.side, self.new_from);
         if log.is_empty() {
             build::text(ui, self.list, "Nothing yet.");
         }
+        let space = ui.dimension_converter().dp_to_px(SPACING_DP);
         for (round, entries) in &log {
             build::heading(ui, self.list, &format!("Round {round}"));
             for entry in entries {
                 for (i, line) in entry.lines.iter().enumerate() {
                     let text = if i == 0 { line.clone() } else { format!("{INDENT}{line}") };
-                    let field = build::text(ui, self.list, &text);
+                    // A battle that can be watched has its button beside its
+                    // first line.
+                    let watchable = i == 0 && entry.battle && game.fight(entry.record).is_some();
+                    let parent = if watchable { build::row(ui, self.list, space) } else { self.list };
+                    let field = build::text(ui, parent, &text);
                     if entry.new {
                         ui.set_skin(field, TbId::new(NEW_SKIN));
+                    }
+                    if watchable {
+                        let id = watch_id(entry.record);
+                        build::button(ui, parent, &id, "Watch");
+                        self.watch.push((TbId::new(&id), entry.record));
                     }
                 }
             }
@@ -103,14 +122,16 @@ impl LogWindow {
     }
 
     /// Bring it up to date: `side`'s log, new from `new_from`, as the
-    /// history is now. (Only what changed is written again.)
-    pub fn refresh(&mut self, ui: &mut Ui, game: &Game, side: Side, new_from: usize) {
+    /// history is now. True if it was written again (its new lines and
+    /// buttons are to be laid out).
+    pub fn refresh(&mut self, ui: &mut Ui, game: &Game, side: Side, new_from: usize) -> bool {
         if self.side == side && self.new_from == new_from && self.length == game.history().len() {
-            return;
+            return false;
         }
         (self.side, self.new_from) = (side, new_from);
         self.fill(ui, game);
         build::refit(ui, self.parts);
+        true
     }
 
     /// The line on top: whose turn it is, while the others play.
@@ -130,14 +151,38 @@ impl LogWindow {
         build::close(ui, self.parts.window);
     }
 
+    /// The record a click on one of its Watch buttons plays, if it was one.
+    pub fn watch(&self, id: TbId) -> Option<usize> {
+        self.watch.iter().find(|(button, _)| *button == id).map(|(_, record)| *record)
+    }
+
+    /// The Watch buttons' records, in the order they stand.
+    pub fn watchable(&self) -> Vec<usize> {
+        self.watch.iter().map(|(_, record)| *record).collect()
+    }
+
+    /// Its lines' fields, in order: the list's, and those in its rows (a
+    /// battle's first line, beside its button).
+    fn fields(&self, ui: &Ui) -> Vec<WidgetId> {
+        let mut fields = Vec::new();
+        for child in ui.children(self.list) {
+            if ui.get::<TextField>(*child).is_some() {
+                fields.push(*child);
+            } else {
+                fields.extend(ui.children(*child).iter().copied().filter(|id| ui.get::<TextField>(*id).is_some()));
+            }
+        }
+        fields
+    }
+
     /// What it says, a line at a time, the round headings among them.
     pub fn lines(&self, ui: &Ui) -> Vec<String> {
-        ui.children(self.list).iter().filter_map(|id| ui.get::<TextField>(*id)).map(|t| t.text.clone()).collect()
+        self.fields(ui).iter().filter_map(|id| ui.get::<TextField>(*id)).map(|t| t.text.clone()).collect()
     }
 
     /// The lines of it that are new.
     pub fn new_lines(&self, ui: &Ui) -> Vec<String> {
-        ui.children(self.list)
+        self.fields(ui)
             .iter()
             .filter(|id| ui.node(**id).is_some_and(|n| n.skin() == TbId::new(NEW_SKIN)))
             .filter_map(|id| ui.get::<TextField>(*id))

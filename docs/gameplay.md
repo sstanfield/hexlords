@@ -251,6 +251,15 @@ thing to happen. Ideas to try, as the rules grow:
   own, a line on top saying whose turn it is; when the person's turn comes,
   the button says Start turn, which closes it. (Fog of war will decide what
   more a side may hear.)
+- **Battles watched** (built): a battle is played out in a window, both
+  stacks with each unit's strength and where its bonuses come from, then
+  the exchanges a few a second (who fights lit, who is hit in red with an
+  X, the dead dimmed). It opens on the person's own attack; their log has
+  a Watch button for each battle they fought, so the computer's attacks
+  and, in hotseat, another person's can be watched too. The game keeps
+  each battle's fight (who fought with what, each exchange, `Game::fight`)
+  for `REPLAY_ROUNDS` (5) rounds; a battle is deterministic, but the fight
+  is kept as it happened rather than fought again.
 - **What a city can build, before it is built** (built): the city's window
   has a button for each, with the unit's icon, name, strength and moves,
   and all about the one under the pointer (turns, price, upkeep, what each

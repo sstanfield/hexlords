@@ -8,10 +8,11 @@ mod common;
 
 use common::{assets, click, pixel_of, press, widget};
 use hexgame::agents::Simple;
+use hexgame::battle_window::BATTLE_WINDOW_ID;
 use hexgame::game::Game;
 use hexgame::headless;
 use hexgame::orders::{Event, Order};
-use hexgame::session::{NOTICE_ID, Session};
+use hexgame::session::Session;
 use hexgame::setup::{Controller, Setup};
 use hexgame::state::combat::System;
 use hexgame::state::scenario::{self, Scenario};
@@ -236,12 +237,14 @@ fn the_simple_agent_attacks_and_wins() {
 
 // The screen.
 
-fn session(game: Game) -> Session {
-    Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap()
+/// Click the middle of a widget.
+fn push_id(s: &mut Session, name: &str) {
+    let r = s.screen.area(widget(s, name));
+    click(s, Point::new(r.x + r.w / 2, r.y + r.h / 2));
 }
 
-fn notice(s: &Session) -> Vec<String> {
-    s.notice()
+fn session(game: Game) -> Session {
+    Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap()
 }
 
 #[test]
@@ -256,8 +259,12 @@ fn the_screen_tells_the_odds_and_reports_the_battle() {
     assert!(s.status().ends_with("attack: 100% likely to win"), "{}", s.status());
     let p = pixel_of(&s, BLUEMOOR);
     click(&mut s, p);
+    // The battle's window: played out, and then how it went.
+    let battle = s.battle().expect("the battle, to watch");
+    assert_eq!(battle.progress().0, 0);
+    push_id(&mut s, hexgame::battle_window::BATTLE_SKIP_ID);
     assert_eq!(
-        notice(&s),
+        s.battle().unwrap().outcome(&s.screen.ui),
         [
             "You attacked blue at Bluemoor, 3 against 1, and won.",
             "You lost nothing; they lost 1 Levy.",
@@ -266,8 +273,8 @@ fn the_screen_tells_the_odds_and_reports_the_battle() {
     );
     // Esc closes it.
     press(&mut s, SpecialKey::Esc);
-    assert!(notice(&s).is_empty());
-    assert!(s.screen.ui.find(s.screen.ui.root(), turbo_ferret::TbId::new(NOTICE_ID)).is_none());
+    assert!(s.battle().is_none());
+    assert!(s.screen.ui.find(s.screen.ui.root(), turbo_ferret::TbId::new(BATTLE_WINDOW_ID)).is_none());
 }
 
 #[test]
@@ -285,9 +292,9 @@ fn who_was_attacked_while_they_waited_hears_of_it() {
     click(&mut s, p);
     let p = pixel_of(&s, BLUEMOOR);
     click(&mut s, p);
-    assert!(!notice(&s).is_empty());
+    assert!(s.battle().is_some());
     s.end_turn();
-    assert!(s.covered() && notice(&s).is_empty(), "nothing shows over the cover");
+    assert!(s.covered() && s.battle().is_none(), "nothing shows over the cover");
     begin(&mut s);
     assert_eq!(
         s.log_new_lines(),

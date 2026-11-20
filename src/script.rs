@@ -28,6 +28,9 @@
 //!   it is for getting to a far corner);
 //! - `turn`: in a game, a round in one step: the turn ends, the others play
 //!   theirs at once, and the next starts (`turn*30` for thirty rounds);
+//! - `wait:MS`: MS milliseconds of frames go by (the computer's turns, a
+//!   battle being watched), on the script's own clock, which starts at 0
+//!   (the window's frames after the script do not move what it moved);
 //! - any step may end in `*N` to run it N times: `left*12`.
 //!
 //! The keys and the pointer go through the UI exactly as the window sends them,
@@ -42,6 +45,8 @@ use crate::state::Hex;
 
 /// Run a script on a scene. On an error the steps before it have happened.
 pub fn run<S: Scene>(scene: &mut S, script: &str) -> Result<(), String> {
+    // The script's own clock, for `wait`, in ms.
+    let mut clock = 0;
     for step in script.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         let (action, times) = match step.rsplit_once('*') {
             Some((action, n)) if !action.is_empty() && !action.ends_with(':') => {
@@ -50,7 +55,7 @@ pub fn run<S: Scene>(scene: &mut S, script: &str) -> Result<(), String> {
             _ => (step, 1),
         };
         for _ in 0..times {
-            run_step(scene, action).map_err(|e| format!("{step}: {e}"))?;
+            run_step(scene, action, &mut clock).map_err(|e| format!("{step}: {e}"))?;
         }
     }
     Ok(())
@@ -71,6 +76,7 @@ enum Step {
     Zoom(Hex, bool),
     Pull(i32, i32),
     Turn,
+    Wait(u64),
 }
 
 /// `X`, or modifiers and X joined by `+`: `ctrl+s`.
@@ -147,6 +153,10 @@ fn parse_step(action: &str) -> Result<Step, String> {
         "enter" => Step::Key(SpecialKey::Enter),
         "esc" => Step::Key(SpecialKey::Esc),
         "turn" => Step::Turn,
+        "wait" => {
+            let ms = parts.next().ok_or("needs a number of ms")?;
+            Step::Wait(ms.parse().map_err(|_| format!("\"{ms}\" is not a number of ms"))?)
+        }
         "space" => Step::Char(' ', Modifiers::NONE),
         "1" => Step::Char('1', Modifiers::NONE),
         "2" => Step::Char('2', Modifiers::NONE),
@@ -184,15 +194,24 @@ fn click(screen: &mut MapScreen, p: Point) {
     screen.ui.pointer_up(p, Modifiers::NONE);
 }
 
-fn run_step<S: Scene>(scene: &mut S, action: &str) -> Result<(), String> {
+fn run_step<S: Scene>(scene: &mut S, action: &str, clock: &mut u64) -> Result<(), String> {
     // The whole step is read before any of it happens.
     let step = parse_step(action)?;
+    if let Step::Wait(ms) = step {
+        // A frame every 16 ms, on the script's clock.
+        let end = *clock + ms;
+        while *clock < end {
+            *clock = (*clock + 16).min(end);
+            scene.frame(*clock);
+        }
+        return Ok(());
+    }
     if let Step::Turn = step {
         return if scene.next_turn() { Ok(()) } else { Err("there is no turn to end here".to_string()) };
     }
     let screen = scene.screen_mut();
     match step {
-        Step::Turn => {}
+        Step::Turn | Step::Wait(_) => {}
         Step::Key(key) => {
             screen.ui.key(None, key, Modifiers::NONE, true);
             screen.ui.key(None, key, Modifiers::NONE, false);

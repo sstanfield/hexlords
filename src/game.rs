@@ -67,6 +67,47 @@ enum Undo {
     Built { city: CityId, building: Option<usize>, progress: u32 },
 }
 
+/// How many rounds a battle can be watched again for (`Game::fight`).
+pub const REPLAY_ROUNDS: u32 = 5;
+
+/// A unit in a battle, as the battle saw it: who it was, and what its
+/// strength was made of, in points (the walls' in quarters of a point, as a
+/// battle counts them: `combat::QUARTER`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Combatant {
+    pub unit: UnitId,
+    pub side: Side,
+    pub name: String,
+    /// Its kind's picture.
+    pub image: String,
+    pub commander: bool,
+    /// Its own strength, a commander's bonus, the ground's (a defender's).
+    pub strength: u32,
+    pub led: u32,
+    pub ground: u32,
+    /// The walls' bonus, in quarters (a defender's in a city).
+    pub walls: u32,
+    /// All of it, in quarters: what it fought with.
+    pub quarters: u32,
+}
+
+/// A battle, kept so that it can be watched again: where, who, under what
+/// rules, everyone in it with their strengths, and each exchange.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Fight {
+    pub at: Hex,
+    pub attacker: Side,
+    pub defender: Side,
+    pub rules: crate::state::combat::Rules,
+    /// The ground of the hex, and the walls of a city there.
+    pub terrain: TileType,
+    pub walls: u32,
+    pub attackers: Vec<Combatant>,
+    pub defenders: Vec<Combatant>,
+    pub trace: Vec<combat::Exchange>,
+    pub won: bool,
+}
+
 pub struct Game {
     pub map: Map,
     /// The units selected to move together (a stack, or some of one).
@@ -96,6 +137,11 @@ pub struct Game {
     history: Vec<Record>,
     /// Each side's gold, by `Side::index`.
     treasury: [u32; NUM_SIDES + 1],
+    /// The battles of the last few rounds, to be watched again: the index of
+    /// each one's record in the history, its round, the fight; and the one
+    /// the order being carried out fought, until it is kept.
+    fights: Vec<(usize, u32, Fight)>,
+    fought: Option<Fight>,
     /// The sides that are out, in the order they went.
     out: Vec<Side>,
     winner: Option<Side>,
@@ -134,6 +180,8 @@ impl Game {
             undo_mark: 0,
             history: Vec::new(),
             treasury: [setup.gold; NUM_SIDES + 1],
+            fights: Vec::new(),
+            fought: None,
             setup,
         }
     }
@@ -242,7 +290,21 @@ impl Game {
     /// turns' beginnings, or an undo.
     fn remember(&mut self, round: u32, turn: Side, events: &[Event]) {
         let kept = events.iter().filter(|e| !matches!(e, Event::Moved { .. } | Event::Began { .. } | Event::Undone));
-        self.history.extend(kept.map(|event| Record { round, turn, event: event.clone() }));
+        for event in kept {
+            // A battle's fight is kept beside its record.
+            if matches!(event, Event::Battle { .. }) {
+                if let Some(fight) = self.fought.take() {
+                    self.fights.push((self.history.len(), round, fight));
+                }
+            }
+            self.history.push(Record { round, turn, event: event.clone() });
+        }
+    }
+
+    /// The battle of the history's record `record`, to be watched again, if
+    /// it was in the last [`REPLAY_ROUNDS`] rounds.
+    pub fn fight(&self, record: usize) -> Option<&Fight> {
+        self.fights.iter().find(|(i, _, _)| *i == record).map(|(_, _, fight)| fight)
     }
 
     /// What has happened in the game, oldest first: every battle, every city
@@ -441,6 +503,14 @@ impl Game {
     /// bonus, and three quarters of a point for each level of the walls of a
     /// city there.
     pub fn battle_strength(&self, unit: &Unit, at: Hex, defending: bool, stack: &[UnitId]) -> u32 {
+        let (own, led, ground, walls) = self.strength_parts(unit, at, defending, stack);
+        own.saturating_add(led).saturating_add(ground).saturating_mul(combat::QUARTER).saturating_add(walls)
+    }
+
+    /// What `battle_strength` is made of: the unit's own strength, the best
+    /// bonus of a commander in its stack, the ground's bonus (a defender's),
+    /// in points; and the walls' (a defender's in a city), in quarters.
+    pub fn strength_parts(&self, unit: &Unit, at: Hex, defending: bool, stack: &[UnitId]) -> (u32, u32, u32, u32) {
         let units = self.map.units();
         let led = stack
             .iter()
@@ -449,16 +519,12 @@ impl Game {
             .map(|kind| kind.commander)
             .max()
             .unwrap_or(0);
-        let mut points = unit.strength.saturating_add(led);
-        if defending {
-            points = points.saturating_add(self.map.tile(at).map_or(0, |t| combat::ground_bonus(t.kind)));
+        if !defending {
+            return (unit.strength, led, 0, 0);
         }
-        let mut quarters = points.saturating_mul(combat::QUARTER);
-        if defending {
-            let walls = self.map.city_at(at).map_or(0, |c| c.walls);
-            quarters = quarters.saturating_add(walls.saturating_mul(combat::WALL_QUARTERS));
-        }
-        quarters
+        let ground = self.map.tile(at).map_or(0, |t| combat::ground_bonus(t.kind));
+        let walls = self.map.city_at(at).map_or(0, |c| c.walls).saturating_mul(combat::WALL_QUARTERS);
+        (unit.strength, led, ground, walls)
     }
 
     /// The two sides of a battle of `attackers` against whoever is on `at`.
@@ -496,6 +562,20 @@ impl Game {
         let (a, d) = self.fighters(attackers, at);
         let defender = d.first().map_or(Side::Grey, |f| f.unit.side);
         let battle = combat::fight(&a, &d, &self.setup.combat, &mut self.rng);
+        // As it was, to be watched again.
+        let defending: Vec<UnitId> = d.iter().map(|f| f.unit).collect();
+        self.fought = Some(Fight {
+            at,
+            attacker: side,
+            defender,
+            rules: self.setup.combat,
+            terrain: self.map.tile(at).map_or(TileType::Grass, |t| t.kind),
+            walls: self.map.city_at(at).map_or(0, |c| c.walls),
+            attackers: self.combatants(attackers, at, false),
+            defenders: self.combatants(&defending, at, true),
+            trace: battle.trace.clone(),
+            won: battle.attackers_won,
+        });
         let lost = |s: Side| battle.dead.iter().filter(|u| u.side == s).count();
         let units = self.map.units();
         let dead = battle.dead.iter().filter_map(|id| units.get(*id)).map(|u| (u.side(), u.name.clone())).collect();
@@ -514,6 +594,33 @@ impl Game {
             self.map.kill_unit(*unit);
         }
         (battle.attackers_won, event)
+    }
+
+    /// The units of `ids` in a battle on `at`, as the battle sees them (the
+    /// order of `fighters`).
+    fn combatants(&self, ids: &[UnitId], at: Hex, defending: bool) -> Vec<Combatant> {
+        let units = self.map.units();
+        ids.iter()
+            .filter_map(|id| units.get(*id))
+            .map(|unit| {
+                let (strength, led, ground, walls) = self.strength_parts(unit, at, defending, ids);
+                Combatant {
+                    unit: unit.id(),
+                    side: unit.side(),
+                    name: unit.name.clone(),
+                    image: units
+                        .kind_of(unit)
+                        .map_or(crate::state::DEFAULT_UNIT_IMAGE, |k| k.image.as_str())
+                        .to_string(),
+                    commander: self.map.is_commander(unit.id()),
+                    strength,
+                    led,
+                    ground,
+                    walls,
+                    quarters: self.battle_strength(unit, at, defending, ids),
+                }
+            })
+            .collect()
     }
 
     /// `by` takes a city from `from`: it starts its work over, and a side
@@ -579,6 +686,8 @@ impl Game {
             }
         }
         let side = self.player();
+        let round = self.round;
+        self.fights.retain(|(_, fought, _)| fought + REPLAY_ROUNDS > round);
         let mut events = vec![Event::Began { side, round: self.round }];
         if self.round > 1 {
             self.map.reset_move_points(side);

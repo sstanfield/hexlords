@@ -21,6 +21,7 @@ use turbo_ferret::widgets::ImageWidget;
 use turbo_ferret::{ImageHandle, LayoutParams, Modifiers, Point, Rect, Size, TbId, Visibility, WidgetId};
 
 use crate::agents::{self, Agents};
+use crate::battle_window::{self, BattleWindow};
 use crate::city_windows::{self, CityList, CityOrder, CityWindow};
 use crate::game::{Game, SelectOutcome};
 use crate::gui::build::{self, WindowParts};
@@ -28,7 +29,7 @@ use crate::gui::{MapCommand, MapKey, RootCommand};
 use crate::help::{HelpSection, command_key};
 use crate::info;
 use crate::log_window::{self, LogWindow};
-use crate::orders::Order;
+use crate::orders::{Event, Order};
 use crate::render::{AssetDirs, unit_icon};
 use crate::screen::{MapScreen, Scene};
 use crate::setup::Controller;
@@ -78,8 +79,6 @@ pub const BEGIN_TURN_ID: &str = "begin_turn";
 pub const GAME_OVER_ID: &str = "game_over";
 pub const NEW_GAME_ID: &str = "new_game";
 /// The window of a few lines (a battle's report, the news), and its button.
-pub const NOTICE_ID: &str = "notice";
-pub const NOTICE_CLOSE_ID: &str = "notice_close";
 pub const GAME_OVER_CLOSE_ID: &str = "game_over_close";
 /// Where the windows go on the map: the list in its left part, a city in its
 /// right, a third of the way down (see `gui::build::place`).
@@ -177,6 +176,7 @@ fn help_section() -> HelpSection {
             ("N,  or  Next stack", "Select the next stack that can still move (Shift+N: the one before)"),
             ("C,  or  Next city", "Go to your next city (Shift+C: the one before)"),
             ("L,  or  Log", "Your battles, with who won and who died, and the cities you took and lost"),
+            ("Watch, in the log", "A battle you fought, played out again: both stacks, a hit at a time"),
             (&end_turn, "End the turn: your log shows what the others do; then Start turn"),
             ("City details", "All about the selected city; set what it builds (point at one: all about it)"),
             ("All cities, My cities", "A list of cities: see where one is, go to it, open it"),
@@ -236,9 +236,8 @@ pub struct Session {
     game_over: Option<WindowParts>,
     /// A new game was asked for (the game over window's button).
     wants_new_game: bool,
-    /// The window of a few lines (a battle's report, the news), while it is
-    /// open.
-    notice: Option<WindowParts>,
+    /// A battle being watched, while its window is open.
+    battle: Option<BattleWindow>,
 }
 
 impl Session {
@@ -297,7 +296,7 @@ impl Session {
             last_person: None,
             game_over: None,
             wants_new_game: false,
-            notice: None,
+            battle: None,
             screen,
         };
         session.apply_layout_sizes();
@@ -713,9 +712,15 @@ impl Session {
         if self.log.as_ref().is_some_and(|log| !log.is_open(&self.screen.ui)) {
             self.log = None;
         }
+        if self.battle.as_ref().is_some_and(|battle| !battle.is_open(&self.screen.ui)) {
+            self.battle = None;
+        }
         if let Some(log) = &mut self.log {
-            log.refresh(&mut self.screen.ui, &self.screen.game, viewer, new_from);
+            let refilled = log.refresh(&mut self.screen.ui, &self.screen.game, viewer, new_from);
             log.set_status(&mut self.screen.ui, &status);
+            if refilled {
+                self.screen.settle();
+            }
         }
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
         if let Some(window) = &mut self.city_window {
@@ -791,13 +796,13 @@ impl Session {
         self.city_list.as_ref()
     }
 
-    /// Close the window on top (a notice, a city's, the list). False if none
-    /// was open.
+    /// Close the window on top (a battle's, the log, a city's, the list).
+    /// False if none was open.
     fn close_top_window(&mut self) -> bool {
         let ui = &mut self.screen.ui;
-        if let Some(notice) = self.notice.take() {
-            if build::is_open(ui, notice.window) {
-                build::close(ui, notice.window);
+        if let Some(battle) = self.battle.take() {
+            if battle.is_open(ui) {
+                battle.close(ui);
                 return true;
             }
         }
@@ -926,6 +931,9 @@ impl Session {
                 self.last_play = Some(now_ms);
             }
         }
+        if let Some(battle) = &mut self.battle {
+            battle.tick(&mut self.screen.ui, now_ms);
+        }
         self.screen.frame(now_ms);
         self.refresh();
     }
@@ -938,16 +946,46 @@ impl Session {
         if self.between && self.persons_turn() {
             self.start_turn();
         }
-        let side = self.screen.game.player();
         let before = self.screen.game.history().len();
         if let SelectOutcome::Fought(_) = self.screen.game.select_hex(hex) {
-            // The report: what the history says of it to the attacker.
-            let game = &self.screen.game;
-            let records = game.history().get(before..).unwrap_or_default();
-            let lines: Vec<String> = records.iter().flat_map(|r| info::record_lines(&game.map, r, side)).collect();
-            self.open_notice("Battle", &lines);
+            // The battle, played out.
+            let history = self.screen.game.history();
+            let battle = (before..history.len()).find(|i| matches!(history[*i].event, Event::Battle { .. }));
+            if let Some(record) = battle {
+                self.open_battle(record);
+            }
         }
         self.shown = hex;
+    }
+
+    /// Watch the battle of the history's record `record`, from the start, if
+    /// the game still keeps it.
+    pub fn open_battle(&mut self, record: usize) {
+        let Some(fight) = self.screen.game.fight(record).cloned() else { return };
+        if let Some(old) = self.battle.take() {
+            old.close(&mut self.screen.ui);
+        }
+        let icons = [&fight.attackers, &fight.defenders]
+            .map(|units| units.iter().map(|u| self.icon(&(u.image.clone(), u.side))).collect::<Vec<_>>());
+        let game = &self.screen.game;
+        let place = game
+            .map
+            .city_at(fight.at)
+            .map_or(format!("row {}, column {}", fight.at.row, fight.at.col), |c| c.name.clone());
+        // How it went, to the one watching (who fought it).
+        let viewer =
+            if [fight.attacker, fight.defender].contains(&self.viewer()) { self.viewer() } else { fight.attacker };
+        let outcome = info::battle_outcome(game, record, viewer);
+        let (root, area) = (self.screen.root_window(), self.window_area());
+        let window =
+            BattleWindow::open(&mut self.screen.ui, root, &fight, icons, (&place, outcome), (area, (0.5, 0.2)));
+        self.battle = Some(window);
+        self.screen.settle();
+    }
+
+    /// The battle being watched, while its window is open.
+    pub fn battle(&self) -> Option<&BattleWindow> {
+        self.battle.as_ref().filter(|b| b.is_open(&self.screen.ui))
     }
 
     /// Open the log (the Log button, L), or close it if it is open.
@@ -1008,6 +1046,12 @@ impl Session {
     /// What the log's line on top says, while it is open.
     pub fn log_status_line(&self) -> String {
         self.log.as_ref().filter(|log| log.is_open(&self.screen.ui)).map_or(String::new(), |log| log.status().into())
+    }
+
+    /// The records of the battles the log's Watch buttons play, while it is
+    /// open.
+    pub fn log_watchable(&self) -> Vec<usize> {
+        self.log.as_ref().filter(|log| log.is_open(&self.screen.ui)).map_or(Vec::new(), |l| l.watchable())
     }
 
     /// The new lines of the log, while it is open.
@@ -1082,40 +1126,6 @@ impl Session {
     fn people_in_play(&self) -> bool {
         let game = &self.screen.game;
         game.order().iter().any(|s| !game.out().contains(s) && game.controller(*s) == Some(&Controller::Person))
-    }
-
-    /// A window of a few lines, with a button that closes it (as Esc does).
-    fn open_notice(&mut self, title: &str, lines: &[String]) {
-        if lines.is_empty() {
-            return;
-        }
-        if let Some(old) = self.notice.take() {
-            build::close(&mut self.screen.ui, old.window);
-        }
-        let root = self.screen.root_window();
-        let area = self.window_area();
-        let ui = &mut self.screen.ui;
-        let parts = build::window(ui, root, NOTICE_ID, title);
-        for line in lines {
-            build::text(ui, parts.content, line);
-        }
-        let space = ui.dimension_converter().dp_to_px(SPACING_DP * 2);
-        build::gap(ui, parts.content, space);
-        build::button(ui, parts.content, NOTICE_CLOSE_ID, "Close");
-        build::place(ui, parts, area, (0.5, 0.15));
-        self.notice = Some(parts);
-        self.screen.settle();
-    }
-
-    /// What the window of a few lines says, while it is open.
-    pub fn notice(&self) -> Vec<String> {
-        let Some(parts) = self.notice.filter(|p| build::is_open(&self.screen.ui, p.window)) else { return Vec::new() };
-        let ui = &self.screen.ui;
-        ui.children(parts.content)
-            .iter()
-            .filter_map(|id| ui.get::<turbo_ferret::widgets::TextField>(*id))
-            .map(|t| t.text.clone())
-            .collect()
     }
 
     /// Apply what the widgets recorded since the last call. The host calls this
@@ -1195,9 +1205,25 @@ impl Session {
                     }
                 }
                 RootCommand::Click(id) if id == TbId::new(NEW_GAME_ID) => self.wants_new_game = true,
-                RootCommand::Click(id) if id == TbId::new(NOTICE_CLOSE_ID) => {
-                    if let Some(notice) = self.notice.take() {
-                        build::close(&mut self.screen.ui, notice.window);
+                RootCommand::Click(id) if id == TbId::new(battle_window::BATTLE_CLOSE_ID) => {
+                    if let Some(battle) = self.battle.take() {
+                        battle.close(&mut self.screen.ui);
+                    }
+                }
+                RootCommand::Click(id) if id == TbId::new(battle_window::BATTLE_SKIP_ID) => {
+                    if let Some(battle) = &mut self.battle {
+                        battle.skip(&mut self.screen.ui);
+                    }
+                }
+                RootCommand::Click(id) if id == TbId::new(battle_window::BATTLE_AGAIN_ID) => {
+                    if let Some(battle) = &mut self.battle {
+                        battle.again(&mut self.screen.ui);
+                    }
+                }
+                // A battle's Watch button in the log.
+                RootCommand::Click(id) if self.log.as_ref().and_then(|l| l.watch(id)).is_some() => {
+                    if let Some(record) = self.log.as_ref().and_then(|l| l.watch(id)) {
+                        self.open_battle(record);
                     }
                 }
                 RootCommand::Click(id) if id == TbId::new(GAME_OVER_CLOSE_ID) => {

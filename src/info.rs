@@ -91,6 +91,10 @@ pub fn record_lines(map: &Map, record: &Record, side: Side) -> Vec<String> {
 pub struct LogEntry {
     pub new: bool,
     pub lines: Vec<String>,
+    /// Its record's place in the history, and whether it is a battle (one
+    /// that can be watched, while the game keeps it: `Game::fight`).
+    pub record: usize,
+    pub battle: bool,
 }
 
 /// What the game's history says to `side`, a round at a time, the latest
@@ -104,7 +108,8 @@ pub fn log(game: &Game, side: Side, new_from: usize) -> Vec<(u32, Vec<LogEntry>)
         if lines.is_empty() {
             continue;
         }
-        let entry = LogEntry { new: i >= new_from, lines };
+        let battle = matches!(record.event, Event::Battle { .. });
+        let entry = LogEntry { new: i >= new_from, lines, record: i, battle };
         match rounds.last_mut() {
             Some((round, entries)) if *round == record.round => entries.push(entry),
             _ => rounds.push((record.round, vec![entry])),
@@ -112,6 +117,23 @@ pub fn log(game: &Game, side: Side, new_from: usize) -> Vec<(u32, Vec<LogEntry>)
     }
     rounds.reverse();
     rounds
+}
+
+/// How a battle went, for `side` (who fought it): the battle's record's
+/// lines, and those of what came of it in the same order (a city taken, a
+/// side out, the winner).
+pub fn battle_outcome(game: &Game, record: usize, side: Side) -> Vec<String> {
+    let history = game.history();
+    let Some(battle) = history.get(record) else { return Vec::new() };
+    let mut lines = record_lines(&game.map, battle, side);
+    for next in history.iter().skip(record + 1) {
+        let after = matches!(next.event, Event::Taken { .. } | Event::Out { .. } | Event::Won { .. });
+        if !after || next.round != battle.round || next.turn != battle.turn {
+            break;
+        }
+        lines.extend(record_lines(&game.map, next, side));
+    }
+    lines
 }
 
 /// Units by name, counted: "2 Militia, 1 Riders", in the order they first

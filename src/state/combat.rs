@@ -99,6 +99,21 @@ pub struct Battle {
     pub dead: Vec<UnitId>,
     /// How many exchanges it took.
     pub exchanges: u32,
+    /// Each exchange, in order: what a battle is played back from.
+    pub trace: Vec<Exchange>,
+}
+
+/// One exchange of a battle, by the fighters' places in the lists `fight`
+/// was given: who fought (in lines, the two at the front; by strength, the
+/// whole stacks: `None`), and who took the hit.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct Exchange {
+    pub attacker: Option<usize>,
+    pub defender: Option<usize>,
+    /// The hit fell on an attacker (else on a defender) ...
+    pub hit_attacker: bool,
+    /// ... this one.
+    pub unit: usize,
 }
 
 /// One exchange between strengths `a` (the attacker's) and `b`: true if `a`
@@ -143,16 +158,23 @@ pub fn fight(attackers: &[Fighter], defenders: &[Fighter], rules: &Rules, rng: &
     }
 }
 
-/// A fighter with the hits it has left.
+/// A fighter with the hits it has left, and its place in the list it came
+/// in.
 struct Standing {
     fighter: Fighter,
     hits: u32,
+    index: usize,
+}
+
+/// A side as it came, each with all its hits.
+fn standing(side: &[Fighter]) -> Vec<Standing> {
+    side.iter().enumerate().map(|(index, f)| Standing { fighter: *f, hits: HITS, index }).collect()
 }
 
 /// A side in its line: the weakest first, its commander last; a side's own
 /// order where they are as strong.
 fn line(side: &[Fighter]) -> Vec<Standing> {
-    let mut line: Vec<Standing> = side.iter().map(|f| Standing { fighter: *f, hits: HITS }).collect();
+    let mut line = standing(side);
     line.sort_by_key(|s| (s.fighter.commander, s.fighter.strength));
     line
 }
@@ -163,11 +185,11 @@ fn lines(attackers: &[Fighter], defenders: &[Fighter], chance: u8, rng: &mut Rng
     let mut battle = Battle::default();
     while i < a.len() && j < d.len() && battle.exchanges < MAX_EXCHANGES {
         battle.exchanges += 1;
-        let (front, other) = if exchange(a[i].fighter.strength, d[j].fighter.strength, chance, rng) {
-            (&mut d[j], &mut j)
-        } else {
-            (&mut a[i], &mut i)
-        };
+        let won = exchange(a[i].fighter.strength, d[j].fighter.strength, chance, rng);
+        let hit = if won { d[j].index } else { a[i].index };
+        let (attacker, defender) = (Some(a[i].index), Some(d[j].index));
+        battle.trace.push(Exchange { attacker, defender, hit_attacker: !won, unit: hit });
+        let (front, other) = if won { (&mut d[j], &mut j) } else { (&mut a[i], &mut i) };
         front.hits -= 1;
         if front.hits == 0 {
             battle.dead.push(front.fighter.unit);
@@ -179,14 +201,16 @@ fn lines(attackers: &[Fighter], defenders: &[Fighter], chance: u8, rng: &mut Rng
 }
 
 fn strength(attackers: &[Fighter], defenders: &[Fighter], chance: u8, rng: &mut Rng) -> Battle {
-    let mut a: Vec<Standing> = attackers.iter().map(|f| Standing { fighter: *f, hits: HITS }).collect();
-    let mut d: Vec<Standing> = defenders.iter().map(|f| Standing { fighter: *f, hits: HITS }).collect();
+    let (mut a, mut d) = (standing(attackers), standing(defenders));
     let mut battle = Battle::default();
     let total = |side: &[Standing]| side.iter().map(|s| s.fighter.strength).sum::<u32>();
     while !a.is_empty() && !d.is_empty() && battle.exchanges < MAX_EXCHANGES {
         battle.exchanges += 1;
-        let loser = if exchange(total(&a), total(&d), chance, rng) { &mut d } else { &mut a };
+        let won = exchange(total(&a), total(&d), chance, rng);
+        let loser = if won { &mut d } else { &mut a };
         let hit = rng.below(loser.len() as u64) as usize;
+        let unit = loser[hit].index;
+        battle.trace.push(Exchange { attacker: None, defender: None, hit_attacker: !won, unit });
         loser[hit].hits -= 1;
         if loser[hit].hits == 0 {
             battle.dead.push(loser.remove(hit).fighter.unit);
@@ -339,6 +363,35 @@ mod tests {
         assert_eq!(odds(&[], &weak, &rules, 5, 10), 0);
         // The same seed, the same answer.
         assert_eq!(odds(&strong, &weak, &rules, 5, 200), good);
+    }
+
+    #[test]
+    fn the_trace_plays_the_battle_back() {
+        // Each exchange hits someone; replayed, the trace kills exactly the
+        // dead, in their order, and each with its last hit.
+        let (a, d) = (fighters(Side::Red, &[2, 4, 3, 3]), fighters(Side::Blue, &[3, 2, 4]));
+        for system in System::ALL {
+            let battle = fight(&a, &d, &Rules { chance: 5, system }, &mut Rng::new(11));
+            assert_eq!(battle.trace.len() as u32, battle.exchanges, "{system:?}");
+            let (mut hits_a, mut hits_d) = (vec![0; a.len()], vec![0; d.len()]);
+            let mut dead = Vec::new();
+            for blow in &battle.trace {
+                let (hits, side) = if blow.hit_attacker { (&mut hits_a, &a) } else { (&mut hits_d, &d) };
+                hits[blow.unit] += 1;
+                assert!(hits[blow.unit] <= HITS, "a dead unit is not hit again");
+                if hits[blow.unit] == HITS {
+                    dead.push(side[blow.unit].unit);
+                }
+                // In lines the two at the front fight, and one of them is hit.
+                if system == System::Lines {
+                    let (i, j) = (blow.attacker.unwrap(), blow.defender.unwrap());
+                    assert_eq!(blow.unit, if blow.hit_attacker { i } else { j });
+                } else {
+                    assert_eq!((blow.attacker, blow.defender), (None, None));
+                }
+            }
+            assert_eq!(dead, battle.dead, "{system:?}");
+        }
     }
 
     #[test]

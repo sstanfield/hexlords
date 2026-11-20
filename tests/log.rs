@@ -124,9 +124,9 @@ fn the_log_has_the_battles_you_fought_on_both_sides() {
         s.log_lines(),
         ["Round 1", "You attacked blue at Bluemoor, 1 against 4, and lost.", "    You lost 1 Levy; they lost nothing."]
     );
-    // Esc: the report first, then the log.
+    // Esc: the battle's window first, then the log.
     press(&mut s, SpecialKey::Esc);
-    assert!(s.notice().is_empty() && !s.log_lines().is_empty());
+    assert!(s.battle().is_none() && !s.log_lines().is_empty());
     press(&mut s, SpecialKey::Esc);
     assert!(s.log_lines().is_empty());
     // End turn: red's log opens, and says whose turn it is; the button waits.

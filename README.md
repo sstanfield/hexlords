@@ -113,11 +113,15 @@ into another side's units attack them, as many as a hex holds (from one hex
 or several): the two stacks fight until one is gone, and if the attackers
 win they go in (and take the city, if it is one).
 Strength counts, and so do chance, the ground (hills and forests 1, mountains
-2), a city's walls and a commander, who makes every other unit of its stack 1
-stronger (or as much as its kind says). A window says how a battle went;
-what was done to a person while others played is told when their turn
-begins, and the log keeps all of it. When the last person is out, the
-computer plays on, a turn a frame, to the end. A side that loses its last
+2), a city's walls (¾ a level) and a commander, who makes every other unit of
+its stack 1 stronger (or as much as its kind says). A battle is played out
+in a window: both stacks, a card for each unit with what it fights with and
+where its bonuses come from, and then the exchanges, a few a second, the two
+that fight lit, the one hit in red with an X, the dead dimmed (Skip, Watch
+again). Every battle you fought, attacking or attacked, can be watched again
+from your log for a few rounds (its Watch button). While the others play,
+your log is open and fills as they go; Start turn begins yours. When the
+last person is out, the computer plays on, a turn at a time, to the end. A side that loses its last
 city is out, and the last side left wins.
 
 Each side has a treasury (the sidebar shows yours: "Gold 34", "Taxes +40,
@@ -126,7 +130,7 @@ and its units' upkeep goes out; units it cannot pay leave it. What a city
 finishes is paid for then, at the city's price; without the gold, the unit
 waits in the city until there is enough ([docs/gameplay.md](docs/gameplay.md)).
 
-![A battle, and the window that says how it went](docs/screenshots/battle.png)
+![A battle, played out](docs/screenshots/battle.png)
 
 ![A side's log: the battles it fought and the cities it lost](docs/screenshots/log.png)
 
@@ -172,8 +176,10 @@ Without `--map` the window opens on the new game screen.
   `scroll:DX:DY` (two fingers on the map: it moves that many pixels right and
   down), `miniscroll:DX:DY` (the same on the minimap), `zoomin:ROW:COL` and
   `zoomout:ROW:COL` (Ctrl and the wheel over that hex), `pull:DX:DY` (a drag
-  with the right button), `cursor:ROW:COL` (jump there), and `*N` repeats a
-  step.
+  with the right button), `cursor:ROW:COL` (jump there), `turn` (in a game,
+  a round: the turn ends, the others play, the next starts), `wait:MS` (MS
+  milliseconds of frames go by, on the script's own clock: the computer's
+  turns, a battle being watched), and `*N` repeats a step.
 
 ```sh
 cargo run -- --map assets/maps/continent --screenshot shot.png --script "enter,1"   # a unit's range, zoomed out

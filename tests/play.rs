@@ -248,7 +248,7 @@ fn what_an_undo_takes_back_is_no_news_for_the_others() {
     assert_eq!(s.screen.game.map.city_at(BLUEMOOR).unwrap().side, Side::Blue);
     s.end_turn();
     begin(&mut s);
-    assert!(s.notice().is_empty(), "{:?}", s.notice());
+    assert!(s.log_lines().is_empty(), "no news, no log: {:?}", s.log_lines());
 }
 
 #[test]

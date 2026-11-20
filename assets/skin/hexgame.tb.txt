@@ -35,6 +35,21 @@ elements
 	# What is new in the log since the player last ended a turn.
 	LogNew
 		text-color #8fd8ff
+	# A unit's card in a battle being watched: like a slot; the two that
+	# fight lit; the one hit red; its hits marked in red.
+	BattleCard
+		bitmap button.png
+		cut 17
+		expand 7
+		padding 4 4
+	BattleCard.fighting
+		background-color #6e5a1cff
+		padding 4 4
+	BattleCard.hit
+		background-color #b3261eff
+		padding 4 4
+	HitMark
+		text-color #ff4a3d
 	# A row of a list (the cities): flat, lit under the pointer, the chosen
 	# one marked and in color.
 	ListRow
