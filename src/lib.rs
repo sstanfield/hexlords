@@ -50,4 +50,5 @@ pub mod session;
 pub mod setup;
 pub mod shell;
 pub mod state;
+pub mod tasks_window;
 pub mod view;

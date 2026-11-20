@@ -119,7 +119,9 @@ fn the_battles_are_set_up_on_the_screen_and_carried_into_the_game() {
     push(&mut shell, GOLD_LESS_ID);
     let gold = hexgame::setup::START_GOLD + 10;
     assert!(
-        descendants_of(&shell, "new_game_settings").iter().any(|t| *t == format!("{gold} for each side at the start"))
+        descendants_of(&shell, "new_game_settings")
+            .iter()
+            .any(|t| *t == format!("{gold} gold for each side at the start"))
     );
     push(&mut shell, START_ID);
     let game = &shell.session().unwrap().screen.game;

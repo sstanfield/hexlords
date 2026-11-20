@@ -97,6 +97,7 @@ pub fn event_line(game: &Game, event: &Event) -> String {
             )
         }
         Event::Undone => "the last order is taken back".to_string(),
+        Event::Stalled { units, at, to, .. } => format!("{} stop at {at} on their way to {to}", names(units)),
         Event::Deserted { side, name } => format!("{}'s {name} leave, unpaid", side_name(*side)),
         Event::Promoted { side, name, level, commander, .. } => {
             format!("{}'s {name} rise to {}", side_name(*side), crate::info::rank(*level, *commander))
@@ -126,6 +127,15 @@ pub fn order_line(game: &Game, order: &Order) -> String {
             format!("build {} {} {what}", at.0, at.1)
         }
         Order::Undo => "undo".to_string(),
+        Order::GoTo { units, to } => format!("goto {} {} {}", names(units), to.row, to.col),
+        Order::Done { units } => format!("done {}", names(units)),
+        Order::Rally { city, to } => {
+            let at = game.map.cities().get(*city).map_or((0, 0), |c| (c.pos.row, c.pos.col));
+            match to {
+                Some(to) => format!("rally {} {} {} {}", at.0, at.1, to.row, to.col),
+                None => format!("rally {} {} none", at.0, at.1),
+            }
+        }
         Order::EndTurn => "end".to_string(),
     }
 }

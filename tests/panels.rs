@@ -328,9 +328,10 @@ fn the_selected_unit_goes_where_it_is_sent_and_the_panels_follow() {
     assert!(s.stack().is_empty() && s.unit_line().is_empty() && s.city().is_empty());
     assert!((0..STACK_SLOTS).all(|i| !shown(&s, &unit_button_id(i))));
     assert!((0..STACK_SLOTS).all(|i| s.slot_icon(i).is_none()));
-    // The other city, which is nobody's.
+    // The other city, which is nobody's: what shows from outside (what it
+    // builds is not told).
     click_hex(&mut s, Hex::new(10, 16));
-    assert_eq!(s.city(), ["Low Tarn", "Nobody's", "Walls 0, taxes 10", "No garrison", "Builds nothing"]);
+    assert_eq!(s.city(), ["Low Tarn", "Nobody's", "Walls 0, taxes 10", "No garrison"]);
 }
 
 #[test]

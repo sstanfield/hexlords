@@ -64,6 +64,17 @@ pub fn widget(s: &Session, name: &str) -> WidgetId {
     s.screen.ui.find(s.screen.ui.root(), TbId::new(name)).unwrap_or_else(|| panic!("no widget {name}"))
 }
 
+/// The widget with this id and all that is in it, the widget first.
+pub fn descendants(s: &Session, name: &str) -> Vec<WidgetId> {
+    let mut out = Vec::new();
+    let mut stack = vec![widget(s, name)];
+    while let Some(id) = stack.pop() {
+        out.push(id);
+        stack.extend(s.screen.ui.children(id).iter().copied());
+    }
+    out
+}
+
 /// The window pixel in the middle of a hex of the main map.
 pub fn pixel_of(s: &Session, hex: Hex) -> Point {
     let [x, y] = s.screen.view.to_ndc(s.screen.view.hex_center(hex));

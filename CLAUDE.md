@@ -17,7 +17,11 @@ stacks move together, and moving into another side's units is a battle
 (`state::combat`: how much chance and which system are set with the game;
 commanders lead stacks); each side has a treasury, its cities' taxes come
 in and its units' upkeep goes out each turn, and what a city builds is paid
-for when it is done; a side that has lost its cities is out.
+for when it is done; a side that has lost its cities is out. Orders can
+last (a stack sent far goes over turns, a city sends what it builds), a
+stack can be put aside for the turn, and a list says what is left to do; a
+side sees the others' stacks only as banners with their size, and fog of
+war is a choice made with the game (`Game::sight`).
 **`docs/gameplay.md` is the plan for the rules**: two modes (turns one side
 after the other, and rounds where all sides give orders at once) on one set
 of rules made of orders. The computer's players are agents, which also play
@@ -47,7 +51,7 @@ touching the rules.
 | `src/platform.rs` | What miniquad leaves out: bringing the window to the front on macOS (the crate's one `unsafe` block) |
 | `src/screen.rs` | `MapScreen`: the `Ui`, a map and the two views together, with no window: what the game and the tools share. `Scene`: what the window can run |
 | `src/new_game.rs`, `src/shell.rs` | The new game screen (a scene on a map screen of its own), and the window's scene from it to the game and back |
-| `src/session.rs`, `src/info.rs`, `src/city_windows.rs`, `src/log_window.rs`, `src/battle_window.rs` | `Session`: the game on a map screen (its layout, what a click and Enter do, the panels around the map: the stack's slots, the box the pointer opens over a unit, the city). `info`: what the panels say, as plain functions of the game's state (and what the game's history says to a side). `city_windows`: a city in full, where its holder sets what it builds, and the lists of cities. `log_window`: a side's log of battles and cities. `battle_window`: a battle played out. Tests drive them all |
+| `src/session.rs`, `src/info.rs`, `src/city_windows.rs`, `src/log_window.rs`, `src/battle_window.rs`, `src/tasks_window.rs` | `Session`: the game on a map screen (its layout, what a click and Enter do, what a click picks after Go to, the panels around the map: the stack's slots, the box the pointer opens over a unit, the city; what the person at the screen sees). `info`: what the panels say, as plain functions of the game's state (and what the game's history says to a side). `city_windows`: a city in full, where its holder sets what it builds and where its new units go, and the lists of cities. `log_window`: a side's log of battles and cities. `battle_window`: a battle played out. `tasks_window`: what a side has left to do this turn. Tests drive them all |
 | `src/script.rs` | Scripted input (`--script`) for any scene, for screenshots and tests |
 | `src/app.rs`, `src/main.rs` | The miniquad window (`App<S: Scene>`, `app::run`): forwards input to the scene, draws the frame. `main.rs` is the game's command line |
 | `tools/mapeditor/` | The map editor, a workspace member on the game's library: `Editor` (a scene: the sidebar, painting, files), `brush`, `history` (undo), `check` (`--check`) |

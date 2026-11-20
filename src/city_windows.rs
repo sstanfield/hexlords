@@ -14,13 +14,16 @@ use crate::gui::build::{self, WindowParts};
 use crate::info;
 use crate::render::minimap_image;
 use crate::state::scenario::side_name;
-use crate::state::{CityId, Map, Side};
+use crate::state::{CityId, Hex, Map, Side};
 
 /// A city's window, its buttons for what it builds (`build_0` ... and
 /// nothing), and its close button.
 pub const CITY_WINDOW_ID: &str = "city_window";
 pub const BUILD_NOTHING_ID: &str = "build_none";
 pub const CITY_CLOSE_ID: &str = "city_close";
+/// Where its new units go: a hex to pick on the map, or nowhere (they stay).
+pub const CITY_RALLY_ID: &str = "city_rally";
+pub const CITY_NO_RALLY_ID: &str = "city_no_rally";
 /// The list of cities, its rows (`city_row_0` ...) and its buttons.
 pub const LIST_WINDOW_ID: &str = "cities_window";
 pub const LIST_DETAILS_ID: &str = "cities_details";
@@ -70,6 +73,10 @@ pub enum CityOrder {
     Details(CityId),
     /// Show the city on the map, and make its hex the selected one.
     GoTo(CityId),
+    /// Pick on the map where the city sends its new units.
+    PickRally(CityId),
+    /// The city's new units stay in it.
+    NoRally(CityId),
 }
 
 /// A line of text, with what it says now (so that it is set only on a change).
@@ -126,6 +133,13 @@ pub struct CityWindow {
     note: Text,
     /// All about the option under the pointer (or the one it builds).
     details: Vec<Text>,
+    /// Where its new units go.
+    rally: Text,
+    rally_buttons: [WidgetId; 2],
+    /// What its holder alone knows (what it builds, its taxes): shown or
+    /// not, as much as the one looking knows (`info::Known`).
+    private: Vec<WidgetId>,
+    known: info::Known,
     /// The buttons for what it builds, and what each sets.
     builds: Vec<(WidgetId, Option<usize>)>,
 }
@@ -139,7 +153,7 @@ impl CityWindow {
         parent: WidgetId,
         map: &Map,
         id: CityId,
-        player: Side,
+        (player, known): (Side, info::Known),
         icons: &[ImageHandle],
         (area, align): (Rect, (f32, f32)),
     ) -> Option<Self> {
@@ -152,7 +166,7 @@ impl CityWindow {
         let garrison = Text::new(build::text(ui, content, ""));
         let space = dp(ui, SPACING_DP);
         build::gap(ui, content, space);
-        build::heading(ui, content, "What it builds");
+        let heading = build::heading(ui, content, "What it builds");
         let options = build::column(ui, content, dp(ui, 2));
         let group = TbId::new("production");
         let mut builds = vec![(build::button(ui, options, BUILD_NOTHING_ID, "Nothing"), None)];
@@ -205,10 +219,35 @@ impl CityWindow {
         }
         build::gap(ui, content, dp(ui, 4));
         let progress = Text::new(build::text(ui, content, ""));
+        // Where its new units go.
+        let rally_gap = build::gap(ui, content, space);
+        let rally = Text::new(build::text(ui, content, ""));
+        let rally_row = build::row(ui, content, space);
+        let send = build::button(ui, rally_row, CITY_RALLY_ID, "Send new units to...");
+        let keep = build::button(ui, rally_row, CITY_NO_RALLY_ID, "Keep them here");
         let note = Text::new(build::text(ui, content, ""));
         build::gap(ui, content, space);
         build::button(ui, content, CITY_CLOSE_ID, "Close");
-        let mut window = CityWindow { parts, city: id, summary, income, garrison, progress, note, details, builds };
+        let private = [heading, options, rally_gap, rally.widget, rally_row]
+            .into_iter()
+            .chain(details.iter().map(|d: &Text| d.widget))
+            .collect();
+        let mut window = CityWindow {
+            parts,
+            city: id,
+            summary,
+            income,
+            garrison,
+            progress,
+            note,
+            details,
+            builds,
+            rally,
+            rally_buttons: [send, keep],
+            private,
+            known: info::Known::All,
+        };
+        window.known = known;
         window.fill(ui, map, player);
         build::place(ui, parts, area, align);
         Some(window)
@@ -250,10 +289,11 @@ impl CityWindow {
     }
 
     /// Bring it up to date with the city. False if the city is gone.
-    pub fn refresh(&mut self, ui: &mut Ui, map: &Map, player: Side) -> bool {
+    pub fn refresh(&mut self, ui: &mut Ui, map: &Map, (player, known): (Side, info::Known)) -> bool {
         if map.cities().get(self.city).is_none() {
             return false;
         }
+        self.known = known;
         if self.fill(ui, map, player) {
             build::refit(ui, self.parts);
         }
@@ -264,15 +304,46 @@ impl CityWindow {
     fn fill(&mut self, ui: &mut Ui, map: &Map, player: Side) -> bool {
         let Some(city) = map.cities().get(self.city) else { return false };
         let mine = city.side == player && city.side != Side::Grey;
-        let note = match (mine, city.side) {
-            (true, _) => String::new(),
-            (false, Side::Grey) => "Nobody's: nobody sets what it builds.".to_string(),
-            (false, side) => format!("Only {} sets what it builds.", side_name(side)),
+        let known = self.known;
+        let note = match (known, mine, city.side) {
+            (info::Known::Fog, _, _) => "Not seen: who holds it, who is in it.".to_string(),
+            (info::Known::Outside, _, Side::Grey) => "Nobody's: what it builds is not known.".to_string(),
+            (info::Known::Outside, _, side) => format!("Only {} knows what it builds.", side_name(side)),
+            (_, true, _) => String::new(),
+            (_, false, Side::Grey) => "Nobody's: nobody sets what it builds.".to_string(),
+            (_, false, side) => format!("Only {} sets what it builds.", side_name(side)),
         };
-        let mut changed = self.summary.set(ui, &info::city_summary(city));
+        let all = known == info::Known::All;
+        let summary = match known {
+            info::Known::Fog => {
+                format!("Not seen, walls {}, at row {}, column {}", city.walls, city.pos.row, city.pos.col)
+            }
+            _ => info::city_summary(city),
+        };
+        let garrison = match known {
+            info::Known::All => info::garrison_line(map, city),
+            info::Known::Outside => format!("Garrison: {} units", map.units_at(city.pos).len()),
+            info::Known::Fog => String::new(),
+        };
+        let mut changed = self.summary.set(ui, &summary);
         changed |= self.income.set(ui, &info::income_line(city));
-        changed |= self.garrison.set(ui, &info::garrison_line(map, city));
-        changed |= self.progress.set(ui, &info::progress_line(map, city));
+        changed |= self.garrison.set(ui, &garrison);
+        changed |= self.progress.set(ui, if all { info::progress_line(map, city) } else { String::new() }.as_str());
+        // A line with nothing to say takes no room.
+        for line in [&self.garrison, &self.progress] {
+            let visibility = if line.text.is_empty() { Visibility::Gone } else { Visibility::Visible };
+            if ui.node(line.widget).is_some_and(|n| n.visibility() != visibility) {
+                ui.set_visibility(line.widget, visibility);
+                changed = true;
+            }
+        }
+        let visibility = if all { Visibility::Visible } else { Visibility::Gone };
+        for widget in &self.private {
+            if ui.node(*widget).is_some_and(|n| n.visibility() != visibility) {
+                ui.set_visibility(*widget, visibility);
+                changed = true;
+            }
+        }
         // All about what is under the pointer; else about what it builds.
         let shown = self.hovered(ui).or(city.building);
         let details = match shown.and_then(|i| city.units.get(i)) {
@@ -282,6 +353,16 @@ impl CityWindow {
         };
         for (i, line) in self.details.iter_mut().enumerate() {
             changed |= line.set(ui, details.get(i).map_or("", String::as_str));
+        }
+        let rally = match city.rally {
+            Some(to) => format!("New units go to {}.", info::place(map, to)),
+            None => "New units stay in the city.".to_string(),
+        };
+        changed |= self.rally.set(ui, &rally);
+        for button in self.rally_buttons {
+            if ui.node(button).is_some_and(|n| n.is_disabled() == mine) {
+                ui.set_disabled(button, !mine);
+            }
         }
         changed |= self.note.set(ui, &note);
         let visibility = if note.is_empty() { Visibility::Gone } else { Visibility::Visible };
@@ -301,6 +382,12 @@ impl CityWindow {
     /// What a click on one of its buttons asks for (its close button is the
     /// caller's to handle).
     pub fn click(&self, id: TbId) -> Option<CityOrder> {
+        if id == TbId::new(CITY_RALLY_ID) {
+            return Some(CityOrder::PickRally(self.city));
+        }
+        if id == TbId::new(CITY_NO_RALLY_ID) {
+            return Some(CityOrder::NoRally(self.city));
+        }
         let what = if id == TbId::new(BUILD_NOTHING_ID) {
             None
         } else {
@@ -322,8 +409,9 @@ pub struct CityList {
     chosen: Option<CityId>,
     chosen_line: Text,
     picture: WidgetId,
-    /// What the picture shows: the chosen city, and the terrain as it was.
-    shows: Option<(Option<CityId>, u64)>,
+    /// What the picture shows: the chosen city, the terrain as it was, and
+    /// which cities were seen.
+    shows: Option<(Option<CityId>, u64, Vec<bool>)>,
     /// The picture, held so that it stays loaded; and how many have been made.
     image: ImageHandle,
     made: u64,
@@ -341,6 +429,7 @@ impl CityList {
         own: bool,
         player: Side,
         (area, align): (Rect, (f32, f32)),
+        seen: &dyn Fn(Hex) -> bool,
     ) -> CityList {
         let title = if own { format!("{}'s cities", title_case(player)) } else { "All cities".to_string() };
         let parts = build::window(ui, parent, LIST_WINDOW_ID, &title);
@@ -394,7 +483,7 @@ impl CityList {
             details,
             goto,
         };
-        list.refresh(ui, map);
+        list.refresh(ui, map, seen);
         build::place(ui, parts, area, align);
         list
     }
@@ -428,25 +517,31 @@ impl CityList {
     }
 
     /// Choose a city of the list: its row is marked, and it is ringed on the map.
-    pub fn choose(&mut self, ui: &mut Ui, map: &Map, id: CityId) {
+    pub fn choose(&mut self, ui: &mut Ui, map: &Map, id: CityId, seen: &dyn Fn(Hex) -> bool) {
         if self.rows.iter().any(|(_, city)| *city == id) {
             self.chosen = Some(id);
-            self.refresh(ui, map);
+            self.refresh(ui, map, seen);
         }
     }
 
     /// Bring it up to date with the map: what the rows say, which is marked,
     /// the picture.
-    pub fn refresh(&mut self, ui: &mut Ui, map: &Map) {
+    pub fn refresh(&mut self, ui: &mut Ui, map: &Map, seen: &dyn Fn(Hex) -> bool) {
         for (text, id) in &mut self.rows {
             if let Some(city) = map.cities().get(*id) {
-                text.set(ui, &info::city_row(map, city, self.own));
+                let row = if seen(city.pos) {
+                    info::city_row(map, city, self.own)
+                } else {
+                    format!("{} (not seen)", city.name)
+                };
+                text.set(ui, &row);
             }
             set_pressed(ui, text.widget, self.chosen == Some(*id));
         }
         let chosen = self.chosen.and_then(|id| map.cities().get(id));
         let line = chosen.map_or("Choose a city to see where it is.".to_string(), |city| {
-            format!("{}: {}", city.name, info::holder(city.side).to_lowercase())
+            let holder = if seen(city.pos) { info::holder(city.side).to_lowercase() } else { "not seen".to_string() };
+            format!("{}: {holder}", city.name)
         });
         self.chosen_line.set(ui, &line);
         for button in [self.details, self.goto] {
@@ -454,12 +549,14 @@ impl CityList {
                 ui.set_disabled(button, chosen.is_none());
             }
         }
-        // A new picture when the chosen city or the terrain changed.
-        let wanted = (self.chosen, map.terrain_revision());
-        if self.shows != Some(wanted) {
+        // A new picture when the chosen city, the terrain, or what is seen of
+        // the cities changed.
+        let seen_cities: Vec<bool> = map.cities().iter().map(|c| seen(c.pos)).collect();
+        let wanted = (self.chosen, map.terrain_revision(), seen_cities);
+        if self.shows.as_ref() != Some(&wanted) {
             let size =
                 ui.layout_params(self.picture).map_or((0, 0), |lp| (lp.pref_w.unwrap_or(0), lp.pref_h.unwrap_or(0)));
-            let image = minimap_image(map, size.0, size.1, chosen.map(|city| city.pos));
+            let image = minimap_image(map, size.0, size.1, chosen.map(|city| city.pos), seen);
             self.made += 1;
             let handle = ui.image_from_pixels(&format!("cities' minimap {}", self.made), image.size, &image.rgba);
             ui.with_widget::<ImageWidget, _>(self.picture, |w, cx| w.set_image(cx, handle.clone()));
@@ -471,10 +568,10 @@ impl CityList {
     /// What a click on one of its buttons asks of the game: a row chooses its
     /// city (which the list does itself), Details and Go to are about the
     /// chosen one. (Its close button is the caller's to handle.)
-    pub fn click(&mut self, ui: &mut Ui, map: &Map, id: TbId) -> Option<CityOrder> {
+    pub fn click(&mut self, ui: &mut Ui, map: &Map, id: TbId, seen: &dyn Fn(Hex) -> bool) -> Option<CityOrder> {
         if let Some(i) = (0..self.rows.len()).find(|i| id == TbId::new(&row_id(*i))) {
             let city = self.rows[i].1;
-            self.choose(ui, map, city);
+            self.choose(ui, map, city, seen);
             return None;
         }
         let chosen = self.chosen?;

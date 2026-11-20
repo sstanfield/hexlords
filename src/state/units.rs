@@ -102,6 +102,14 @@ pub struct Unit {
     pub given_name: Option<String>,
     /// What a temple gave it, once.
     pub blessing: Option<Blessing>,
+    /// A standing order: where it goes, a turn at a time (`Order::GoTo`);
+    /// and whether its last step was stopped (it waits for its player).
+    pub goto: Option<Hex>,
+    pub stalled: bool,
+    /// This turn: it has been given an order (it moved), or its player is
+    /// done with it (`Order::Done`).
+    pub moved: bool,
+    pub done: bool,
 }
 
 /// The highest level, and the battles won a unit needs for each level above
@@ -272,6 +280,10 @@ impl Units {
             experience: 0,
             given_name: None,
             blessing: None,
+            goto: None,
+            stalled: false,
+            moved: false,
+            done: false,
         });
         id
     }
@@ -377,6 +389,8 @@ impl Units {
         for u in self.per_side[side.index()].iter_mut().filter_map(|slot| slot.unit.as_mut()) {
             // A map may give a kind any number of moves: the most there is stays the most.
             u.movement = u.base_move_points.saturating_add(u.movement.min(2));
+            // A new turn: nothing done yet.
+            (u.moved, u.done, u.stalled) = (false, false, false);
         }
     }
 }

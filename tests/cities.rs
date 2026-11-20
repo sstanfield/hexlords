@@ -5,11 +5,11 @@
 
 mod common;
 
-use common::{assets, click, pixel_of, press, widget};
+use common::{assets, click, descendants, pixel_of, press, widget};
 use hexgame::city_windows::CityList;
 use hexgame::city_windows::{
-    BUILD_NOTHING_ID, CITY_CLOSE_ID, CITY_WINDOW_ID, LIST_CLOSE_ID, LIST_DETAILS_ID, LIST_GOTO_ID, LIST_WINDOW_ID,
-    build_id, row_id,
+    BUILD_NOTHING_ID, CITY_CLOSE_ID, CITY_RALLY_ID, CITY_WINDOW_ID, LIST_CLOSE_ID, LIST_DETAILS_ID, LIST_GOTO_ID,
+    LIST_WINDOW_ID, build_id, row_id,
 };
 use hexgame::game::Game;
 use hexgame::session::{ALL_CITIES_ID, CITY_DETAILS_ID, MY_CITIES_ID, Session};
@@ -117,16 +117,6 @@ fn all_cities_lists_every_city_and_rings_the_chosen_one() {
     assert!(s.city_list().is_none() && !exists(&s, LIST_WINDOW_ID));
 }
 
-fn descendants(s: &Session, name: &str) -> Vec<turbo_ferret::WidgetId> {
-    let mut out = Vec::new();
-    let mut stack = vec![widget(s, name)];
-    while let Some(id) = stack.pop() {
-        out.push(id);
-        stack.extend(s.screen.ui.children(id).iter().copied());
-    }
-    out
-}
-
 #[test]
 fn my_cities_lists_the_players_with_what_they_build() {
     let mut s = session();
@@ -143,7 +133,8 @@ fn my_cities_lists_the_players_with_what_they_build() {
     push(&mut s, ALL_CITIES_ID);
     let root = s.screen.root_window();
     let area = s.screen.map_rect();
-    let list = CityList::open(&mut s.screen.ui, root, &s.screen.game.map, true, Side::Purple, (area, (0.0, 0.0)));
+    let list =
+        CityList::open(&mut s.screen.ui, root, &s.screen.game.map, true, Side::Purple, (area, (0.0, 0.0)), &|_| true);
     assert!(list.rows().is_empty());
     let says: Vec<String> =
         descendants(&s, LIST_WINDOW_ID).into_iter().filter_map(|id| s.screen.ui.text(id).map(str::to_string)).collect();
@@ -217,7 +208,16 @@ fn only_the_holder_sets_what_a_city_builds() {
     assert!(disabled(&s, &build_id(0)) && disabled(&s, BUILD_NOTHING_ID));
     let says: Vec<String> =
         descendants(&s, CITY_WINDOW_ID).into_iter().filter_map(|id| s.screen.ui.text(id).map(str::to_string)).collect();
-    assert!(says.iter().any(|t| t == "Only blue sets what it builds."), "{says:?}");
+    // Another side's city: what it builds is its holder's to know; its
+    // buttons are not shown.
+    assert!(says.iter().any(|t| t == "Only blue knows what it builds."), "{says:?}");
+    // Shown: it and everything it is in.
+    let shown = |s: &Session, id: &str| {
+        let ui = &s.screen.ui;
+        std::iter::successors(Some(widget(s, id)), |w| ui.parent(*w))
+            .all(|w| ui.node(w).is_some_and(|n| n.visibility() == Visibility::Visible))
+    };
+    assert!(!shown(&s, BUILD_NOTHING_ID) && !shown(&s, CITY_RALLY_ID));
     push(&mut s, &build_id(0));
     assert_eq!(s.screen.game.map.city_at(HIGHCLIFF).unwrap().building, None);
     // When a person plays blue, on blue's turn, they can.

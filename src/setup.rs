@@ -68,6 +68,9 @@ pub struct Setup {
     pub combat: CombatRules,
     /// The gold in each side's treasury at the start.
     pub gold: u32,
+    /// Fog of war: a side sees what is near its units and cities, and
+    /// beyond them the terrain and where the cities are, no more.
+    pub fog: bool,
 }
 
 /// The gold each side starts with unless the game is set up otherwise.
@@ -112,6 +115,7 @@ impl Setup {
             when_out: WhenOut::Disband,
             combat: CombatRules::default(),
             gold: START_GOLD,
+            fog: false,
         }
     }
 

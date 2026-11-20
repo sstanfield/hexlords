@@ -16,6 +16,16 @@ pub enum Order {
     Toward { units: Vec<UnitId>, to: Hex },
     /// Set what a city builds: an index into what it can build, or nothing.
     Build { city: CityId, what: Option<usize> },
+    /// Send units to a hex, near or far: they go as far as the slowest gets
+    /// this turn, and on at the start of each of their side's turns until
+    /// they are there (a standing order; another order for them ends it).
+    GoTo { units: Vec<UnitId>, to: Hex },
+    /// The player is done with these units this turn: they are not offered
+    /// again (Next stack) though they have moves left.
+    Done { units: Vec<UnitId> },
+    /// Where a city sends the units it builds (they go there as `GoTo`), or
+    /// nowhere.
+    Rally { city: CityId, to: Option<Hex> },
     /// Take back the side's last order this turn, if it had no chance in it
     /// (a move that was no battle and put nobody out, a city's work set).
     Undo,
@@ -72,6 +82,14 @@ pub enum Event {
         side: Side,
         at: Hex,
         name: String,
+    },
+    /// Units on a standing order (`GoTo`) could not go on: the next step was
+    /// into another side's units, or there is no way. They wait for orders.
+    Stalled {
+        side: Side,
+        units: Vec<UnitId>,
+        at: Hex,
+        to: Hex,
     },
     /// A side's unit went into another's (or nobody's) city with nobody in it.
     Taken {

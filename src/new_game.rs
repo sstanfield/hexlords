@@ -34,6 +34,8 @@ pub const BATTLES_LINES_ID: &str = "battles_lines";
 pub const BATTLES_STRENGTH_ID: &str = "battles_strength";
 pub const CHANCE_LESS_ID: &str = "chance_less";
 pub const CHANCE_MORE_ID: &str = "chance_more";
+pub const FOG_OFF_ID: &str = "fog_off";
+pub const FOG_ON_ID: &str = "fog_on";
 pub const GOLD_LESS_ID: &str = "gold_less";
 pub const GOLD_MORE_ID: &str = "gold_more";
 /// How much a press of Gold's - or + changes it, and the most it can be.
@@ -113,6 +115,7 @@ impl NewGame {
                 ("Order of turns", "The same each round, or drawn anew"),
                 ("Battles", "Lines of duels, or strength against strength; how much chance, 0 to 10"),
                 ("Gold", "What each side's treasury holds at the start"),
+                ("Fog of war", "Each side sees only what is near its units and cities"),
                 ("Person, Computer", "Who plays each side: several people take turns at the screen"),
                 ("Start the game", "Play"),
             ],
@@ -179,6 +182,7 @@ impl NewGame {
                 (setup.mode, setup.order, setup.seed) = (self.setup.mode, self.setup.order, self.setup.seed);
                 setup.combat = self.setup.combat;
                 setup.gold = self.setup.gold;
+                setup.fog = self.setup.fog;
                 self.setup = setup;
                 self.screen.set_game(game);
                 self.problem = None;
@@ -279,12 +283,18 @@ impl NewGame {
         build::text(ui, row, &format!("Chance {} of {MAX_CHANCE}", self.setup.combat.chance));
         build::button(ui, row, CHANCE_MORE_ID, "+");
 
+        // The gold and the fog of war, each a row that says what it is.
         build::gap(ui, c, space);
-        build::heading(ui, c, "Gold");
         let row = build::row(ui, c, space);
         build::button(ui, row, GOLD_LESS_ID, "-");
-        build::text(ui, row, &format!("{} for each side at the start", self.setup.gold));
+        build::text(ui, row, &format!("{} gold for each side at the start", self.setup.gold));
         build::button(ui, row, GOLD_MORE_ID, "+");
+        let row = build::row(ui, c, space);
+        build::text(ui, row, "Fog of war");
+        let off = build::button(ui, row, FOG_OFF_ID, "Off");
+        press(ui, off, "fog", !self.setup.fog);
+        let on = build::button(ui, row, FOG_ON_ID, "On");
+        press(ui, on, "fog", self.setup.fog);
 
         build::gap(ui, c, space);
         build::heading(ui, c, "Who plays");
@@ -345,6 +355,8 @@ impl NewGame {
                     (*chance + 1).min(MAX_CHANCE)
                 };
                 self.rebuild();
+            } else if id == TbId::new(FOG_OFF_ID) || id == TbId::new(FOG_ON_ID) {
+                self.setup.fog = id == TbId::new(FOG_ON_ID);
             } else if id == TbId::new(GOLD_LESS_ID) || id == TbId::new(GOLD_MORE_ID) {
                 let gold = &mut self.setup.gold;
                 *gold = if id == TbId::new(GOLD_LESS_ID) {

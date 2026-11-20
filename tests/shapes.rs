@@ -226,7 +226,7 @@ fn the_maps_edges_are_cut_straight_on_all_four_sides() {
         let mut view = hexgame::view::MapView::new(rows, cols, Hex::new(last_row, last_col));
         view.resize(819, 537);
         let mut geometry = MapGeometry::new();
-        geometry.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
+        geometry.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, None));
         // Every hex once: its terrain's, or its city's.
         let layers: Vec<_> = TileType::ALL
             .into_iter()

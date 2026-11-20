@@ -53,8 +53,15 @@ Built (2026-11-19):
 - **gold**: a treasury for each side, its cities' taxes, its units'
   upkeep (those it cannot pay leave), and the price of what its cities
   build, paid when it is done (it waits for the gold);
+- **orders that last** (below, "Easy to play"): a stack sent somewhere far
+  goes there over turns, a city sends what it builds where its holder
+  says, a stack can be put aside for the turn, and a list of tasks says
+  what is left to do;
+- **what a side sees**: the other sides' stacks only as banners with their
+  size, their cities only from outside; and **fog of war**, set with the
+  game (below, 9).
 
-Not built: fog of war, rounds, saved games.
+Not built: rounds, saved games.
 
 ## One set of rules, two modes
 
@@ -201,11 +208,17 @@ and the rules use integers, not floats.
      life: +1 strength or +2 moves a turn, chance says which. A move that
      brings a blessing cannot be undone. (The continent has a temple near
      each side's first city.)
-   - **Captains from the ranks**: when a stack with no commander wins a
-     battle it was at most 65% likely to win (`EMERGE_ODDS`, the odds the
-     game gives before an attack), one time in four (`EMERGE_ONE_IN`) a
-     captain of the map's first kind of commander rises among its
-     survivors, named, with no moves that turn.
+   - **Captains from the ranks** (the owner's word, 2026-11-19): when a
+     stack with no commander wins a battle, a captain of the map's first
+     kind of commander may rise among its survivors, named, with no moves
+     that turn. The chance, in percent, is half of how unlikely the win was:
+     (100 - the odds the game gave before the attack) / 2
+     (`emerge_chance`): one in two for a win nobody expected, none for a
+     sure one.
+   - **A captain rides with its stack** (the owner's word): at the start of
+     its side's turn, a commander gets the moves of the fastest unit on its
+     hex, if they are more than its own: a captain with riders rides
+     (`Map::reset_move_points`).
    - What shows: a unit's ring is silver for a veteran (or a captain of
      level 2) and gold for elite (level 3), on the map and on its icons; the
      panels say its rank, its experience and what it needs for the next
@@ -214,8 +227,21 @@ and the rules use integers, not floats.
 8. **The end** (decided): a side that has lost all its cities is out of the
    game, and its units with it; the game ends when one side is left. (More
    ways to win can come later: a share of the cities, a number of rounds.)
-9. **Fog of war.** A side sees what is near its units and cities. Rounds
-   need it far more than turns do.
+9. **What a side sees** (built, the owner's word 2026-11-19: "you can
+   only see the details of your side's units and cities"). The other
+   sides' stacks are banners in their color on the map, with a pip for each
+   unit (as a city's garrison is), and their panels say how many there are
+   and whose, not what; their cities show their name, holder, walls, taxes
+   and how many stand in them, never what they build or where its units go.
+   **Fog of war** is a choice when the game is set up (the new game screen,
+   `--fog`, `Setup::fog`): a side sees what is within 2 hexes of its units
+   (`UNIT_SIGHT`) and 3 of its cities (`CITY_SIGHT`) (`Game::sight`); the
+   rest of the map is dimmed: its terrain and where its cities are show,
+   but no units, and no city's holder (on the map, the minimap and the
+   lists of cities). It is worked out anew whenever the map changes. With
+   nobody at the screen (the computer against itself) all is seen. The
+   agents still read the whole game (they do not respect the fog yet).
+   Rounds need fog far more than turns do.
 10. **Saved games.** The state and the orders, in text, like the maps.
 11. **Movement points.** A unit that does not use all its points keeps up
     to 2 of them for the next turn (decided: as now, from the C++).
@@ -261,10 +287,33 @@ can become a slog, and what helps most is a clean interface that is easy to
 get around, and good defaults, so that little has to be said for the usual
 thing to happen. Ideas to try, as the rules grow:
 
-- **Orders that last**: "go to" a far hex goes on, turn after turn, until it
-  is there (`Order::Toward` is the first step); a stack follows another.
-- **Rally points**: what a city builds goes on its own to where its holder
-  said.
+- **Orders that last** (built): Go to (G, or the Go to button, then a
+  hex: `Order::GoTo`) sends the selected units to a far hex: they take this
+  turn's part at once, and the rest at the start of each of their side's
+  turns, before the player plays (`Game::marches`), as far as the slowest
+  of them goes, until they are there. A march never attacks: if its next
+  step is into another side's units, or there is no way, the stack stops
+  (`Event::Stalled`, and a line in the log), keeps its order, and goes
+  back among the stacks that wait for orders (Next stack, the tasks); left
+  alone, it tries again next turn. A move of the player's own ends the
+  order (an undo gives it back). In rounds, the same: a stopped march is
+  in the list again, and goes on if it is not given another order. Later:
+  a stack follows another.
+- **Rally points** (built): a city's window has "Send new units to..."
+  (then a hex) and "Keep them here" (`Order::Rally`): what it builds is
+  sent there with a standing order the moment it is done.
+- **Done for the turn** (built): D, or the Done button (`Order::Done`),
+  puts the selected units aside: Next stack passes them by, as if they had
+  no moves left, and the selection goes on to the next stack that waits.
+  The next turn they are back.
+- **A list of tasks** (built): T, or the Tasks button, opens what the
+  player has left to do this turn (`Game::tasks`), most pressing first:
+  stacks that have had no orders (or whose march stopped short) and cities
+  that build nothing; then stacks that can go further, or were put aside
+  with moves left, and cities whose work is done and waits (for gold, or
+  for room); then the rest (marching, spent, building). A row is a button:
+  a stack's selects it, a city's opens it; the list follows the game, so
+  the player can work down it.
 - **Production that repeats** until told otherwise (it does), and the lists
   of cities to see and change all of it in one place (they do).
 - **The next stack with points left**, a key away (built: N, and the Next
@@ -333,7 +382,8 @@ it; the rules are written once for both modes from the first step.
    **Done (2026-11-19).**
 4. **The end, and an AI.** A side that has lost its cities is out; the last
    one wins; a first AI.
-5. **Fog of war.**
+5. **Fog of war.** **Done (2026-11-19)**, with orders that last and the
+   tasks.
 6. **Rounds.** Planned paths, "done", the resolution, the replay.
 7. **Saves, then the network.**
 

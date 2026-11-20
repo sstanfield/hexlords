@@ -61,9 +61,12 @@ pub fn level_ring(level: u8) -> ([f32; 4], f32) {
 }
 /// A city shows its own picture, not a unit: its garrison is a pip for each
 /// unit, in its side's color, in rows over the gate, the first unit at the
-/// left of the bottom row. `pip_at` places them.
-const PIPS_PER_ROW: usize = 4;
+/// left of the bottom row. `pip_at` places them; a stack in the field says
+/// how many it is so too.
+const PIPS_PER_ROW: usize = 5;
 pub const PIP_ROWS: usize = 2;
+// Room for a full stack and two commanders.
+const _: () = assert!(PIPS_PER_ROW * PIP_ROWS >= crate::state::MAX_STACK + 2);
 const PIP_RADIUS: f32 = 0.075;
 const PIP_RING: f32 = 0.03;
 const PIP_STEP: f32 = 0.22;
@@ -98,7 +101,23 @@ pub struct Marks<'a> {
     /// one); in a city, the unit whose pip is ringed. Of every other hex the
     /// first unit shows.
     pub front: Option<UnitId>,
+    /// Whose units show what they are (their picture): the others' are
+    /// banners, their size and no more. `None`: everyone's show.
+    pub viewer: Option<Side>,
+    /// The hexes seen (fog of war): the others are dimmed, with no units on
+    /// them and their cities nobody's to look at.
+    pub seen: &'a dyn Fn(Hex) -> bool,
 }
+
+impl Marks<'_> {
+    /// Marks of a map seen whole, everyone's units shown: a tool's.
+    pub fn plain(color: [f32; 4], marked: &dyn Fn(Hex) -> bool, front: Option<UnitId>) -> Marks<'_> {
+        Marks { color, marked, front, viewer: None, seen: &|_| true }
+    }
+}
+
+/// The dimming over a hex in the fog.
+pub const FOG: [f32; 4] = [0.02, 0.02, 0.06, 0.5];
 
 /// The image a terrain is drawn with, relative to the asset directory: every
 /// terrain has its own, made by `tools/assetgen` (`docs/tiles.md`). A city's
@@ -146,6 +165,9 @@ pub struct MapGeometry {
     roads: Vec<MeshList<HexVertex>>,
     /// The discs under the units and the cities' pips.
     discs: MeshList<FlatVertex>,
+    /// Over the units: the other sides' stacks as banners, and how many
+    /// stand in each stack.
+    signs: MeshList<FlatVertex>,
     /// The hexes that hold units, by the image of the unit that is shown.
     units: Vec<(String, MeshList<HexVertex>)>,
     /// The marked hexes.
@@ -200,6 +222,78 @@ fn push_disc(
     list.push(&vertices, &indices);
 }
 
+/// A shape of one color in a hex, as a fan from its first corner (which
+/// must see every other: the shapes here are such), corners in the hex
+/// model, cut where the hex is cut.
+fn push_shape(
+    list: &mut MeshList<FlatVertex>,
+    view: &MapView,
+    hex_center: [f32; 2],
+    variant: HexVariant,
+    corners: &[[f32; 2]],
+    color: [f32; 4],
+) {
+    let positions = variant.positions();
+    let bound = |axis: usize| {
+        let values = positions.iter().map(|p| p[axis]);
+        (values.clone().fold(f32::MAX, f32::min), values.fold(f32::MIN, f32::max))
+    };
+    let ((left, right), (bottom, top)) = (bound(0), bound(1));
+    let vertices: Vec<FlatVertex> = corners
+        .iter()
+        .map(|[x, y]| FlatVertex {
+            pos: view.to_ndc([hex_center[0] + x.clamp(left, right), hex_center[1] + y.clamp(bottom, top)]),
+            color,
+        })
+        .collect();
+    let indices: Vec<u16> = (1..corners.len().saturating_sub(1) as u16).flat_map(|i| [0, i, i + 1]).collect();
+    list.push(&vertices, &indices);
+}
+
+/// Another side's stack: a banner in its color on a pole, its tail cut in
+/// two, outlined dark; what is in it is not shown.
+fn push_banner(
+    list: &mut MeshList<FlatVertex>,
+    view: &MapView,
+    center: [f32; 2],
+    variant: HexVariant,
+    color: [f32; 3],
+) {
+    let [r, g, b] = color;
+    let a = HEX_HEIGHT_ADJUST;
+    // The cloth: from the pole to its cut tail; the pole.
+    let cloth = |grow: f32| {
+        let (x0, x1, y0, y1) = (-0.24 - grow, 0.42 + grow, (0.0 - grow) / a, (0.5 + grow) / a);
+        let notch = 0.24 + grow * 0.5;
+        [[x0, (y0 + y1) / 2.0], [x0, y0], [x1, y0], [notch, (y0 + y1) / 2.0], [x1, y1], [x0, y1]]
+    };
+    let pole = |grow: f32| {
+        let (x0, x1, y0, y1) = (-0.31 - grow, -0.24 + grow, (-0.5 - grow) / a, (0.55 + grow) / a);
+        [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+    };
+    push_shape(list, view, center, variant, &pole(0.04), RING_COLOR);
+    push_shape(list, view, center, variant, &cloth(0.04), RING_COLOR);
+    push_shape(list, view, center, variant, &pole(0.0), [0.85, 0.80, 0.68, 1.0]);
+    push_shape(list, view, center, variant, &cloth(0.0), [r, g, b, 1.0]);
+}
+
+/// A stack's size: a pip for each unit, in its side's color, along the
+/// bottom of its hex as a city's garrison is (`pip_at`).
+fn push_size(
+    list: &mut MeshList<FlatVertex>,
+    view: &MapView,
+    center: [f32; 2],
+    variant: HexVariant,
+    count: usize,
+    side: Side,
+) {
+    let [r, g, b] = side_color(side);
+    for at in (0..count).map_while(|i| pip_at(i, count)) {
+        push_disc(list, view, center, variant, at, PIP_RADIUS + PIP_RING, RING_COLOR);
+        push_disc(list, view, center, variant, at, PIP_RADIUS, [r, g, b, 1.0]);
+    }
+}
+
 impl MapGeometry {
     pub fn new() -> MapGeometry {
         MapGeometry::default()
@@ -217,6 +311,7 @@ impl MapGeometry {
             list.clear();
         }
         self.discs.clear();
+        self.signs.clear();
         for (_, list) in &mut self.units {
             list.clear();
         }
@@ -236,8 +331,9 @@ impl MapGeometry {
 
             let vertices: [HexVertex; HEX_VERTICES] =
                 std::array::from_fn(|i| HexVertex { pos: corner(i), uv: uvs[i], bary: HEX_BARY[i], border });
-            // A city is drawn with its owner's picture.
-            let owner = map.city_at(hex).map_or(Side::Grey, |city| city.side);
+            // A city is drawn with its owner's picture (nobody's, in the fog).
+            let seen = (marks.seen)(hex);
+            let owner = if seen { map.city_at(hex).map_or(Side::Grey, |city| city.side) } else { Side::Grey };
             match tile.kind {
                 TileType::City => self.cities[owner.index()].push(&vertices, &HEX_INDICES),
                 kind => self.terrain[kind.index()].push(&vertices, &HEX_INDICES),
@@ -259,7 +355,7 @@ impl MapGeometry {
             }
 
             // A city's garrison: its pips.
-            if tile.kind == TileType::City {
+            if tile.kind == TileType::City && seen {
                 let garrison: Vec<(UnitId, Side)> =
                     tile.units().iter().filter_map(|id| map.units().get(*id).map(|unit| (*id, unit.side()))).collect();
                 for (i, (id, side)) in garrison.iter().enumerate() {
@@ -275,13 +371,21 @@ impl MapGeometry {
             // here, else the first): a disc of its side's color, and on it the
             // picture of its kind.
             let shown = marks.front.filter(|id| tile.units().contains(id)).or(tile.units().first().copied());
-            let shown = shown.filter(|_| tile.kind != TileType::City);
-            if let Some(unit) = shown.and_then(|id| map.units().get(id)) {
+            let shown = shown.filter(|_| tile.kind != TileType::City && seen);
+            let theirs =
+                shown.and_then(|id| map.units().get(id)).filter(|u| marks.viewer.is_some_and(|v| v != u.side()));
+            if let Some(unit) = theirs {
+                // Another side's stack: a banner, and how many there are.
+                push_banner(&mut self.signs, view, visible.center, variant, side_color(unit.side()));
+                push_size(&mut self.signs, view, visible.center, variant, tile.units().len(), unit.side());
+            }
+            if let Some(unit) = shown.and_then(|id| map.units().get(id)).filter(|_| theirs.is_none()) {
                 let [r, g, b] = side_color(unit.side());
                 let middle = [0.0, 0.0];
                 let (ring, width) = level_ring(unit.level);
                 push_disc(&mut self.discs, view, visible.center, variant, middle, DISC_RADIUS + width, ring);
                 push_disc(&mut self.discs, view, visible.center, variant, middle, DISC_RADIUS, [r, g, b, 1.0]);
+                push_size(&mut self.signs, view, visible.center, variant, tile.units().len(), unit.side());
                 let image = map.units().kind_of(unit).map_or(UNIT_IMAGE, |kind| kind.image.as_str());
                 let sign: [HexVertex; HEX_VERTICES] =
                     std::array::from_fn(|i| HexVertex { border: NO_BORDER, ..vertices[i] });
@@ -298,6 +402,11 @@ impl MapGeometry {
             if (marks.marked)(hex) {
                 let flat: [FlatVertex; HEX_VERTICES] =
                     std::array::from_fn(|i| FlatVertex { pos: corner(i), color: marks.color });
+                self.overlay.push(&flat, &HEX_INDICES);
+            }
+            if !seen {
+                let flat: [FlatVertex; HEX_VERTICES] =
+                    std::array::from_fn(|i| FlatVertex { pos: corner(i), color: FOG });
                 self.overlay.push(&flat, &HEX_INDICES);
             }
         }
@@ -322,6 +431,12 @@ impl MapGeometry {
     /// first.
     pub fn discs(&self) -> &MeshList<FlatVertex> {
         &self.discs
+    }
+
+    /// Over the units: the banners of the stacks whose units are not shown,
+    /// and the stacks' sizes.
+    pub fn signs(&self) -> &MeshList<FlatVertex> {
+        &self.signs
     }
 
     /// The hexes that show a unit, by the unit's image.
@@ -513,6 +628,10 @@ impl MapRenderer {
                 draw_textured(ctx, buffers, geometry.units_with(image), texture);
             }
         }
+        if !geometry.signs().is_empty() {
+            ctx.apply_pipeline(&pipelines.flat);
+            draw_flat(ctx, buffers, geometry.signs());
+        }
         if !geometry.overlay().is_empty() {
             ctx.apply_pipeline(&pipelines.flat);
             draw_flat(ctx, buffers, geometry.overlay());
@@ -549,7 +668,7 @@ mod tests {
 
     fn geometry(game: &Game, view: &MapView) -> MapGeometry {
         let mut g = MapGeometry::new();
-        g.build(&game.map, view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex), front: None });
+        g.build(&game.map, view, &Marks::plain(RANGE_OVERLAY, &|hex| game.can_move_to(hex), None));
         g
     }
 
@@ -597,7 +716,7 @@ mod tests {
         let mut view = MapView::new(20, 20, Hex::new(10, 10));
         view.resize(819, 537);
         let mut g = MapGeometry::new();
-        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
+        g.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, None));
         for (col, kind) in TileType::ALL.into_iter().enumerate() {
             let want = center_of(&view, Hex::new(10, col as u16 + 5));
             // (A city hex without a city record is nobody's city.)
@@ -732,7 +851,7 @@ mod tests {
         let mut view = MapView::new(20, 20, Hex::new(10, 8));
         view.resize(819, 537);
         let mut g = MapGeometry::new();
-        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
+        g.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, None));
 
         let mut drawn = 0;
         for col in 6..=9 {
@@ -794,7 +913,7 @@ mod tests {
         let mut view = MapView::new(20, 20, Hex::new(10, 10));
         view.resize(819, 537);
         let mut g = MapGeometry::new();
-        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
+        g.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, None));
 
         // The first unit of a hex is the one that shows.
         let at = |g: &MapGeometry, image: &str| -> Vec<[f32; 2]> {
@@ -811,6 +930,20 @@ mod tests {
         assert_eq!((count(solid(Side::Red)), count(solid(Side::Blue)), count(solid(Side::Grey))), (1, 1, 1));
         assert_eq!((count(RING_COLOR), colors.len()), (3, 6));
         assert!(discs(&g).iter().any(|(at, _)| *at == center_of(&view, Hex::new(10, 5))));
+        // The stacks say how many they are: two pips for each of the two,
+        // along the bottom of the hex, in the side's color (and rings); one
+        // for the one alone.
+        let signs: Vec<([f32; 2], [f32; 4])> = g
+            .signs()
+            .meshes()
+            .iter()
+            .flat_map(|m| m.vertices.chunks(DISC_CORNERS + 1))
+            .map(|d| (d[0].pos, d[0].color))
+            .collect();
+        let pips = |side: Side| signs.iter().filter(|(_, c)| *c == solid(side)).map(|(at, _)| *at).collect::<Vec<_>>();
+        assert_eq!((pips(Side::Red).len(), pips(Side::Blue).len(), pips(Side::Grey).len()), (2, 2, 1));
+        assert!(pips(Side::Blue).iter().all(|at| at[1] < center_of(&view, Hex::new(10, 10))[1]));
+        assert_eq!(signs.len(), 10);
         // The sides can be told apart.
         let sides: Vec<[f32; 3]> = Side::PLAYERS.into_iter().chain([Side::Grey]).map(side_color).collect();
         for (i, a) in sides.iter().enumerate() {
@@ -821,17 +954,17 @@ mod tests {
 
         // The selected unit shows on its hex instead of the first: the militia
         // stands behind the rider.
-        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: Some(militia) });
+        g.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, Some(militia)));
         assert!(g.units_with("units/riders.png").is_empty());
         assert_eq!(at_all(&g, "units/militia.png"), 2);
         // A unit that is not on a hex changes nothing there.
-        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
+        g.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, None));
         assert_eq!(at_all(&g, "units/riders.png"), 1);
 
         // The map changes and the pictures follow: the rider is gone.
         let rider = map.units_at(Hex::new(10, 5))[0];
         map.kill_unit(rider);
-        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
+        g.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, None));
         assert!(g.units_with("units/riders.png").is_empty());
         assert_eq!(g.units().count(), 2);
         assert_eq!(at_all(&g, "units/militia.png"), 2);
@@ -849,7 +982,7 @@ mod tests {
         let mut view = MapView::new(20, 20, Hex::new(10, 10));
         view.resize(819, 537);
         let mut g = MapGeometry::new();
-        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
+        g.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, None));
 
         // Each city with its owner's picture, nobody's with the city's own;
         // none in the terrain's.
@@ -881,16 +1014,17 @@ mod tests {
             assert!(at[1] < center_of(&view, Hex::new(10, 10))[1]);
         }
 
-        // Rows of four from the bottom, each row centered; no more than two.
+        // Rows of five from the bottom, each row centered; no more than two
+        // (a full stack and two commanders).
         let step = PIP_STEP;
         assert_eq!(pip_at(0, 1), Some([0.0, PIP_BOTTOM]));
         assert_eq!(pip_at(1, 2), Some([step / 2.0, PIP_BOTTOM]));
-        assert_eq!(pip_at(3, 6), Some([1.5 * step, PIP_BOTTOM]));
-        assert_eq!(pip_at(4, 6), Some([-step / 2.0, PIP_BOTTOM + PIP_ROW_STEP]));
-        assert_eq!((pip_at(2, 2), pip_at(8, 9)), (None, None));
+        assert_eq!(pip_at(4, 7), Some([2.0 * step, PIP_BOTTOM]));
+        assert_eq!(pip_at(6, 7), Some([step / 2.0, PIP_BOTTOM + PIP_ROW_STEP]));
+        assert_eq!((pip_at(2, 2), pip_at(10, 11)), (None, None));
         // Every pip is inside its hex, whose half width at height y is 1 - |y| / 2.
         for i in 0..PIPS_PER_ROW * PIP_ROWS {
-            let [x, y] = pip_at(i, 8).unwrap();
+            let [x, y] = pip_at(i, PIPS_PER_ROW * PIP_ROWS).unwrap();
             let r = PIP_RADIUS + PIP_RING;
             let reach = r / HEX_HEIGHT_ADJUST;
             assert!(y - reach > -1.0, "pip {i}");
@@ -899,7 +1033,7 @@ mod tests {
 
         // The selected unit's pip is ringed in gold; it still shows no picture.
         let militia = map.units_at(Hex::new(10, 5))[1];
-        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: Some(militia) });
+        g.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, Some(militia)));
         let colors: Vec<[f32; 4]> = discs(&g).into_iter().map(|(_, color)| color).collect();
         assert_eq!((count(&colors, SELECTED_RING), count(&colors, RING_COLOR)), (1, 7));
         let gold = discs(&g).into_iter().find(|(_, color)| *color == SELECTED_RING).unwrap().0;
@@ -909,6 +1043,51 @@ mod tests {
 
     fn at_all(g: &MapGeometry, image: &str) -> usize {
         hexes(g.units_with(image)).len()
+    }
+
+    #[test]
+    fn the_others_stacks_are_banners_and_the_fog_hides_who_is_there() {
+        let mut rows = vec!["g".repeat(20); 20];
+        rows[10] = "gggggggggggggcgggggg".to_string();
+        let terrain = format!("20\n20\n{}\n", rows.join("\n"));
+        let cities = "city 10 13\nname Far\nside blue\ngarrison a\n";
+        let (mut map, _) = crate::state::scenario::parse(&terrain, Some(KINDS), Some(cities)).unwrap();
+        let put = |map: &mut Map, side: Side, hex: Hex| {
+            let kind = map.units().kind_named("a").unwrap();
+            let unit = map.new_unit_of(side, kind).unwrap();
+            map.place_unit(unit, hex).unwrap();
+        };
+        put(&mut map, Side::Red, Hex::new(10, 5));
+        for _ in 0..3 {
+            put(&mut map, Side::Blue, Hex::new(10, 8));
+        }
+        let mut view = MapView::new(20, 20, Hex::new(10, 10));
+        view.resize(819, 537);
+        let mut g = MapGeometry::new();
+        let seen_all = |_: Hex| true;
+        let marks = Marks { viewer: Some(Side::Red), seen: &seen_all, ..Marks::plain(RANGE_OVERLAY, &|_| false, None) };
+        g.build(&map, &view, &marks);
+        // Red's own unit shows what it is; blue's stack is a banner in blue
+        // with three pips, and no picture.
+        assert_eq!(at_all(&g, "units/militia.png"), 1);
+        let blue = solid(Side::Blue);
+        let banner = g.signs().meshes().iter().flat_map(|m| &m.vertices).filter(|v| v.color == blue).count();
+        assert!(banner > 3 * (DISC_CORNERS + 1), "the cloth and three pips");
+        assert!(g.overlay().is_empty(), "no fog");
+        assert_eq!(hexes(g.cities(Side::Blue)).len(), 1);
+
+        // In the fog (all but the west of the map): no blue at all, the city
+        // nobody's, no garrison pips, and the hexes dimmed.
+        let near = |hex: Hex| hex.col < 7;
+        let marks = Marks { viewer: Some(Side::Red), seen: &near, ..Marks::plain(RANGE_OVERLAY, &|_| false, None) };
+        g.build(&map, &view, &marks);
+        assert_eq!(at_all(&g, "units/militia.png"), 1, "red's own, in sight");
+        let all_flat = g.signs().meshes().iter().chain(g.discs().meshes()).flat_map(|m| m.vertices.clone());
+        assert!(all_flat.into_iter().all(|v| v.color != blue));
+        assert!(g.cities(Side::Blue).is_empty());
+        assert_eq!(hexes(g.cities(Side::Grey)).len(), 1);
+        let fogged = g.overlay().meshes().iter().flat_map(|m| &m.vertices).filter(|v| v.color == FOG).count();
+        assert!(fogged > 0 && fogged % HEX_VERTICES == 0);
     }
 
     #[test]
@@ -922,7 +1101,7 @@ mod tests {
         let mut view = MapView::new(20, 20, Hex::new(1, 1));
         view.resize(819, 537);
         let mut g = MapGeometry::new();
-        g.build(&map, &view, &Marks { color: RANGE_OVERLAY, marked: &|_| false, front: None });
+        g.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, None));
         let top = center_of(&view, hex)[1];
         let vertices: Vec<&FlatVertex> = g.discs().meshes().iter().flat_map(|m| m.vertices.iter()).collect();
         assert_eq!(vertices.len(), 2 * (DISC_CORNERS + 1));
@@ -1006,9 +1185,9 @@ mod tests {
         let game = crate::game::grassland();
         let view = view_at(START);
         let mut g = MapGeometry::new();
-        g.build(&game.map, &view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex), front: None });
+        g.build(&game.map, &view, &Marks::plain(RANGE_OVERLAY, &|hex| game.can_move_to(hex), None));
         let first = g.terrain(TileType::Grass).vertex_count();
-        g.build(&game.map, &view, &Marks { color: RANGE_OVERLAY, marked: &|hex| game.can_move_to(hex), front: None });
+        g.build(&game.map, &view, &Marks::plain(RANGE_OVERLAY, &|hex| game.can_move_to(hex), None));
         assert_eq!(g.terrain(TileType::Grass).vertex_count(), first);
         assert_eq!(hexes(g.units_with(UNIT_IMAGE)).len(), 1);
     }

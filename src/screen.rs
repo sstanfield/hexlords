@@ -600,6 +600,12 @@ impl MapScreen {
         std::mem::take(&mut self.fullscreen_toggles)
     }
 
+    /// Ask for the minimap's picture to be drawn again (what is seen of it
+    /// changed).
+    pub fn redraw_minimap(&mut self) {
+        self.minimap_dirty = true;
+    }
+
     /// True if the minimap's picture is out of date; the caller redraws it.
     pub fn take_minimap_dirty(&mut self) -> bool {
         std::mem::take(&mut self.minimap_dirty)
@@ -655,6 +661,17 @@ pub trait Scene {
     /// The player wants to quit (Ctrl+Q, or the window's close button): false
     /// keeps the window open.
     fn confirm_quit(&mut self) -> bool {
+        true
+    }
+
+    /// Whose units show what they are on the map (the others' are banners):
+    /// the person at the screen. `None`: everyone's (a tool).
+    fn viewer(&self) -> Option<crate::state::Side> {
+        None
+    }
+
+    /// True if the hex is seen by who is at the screen (fog of war).
+    fn sees(&self, _hex: Hex) -> bool {
         true
     }
 

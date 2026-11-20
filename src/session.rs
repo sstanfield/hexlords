@@ -23,7 +23,7 @@ use turbo_ferret::{ImageHandle, LayoutParams, Modifiers, Point, Rect, Size, TbId
 use crate::agents::{self, Agents};
 use crate::battle_window::{self, BattleWindow};
 use crate::city_windows::{self, CityList, CityOrder, CityWindow};
-use crate::game::{Game, SelectOutcome};
+use crate::game::{Game, SelectOutcome, Sight, Task};
 use crate::gui::build::{self, WindowParts};
 use crate::gui::{MapCommand, MapKey, RootCommand};
 use crate::help::{HelpSection, command_key};
@@ -35,6 +35,7 @@ use crate::screen::{MapScreen, Scene};
 use crate::setup::Controller;
 use crate::state::scenario::side_name;
 use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Side, UnitId};
+use crate::tasks_window::{self, TasksWindow};
 
 /// The layout, relative to the asset directory.
 pub const LAYOUT: &str = "layouts/main.tb.txt";
@@ -70,6 +71,9 @@ pub const NEXT_CITY_ID: &str = "next_city";
 pub const COMPUTER_TURN_MS: u64 = 400;
 /// The button that opens the log (`log_window`).
 pub const LOG_ID: &str = "log";
+pub const GO_TO_ID: &str = "go_to";
+pub const DONE_ID: &str = "done";
+pub const TASKS_ID: &str = "tasks";
 pub const MY_CITIES_ID: &str = "my_cities";
 pub const CITY_DETAILS_ID: &str = "city_details";
 /// The cover between two people's turns, and its button.
@@ -84,6 +88,16 @@ pub const GAME_OVER_CLOSE_ID: &str = "game_over_close";
 /// right, a third of the way down (see `gui::build::place`).
 const LIST_ALIGN: (f32, f32) = (0.0, 0.33);
 const CITY_ALIGN: (f32, f32) = (1.0, 0.33);
+const TASKS_ALIGN: (f32, f32) = (1.0, 0.0);
+
+/// What a click on the map picks, when it does not choose (`Session::picking`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Pick {
+    /// Where the selected units go.
+    GoTo,
+    /// Where the city sends its new units.
+    Rally(CityId),
+}
 pub const STATUS_ID: &str = "status";
 /// The selected hex's heading, and the line about the selected unit.
 pub const HEX_TITLE_ID: &str = "hex_title";
@@ -176,10 +190,14 @@ fn help_section() -> HelpSection {
             (&undo, "Take back the last move or city order (not a battle)"),
             ("N,  or  Next stack", "Select the next stack that can still move (Shift+N: the one before)"),
             ("C,  or  Next city", "Go to your next city (Shift+C: the one before)"),
+            ("G,  or  Go to", "Then click a hex: the selected units go there, over as many turns as it takes"),
+            ("D,  or  Done", "Put the selected units aside for this turn (Next stack passes them by)"),
+            ("T,  or  Tasks", "What you have left to do: stacks with no orders, idle cities, then the rest"),
             ("L,  or  Log", "Your battles, with who won and who died, and the cities you took and lost"),
             ("Watch, in the log", "A battle you fought, played out again: both stacks, a hit at a time"),
             (&end_turn, "End the turn: your log shows what the others do; then Start turn"),
             ("City details", "All about the selected city; set what it builds (point at one: all about it)"),
+            ("Send new units to...", "In a city's window, then click a hex: what it builds goes there on its own"),
             ("All cities, My cities", "A list of cities: see where one is, go to it, open it"),
         ],
     )
@@ -209,7 +227,21 @@ pub struct Session {
     city_lists: WidgetId,
     turn_row: WidgetId,
     next_row: WidgetId,
+    order_row: WidgetId,
+    log_row: WidgetId,
     undo: WidgetId,
+    go_to: WidgetId,
+    done: WidgetId,
+    /// What the next click on the map (or Enter) picks, instead of choosing
+    /// a hex: where the selected units go, or where a city sends its new
+    /// ones. Esc lets it go.
+    picking: Option<Pick>,
+    /// Why the last pick was refused, said until the next one.
+    refused: Option<String>,
+    /// The list of tasks, while it is open; and the map's revision and the
+    /// side it was last brought up to date for.
+    tasks: Option<TasksWindow>,
+    tasks_of: Option<(u64, Side)>,
     /// The log, while it is open.
     log: Option<LogWindow>,
     /// How long the game's history was when each person at this screen last
@@ -218,6 +250,12 @@ pub struct Session {
     /// Between a person's turns: from End turn (or, in hotseat, the next
     /// person's Begin) to Start turn, while the log shows what the others do.
     between: bool,
+    /// What the person at the screen sees (fog of war), as of the map's
+    /// revision and the person it was worked out for; and which cities they
+    /// saw then (the minimap's picture is drawn again when that changes).
+    sight: Sight,
+    sight_of: Option<(u64, Side)>,
+    cities_seen: Vec<bool>,
     /// When the computer last played a turn, in ms (it plays one at a time,
     /// [`COMPUTER_TURN_MS`] apart, so that the log can be followed).
     last_play: Option<u64>,
@@ -283,11 +321,22 @@ impl Session {
             city_lists: find(&screen, "city_lists")?,
             turn_row: find(&screen, "turn_row")?,
             next_row: find(&screen, "next_row")?,
+            order_row: find(&screen, "order_row")?,
+            log_row: find(&screen, "log_row")?,
             undo: find(&screen, UNDO_ID)?,
+            go_to: find(&screen, GO_TO_ID)?,
+            done: find(&screen, DONE_ID)?,
+            picking: None,
+            refused: None,
+            tasks: None,
+            tasks_of: None,
             log: None,
             seen: Vec::new(),
             between: false,
             last_play: None,
+            sight: Sight::all(),
+            sight_of: None,
+            cities_seen: Vec::new(),
             cycled: None,
             city_window: None,
             city_list: None,
@@ -516,6 +565,8 @@ impl Session {
         ui.set_layout_params(self.city_lists, Some(narrow));
         ui.set_layout_params(self.turn_row, Some(narrow));
         ui.set_layout_params(self.next_row, Some(narrow));
+        ui.set_layout_params(self.order_row, Some(narrow));
+        ui.set_layout_params(self.log_row, Some(narrow));
         // The panel is as tall as its lines and its slots (an empty slot keeps
         // its room), and the map has the rest.
         let panel_h = ui.preferred_size_free(self.panel).pref.h;
@@ -542,9 +593,36 @@ impl Session {
 
     /// The units of the selected hex, in the stack's order: the order of their
     /// slots, the first the one the map shows.
+    /// Only the person at the screen's own units are shown in full: of
+    /// another side's stack, how many there are (the hex's heading) and no
+    /// more.
     fn stack_units(&self) -> Vec<UnitId> {
         let map = &self.screen.game.map;
-        map.units_at(self.shown).iter().copied().filter(|id| map.units().get(*id).is_some()).collect()
+        let viewer = self.seer();
+        let mine = |id: &UnitId| map.units().get(*id).is_some_and(|u| viewer == Side::Grey || u.side() == viewer);
+        map.units_at(self.shown).iter().copied().filter(mine).collect()
+    }
+
+    /// Work out what the person at the screen sees, if the map or the
+    /// person changed; and draw the minimap again if what it shows of the
+    /// cities changed.
+    fn see(&mut self) {
+        let (revision, viewer) = (self.screen.game.map.revision(), self.seer());
+        if self.sight_of == Some((revision, viewer)) {
+            return;
+        }
+        self.sight_of = Some((revision, viewer));
+        self.sight = self.screen.game.sight(viewer);
+        let seen: Vec<bool> = self.screen.game.map.cities().iter().map(|c| self.sight.sees(c.pos)).collect();
+        if seen != self.cities_seen {
+            self.cities_seen = seen;
+            self.screen.redraw_minimap();
+        }
+    }
+
+    /// What the person at the screen sees.
+    pub fn sight(&self) -> &Sight {
+        &self.sight
     }
 
     /// The numbers under the icons of the selected hex's units, the first unit
@@ -597,10 +675,11 @@ impl Session {
 
     /// Bring the panels up to date with the game.
     fn refresh(&mut self) {
+        self.see();
         let game = &self.screen.game;
         let map = &game.map;
-        let status = info::cursor_line(game);
-        let title = info::hex_title(map, self.shown);
+        let status = info::cursor_line_for(game, &self.sight);
+        let title = info::hex_title_for(map, self.shown, self.sight.sees(self.shown));
         // The units of the selected hex: each one's icon and numbers, and
         // which of them is the selected one.
         let ids = self.stack_units();
@@ -615,6 +694,20 @@ impl Session {
         let chosen: Vec<bool> = ids.iter().map(|id| game.selection().contains(id)).collect();
         // The selected unit in a line, wherever it stands; a stack in a word.
         let line = match game.selected().and_then(|id| map.units().get(id)) {
+            _ if self.picking == Some(Pick::GoTo) => match &self.refused {
+                Some(why) => format!("Go to: {why}. Click another hex (Esc: never mind)."),
+                None => {
+                    "Go to: click the hex they go to, over as many turns as it takes (Esc: never mind).".to_string()
+                }
+            },
+            _ if matches!(self.picking, Some(Pick::Rally(_))) => {
+                "Click the hex the city sends its new units to (Esc: never mind).".to_string()
+            }
+            Some(unit) if unit.goto.is_some() && game.selection().len() == 1 => format!(
+                "{} (on the way to {})",
+                info::unit_line(map, unit),
+                info::place(map, unit.goto.unwrap_or_default())
+            ),
             Some(_) if game.selection().len() > 1 => format!(
                 "{} units selected: they move together (click one to leave it behind, or to take it along).",
                 game.selection().len()
@@ -629,7 +722,10 @@ impl Session {
         let mut tip =
             tipped.and_then(|i| map.units().get(ids[i])).map_or(Vec::new(), |unit| info::unit_details(map, unit));
         tip.truncate(TIP_LINES);
-        let city = map.city_at(self.shown).map_or(Vec::new(), |city| info::city_lines(map, city, CITY_LINES));
+        let city = map.city_at(self.shown).map_or(Vec::new(), |city| {
+            let known = info::Known::of(city, self.seer(), &self.sight);
+            info::city_lines_for(map, city, CITY_LINES, known)
+        });
 
         self.status.set(&mut self.screen, &status);
         self.hex_title.set(&mut self.screen, &title);
@@ -696,6 +792,15 @@ impl Session {
         // Undo is there while there is something to take back.
         let undo = self.screen.game.can_undo();
         self.screen.ui.set_disabled(self.undo, !undo);
+        // Go to and Done are about the person's selected units.
+        let game = &self.screen.game;
+        let own = self.persons_turn()
+            && game.selected().and_then(|id| game.map.units().get(id)).is_some_and(|u| u.side() == game.player());
+        for button in [self.go_to, self.done] {
+            if self.screen.ui.node(button).is_some_and(|n| n.is_disabled() == own) {
+                self.screen.ui.set_disabled(button, !own);
+            }
+        }
         if let (Some(winner), None) = (self.screen.game.winner(), self.game_over) {
             self.open_game_over(winner);
         }
@@ -716,6 +821,20 @@ impl Session {
         if self.battle.as_ref().is_some_and(|battle| !battle.is_open(&self.screen.ui)) {
             self.battle = None;
         }
+        // The tasks: the person's, as the game is now (a refill is worked
+        // out only when the map changed).
+        if self.tasks.as_ref().is_some_and(|tasks| !tasks.is_open(&self.screen.ui)) {
+            self.tasks = None;
+        }
+        let revision = self.screen.game.map.revision();
+        if let Some(tasks) = &mut self.tasks {
+            if self.tasks_of != Some((revision, viewer))
+                && tasks.refresh(&mut self.screen.ui, &self.screen.game, viewer)
+            {
+                self.screen.settle();
+            }
+        }
+        self.tasks_of = Some((revision, viewer));
         if let Some(log) = &mut self.log {
             let refilled = log.refresh(&mut self.screen.ui, &self.screen.game, viewer, new_from);
             log.set_status(&mut self.screen.ui, &status);
@@ -723,16 +842,23 @@ impl Session {
                 self.screen.settle();
             }
         }
+        let seer = self.seer();
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
         if let Some(window) = &mut self.city_window {
-            if !window.is_open(ui) || !window.refresh(ui, &game.map, game.player()) {
+            let known = game
+                .map
+                .cities()
+                .get(window.city())
+                .map_or(info::Known::All, |c| info::Known::of(c, seer, &self.sight));
+            if !window.is_open(ui) || !window.refresh(ui, &game.map, (game.player(), known)) {
                 window.close(ui);
                 self.city_window = None;
             }
         }
         if let Some(list) = &mut self.city_list {
             if list.is_open(ui) {
-                list.refresh(ui, &game.map);
+                let sight = &self.sight;
+                list.refresh(ui, &game.map, &|hex| sight.sees(hex));
             } else {
                 self.city_list = None;
             }
@@ -757,8 +883,11 @@ impl Session {
                 .collect()
         });
         let icons: Vec<ImageHandle> = keys.iter().map(|key| self.icon(key)).collect();
+        let seer = self.seer();
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
-        self.city_window = CityWindow::open(ui, root, &game.map, id, game.player(), &icons, (area, CITY_ALIGN));
+        let known = game.map.cities().get(id).map_or(info::Known::All, |c| info::Known::of(c, seer, &self.sight));
+        self.city_window =
+            CityWindow::open(ui, root, &game.map, id, (game.player(), known), &icons, (area, CITY_ALIGN));
     }
 
     /// The list of cities, every one or the player's (`own`); the same list
@@ -772,10 +901,12 @@ impl Session {
         }
         let (root, area) = (self.screen.root_window(), self.window_area());
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
-        let mut list = CityList::open(ui, root, &game.map, own, game.player(), (area, LIST_ALIGN));
+        let sight = &self.sight;
+        let seen = |hex| sight.sees(hex);
+        let mut list = CityList::open(ui, root, &game.map, own, game.player(), (area, LIST_ALIGN), &seen);
         // The selected hex's city, if it is in the list, is the chosen one.
         if let Some(city) = game.map.city_at(self.shown) {
-            list.choose(ui, &game.map, city.id);
+            list.choose(ui, &game.map, city.id, &seen);
         }
         self.city_list = Some(list);
     }
@@ -821,6 +952,12 @@ impl Session {
             list.close(ui);
             return true;
         }
+        if let Some(tasks) = self.tasks.take() {
+            if tasks.is_open(ui) {
+                tasks.close(ui);
+                return true;
+            }
+        }
         false
     }
 
@@ -832,6 +969,10 @@ impl Session {
                 let _ = self.screen.game.apply(Order::Build { city: id, what });
             }
             CityOrder::Details(id) => self.open_city(id),
+            CityOrder::PickRally(id) => self.picking = Some(Pick::Rally(id)),
+            CityOrder::NoRally(id) => {
+                let _ = self.screen.game.apply(Order::Rally { city: id, to: None });
+            }
             CityOrder::GoTo(id) => {
                 if let Some(pos) = self.screen.game.map.cities().get(id).map(|city| city.pos) {
                     self.screen.game.set_cursor(pos);
@@ -871,7 +1012,7 @@ impl Session {
             self.obey(order);
             return true;
         }
-        let (ui, map) = (&mut self.screen.ui, &self.screen.game.map);
+        let (ui, map, sight) = (&mut self.screen.ui, &self.screen.game.map, &self.sight);
         let mut handled = false;
         let mut order = None;
         if let Some(list) = &mut self.city_list {
@@ -880,7 +1021,7 @@ impl Session {
                 || id == TbId::new(city_windows::LIST_DETAILS_ID)
                 || id == TbId::new(city_windows::LIST_GOTO_ID);
             if is_list_button {
-                order = list.click(ui, map, id);
+                order = list.click(ui, map, id, &|hex| sight.sees(hex));
                 handled = true;
             }
         }
@@ -1071,6 +1212,14 @@ impl Session {
         if game.controller(side) == Some(&Controller::Person) { side } else { self.last_person.unwrap_or(side) }
     }
 
+    /// Whom the map and the panels show what they know: the person at the
+    /// screen (fog of war, the other sides' details hidden). Nobody
+    /// (`Side::Grey`, all shown) while no person plays here, or none is left
+    /// in the game.
+    pub fn seer(&self) -> Side {
+        if self.people_in_play() { self.viewer() } else { Side::Grey }
+    }
+
     /// What the log says, while it is open (none while it is closed).
     pub fn log_lines(&self) -> Vec<String> {
         self.log
@@ -1114,6 +1263,135 @@ impl Session {
         self.look_at(hex);
     }
 
+    /// Go to (G, or the Go to button): the next click on the map (or Enter)
+    /// picks where the selected units go, over as many turns as it takes.
+    pub fn start_go_to(&mut self) {
+        let game = &self.screen.game;
+        let own = game.selected().and_then(|id| game.map.units().get(id)).is_some_and(|u| u.side() == game.player());
+        if own && self.persons_turn() && !self.covered() {
+            (self.picking, self.refused) = (Some(Pick::GoTo), None);
+        }
+    }
+
+    /// Done (D, or the Done button): the selected units are put aside for
+    /// this turn (Next stack and the tasks pass them by), and the next
+    /// stack that waits is selected.
+    pub fn done_with_stack(&mut self) {
+        if self.covered() || !self.persons_turn() {
+            return;
+        }
+        let units = self.screen.game.selection().to_vec();
+        if units.is_empty() || self.screen.game.apply(Order::Done { units }).is_err() {
+            return;
+        }
+        self.picking = None;
+        let game = &self.screen.game;
+        let here = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos());
+        self.screen.game.deselect();
+        // On to the next, if one waits for orders.
+        let waits = self
+            .screen
+            .game
+            .tasks(self.screen.game.player())
+            .iter()
+            .any(|t| t.tier() == 1 && matches!(t, Task::Stack { .. }));
+        if waits {
+            self.cycled = here.or(self.cycled);
+            self.next_stack(false);
+        }
+    }
+
+    /// What a pick on the map does: the selected units go there, or the
+    /// city sends its new units there.
+    fn picked(&mut self, pick: Pick, hex: Hex) {
+        if self.between && self.persons_turn() {
+            self.start_turn();
+        }
+        match pick {
+            Pick::GoTo => {
+                let units = self.screen.game.selection().to_vec();
+                match self.screen.game.apply(Order::GoTo { units: units.clone(), to: hex }) {
+                    Ok(_) => {
+                        // The cursor follows them; nothing stays selected.
+                        let game = &self.screen.game;
+                        let at = units.iter().find_map(|id| game.map.units().get(*id)).map(|u| u.pos());
+                        self.screen.game.deselect();
+                        if let Some(at) = at {
+                            self.screen.game.set_cursor(at);
+                            self.shown = at;
+                        }
+                    }
+                    // Refused: say why, and pick again.
+                    Err(why) => {
+                        self.refused = Some(why);
+                        self.picking = Some(Pick::GoTo);
+                    }
+                }
+            }
+            Pick::Rally(city) => {
+                let _ = self.screen.game.apply(Order::Rally { city, to: Some(hex) });
+            }
+        }
+    }
+
+    /// See to a task of the list: select its stack and look at it, or open
+    /// its city.
+    fn see_to(&mut self, task: Task) {
+        self.picking = None;
+        match task {
+            Task::Stack { at, .. } => {
+                let game = &mut self.screen.game;
+                game.deselect();
+                if game
+                    .map
+                    .units_at(at)
+                    .iter()
+                    .filter_map(|id| game.map.units().get(*id))
+                    .any(|u| u.side() == game.player())
+                {
+                    game.select_hex(at);
+                }
+                self.cycled = Some(at);
+                self.look_at(at);
+            }
+            Task::City { city, .. } => {
+                if let Some(pos) = self.screen.game.map.cities().get(city).map(|c| c.pos) {
+                    self.screen.game.deselect();
+                    self.look_at(pos);
+                    self.open_city(city);
+                }
+            }
+        }
+    }
+
+    /// Open the list of tasks (T, or the Tasks button), or close it.
+    pub fn toggle_tasks(&mut self) {
+        if let Some(tasks) = self.tasks.take() {
+            if tasks.is_open(&self.screen.ui) {
+                tasks.close(&mut self.screen.ui);
+                return;
+            }
+        }
+        if self.covered() {
+            return;
+        }
+        let (root, area) = (self.screen.root_window(), self.window_area());
+        let side = self.viewer();
+        let window = TasksWindow::open(&mut self.screen.ui, root, &self.screen.game, side, (area, TASKS_ALIGN));
+        self.tasks = Some(window);
+        self.screen.settle();
+    }
+
+    /// The list of tasks, while it is open.
+    pub fn tasks_window(&self) -> Option<&TasksWindow> {
+        self.tasks.as_ref().filter(|t| t.is_open(&self.screen.ui))
+    }
+
+    /// What the next click on the map picks, if anything.
+    pub fn picking(&self) -> Option<Pick> {
+        self.picking
+    }
+
     /// The cursor goes to a hex, the view to the middle of it, and the panels
     /// are about it.
     fn look_at(&mut self, hex: Hex) {
@@ -1155,20 +1433,28 @@ impl Session {
         for command in self.screen.take_map_commands() {
             // Esc closes the help if it is open, else the window on top, and
             // with none open it drops the selection.
-            if command == MapCommand::Key(MapKey::Esc) && !self.screen.help_open() && !self.close_top_window() {
+            if command == MapCommand::Key(MapKey::Esc)
+                && !self.screen.help_open()
+                && self.picking.take().is_none()
+                && !self.close_top_window()
+            {
                 self.screen.game.deselect();
             }
             self.screen.navigate(command);
-            // A click, or Enter at the cursor, chooses a hex.
+            // A click, or Enter at the cursor, chooses a hex (or picks it).
             // C++: MapWidget::OnEvent
-            match command {
-                MapCommand::Click(p, size) => {
-                    if let Some(hex) = self.screen.pick(p, size) {
-                        self.choose(hex);
-                    }
+            let hex = match command {
+                MapCommand::Click(p, size) => self.screen.pick(p, size),
+                MapCommand::Key(MapKey::Enter) => Some(self.screen.game.map.cursor),
+                _ => None,
+            };
+            match (hex, self.picking.take()) {
+                (Some(hex), Some(pick)) => {
+                    self.refused = None;
+                    self.picked(pick, hex);
                 }
-                MapCommand::Key(MapKey::Enter) => self.choose(self.screen.game.map.cursor),
-                _ => {}
+                (Some(hex), None) => self.choose(hex),
+                (None, pick) => self.picking = pick,
             }
         }
         for command in self.screen.pump_shared() {
@@ -1190,6 +1476,19 @@ impl Session {
                 RootCommand::Click(id) if id == TbId::new(NEXT_STACK_ID) => self.next_stack(false),
                 RootCommand::Click(id) if id == TbId::new(NEXT_CITY_ID) => self.next_city(false),
                 RootCommand::Click(id) if id == TbId::new(LOG_ID) => self.toggle_log(),
+                RootCommand::Click(id) if id == TbId::new(GO_TO_ID) => self.start_go_to(),
+                RootCommand::Click(id) if id == TbId::new(DONE_ID) => self.done_with_stack(),
+                RootCommand::Click(id) if id == TbId::new(TASKS_ID) => self.toggle_tasks(),
+                RootCommand::Click(id) if id == TbId::new(tasks_window::TASKS_CLOSE_ID) => {
+                    if let Some(tasks) = self.tasks.take() {
+                        tasks.close(&mut self.screen.ui);
+                    }
+                }
+                RootCommand::Click(id) if self.tasks.as_ref().and_then(|t| t.click(id)).is_some() => {
+                    if let Some(task) = self.tasks.as_ref().and_then(|t| t.click(id)).cloned() {
+                        self.see_to(task);
+                    }
+                }
                 RootCommand::Click(id) if id == TbId::new(log_window::LOG_CLOSE_ID) => {
                     if let Some(log) = self.log.take() {
                         log.close(&mut self.screen.ui);
@@ -1202,6 +1501,9 @@ impl Session {
                         'c' => self.next_city(false),
                         'C' => self.next_city(true),
                         'l' | 'L' => self.toggle_log(),
+                        'g' | 'G' => self.start_go_to(),
+                        'd' | 'D' => self.done_with_stack(),
+                        't' | 'T' => self.toggle_tasks(),
                         _ => {}
                     }
                 }
@@ -1282,6 +1584,16 @@ impl Scene for Session {
     /// city, its pip is ringed).
     fn front_unit(&self) -> Option<UnitId> {
         self.screen.game.selected()
+    }
+
+    /// The person at the screen: their units show what they are; the
+    /// others', on the map, are banners.
+    fn viewer(&self) -> Option<Side> {
+        Some(self.seer()).filter(|side| *side != Side::Grey)
+    }
+
+    fn sees(&self, hex: Hex) -> bool {
+        self.sight.sees(hex)
     }
 }
 

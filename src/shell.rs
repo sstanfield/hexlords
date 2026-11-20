@@ -130,4 +130,12 @@ impl Scene for Shell {
     fn next_turn(&mut self) -> bool {
         self.scene_mut().next_turn()
     }
+
+    fn viewer(&self) -> Option<crate::state::Side> {
+        self.scene().viewer()
+    }
+
+    fn sees(&self, hex: Hex) -> bool {
+        self.scene().sees(hex)
+    }
 }

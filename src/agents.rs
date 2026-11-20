@@ -438,7 +438,8 @@ pub fn describe(game: &Game, side: Side) -> String {
 
 /// An order in a line of text (`docs/agents.md`): `move <units> <row> <col>`,
 /// `toward <units> <row> <col>` (units: names with commas between),
-/// `build <row> <col> <index or none>`, `undo`, `end`.
+/// `goto <units> <row> <col>`, `done <units>`, `build <row> <col> <index or
+/// none>`, `rally <row> <col> <row> <col>` (or `none`), `undo`, `end`.
 /// `None` for an empty line or a comment (`#`).
 pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
     let words: Vec<&str> = line.split_whitespace().collect();
@@ -465,6 +466,15 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
             };
             Order::Build { city, what }
         }
-        _ => return Err("not an order (move, toward, build, end)".to_string()),
+        ["goto", u, row, col] => Order::GoTo { units: units(u)?, to: hex(row, col)? },
+        ["done", u] => Order::Done { units: units(u)? },
+        ["rally", row, col, "none"] => {
+            Order::Rally { city: game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id, to: None }
+        }
+        ["rally", row, col, to_row, to_col] => {
+            let city = game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id;
+            Order::Rally { city, to: Some(hex(to_row, to_col)?) }
+        }
+        _ => return Err("not an order (move, toward, goto, done, build, rally, undo, end)".to_string()),
     }))
 }

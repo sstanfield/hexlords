@@ -308,6 +308,21 @@ impl Map {
     pub fn reset_move_points(&mut self, side: Side) {
         self.changed();
         self.units.reset_move_points(side);
+        // A commander moves as fast as the fastest of its stack: a captain
+        // with riders rides.
+        let leaders: Vec<UnitId> = self
+            .units
+            .of_side(side)
+            .filter(|u| self.contains(u.pos()) && self.is_commander(u.id()))
+            .map(|u| u.id())
+            .collect();
+        for id in leaders {
+            let Some(pos) = self.units.get(id).map(|u| u.pos()) else { continue };
+            let fastest = self.units_at(pos).iter().filter_map(|u| self.units.get(*u)).map(|u| u.movement).max();
+            if let (Some(fastest), Some(leader)) = (fastest, self.units.get_mut(id)) {
+                leader.movement = leader.movement.max(fastest);
+            }
+        }
     }
 
     /// The neighbours of `hex` that are on the map.

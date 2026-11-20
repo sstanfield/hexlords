@@ -9,7 +9,7 @@
 //!   one drawn anew; `--seed <n>`: the seed of the game's chance;
 //! - `--chance <0-10>`: how much chance there is in a battle (5); `--battles
 //!   lines|strength`: how a battle goes (lines); `--gold <n>`: the gold each
-//!   side starts with (50);
+//!   side starts with (50); `--fog`: fog of war;
 //! - `--headless`: no window: the computer plays every side of `--map` until
 //!   one is left or `--rounds <n>` (200) have gone by, then says how it went
 //!   (`--log`: and everything that happened on the way);
@@ -53,12 +53,14 @@ struct Args {
     chance: Option<u8>,
     battles: Option<System>,
     gold: Option<u32>,
+    fog: bool,
 }
 
 fn usage() -> String {
     format!(
         "usage: hexgame [--map <file.map or map directory>] [--players <side>=<person|agent>,...] [--order fixed|drawn] \
-         [--seed <n>] [--chance <0-10>] [--battles lines|strength] [--gold <n>] [--headless [--rounds <n>] [--log]] \
+         [--seed <n>] [--chance <0-10>] [--battles lines|strength] [--gold <n>] [--fog] [--headless [--rounds <n>] \
+         [--log]] \
          [--script <steps>] {OPTIONS_USAGE}"
     )
 }
@@ -91,6 +93,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
                 parsed.rounds = Some(n.parse().map_err(|_| format!("--rounds: \"{n}\" is not a number"))?);
             }
             "--headless" => parsed.headless = true,
+            "--fog" => parsed.fog = true,
             "--chance" => {
                 let n = value("a number from 0 to 10")?;
                 let chance = n.parse::<u8>().ok().filter(|c| *c <= MAX_CHANCE);
@@ -124,7 +127,7 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let Args { window, map, script, players, order, seed, headless, rounds, log, chance, battles, gold } = args;
+    let Args { window, map, script, players, order, seed, headless, rounds, log, chance, battles, gold, fog } = args;
     // A map that cannot be read ends the run before a window opens.
     let game = match &map {
         Some(path) => match Game::load(path) {
@@ -161,6 +164,7 @@ fn main() {
             setup.combat.chance = chance.unwrap_or(setup.combat.chance);
             setup.combat.system = battles.unwrap_or(setup.combat.system);
             setup.gold = gold.unwrap_or(setup.gold);
+            setup.fog = setup.fog || fog;
             Some(game.with_setup(setup))
         }
         None => None,

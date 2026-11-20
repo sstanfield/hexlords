@@ -14,7 +14,7 @@ use crate::state::combat::{self, Fighter};
 use crate::state::scenario::{self, Scenario, side_name};
 use crate::state::{
     CityId, Direction, Hex, MAX_STACK, Map, MoveRange, NUM_SIDES, Rng, Side, TileType, Unit, UnitId, compute_range,
-    hostile, step_toward_with,
+    hostile, step_toward, step_toward_with,
 };
 
 /// The agent that passes its turns: the computer's, when nothing else is said.
@@ -63,19 +63,109 @@ enum Undo {
         to: Hex,
         stacks: Vec<(Hex, Vec<UnitId>)>,
         taken: Option<(CityId, Side, Option<usize>, u32)>,
+        /// The standing orders they had (each unit's `goto`), given back.
+        goals: Vec<(UnitId, Option<Hex>)>,
     },
     /// A city was set to build something else: what it was building, how far.
     Built { city: CityId, building: Option<usize>, progress: u32 },
 }
 
+/// Something a side has left to do, or to look at, this turn (`Game::tasks`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Task {
+    /// A stack of the side's, on its hex: how many units, and how it stands.
+    Stack {
+        at: Hex,
+        units: usize,
+        state: StackState,
+    },
+    City {
+        city: CityId,
+        state: CityState,
+    },
+}
+
+/// How a stack stands this turn, as far as orders go.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum StackState {
+    /// It can go, and nobody has told it anything this turn.
+    Waiting,
+    /// Its standing order stopped short: something is in the way.
+    Stalled,
+    /// It went, and can go further.
+    MovesLeft,
+    /// Its player is done with it, though it could still go.
+    Done,
+    /// It is on its way somewhere, on a standing order.
+    Marching,
+    /// It can go nowhere more this turn.
+    Spent,
+}
+
+/// How a city stands this turn.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CityState {
+    /// It builds nothing.
+    Idle,
+    /// What it builds is done and waits: for the gold, or for room.
+    Waiting,
+    /// It is building.
+    Building,
+}
+
+impl Task {
+    /// How pressing it is: 1, what has had no orders (stacks that wait, or
+    /// whose way is blocked, and cities that build nothing); 2, what could
+    /// do more (stacks with moves left, or put aside with moves, and cities
+    /// whose work waits); 3, the rest.
+    pub fn tier(&self) -> u8 {
+        match self {
+            Task::Stack { state: StackState::Waiting | StackState::Stalled, .. } => 1,
+            Task::City { state: CityState::Idle, .. } => 1,
+            Task::Stack { state: StackState::MovesLeft | StackState::Done, .. } => 2,
+            Task::City { state: CityState::Waiting, .. } => 2,
+            _ => 3,
+        }
+    }
+}
+
+/// How far a side sees, with fog of war: from its units, and from its cities.
+pub const UNIT_SIGHT: u32 = 2;
+pub const CITY_SIGHT: u32 = 3;
+
+/// What a side sees: every hex (no fog of war), or those near its units and
+/// cities (`Game::sight`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Sight {
+    cols: u16,
+    /// Row-major; `None`: everything.
+    seen: Option<Vec<bool>>,
+}
+
+impl Sight {
+    /// Sight of everything.
+    pub fn all() -> Sight {
+        Sight::default()
+    }
+
+    /// True if the hex is seen: who stands there, who holds its city.
+    pub fn sees(&self, hex: Hex) -> bool {
+        match &self.seen {
+            None => true,
+            Some(seen) => seen.get(usize::from(hex.row) * usize::from(self.cols) + usize::from(hex.col)) == Some(&true),
+        }
+    }
+}
+
 /// How many rounds a battle can be watched again for (`Game::fight`).
 pub const REPLAY_ROUNDS: u32 = 5;
 
-/// A stack with no commander that wins a battle it was this likely to win
-/// or less (in percent) may see a captain rise from its ranks, one time in
-/// [`EMERGE_ONE_IN`].
-pub const EMERGE_ODDS: u32 = 65;
-pub const EMERGE_ONE_IN: u64 = 4;
+/// A stack with no commander that wins a battle sees a captain rise from its
+/// ranks with the chance, in percent, of half of how unlikely its win was:
+/// `(100 - odds) / 2` (the owner's word, 2026-11-19).
+pub fn emerge_chance(odds: u32) -> u32 {
+    (100 - odds.min(100)) / 2
+}
 /// A battle won against odds below this (percent) is worth a point more of
 /// experience to who lived through it.
 pub const HARD_ODDS: u32 = 50;
@@ -341,7 +431,14 @@ impl Game {
             return self.take_back(side, last);
         }
         let (round, mark) = (self.round, self.history.len());
+        // Being done with units changes nothing to take back: the order
+        // before can still be.
+        let keeps = matches!(order, Order::Done { .. });
         let done = self.carry_out(side, order);
+        if keeps && done.is_ok() {
+            self.undo = last;
+            return done;
+        }
         match &done {
             Ok(events) => {
                 self.remember(round, side, events);
@@ -424,14 +521,139 @@ impl Game {
             }
             Order::EndTurn => Ok(self.next_turn()),
             Order::Undo => Err("there is nothing to undo".to_string()),
+            Order::GoTo { units, to } => {
+                if !self.map.contains(to) {
+                    return Err(format!("{to} is not on the map"));
+                }
+                let goals: Vec<Option<Hex>> =
+                    units.iter().map(|id| self.own_unit(side, *id).map(|u| u.goto)).collect::<Result<_, _>>()?;
+                if units.is_empty() {
+                    return Err("no units".to_string());
+                }
+                let lead = units.iter().filter_map(|id| self.map.units().get(*id)).min_by_key(|u| u.movement);
+                if lead.is_some_and(|u| u.pos() != to && step_toward(&self.map, u, to).is_none()) {
+                    return Err("there is no way there".to_string());
+                }
+                for id in &units {
+                    if let Some(unit) = self.map.unit_mut(*id) {
+                        (unit.goto, unit.stalled) = (Some(to), false);
+                    }
+                }
+                // This turn's step, as the march would; an undo gives the
+                // units back what they were going to before.
+                let events = self.march(side, &units, to);
+                if let Some(Undo::Moved { goals: old, .. }) = &mut self.undo {
+                    *old = units.iter().copied().zip(goals).collect();
+                }
+                Ok(events)
+            }
+            Order::Done { units } => {
+                for id in &units {
+                    self.own_unit(side, *id)?;
+                }
+                for id in &units {
+                    if let Some(unit) = self.map.unit_mut(*id) {
+                        unit.done = true;
+                    }
+                }
+                Ok(Vec::new())
+            }
+            Order::Rally { city, to } => {
+                let holder = self.map.cities().get(city).map(|c| c.side).ok_or("there is no such city")?;
+                if holder != side {
+                    return Err(format!("only {} says where its units go", side_name(holder)));
+                }
+                if to.is_some_and(|hex| !self.map.contains(hex)) {
+                    return Err("that is not on the map".to_string());
+                }
+                if let Some(c) = self.map.city_mut(city) {
+                    c.rally = to;
+                }
+                Ok(Vec::new())
+            }
         }
+    }
+
+    /// Units of `side` on a standing order to `to` take this turn's step: as
+    /// far as the slowest of them gets, where there is room for all of them,
+    /// and those that can get as far go. They do not attack: a step into
+    /// another side's units, or no way at all, stalls them (they keep their
+    /// order, and wait for their player). There, their order ends.
+    fn march(&mut self, side: Side, ids: &[UnitId], to: Hex) -> Vec<Event> {
+        let units: Vec<&Unit> = ids.iter().filter_map(|id| self.map.units().get(*id)).collect();
+        let Some(lead) = units.iter().copied().min_by_key(|u| u.movement) else { return Vec::new() };
+        let at = lead.pos();
+        let ids: Vec<UnitId> = units.iter().map(|u| u.id()).collect();
+        if at == to {
+            self.arrive(&ids);
+            return Vec::new();
+        }
+        if lead.movement == 0 {
+            return Vec::new();
+        }
+        let room = |hex: Hex| self.fits(hex, &ids);
+        let step = step_toward_with(&self.map, lead, to, &room).filter(|(hex, _)| !hostile(&self.map, side, *hex));
+        let coming: Vec<UnitId> = match step {
+            Some((hex, _)) => {
+                units.iter().filter(|u| compute_range(&self.map, u).cost(hex).is_some()).map(|u| u.id()).collect()
+            }
+            None => Vec::new(),
+        };
+        let moved = match step {
+            Some((hex, _)) if !coming.is_empty() => self.move_units(side, &coming, hex).ok().map(|e| (hex, e)),
+            _ => None,
+        };
+        let Some((hex, events)) = moved else {
+            for id in &ids {
+                if let Some(unit) = self.map.unit_mut(*id) {
+                    unit.stalled = true;
+                }
+            }
+            return vec![Event::Stalled { side, units: ids, at, to }];
+        };
+        // On, or there.
+        for id in &coming {
+            if let Some(unit) = self.map.unit_mut(*id) {
+                unit.goto = (hex != to).then_some(to);
+            }
+        }
+        events
+    }
+
+    /// Units on a standing order are where it sent them: it ends.
+    fn arrive(&mut self, ids: &[UnitId]) {
+        for id in ids {
+            if let Some(unit) = self.map.unit_mut(*id) {
+                (unit.goto, unit.stalled) = (None, false);
+            }
+        }
+    }
+
+    /// At the start of `side`'s turn, its stacks on standing orders march, a
+    /// stack (the units of a hex going to the same hex) at a time.
+    fn marches(&mut self, side: Side) -> Vec<Event> {
+        let mut groups: Vec<(Hex, Hex, Vec<UnitId>)> = Vec::new();
+        for unit in self.map.units().of_side(side).filter(|u| self.map.contains(u.pos())) {
+            let Some(to) = unit.goto else { continue };
+            match groups.iter_mut().find(|(at, goal, _)| *at == unit.pos() && *goal == to) {
+                Some((_, _, ids)) => ids.push(unit.id()),
+                None => groups.push((unit.pos(), to, vec![unit.id()])),
+            }
+        }
+        let mut events = Vec::new();
+        for (_, to, ids) in groups {
+            events.extend(self.march(side, &ids, to));
+        }
+        // What marched on its own is not the player's to take back.
+        self.undo = None;
+        events
     }
 
     /// Take back the last order (`last`), which is `side`'s, this turn.
     fn take_back(&mut self, side: Side, last: Option<Undo>) -> Result<Vec<Event>, String> {
         let mark = self.undo_mark;
         match last.ok_or("there is nothing to undo")? {
-            Undo::Moved { units, to, stacks, taken } => {
+            Undo::Moved { units, to, stacks, taken, goals } => {
                 for (id, _, _) in &units {
                     if self.own_unit(side, *id)?.pos() != to {
                         return Err("the units are not where the order left them".to_string());
@@ -450,6 +672,11 @@ impl Game {
                 }
                 for (hex, order) in &stacks {
                     self.map.set_stack_order(*hex, order);
+                }
+                for (id, goal) in goals {
+                    if let Some(unit) = self.map.unit_mut(id) {
+                        unit.goto = goal;
+                    }
                 }
                 // They are where they were, and selected again, to go
                 // somewhere else.
@@ -493,12 +720,14 @@ impl Game {
         // for an undo.
         let mut going = Vec::with_capacity(ids.len());
         let mut before = Vec::with_capacity(ids.len());
+        let mut goals = Vec::with_capacity(ids.len());
         for id in &ids {
             let unit = self.own_unit(side, *id)?;
             let cost = compute_range(&self.map, unit).cost(to);
             let cost = cost.ok_or(format!("{} cannot get there this turn", unit.name))?;
             going.push((*id, unit.pos(), cost));
             before.push((*id, unit.pos(), unit.movement));
+            goals.push((*id, unit.goto));
         }
         let city_before = self.map.city_at(to).map(|c| (c.id, c.side, c.building, c.progress));
         let mut stacks: Vec<(Hex, Vec<UnitId>)> = Vec::new();
@@ -538,6 +767,11 @@ impl Game {
             }
             self.pay(id, cost);
         }
+        for id in &ids {
+            if let Some(unit) = self.map.unit_mut(*id) {
+                (unit.moved, unit.goto, unit.stalled) = (true, None, false);
+            }
+        }
         if let Some((side, at)) = self.emerging.take() {
             events.extend(self.emerge(side, at));
         }
@@ -566,7 +800,7 @@ impl Game {
         // a temple's blessing came of it (chance had a say).
         let final_ = events.iter().any(|e| matches!(e, Event::Battle { .. } | Event::Out { .. } | Event::Won { .. }));
         if !final_ && !blessed {
-            self.undo = Some(Undo::Moved { units: before, to, stacks, taken });
+            self.undo = Some(Undo::Moved { units: before, to, stacks, taken, goals });
         }
         Ok(events)
     }
@@ -719,7 +953,7 @@ impl Game {
         }
         let led = living.iter().any(|id| self.map.is_commander(*id));
         self.emerging = None;
-        if !led && !living.is_empty() && winner_odds <= EMERGE_ODDS && self.rng.below(EMERGE_ONE_IN) == 0 {
+        if !led && !living.is_empty() && self.rng.below(100) < u64::from(emerge_chance(winner_odds)) {
             let side = if battle.attackers_won { side } else { defender };
             self.emerging = Some((side, at));
         }
@@ -843,6 +1077,7 @@ impl Game {
         if self.round > 1 {
             self.map.reset_move_points(side);
             events.extend(self.pay_day(side));
+            events.extend(self.marches(side));
         }
         events
     }
@@ -869,9 +1104,13 @@ impl Game {
             }
         }
         for unit in self.map.produce(side, &mut gold) {
-            let city = self.map.units().get(unit).and_then(|u| self.map.city_at(u.pos())).map(|c| c.id);
-            if let Some(city) = city {
+            let city = self.map.units().get(unit).and_then(|u| self.map.city_at(u.pos())).map(|c| (c.id, c.rally));
+            if let Some((city, rally)) = city {
                 events.push(Event::Built { city, unit });
+                // Its city sends it on.
+                if let Some(new) = self.map.unit_mut(unit) {
+                    new.goto = rally;
+                }
             }
         }
         self.name_commanders();
@@ -891,6 +1130,31 @@ impl Game {
             enough.or_else(|| units.iter().max_by_key(|u| u.upkeep)).map(|u| u.id())
         };
         pick(&soldiers).or_else(|| pick(&leaders))
+    }
+
+    /// What `side` sees: everything without fog of war; with it, what is
+    /// within [`UNIT_SIGHT`] of its units and [`CITY_SIGHT`] of its cities.
+    /// (Nobody, `Side::Grey`, sees everything.)
+    pub fn sight(&self, side: Side) -> Sight {
+        if !self.setup.fog || side == Side::Grey {
+            return Sight::all();
+        }
+        let (rows, cols) = (self.map.rows(), self.map.cols());
+        let mut seen = vec![false; usize::from(rows) * usize::from(cols)];
+        let units = self.map.units().of_side(side).map(|u| (u.pos(), UNIT_SIGHT));
+        let cities = self.map.cities().iter().filter(|c| c.side == side).map(|c| (c.pos, CITY_SIGHT));
+        for (at, reach) in units.chain(cities).filter(|(at, _)| self.map.contains(*at)) {
+            let r = reach as i32;
+            for row in (i32::from(at.row) - r).max(0)..=(i32::from(at.row) + r).min(i32::from(rows) - 1) {
+                for col in (i32::from(at.col) - r).max(0)..=(i32::from(at.col) + r).min(i32::from(cols) - 1) {
+                    let hex = Hex::new(row as u16, col as u16);
+                    if at.distance(hex) <= reach {
+                        seen[row as usize * usize::from(cols) + col as usize] = true;
+                    }
+                }
+            }
+        }
+        Sight { cols, seen: Some(seen) }
     }
 
     /// The gold in a side's treasury.
@@ -1080,14 +1344,73 @@ impl Game {
         let mut hexes: Vec<Hex> = map.units().of_side(side).map(|u| u.pos()).filter(|h| map.contains(*h)).collect();
         hexes.sort_by_key(|h| (h.row, h.col));
         hexes.dedup();
+        // A stack waits for orders if one of its units can still go
+        // somewhere, its player is not done with it, and it is on no
+        // standing order (or one that stalled).
         let can_go = |hex: &Hex| {
-            map.units_at(*hex)
-                .iter()
-                .filter_map(|id| map.units().get(*id))
-                .any(|u| u.side() == side && u.movement > 0 && compute_range(map, u).reachable().next().is_some())
+            map.units_at(*hex).iter().filter_map(|id| map.units().get(*id)).any(|u| {
+                u.side() == side
+                    && u.movement > 0
+                    && !u.done
+                    && (u.goto.is_none() || u.stalled)
+                    && compute_range(map, u).reachable().next().is_some()
+            })
         };
         let able: Vec<Hex> = hexes.iter().copied().filter(can_go).collect();
         next_in(if able.is_empty() { &hexes } else { &able }, from, back)
+    }
+
+    /// What `side` has: each of its stacks and cities, as a task (what it
+    /// has left to do with it this turn), the most pressing first
+    /// ([`Task::tier`]), then stacks before cities, then by place.
+    pub fn tasks(&self, side: Side) -> Vec<Task> {
+        let map = &self.map;
+        let mut hexes: Vec<Hex> = map.units().of_side(side).map(|u| u.pos()).filter(|h| map.contains(*h)).collect();
+        hexes.sort_by_key(|h| (h.row, h.col));
+        hexes.dedup();
+        let mut tasks: Vec<Task> = hexes
+            .into_iter()
+            .map(|at| {
+                let units: Vec<&Unit> = map
+                    .units_at(at)
+                    .iter()
+                    .filter_map(|id| map.units().get(*id))
+                    .filter(|u| u.side() == side)
+                    .collect();
+                let can_go = |u: &&Unit| u.movement > 0 && compute_range(map, u).reachable().next().is_some();
+                let free: Vec<&Unit> = units.iter().copied().filter(can_go).collect();
+                let state = if free.iter().any(|u| u.goto.is_some() && u.stalled) {
+                    StackState::Stalled
+                } else if free.iter().any(|u| !u.moved && !u.done && u.goto.is_none()) {
+                    StackState::Waiting
+                } else if free.iter().any(|u| !u.done && u.goto.is_none()) {
+                    StackState::MovesLeft
+                } else if free.iter().any(|u| u.done) {
+                    StackState::Done
+                } else if units.iter().any(|u| u.goto.is_some()) {
+                    StackState::Marching
+                } else {
+                    StackState::Spent
+                };
+                Task::Stack { at, units: units.len(), state }
+            })
+            .collect();
+        for city in map.cities().iter().filter(|c| c.side == side && side != Side::Grey) {
+            let state = match city.production() {
+                None => CityState::Idle,
+                Some(prod) if city.progress >= prod.time.max(1) => CityState::Waiting,
+                Some(_) => CityState::Building,
+            };
+            tasks.push(Task::City { city: city.id, state });
+        }
+        let place = |task: &Task| match task {
+            Task::Stack { at, .. } => (0, at.row, at.col),
+            Task::City { city, .. } => {
+                (1, map.cities().get(*city).map_or(0, |c| c.pos.row), map.cities().get(*city).map_or(0, |c| c.pos.col))
+            }
+        };
+        tasks.sort_by_key(|t| (t.tier(), place(t)));
+        tasks
     }
 
     /// The next city of the side whose turn it is after the one on `from` (or

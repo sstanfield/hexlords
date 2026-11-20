@@ -15,7 +15,7 @@ use crate::state::{Hex, Map};
 
 /// The map in `w` x `h` pixels, with `ringed` (a city's hex, say) ringed in
 /// gold: straight-alpha RGBA, top row first, opaque.
-pub fn minimap_image(map: &Map, w: i32, h: i32, ringed: Option<Hex>) -> Image {
+pub fn minimap_image(map: &Map, w: i32, h: i32, ringed: Option<Hex>, seen: &dyn Fn(Hex) -> bool) -> Image {
     let (w, h) = (w.max(0), h.max(0));
     let mut view = MiniMapView::new(map.rows(), map.cols());
     view.resize(w, h);
@@ -41,7 +41,8 @@ pub fn minimap_image(map: &Map, w: i32, h: i32, ringed: Option<Hex>) -> Image {
     let edge = (reach / 4.0).max(1.0);
     for city in map.cities().iter() {
         let [cx, cy] = pixel_of(&view, city.pos);
-        let [r, g, b] = side_color(city.side);
+        // In the fog, who holds it is not seen.
+        let [r, g, b] = side_color(if seen(city.pos) { city.side } else { crate::state::Side::Grey });
         fill_square(&mut image, cx, cy, reach + edge, [RING_COLOR[0], RING_COLOR[1], RING_COLOR[2]]);
         fill_square(&mut image, cx, cy, reach, [r, g, b]);
     }
@@ -128,7 +129,7 @@ mod tests {
 
     #[test]
     fn the_map_in_its_colors_on_black() {
-        let image = minimap_image(&map(), 240, 200, None);
+        let image = minimap_image(&map(), 240, 200, None, &|_| true);
         assert_eq!((image.size, image.rgba.len()), (Size::new(240, 200), 240 * 200 * 4));
         assert!(image.rgba.chunks(4).all(|p| p[3] == 255));
         // The map is wider than the picture's shape: black above and below.
@@ -155,8 +156,8 @@ mod tests {
 
     #[test]
     fn the_ringed_city_has_a_gold_ring_round_it() {
-        let plain = minimap_image(&map(), 240, 200, None);
-        let ringed = minimap_image(&map(), 240, 200, Some(Hex::new(15, 15)));
+        let plain = minimap_image(&map(), 240, 200, None, &|_| true);
+        let ringed = minimap_image(&map(), 240, 200, Some(Hex::new(15, 15)), &|_| true);
         let gold = byte([SELECTED_RING[0], SELECTED_RING[1], SELECTED_RING[2]]);
         let golden = |image: &Image| image.rgba.chunks(4).filter(|p| p[..3] == gold).count();
         assert_eq!(golden(&plain), 0);
@@ -167,7 +168,7 @@ mod tests {
         let [x, y] = pixel_of(&view, Hex::new(5, 5));
         assert_eq!(pixel(&ringed, x as i32, y as i32), pixel(&plain, x as i32, y as i32));
         // Any size, even none.
-        assert!(minimap_image(&map(), 0, 0, Some(Hex::new(15, 15))).rgba.is_empty());
-        assert_eq!(minimap_image(&map(), 3, 2, Some(Hex::new(0, 0))).rgba.len(), 24);
+        assert!(minimap_image(&map(), 0, 0, Some(Hex::new(15, 15)), &|_| true).rgba.is_empty());
+        assert_eq!(minimap_image(&map(), 3, 2, Some(Hex::new(0, 0)), &|_| true).rgba.len(), 24);
     }
 }

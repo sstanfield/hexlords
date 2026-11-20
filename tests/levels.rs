@@ -7,7 +7,7 @@
 mod common;
 
 use common::assets;
-use hexgame::game::{EMERGE_ODDS, Game};
+use hexgame::game::{Game, emerge_chance};
 use hexgame::info;
 use hexgame::orders::{Event, Order};
 use hexgame::session::Session;
@@ -170,9 +170,11 @@ fn next_round(game: &mut Game) {
 
 #[test]
 fn a_captain_may_rise_from_a_stack_that_wins_a_hard_fight_without_one() {
-    // Two soldiers against two levies behind walls, with chance: a hard
-    // fight. Over seeds, a captain rises now and then, and only when the
-    // odds were low enough, and never in a stack that had one.
+    // The chance, in percent: half of how unlikely the win was.
+    assert_eq!([0, 20, 50, 90, 100].map(emerge_chance), [50, 40, 25, 5, 0]);
+    // Two soldiers against two soldiers behind walls, with chance: a hard
+    // fight. Over seeds, a captain rises now and then, never in a stack that
+    // had one.
     let (mut rose, mut fights) = (0, 0);
     for seed in 0..120 {
         let mut game = game("garrison soldiers 2\n", "walls 3\ngarrison soldiers 2\n", |s| {
@@ -181,7 +183,7 @@ fn a_captain_may_rise_from_a_stack_that_wins_a_hard_fight_without_one() {
         });
         let red = at(&game, REDHOLD);
         let odds = game.battle_odds(&red, BLUEMOOR).unwrap();
-        assert!(odds <= EMERGE_ODDS, "{odds}: a hard fight");
+        assert!(odds < 50, "{odds}: a hard fight");
         let events = game.apply(Order::Move { units: red.clone(), to: BLUEMOOR }).unwrap();
         fights += 1;
         if let Some(Event::Emerged { unit, side, at, name }) =

@@ -5,7 +5,7 @@
 //!
 //! Not a port: the C++ had no panels.
 
-use crate::game::{Game, describe_terrain};
+use crate::game::{CityState, Game, Sight, StackState, Task, describe_terrain};
 use crate::orders::{Event, Fallen, Record};
 use crate::state::scenario::side_name;
 use crate::state::{City, Hex, Map, MoveCost, Side, Unit, UnitProd};
@@ -15,7 +15,14 @@ use crate::state::{City, Hex, Map, MoveCost, Side, Unit, UnitProd};
 /// units can go there, what it costs (one unit) or that they can (a stack),
 /// and the odds of winning if going there is an attack.
 pub fn cursor_line(game: &Game) -> String {
+    cursor_line_for(game, &Sight::all())
+}
+
+/// [`cursor_line`] as a side sees it: of a hex in the fog, no units, and no
+/// odds.
+pub fn cursor_line_for(game: &Game, sight: &Sight) -> String {
     let (map, hex) = (&game.map, game.map.cursor);
+    let seen = sight.sees(hex);
     let mut parts = vec![format!("Turn {}", game.turn())];
     if let Some(tile) = map.tile(hex) {
         parts.push(format!("row {}, column {}: {}", hex.row, hex.col, describe_terrain(tile.kind, tile.road)));
@@ -23,6 +30,7 @@ pub fn cursor_line(game: &Game) -> String {
             parts.push(city.name.clone());
         }
         match tile.units().len() {
+            _ if !seen => parts.push("not seen".to_string()),
             0 => {}
             1 => parts.push("1 unit".to_string()),
             n => parts.push(format!("{n} units")),
@@ -30,7 +38,7 @@ pub fn cursor_line(game: &Game) -> String {
     }
     let selected = game.selected().and_then(|id| map.units().get(id));
     if let (Some(unit), Some(cost)) = (selected, game.range().and_then(|r| r.cost(hex))) {
-        match game.battle_odds(game.selection(), hex) {
+        match game.battle_odds(game.selection(), hex).filter(|_| seen) {
             Some(odds) => parts.push(format!("attack: {odds}% likely to win")),
             None if game.selection().len() > 1 => {
                 parts.push(format!("the {} units can move here", game.selection().len()))
@@ -45,7 +53,8 @@ pub fn cursor_line(game: &Game) -> String {
 /// line or two: a battle it fought, as the attacker or the defender, with who
 /// died; a city it took or lost; a side out of the game, the winner. Nothing
 /// if it is not about `side` (the other sides' battles and cities, the units
-/// built). Units that left it unpaid are told too.
+/// built). Units that left it unpaid are told too, and its marches that
+/// stopped short.
 pub fn record_lines(map: &Map, record: &Record, side: Side) -> Vec<String> {
     match &record.event {
         Event::Battle { at, attacker, defender, attackers, defenders, won, dead, .. }
@@ -82,6 +91,18 @@ pub fn record_lines(map: &Map, record: &Record, side: Side) -> Vec<String> {
         }
         Event::Emerged { side: whose, at, name, .. } if *whose == side => {
             vec![format!("From the ranks at {}, a leader rose: {name}.", place(map, *at))]
+        }
+        // A standing order that stopped short, at the start of the turn.
+        Event::Stalled { side: whose, units, at, to } if *whose == side => {
+            let (who, waits) = match units.len() {
+                1 => ("One of your units".to_string(), "It waits"),
+                n => (format!("{n} of your units"), "They wait"),
+            };
+            vec![format!(
+                "{who} stopped at {} on the way to {}: something is in the way. {waits} for orders.",
+                place(map, *at),
+                place(map, *to)
+            )]
         }
         Event::Deserted { side: whose, name } if *whose == side => {
             vec![format!("Unpaid, your {name} left you: the treasury could not pay their upkeep.")]
@@ -196,8 +217,9 @@ fn whose(side: Side) -> String {
     if side == Side::Grey { "nobody's units".to_string() } else { side_name(side).to_string() }
 }
 
-/// Where a battle was: its city's name, or the hex.
-fn place(map: &Map, at: Hex) -> String {
+/// A hex in words (where a battle was, where units go): its city's name,
+/// or "row 5, column 9".
+pub fn place(map: &Map, at: Hex) -> String {
     map.city_at(at).map_or(format!("row {}, column {}", at.row, at.col), |c| c.name.clone())
 }
 
@@ -214,6 +236,12 @@ fn who(side: Side) -> &'static str {
 
 /// The heading of the selected hex: where it is, what it is, who is there.
 pub fn hex_title(map: &Map, hex: Hex) -> String {
+    hex_title_for(map, hex, true)
+}
+
+/// [`hex_title`] of a hex that is `seen` or not (fog of war: in the fog, who
+/// is there is not told).
+pub fn hex_title_for(map: &Map, hex: Hex, seen: bool) -> String {
     let Some(tile) = map.tile(hex) else { return String::new() };
     let mut title = format!("Row {}, column {}: {}", hex.row, hex.col, describe_terrain(tile.kind, tile.road));
     if let Some(city) = map.city_at(hex) {
@@ -227,6 +255,7 @@ pub fn hex_title(map: &Map, hex: Hex) -> String {
         }
     }
     match tile.units().len() {
+        _ if !seen => title.push_str(", not seen"),
         0 => title.push_str(", no units"),
         1 => title.push_str(&format!(", 1 unit ({})", sides.join(", "))),
         n => title.push_str(&format!(", {n} units ({})", sides.join(", "))),
@@ -477,6 +506,96 @@ pub fn city_row(map: &Map, city: &City, own: bool) -> String {
 /// A city, a line at a time, in at most `room` lines: its name, who holds it,
 /// its walls and garrison, what it is building, and what it can build (the
 /// unit, the turns one takes, its price).
+/// A task (`Game::tasks`) in a line, for the list of tasks: what it is,
+/// where, and what is left to do with it. "Riders at row 5, column 9: no
+/// orders yet", "3 units in Brindlewick: can go further", "Brindlewick:
+/// builds nothing".
+pub fn task_line(game: &Game, task: &Task) -> String {
+    let map = &game.map;
+    match task {
+        Task::Stack { at, units, state } => {
+            let here: Vec<&Unit> = map.units_at(*at).iter().filter_map(|id| map.units().get(*id)).collect();
+            let who = match (here.first(), units) {
+                (Some(unit), 1) => unit.title(),
+                _ => format!("{units} units"),
+            };
+            let here_words = match map.city_at(*at) {
+                Some(city) => format!("in {}", city.name),
+                None => format!("at row {}, column {}", at.row, at.col),
+            };
+            let goal = here.iter().find_map(|u| u.goto).map_or(String::new(), |to| place(map, to));
+            let what = match state {
+                StackState::Waiting => "no orders yet".to_string(),
+                StackState::Stalled => format!("stopped on the way to {goal}"),
+                StackState::MovesLeft => "can go further".to_string(),
+                StackState::Done => "put aside, with moves left".to_string(),
+                StackState::Marching => format!("on the way to {goal}"),
+                StackState::Spent => "no moves left".to_string(),
+            };
+            format!("{who} {here_words}: {what}")
+        }
+        Task::City { city, state } => {
+            let Some(city) = map.cities().get(*city) else { return String::new() };
+            let what = match (state, city.production()) {
+                (CityState::Waiting, Some(prod)) => {
+                    format!("{} done, {}", kind_name(map, prod), waits(map, city, prod))
+                }
+                (CityState::Building, Some(prod)) => {
+                    format!("building {}, {}/{}", kind_name(map, prod), city.progress, prod.time)
+                }
+                _ => "builds nothing".to_string(),
+            };
+            match city.rally {
+                Some(to) => format!("{}: {what}; new units go to {}", city.name, place(map, to)),
+                None => format!("{}: {what}", city.name),
+            }
+        }
+    }
+}
+
+/// What a side knows of a city: all of it (its own), what shows from
+/// outside (another's, or nobody's, in sight), or where it is (in the fog).
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Known {
+    All,
+    Outside,
+    Fog,
+}
+
+impl Known {
+    /// What `side`, which sees as `sight`, knows of `city`. (Nobody,
+    /// `Side::Grey`, a map without sides: all.)
+    pub fn of(city: &City, side: Side, sight: &Sight) -> Known {
+        if side == Side::Grey || city.side == side {
+            Known::All
+        } else if sight.sees(city.pos) {
+            Known::Outside
+        } else {
+            Known::Fog
+        }
+    }
+}
+
+/// [`city_lines`] as much as is `known`: from outside, its name, holder,
+/// walls and taxes, and how many stand in it; in the fog, its name, walls
+/// and taxes (what it builds is its holder's to know).
+pub fn city_lines_for(map: &Map, city: &City, room: usize, known: Known) -> Vec<String> {
+    match known {
+        Known::All => city_lines(map, city, room),
+        Known::Outside => {
+            let garrison = match map.units_at(city.pos).len() {
+                0 => "No garrison".to_string(),
+                1 => "Garrison: 1 unit".to_string(),
+                n => format!("Garrison: {n} units"),
+            };
+            vec![city.name.clone(), holder(city.side), format!("Walls {}, taxes {}", city.walls, city.income), garrison]
+        }
+        Known::Fog => {
+            vec![city.name.clone(), "Not seen".to_string(), format!("Walls {}, taxes {}", city.walls, city.income)]
+        }
+    }
+}
+
 pub fn city_lines(map: &Map, city: &City, room: usize) -> Vec<String> {
     let mut lines = vec![city.name.clone()];
     lines.push(holder(city.side));

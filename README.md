@@ -16,11 +16,15 @@ direction. So far:
   shape from 20 x 20 to 600 x 600: terrain, roads with bridges and mountain
   passes, the map's own kinds of unit, its cities with what they build and
   who stands in them, and pictures of its own if it wants them;
-- the game plays such a map (`--map`): units of eight sides move over it,
-  along its roads, turn by turn, and cities build what their holder sets.
-  There is no fighting, gold or winning yet: [docs/gameplay.md](docs/gameplay.md)
-  is the plan for the rules, in two modes (sides taking turns, or all giving
-  orders at once);
+- the game plays such a map (`--map`, or the new game screen): sides take
+  turns, people (hotseat) and the computer; stacks move along the roads and
+  fight, led by captains who rise in level; cities are taken, pay taxes and
+  build what their holder sets and can pay for; stacks can be sent far over
+  turns, cities can send what they build, and a list says what is left to
+  do; the other sides show only as banners, and fog of war is a choice; the
+  last side left wins. [docs/gameplay.md](docs/gameplay.md) is the plan for
+  the rules, in two modes (sides taking turns, built; or all giving orders
+  at once);
 - a [map editor](#the-map-editor) for the terrain and the roads;
 - [tiles, roads and unit signs](#the-pictures) drawn by a program in the
   repository, so the art is original and can be made again.
@@ -53,6 +57,10 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | Undo, or Ctrl+Z (Cmd+Z) | Take back the last move or city order, unless it was a battle (chance had a say) or put a side out: the units are back where they were, with their points, selected |
 | Next stack, or N (Shift+N: back) | Select the next of your stacks that can still move, and look at it |
 | Next city, or C (Shift+C: back) | Look at your next city (and drop the selection) |
+| Go to, or G, then a hex | The selected units go there over as many turns as it takes: this turn's part now, the rest at the start of your next turns. A march never attacks: if something is in the way it stops, says so in your log, and waits for orders (left alone, it tries again next turn). Esc: never mind |
+| Done, or D | Put the selected units aside for this turn: Next stack passes them by, and the next stack that waits is selected |
+| Tasks, or T | What you have left to do this turn, most pressing first: stacks with no orders and cities that build nothing; then stacks that can go further and cities whose work waits; then the rest. Click a row to see to it |
+| Send new units to..., in a city's window, then a hex | What the city builds goes there on its own (Keep them here: it stays) |
 | Log, or L | Your log: every battle you fought, attacking or attacked, with who won and who died on each side; the cities you took and lost; who is out. The latest round first |
 | Point at a unit under the map | A box over it says all about the unit: its side, numbers, and what each terrain costs it to enter |
 | Click a unit under the map | Take that unit into the selection, or leave it out (a unit of another hex starts a new one): the reach of those selected shows on the map, and the line under the units is about them |
@@ -144,7 +152,8 @@ waits in the city until there is enough ([docs/gameplay.md](docs/gameplay.md)).
 
 ```
 hexgame [--map <file.map or map directory>] [--players <side>=<who>,...] [--order fixed|drawn] [--seed <n>]
-        [--chance <0-10>] [--battles lines|strength] [--gold <n>] [--headless [--rounds <n>] [--log]] [--script <steps>]
+        [--chance <0-10>] [--battles lines|strength] [--gold <n>] [--fog] [--headless [--rounds <n>] [--log]]
+        [--script <steps>]
         [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
 ```
 
@@ -161,7 +170,8 @@ Without `--map` the window opens on the new game screen.
   stronger always wins), 10 nothing else; 5 unless it is said.
   `--battles lines|strength`: how a battle goes (lines unless it is said;
   [docs/gameplay.md](docs/gameplay.md), "Fighting"). `--gold <n>`: the gold
-  each side starts with (50).
+  each side starts with (50). `--fog`: fog of war: each side sees only what
+  is near its units and cities.
 - `--headless`: no window: the computer plays every side of `--map` until one
   side is left or `--rounds` (200) have gone by, and says how it went
   (`--log`: and all that happened). [docs/agents.md](docs/agents.md) says
