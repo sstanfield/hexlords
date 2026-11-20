@@ -5,14 +5,14 @@
 
 mod common;
 
-use common::{assets, click, descendants, pixel_of, press, widget};
+use common::{assets, choose, click, descendants, pixel_of, press, widget};
 use hexgame::city_windows::CityList;
 use hexgame::city_windows::{
     BUILD_NOTHING_ID, CITY_CLOSE_ID, CITY_RALLY_ID, CITY_WINDOW_ID, LIST_CLOSE_ID, LIST_DETAILS_ID, LIST_GOTO_ID,
-    LIST_WINDOW_ID, build_id, row_id,
+    LIST_WINDOW_ID, PANEL_OPEN_ID, PANEL_PREFIX, build_id, row_id,
 };
 use hexgame::game::Game;
-use hexgame::session::{ALL_CITIES_ID, CITY_DETAILS_ID, MY_CITIES_ID, Session};
+use hexgame::session::{ALL_CITIES_ID, CITY_DETAILS_ID, MENU_CITIES_ID, MY_CITIES_ID, Session};
 use hexgame::setup::Setup;
 use hexgame::state::scenario::{self, Scenario};
 use hexgame::state::{Hex, Side};
@@ -92,7 +92,7 @@ fn all_cities_lists_every_city_and_rings_the_chosen_one() {
     let mut s = session();
     assert_eq!(s.screen.game.player(), Side::Green);
     assert!(!exists(&s, LIST_WINDOW_ID));
-    push(&mut s, ALL_CITIES_ID);
+    choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     let list = s.city_list().expect("the list is open");
     assert!(!list.own());
     assert_eq!(list.rows(), ["Wrenfold (green)", "Low Tarn (nobody's)", "Highcliff (blue)"]);
@@ -113,24 +113,24 @@ fn all_cities_lists_every_city_and_rings_the_chosen_one() {
     assert_eq!(size, s.screen.ui.rect(id).size());
     assert!(size.w > 100 && size.h > 80, "{size:?}");
     // The button again closes it.
-    push(&mut s, ALL_CITIES_ID);
+    choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     assert!(s.city_list().is_none() && !exists(&s, LIST_WINDOW_ID));
 }
 
 #[test]
 fn my_cities_lists_the_players_with_what_they_build() {
     let mut s = session();
-    push(&mut s, MY_CITIES_ID);
+    choose(&mut s, MENU_CITIES_ID, MY_CITIES_ID);
     let list = s.city_list().unwrap();
     assert!(list.own());
     assert_eq!(list.rows(), ["Wrenfold: building nothing"]);
     let title = s.screen.ui.text(widget(&s, LIST_WINDOW_ID)).unwrap().to_string();
     assert_eq!(title, "Green's cities");
     // From one list to the other.
-    push(&mut s, ALL_CITIES_ID);
+    choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     assert_eq!(s.city_list().unwrap().rows().len(), 3);
     // A side with no city has a word for it.
-    push(&mut s, ALL_CITIES_ID);
+    choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     let root = s.screen.root_window();
     let area = s.screen.map_rect();
     let list =
@@ -144,7 +144,7 @@ fn my_cities_lists_the_players_with_what_they_build() {
 #[test]
 fn details_open_the_city_and_go_to_shows_it_on_the_map() {
     let mut s = session();
-    push(&mut s, ALL_CITIES_ID);
+    choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     push(&mut s, &row_id(1));
     push(&mut s, LIST_DETAILS_ID);
     let window = s.city_window().expect("Low Tarn's window");
@@ -163,15 +163,15 @@ fn details_open_the_city_and_go_to_shows_it_on_the_map() {
     assert_eq!(s.shown(), LOW_TARN);
     assert_eq!(s.city()[0], "Low Tarn");
     // Without a chosen city the buttons do nothing.
-    push(&mut s, MY_CITIES_ID);
-    push(&mut s, MY_CITIES_ID);
+    choose(&mut s, MENU_CITIES_ID, MY_CITIES_ID);
+    choose(&mut s, MENU_CITIES_ID, MY_CITIES_ID);
     assert!(s.city_list().is_none());
 }
 
 #[test]
 fn the_player_sets_what_a_city_builds_and_the_turns_build_it() {
     let mut s = session();
-    push(&mut s, CITY_DETAILS_ID);
+    push(&mut s, PANEL_OPEN_ID);
     assert_eq!(s.city_window().unwrap().city(), city_id(&s, WRENFOLD));
     let says = |s: &Session| -> Vec<String> {
         descendants(s, CITY_WINDOW_ID).into_iter().filter_map(|id| s.screen.ui.text(id).map(str::to_string)).collect()
@@ -201,7 +201,7 @@ fn the_player_sets_what_a_city_builds_and_the_turns_build_it() {
 #[test]
 fn only_the_holder_sets_what_a_city_builds() {
     let mut s = session();
-    push(&mut s, ALL_CITIES_ID);
+    choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     push(&mut s, &row_id(2));
     push(&mut s, LIST_DETAILS_ID);
     assert_eq!(s.city_window().unwrap().city(), city_id(&s, HIGHCLIFF));
@@ -223,7 +223,7 @@ fn only_the_holder_sets_what_a_city_builds() {
     // When a person plays blue, on blue's turn, they can.
     let mut s = session_as(Side::Blue);
     assert_eq!(s.screen.game.player(), Side::Blue, "green, the computer, has passed");
-    push(&mut s, ALL_CITIES_ID);
+    choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     push(&mut s, &row_id(2));
     push(&mut s, LIST_DETAILS_ID);
     assert!(!disabled(&s, &build_id(0)));
@@ -234,7 +234,7 @@ fn only_the_holder_sets_what_a_city_builds() {
 #[test]
 fn esc_and_the_close_buttons_shut_the_windows_one_at_a_time() {
     let mut s = session();
-    push(&mut s, ALL_CITIES_ID);
+    choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     push(&mut s, LIST_DETAILS_ID);
     assert!(s.city_window().is_some() && s.city_list().is_some());
     // Esc: the city's, on top, then the list.
@@ -243,17 +243,17 @@ fn esc_and_the_close_buttons_shut_the_windows_one_at_a_time() {
     press(&mut s, SpecialKey::Esc);
     assert!(s.city_list().is_none());
     // The help, if it is open, goes first.
-    push(&mut s, ALL_CITIES_ID);
+    choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     press(&mut s, SpecialKey::F1);
     press(&mut s, SpecialKey::Esc);
     assert!(!s.screen.help_open() && s.city_list().is_some());
     // The close buttons, and the title bars' ones.
     push(&mut s, LIST_CLOSE_ID);
     assert!(s.city_list().is_none());
-    push(&mut s, CITY_DETAILS_ID);
+    push(&mut s, PANEL_OPEN_ID);
     push(&mut s, CITY_CLOSE_ID);
     assert!(s.city_window().is_none());
-    push(&mut s, CITY_DETAILS_ID);
+    push(&mut s, PANEL_OPEN_ID);
     let x = s.screen.ui.get::<Window>(widget(&s, CITY_WINDOW_ID)).and_then(|w| w.close_button()).unwrap();
     let r = s.screen.area(x);
     click(&mut s, Point::new(r.x + r.w / 2, r.y + r.h / 2));
@@ -262,12 +262,26 @@ fn esc_and_the_close_buttons_shut_the_windows_one_at_a_time() {
 }
 
 #[test]
-fn city_details_shows_only_with_a_city() {
+fn the_sidebar_has_ones_own_city_in_full_and_anothers_from_outside() {
     let mut s = session();
     let visible = |s: &Session| s.screen.ui.node(widget(s, CITY_DETAILS_ID)).map(|n| n.visibility());
+    // Wrenfold, the player's: in full, and what it builds is set there.
+    assert_eq!(s.city_panel().map(|p| p.city()), Some(city_id(&s, WRENFOLD)));
+    assert_eq!(visible(&s), Some(Visibility::Gone));
+    push(&mut s, &format!("{PANEL_PREFIX}{}", build_id(0)));
+    assert_eq!(s.screen.game.map.city_at(WRENFOLD).unwrap().building, Some(0));
+    assert!(pressed(&s, &format!("{PANEL_PREFIX}{}", build_id(0))));
+    // Low Tarn, nobody's: its lines from outside, and a button for its window.
+    s.screen.view.center_on(LOW_TARN);
+    let p = pixel_of(&s, LOW_TARN);
+    click(&mut s, p);
+    assert!(s.city_panel().is_none());
+    assert_eq!(s.city()[0], "Low Tarn");
     assert_eq!(visible(&s), Some(Visibility::Visible));
+    // No city: neither.
     let p = pixel_of(&s, Hex::new(15, 5));
     click(&mut s, p);
+    assert!(s.city_panel().is_none() && s.city().is_empty());
     assert_eq!(visible(&s), Some(Visibility::Gone));
 }
 
@@ -275,7 +289,7 @@ fn city_details_shows_only_with_a_city() {
 fn the_windows_fit_the_map_and_take_the_wheel_from_it() {
     for (w, h, dpi) in [(1024, 768, 96), (2048, 1536, 192)] {
         let mut s = session_at(w, h, dpi);
-        push(&mut s, ALL_CITIES_ID);
+        choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
         push(&mut s, LIST_DETAILS_ID);
         let (list, city, map) = (frame(&s, LIST_WINDOW_ID), frame(&s, CITY_WINDOW_ID), s.screen.map_rect());
         assert!(list.right() <= city.x, "{w}x{h}: {list:?} {city:?}");
@@ -293,7 +307,7 @@ fn the_windows_fit_the_map_and_take_the_wheel_from_it() {
 #[test]
 fn what_a_city_can_build_shows_its_icon_and_numbers_and_all_about_it_under_the_pointer() {
     let mut s = session();
-    push(&mut s, CITY_DETAILS_ID);
+    push(&mut s, PANEL_OPEN_ID);
     // A button each: the unit's icon, its name, strength and moves.
     let text = |s: &Session, name: &str| s.screen.ui.text(widget(s, name)).unwrap_or("").to_string();
     assert_eq!(text(&s, &format!("{}_text", build_id(0))), "Riders  4 \u{b7} 10");

@@ -1,4 +1,5 @@
-//! A unit's icon for the panels: the disc of its side's color with the dark
+//! The panels' small pictures: a coin for the treasury ([`coin_icon`]), and
+//! a unit's icon: the disc of its side's color with the dark
 //! ring around it and its kind's picture on it, as the map draws a unit, but
 //! round (the map squeezes it with the hex) and filled to the edge. Drawn on
 //! the CPU into the pixels of the size the panel shows, so the UI only copies
@@ -123,6 +124,50 @@ pub fn unit_icon(picture: Option<&Image>, side: Side, level: u8, size: i32) -> I
             let straight = |c: f32| if alpha > 0.0 { (c / count / alpha).clamp(0.0, 1.0) } else { 0.0 };
             let byte = |v: f32| (v * 255.0).round() as u8;
             rgba.extend([byte(straight(sum[0])), byte(straight(sum[1])), byte(straight(sum[2])), byte(alpha)]);
+        }
+    }
+    Image { size: Size::new(size, size), rgba }
+}
+
+/// A gold coin, `size` pixels across, for the treasury: a disc of gold with a
+/// darker rim and a lighter face, lit from the top left. Straight-alpha RGBA.
+pub fn coin_icon(size: i32) -> Image {
+    const RIM: [f32; 3] = [0.62, 0.45, 0.10];
+    const FACE: [f32; 3] = [0.96, 0.78, 0.25];
+    const SHINE: [f32; 3] = [1.0, 0.94, 0.62];
+    let size = size.max(0);
+    let n = size as usize;
+    let outer = size as f32 / 2.0;
+    let face = outer * 0.74;
+    let mut rgba = Vec::with_capacity(n * n * 4);
+    for y in 0..n {
+        for x in 0..n {
+            let (mut color, mut cover) = ([0.0f32; 3], 0.0f32);
+            for sy in 0..SAMPLES {
+                for sx in 0..SAMPLES {
+                    let px = x as f32 + (sx as f32 + 0.5) / SAMPLES as f32 - outer;
+                    let py = y as f32 + (sy as f32 + 0.5) / SAMPLES as f32 - outer;
+                    let d = (px * px + py * py).sqrt();
+                    if d > outer {
+                        continue;
+                    }
+                    // The face, lighter toward the top left.
+                    let c = if d > face {
+                        RIM
+                    } else {
+                        let light = ((-px - py) / (2.0 * face) + 0.5).clamp(0.0, 1.0) * 0.6;
+                        std::array::from_fn(|i| FACE[i] + (SHINE[i] - FACE[i]) * light)
+                    };
+                    for (s, v) in color.iter_mut().zip(c) {
+                        *s += v;
+                    }
+                    cover += 1.0;
+                }
+            }
+            let alpha = cover / (SAMPLES * SAMPLES) as f32;
+            let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+            let c = |i: usize| if cover > 0.0 { color[i] / cover } else { 0.0 };
+            rgba.extend([byte(c(0)), byte(c(1)), byte(c(2)), byte(alpha)]);
         }
     }
     Image { size: Size::new(size, size), rgba }

@@ -72,3 +72,56 @@ elements
 	# neither sees the other's map.
 	Cover
 		background-color #26282bff
+	# The menu bar along the top: dark, flat; its titles flat buttons, lit
+	# under the pointer and while their menu is open (pressed).
+	MenuBar
+		background-color #1d1f22ff
+		padding 2 6
+	MenuTitle
+		text-color #fefefe
+		padding 4 10
+		children
+			element MenuTitle.hovered
+				state hovered
+		overrides
+			element MenuTitle.pressed
+				state pressed
+	MenuTitle.hovered
+		cut 7
+		bitmap item_hover.png
+	MenuTitle.pressed
+		text-color #ffd24a
+		cut 7
+		bitmap item_selected.png
+	# A menu, open under its title: a window's look; its items rows of a
+	# list (`ListRow`), the keys for each in a dimmer color.
+	MenuDrop
+		bitmap window.png
+		cut 16
+		expand 12
+		padding 6
+	MenuKeys
+		text-color #a8b0b8
+	# The treasury in the menu bar: what comes in green, what goes out red.
+	GoldIn
+		text-color #7fd67f
+	GoldOut
+		text-color #ff8a7a
+	# The buttons beside the stack: smaller than the others. (A skin's
+	# `clone` reaches only its own file: this one is written out.)
+	SmallButton
+		text-color #fefefe
+		bitmap button.png
+		cut 17
+		expand 7
+		padding 3 10
+		overrides
+			element SmallButton.pressed
+				state pressed
+	SmallButton.pressed
+		text-color #fefefe
+		bitmap button_pressed.png
+		cut 17
+		expand 7
+		content-ofs-x 1
+		content-ofs-y 1

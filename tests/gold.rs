@@ -147,15 +147,20 @@ fn a_map_gives_its_cities_taxes() {
 // The screen.
 
 #[test]
-fn the_sidebar_shows_the_treasury_and_a_city_its_taxes() {
+fn the_menu_bar_shows_the_treasury_and_a_city_its_taxes() {
     let mut s =
         Session::with_game(&assets(), Size::new(1024, 768), 96, game("garrison soldiers\n", 30, |_| {})).unwrap();
     let says = |s: &Session, name: &str| s.screen.ui.text(widget(s, name)).unwrap_or("").to_string();
-    assert_eq!((says(&s, "gold_0"), says(&s, "gold_1")), ("Gold 30".to_string(), "Taxes +6, upkeep -2".to_string()));
+    // At a glance, at the right end of the menu bar: the gold, what comes in
+    // a turn, what goes out.
+    let treasury = |s: &Session| [says(s, "gold"), says(s, "gold_in"), says(s, "gold_out")];
+    assert_eq!(treasury(&s), ["30", "+6", "-2"]);
     assert!(s.next_turn());
-    assert_eq!(says(&s, "gold_0"), "Gold 34");
+    assert_eq!(treasury(&s)[0], "34");
+    let (bar, gold) = (s.screen.area(widget(&s, "menu_bar")), s.screen.area(widget(&s, "gold_out")));
+    assert!(gold.y >= bar.y && gold.bottom() <= bar.bottom() && gold.right() > bar.right() - 40, "{gold:?} {bar:?}");
     // The city's window says what it brings in.
-    let r = s.screen.area(widget(&s, hexgame::session::CITY_DETAILS_ID));
+    let r = s.screen.area(widget(&s, hexgame::city_windows::PANEL_OPEN_ID));
     click(&mut s, Point::new(r.x + r.w / 2, r.y + r.h / 2));
     let window = widget(&s, hexgame::city_windows::CITY_WINDOW_ID);
     let mut texts = Vec::new();

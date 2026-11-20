@@ -1413,6 +1413,14 @@ impl Game {
         tasks
     }
 
+    /// A side's capital: its first city in the map's order (on the maps here,
+    /// the one it starts with), or, with no city, where its first unit
+    /// stands. In hotseat a person's turn starts there.
+    pub fn capital(&self, side: Side) -> Option<Hex> {
+        let city = self.map.cities().iter().find(|c| c.side == side && side != Side::Grey).map(|c| c.pos);
+        city.or_else(|| self.map.units().of_side(side).map(|u| u.pos()).find(|h| self.map.contains(*h)))
+    }
+
     /// The next city of the side whose turn it is after the one on `from` (or
     /// before it), in the map's order of cities. `None` if it has none.
     pub fn next_city(&self, from: Hex, back: bool) -> Option<Hex> {

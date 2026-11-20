@@ -48,21 +48,33 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 
 ## Controls
 
+Along the top are the menus (Game, Units, Cities, View, Help: each item says
+its keys) and, at the right end, your treasury: your gold, what your cities
+bring in each turn (+), what your units cost (-). Under the map are the
+selected hex's units, a box each: the leader's (its commander) on the left,
+then one for each of the eight units a hex holds, and beside them Go to, Done
+and Next. Beside the map are End turn and Undo, and the selected hex's city:
+one of yours in full (set what it builds, where its new units go), another's
+as it shows from outside.
+
 | Input | What it does |
 |---|---|
+| A menu's title | Opens it (with one open, pointing at another title opens that one); a click elsewhere, or Esc, closes it |
 | Move the pointer over the map | The hex under it becomes the cursor (red border) |
 | Click a hex, or Enter at the cursor | The hex is the selected one: the panels are about it. With no unit selected: select your stack on the hex (those of its units with moves left), which shows where all of them can go (red tint). With units selected: they move to the hex together if all of them can reach it (into another side's units: an attack); any other hex drops the selection (and selects your stack there, if it has one) |
 | Drag on the map with the left button | Moves the map with the pointer (a press that hardly moves is still a click) |
-| Esc | Close the window on top (the help first); with none open, drop the selection |
+| Esc | Close the menu or the window on top (the help first); with none open, drop the selection |
 | Undo, or Ctrl+Z (Cmd+Z) | Take back the last move or city order, unless it was a battle (chance had a say) or put a side out: the units are back where they were, with their points, selected |
-| Next stack, or N (Shift+N: back) | Select the next of your stacks that can still move, and look at it |
-| Next city, or C (Shift+C: back) | Look at your next city (and drop the selection) |
+| Next, or N (Shift+N: back) | Select the next of your stacks that can still move, and look at it |
+| C (Shift+C: back) | Look at your next city (and drop the selection) |
+| H | Look at your capital (in hotseat, each person's turn starts there) |
 | Go to, or G, then a hex | The selected units go there over as many turns as it takes: this turn's part now, the rest at the start of your next turns. A march never attacks: if something is in the way it stops, says so in your log, and waits for orders (left alone, it tries again next turn). Esc: never mind |
 | Done, or D | Put the selected units aside for this turn: Next stack passes them by, and the next stack that waits is selected |
 | Tasks, or T | What you have left to do this turn, most pressing first: stacks with no orders and cities that build nothing; then stacks that can go further and cities whose work waits; then the rest. Click a row to see to it |
-| Send new units to..., in a city's window, then a hex | What the city builds goes there on its own (Keep them here: it stays) |
+| Send to..., beside the map or in a city's window, then a hex | What the city builds goes there on its own (Keep here: it stays) |
 | Log, or L | Your log: every battle you fought, attacking or attacked, with who won and who died on each side; the cities you took and lost; who is out. The latest round first |
 | Point at a unit under the map | A box over it says all about the unit: its side, numbers, and what each terrain costs it to enter |
+| Point at what your city can build, beside the map | A box beside it says all about it: turns, price, upkeep, what each terrain costs it |
 | Click a unit under the map | Take that unit into the selection, or leave it out (a unit of another hex starts a new one): the reach of those selected shows on the map, and the line under the units is about them |
 | Two fingers on a trackpad, or the mouse wheel, over the map | The map moves with the fingers (a wheel moves it up and down, and sideways with Shift) |
 | Drag with the right or the middle button | Pulls the map along with the pointer |
@@ -73,9 +85,9 @@ The game uses OpenGL (miniquad's default backend on every desktop platform).
 | `1` / `2` | Zoom out / in, centered on the cursor |
 | The End turn button ("End red's turn"), or Ctrl+T (Cmd+T) | The side's turn is over: your log opens, and shows what the others do while they play their turns (the computer's a little apart; the button says whose turn it waits for); a turn begins with the side's units' points back and its cities' work |
 | Start turn (the same button, when your turn has come), or Ctrl+T | Close the log and play (an order on the map starts the turn too) |
-| City details, beside the map | The selected hex's city in a window: all about it, and a button for each thing it can build, with the unit's icon, strength and moves (only its holder's to press); pointing at one shows all about it: turns, price, upkeep, what each terrain costs it |
-| All cities, My cities | A list of the cities, or of yours, with a minimap that rings the one you choose; open it in full, or go to it |
-| F1, or `?` | The help: every key and what the mouse does (Esc closes it) |
+| O, or Open the city's window (City details, for another's) | The selected hex's city in a window, with more room: all about it, and a button for each thing it can build, with the unit's icon, strength and moves (only its holder's to press); pointing at one shows all about it |
+| M, A | A list of your cities, or of all of them, with a minimap that rings the one you choose; open it in full, or go to it |
+| F1, or `?` | The help: every key and what the mouse does (Esc closes it). The Help menu also has the rules of the game in play: battles (the system and chance it was set up with), movement (what each of the map's kinds of unit pays), cities and gold, units and captains, orders and turns, what you see |
 | Ctrl+Cmd+F, or F11 | Fullscreen on and off (macOS keeps F11 for itself) |
 | Ctrl+Q (or Cmd+Q) | Quit |
 

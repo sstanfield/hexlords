@@ -185,11 +185,17 @@ fn the_views_reach_every_corner() {
         };
         let (map_right, map_bottom) = (1.5 * f32::from(cols - 1) + 0.5, -2.0 * f32::from(rows - 1));
         let p = Point::new(mini.x - 300, mini.y + 100);
+        // In view, or on its edge: the view stops at the middle of the last
+        // row's lower hexes, which a rounding puts a hair inside or outside.
+        let near = |s: &Session, hex: Hex| {
+            let ([x, y], (hw, hh)) = (s.screen.view.hex_center(hex), s.screen.view.half_extent());
+            x.abs() <= hw + 1e-3 && y.abs() <= hh + 1e-3
+        };
         assert!(s.screen.scroll(p, -1.0e6, -1.0e6), "{rows} x {cols}: the pointer is on the main map");
         let [left, right, top, bottom] = edges(&s);
         assert!(stops(left, right, -0.5, map_right, map_right), "{rows} x {cols}: {:?}", edges(&s));
         assert!(stops(bottom, top, map_bottom, 1.0, map_bottom), "{rows} x {cols}: {:?}", edges(&s));
-        assert!(s.screen.view.shows(Hex::new(rows - 1, cols - 2)), "{rows} x {cols}");
+        assert!(near(&s, Hex::new(rows - 1, cols - 2)), "{rows} x {cols}");
         assert!(s.screen.scroll(p, 1.0e6, 1.0e6));
         let [left, right, top, bottom] = edges(&s);
         assert!(stops(left, right, -0.5, map_right, -0.5), "{rows} x {cols}: {:?}", edges(&s));

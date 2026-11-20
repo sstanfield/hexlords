@@ -47,8 +47,7 @@ const OPTION_ICON_DP: i32 = 28;
 
 /// The resource a button for what a city can build is made from: the unit's
 /// icon and a line of text beside it.
-fn option_resource(i: usize) -> String {
-    let id = build_id(i);
+fn option_resource(id: &str) -> String {
     format!(
         "TBButton: id: {id}, is-focusable: 0\n\
          \tTBLayout: axis: x, spacing: 6, position: center\n\
@@ -121,60 +120,65 @@ fn title_case(side: Side) -> String {
 
 /// A city in full: its name, holder, walls and place, its garrison, what it
 /// can build (a button each, and one for nothing: the one it builds is
-/// pressed), and how far it has got. Only the city's holder, if that is the
-/// player, can press them.
-pub struct CityWindow {
-    parts: WindowParts,
+/// pressed), how far it has got, and where its new units go. Only the city's
+/// holder, if that is the player, can press them. Built into a window
+/// ([`CityWindow`]) or, smaller, into the sidebar ([`CityPanel`]); the ids
+/// of its buttons start with its prefix, so that both can be there at once.
+pub struct CityView {
+    prefix: &'static str,
+    compact: bool,
     city: CityId,
     summary: Text,
     income: Text,
     garrison: Text,
     progress: Text,
     note: Text,
-    /// All about the option under the pointer (or the one it builds).
+    /// All about the option under the pointer (or the one it builds); none
+    /// in the sidebar (the session's box over the pointer says it there).
     details: Vec<Text>,
-    /// Where its new units go.
+    /// Where its new units go (in the sidebar, on two lines).
     rally: Text,
+    rally_to: Option<Text>,
     rally_buttons: [WidgetId; 2],
-    /// What its holder alone knows (what it builds, its taxes): shown or
-    /// not, as much as the one looking knows (`info::Known`).
+    /// What its holder alone knows (what it builds, where its units go):
+    /// shown or not, as much as the one looking knows (`info::Known`).
     private: Vec<WidgetId>,
     known: info::Known,
     /// The buttons for what it builds, and what each sets.
     builds: Vec<(WidgetId, Option<usize>)>,
 }
 
-impl CityWindow {
-    /// Open a city's window on `parent` (the root window), placed in `area`
-    /// at `align` (see `build::place`). `icons` are the pictures of what it
-    /// can build, in its order. `None` if there is no such city.
-    pub fn open(
+impl CityView {
+    /// Build the city's view into `content`, a column. `icons` are the
+    /// pictures of what it can build, in its order; `compact` is the
+    /// sidebar's form. `None` if there is no such city.
+    #[allow(clippy::too_many_arguments)]
+    fn build(
         ui: &mut Ui,
-        parent: WidgetId,
+        content: WidgetId,
         map: &Map,
         id: CityId,
-        (player, known): (Side, info::Known),
+        known: info::Known,
         icons: &[ImageHandle],
-        (area, align): (Rect, (f32, f32)),
-    ) -> Option<Self> {
+        (prefix, compact): (&'static str, bool),
+    ) -> Option<CityView> {
         let city = map.cities().get(id)?;
-        let parts = build::window(ui, parent, CITY_WINDOW_ID, &city.name);
-        let content = parts.content;
+        let pid = |name: &str| format!("{prefix}{name}");
         build::heading(ui, content, &city.name);
         let summary = Text::new(build::text(ui, content, ""));
         let income = Text::new(build::text(ui, content, ""));
         let garrison = Text::new(build::text(ui, content, ""));
         let space = dp(ui, SPACING_DP);
         build::gap(ui, content, space);
-        let heading = build::heading(ui, content, "What it builds");
+        let heading = build::heading(ui, content, if compact { "Builds" } else { "What it builds" });
         let options = build::column(ui, content, dp(ui, 2));
-        let group = TbId::new("production");
-        let mut builds = vec![(build::button(ui, options, BUILD_NOTHING_ID, "Nothing"), None)];
+        let group = TbId::new(&pid("production"));
+        let mut builds = vec![(build::button(ui, options, &pid(BUILD_NOTHING_ID), "Nothing"), None)];
         let icon_size = dp(ui, OPTION_ICON_DP);
         for (i, prod) in city.units.iter().enumerate() {
             // The unit's icon, its name, strength and moves.
-            let id = build_id(i);
-            if ui.inflate(options, &option_resource(i)).is_err() {
+            let id = pid(&build_id(i));
+            if ui.inflate(options, &option_resource(&id)).is_err() {
                 continue;
             }
             let found = |ui: &Ui, name: &str| ui.find(options, TbId::new(name));
@@ -198,23 +202,25 @@ impl CityWindow {
             ui.set_group_id(*button, group);
         }
         // All about one of them: the one under the pointer.
-        build::gap(ui, content, dp(ui, 4));
-        let details: Vec<Text> = (0..DETAIL_LINES).map(|_| Text::new(build::text(ui, content, ""))).collect();
-        // As wide as the widest they will say, so that the window does not
-        // change its size as the pointer goes from one option to another.
-        if let Some(first) = details.first() {
-            let mut widest = 0;
-            let hint = ["Point at one: all about it shows here.".to_string()];
-            for line in city.units.iter().flat_map(|p| info::production_details(map, p, city.trains)).chain(hint) {
-                ui.set_text(first.widget, &line);
-                widest = widest.max(ui.preferred_size_free(first.widget).pref.w);
-            }
-            ui.set_text(first.widget, "");
-            for line in &details {
-                ui.set_layout_params(
-                    line.widget,
-                    Some(LayoutParams { min_w: Some(widest), ..LayoutParams::default() }),
-                );
+        let mut details = Vec::new();
+        if !compact {
+            build::gap(ui, content, dp(ui, 4));
+            details = (0..DETAIL_LINES).map(|_| Text::new(build::text(ui, content, ""))).collect();
+            // As wide as the widest they will say, so that the window does
+            // not change its size as the pointer goes from one option to
+            // another.
+            if let Some(first) = details.first() {
+                let mut widest = 0;
+                let hint = ["Point at one: all about it shows here.".to_string()];
+                for line in city.units.iter().flat_map(|p| info::production_details(map, p, city.trains)).chain(hint) {
+                    ui.set_text(first.widget, &line);
+                    widest = widest.max(ui.preferred_size_free(first.widget).pref.w);
+                }
+                ui.set_text(first.widget, "");
+                for line in &details {
+                    let lp = LayoutParams { min_w: Some(widest), ..LayoutParams::default() };
+                    ui.set_layout_params(line.widget, Some(lp));
+                }
             }
         }
         build::gap(ui, content, dp(ui, 4));
@@ -222,18 +228,21 @@ impl CityWindow {
         // Where its new units go.
         let rally_gap = build::gap(ui, content, space);
         let rally = Text::new(build::text(ui, content, ""));
+        let rally_to = compact.then(|| Text::new(build::text(ui, content, "")));
         let rally_row = build::row(ui, content, space);
-        let send = build::button(ui, rally_row, CITY_RALLY_ID, "Send new units to...");
-        let keep = build::button(ui, rally_row, CITY_NO_RALLY_ID, "Keep them here");
+        let (send, keep) =
+            if compact { ("Send to...", "Keep here") } else { ("Send new units to...", "Keep them here") };
+        let send = build::button(ui, rally_row, &pid(CITY_RALLY_ID), send);
+        let keep = build::button(ui, rally_row, &pid(CITY_NO_RALLY_ID), keep);
         let note = Text::new(build::text(ui, content, ""));
-        build::gap(ui, content, space);
-        build::button(ui, content, CITY_CLOSE_ID, "Close");
         let private = [heading, options, rally_gap, rally.widget, rally_row]
             .into_iter()
+            .chain(rally_to.iter().map(|t| t.widget))
             .chain(details.iter().map(|d: &Text| d.widget))
             .collect();
-        let mut window = CityWindow {
-            parts,
+        Some(CityView {
+            prefix,
+            compact,
             city: id,
             summary,
             income,
@@ -241,63 +250,29 @@ impl CityWindow {
             progress,
             note,
             details,
-            builds,
             rally,
+            rally_to,
             rally_buttons: [send, keep],
             private,
-            known: info::Known::All,
-        };
-        window.known = known;
-        window.fill(ui, map, player);
-        build::place(ui, parts, area, align);
-        Some(window)
-    }
-
-    /// The city it is about.
-    pub fn city(&self) -> CityId {
-        self.city
+            known,
+            builds,
+        })
     }
 
     /// Which of what it can build the pointer is on, if any.
-    pub fn hovered(&self, ui: &Ui) -> Option<usize> {
+    fn hovered(&self, ui: &Ui) -> Option<usize> {
         let over = ui.hovered()?;
-        let on = |button: WidgetId| {
-            let mut at = Some(over);
-            while let Some(id) = at {
-                if id == button {
-                    return true;
-                }
-                at = ui.parent(id);
-            }
-            false
-        };
-        self.builds.iter().find(|(button, _)| on(*button)).and_then(|(_, what)| *what)
+        self.builds.iter().find(|(button, _)| ui.is_ancestor_of(*button, over)).and_then(|(_, what)| *what)
     }
 
-    /// What the details under the options say.
-    pub fn details(&self) -> Vec<&str> {
-        self.details.iter().map(|t| t.text.as_str()).filter(|t| !t.is_empty()).collect()
-    }
-
-    /// True while it is open (its title bar's button closes it too).
-    pub fn is_open(&self, ui: &Ui) -> bool {
-        build::is_open(ui, self.parts.window)
-    }
-
-    pub fn close(&self, ui: &mut Ui) {
-        build::close(ui, self.parts.window);
-    }
-
-    /// Bring it up to date with the city. False if the city is gone.
-    pub fn refresh(&mut self, ui: &mut Ui, map: &Map, (player, known): (Side, info::Known)) -> bool {
-        if map.cities().get(self.city).is_none() {
-            return false;
-        }
-        self.known = known;
-        if self.fill(ui, map, player) {
-            build::refit(ui, self.parts);
-        }
-        true
+    /// The button of what it can build that the pointer is on, and which it
+    /// is.
+    fn hovered_button(&self, ui: &Ui) -> Option<(WidgetId, usize)> {
+        let over = ui.hovered()?;
+        self.builds
+            .iter()
+            .find(|(button, _)| ui.is_ancestor_of(*button, over))
+            .and_then(|(b, what)| Some((*b, (*what)?)))
     }
 
     /// Write what it says; true if a line changed.
@@ -318,19 +293,30 @@ impl CityWindow {
             info::Known::Fog => {
                 format!("Not seen, walls {}, at row {}, column {}", city.walls, city.pos.row, city.pos.col)
             }
+            _ if self.compact => format!("Walls {}, taxes {}", city.walls, city.income),
             _ => info::city_summary(city),
         };
+        let units = map.units_at(city.pos).len();
         let garrison = match known {
-            info::Known::All => info::garrison_line(map, city),
-            info::Known::Outside => format!("Garrison: {} units", map.units_at(city.pos).len()),
+            info::Known::All if !self.compact => info::garrison_line(map, city),
+            info::Known::All | info::Known::Outside => match units {
+                0 => "No garrison".to_string(),
+                1 => "Garrison: 1 unit".to_string(),
+                n => format!("Garrison: {n} units"),
+            },
             info::Known::Fog => String::new(),
         };
+        let progress = match (all, self.compact) {
+            (false, _) => String::new(),
+            (true, true) => info::progress_short(map, city),
+            (true, false) => info::progress_line(map, city),
+        };
         let mut changed = self.summary.set(ui, &summary);
-        changed |= self.income.set(ui, &info::income_line(city));
+        changed |= self.income.set(ui, if self.compact { String::new() } else { info::income_line(city) }.as_str());
         changed |= self.garrison.set(ui, &garrison);
-        changed |= self.progress.set(ui, if all { info::progress_line(map, city) } else { String::new() }.as_str());
+        changed |= self.progress.set(ui, &progress);
         // A line with nothing to say takes no room.
-        for line in [&self.garrison, &self.progress] {
+        for line in [&self.income, &self.garrison, &self.progress] {
             let visibility = if line.text.is_empty() { Visibility::Gone } else { Visibility::Visible };
             if ui.node(line.widget).is_some_and(|n| n.visibility() != visibility) {
                 ui.set_visibility(line.widget, visibility);
@@ -354,11 +340,21 @@ impl CityWindow {
         for (i, line) in self.details.iter_mut().enumerate() {
             changed |= line.set(ui, details.get(i).map_or("", String::as_str));
         }
-        let rally = match city.rally {
-            Some(to) => format!("New units go to {}.", info::place(map, to)),
-            None => "New units stay in the city.".to_string(),
+        let (rally, rally_to) = match (city.rally, self.compact) {
+            (Some(to), false) => (format!("New units go to {}.", info::place(map, to)), String::new()),
+            (Some(to), true) => ("New units go to".to_string(), info::place(map, to)),
+            (None, false) => ("New units stay in the city.".to_string(), String::new()),
+            (None, true) => ("New units stay here".to_string(), String::new()),
         };
         changed |= self.rally.set(ui, &rally);
+        if let Some(line) = &mut self.rally_to {
+            changed |= line.set(ui, &rally_to);
+            let visibility = if all && !rally_to.is_empty() { Visibility::Visible } else { Visibility::Gone };
+            if ui.node(line.widget).is_some_and(|n| n.visibility() != visibility) {
+                ui.set_visibility(line.widget, visibility);
+                changed = true;
+            }
+        }
         for button in self.rally_buttons {
             if ui.node(button).is_some_and(|n| n.is_disabled() == mine) {
                 ui.set_disabled(button, !mine);
@@ -379,21 +375,167 @@ impl CityWindow {
         changed
     }
 
+    /// What a click on one of its buttons asks for.
+    fn click(&self, id: TbId) -> Option<CityOrder> {
+        let is = |name: &str| id == TbId::new(&format!("{}{name}", self.prefix));
+        if is(CITY_RALLY_ID) {
+            return Some(CityOrder::PickRally(self.city));
+        }
+        if is(CITY_NO_RALLY_ID) {
+            return Some(CityOrder::NoRally(self.city));
+        }
+        if is(BUILD_NOTHING_ID) {
+            return Some(CityOrder::SetProduction(self.city, None));
+        }
+        let what = (0..self.builds.len()).find(|i| is(&build_id(*i)))?;
+        Some(CityOrder::SetProduction(self.city, Some(what)))
+    }
+}
+
+/// A city's window: its view, and a button that closes it.
+pub struct CityWindow {
+    parts: WindowParts,
+    view: CityView,
+}
+
+impl CityWindow {
+    /// Open a city's window on `parent` (the root window), placed in `area`
+    /// at `align` (see `build::place`). `icons` are the pictures of what it
+    /// can build, in its order. `None` if there is no such city.
+    pub fn open(
+        ui: &mut Ui,
+        parent: WidgetId,
+        map: &Map,
+        id: CityId,
+        (player, known): (Side, info::Known),
+        icons: &[ImageHandle],
+        (area, align): (Rect, (f32, f32)),
+    ) -> Option<Self> {
+        let city = map.cities().get(id)?;
+        let parts = build::window(ui, parent, CITY_WINDOW_ID, &city.name);
+        let Some(view) = CityView::build(ui, parts.content, map, id, known, icons, ("", false)) else {
+            build::close(ui, parts.window);
+            return None;
+        };
+        let space = dp(ui, SPACING_DP);
+        build::gap(ui, parts.content, space);
+        build::button(ui, parts.content, CITY_CLOSE_ID, "Close");
+        let mut window = CityWindow { parts, view };
+        window.view.fill(ui, map, player);
+        build::place(ui, parts, area, align);
+        Some(window)
+    }
+
+    /// The city it is about.
+    pub fn city(&self) -> CityId {
+        self.view.city
+    }
+
+    /// Which of what it can build the pointer is on, if any.
+    pub fn hovered(&self, ui: &Ui) -> Option<usize> {
+        self.view.hovered(ui)
+    }
+
+    /// What the details under the options say.
+    pub fn details(&self) -> Vec<&str> {
+        self.view.details.iter().map(|t| t.text.as_str()).filter(|t| !t.is_empty()).collect()
+    }
+
+    /// True while it is open (its title bar's button closes it too).
+    pub fn is_open(&self, ui: &Ui) -> bool {
+        build::is_open(ui, self.parts.window)
+    }
+
+    pub fn close(&self, ui: &mut Ui) {
+        build::close(ui, self.parts.window);
+    }
+
+    /// Bring it up to date with the city. False if the city is gone.
+    pub fn refresh(&mut self, ui: &mut Ui, map: &Map, (player, known): (Side, info::Known)) -> bool {
+        if map.cities().get(self.view.city).is_none() {
+            return false;
+        }
+        self.view.known = known;
+        if self.view.fill(ui, map, player) {
+            build::refit(ui, self.parts);
+        }
+        true
+    }
+
     /// What a click on one of its buttons asks for (its close button is the
     /// caller's to handle).
     pub fn click(&self, id: TbId) -> Option<CityOrder> {
-        if id == TbId::new(CITY_RALLY_ID) {
-            return Some(CityOrder::PickRally(self.city));
-        }
-        if id == TbId::new(CITY_NO_RALLY_ID) {
-            return Some(CityOrder::NoRally(self.city));
-        }
-        let what = if id == TbId::new(BUILD_NOTHING_ID) {
-            None
-        } else {
-            Some((0..self.builds.len()).find(|i| id == TbId::new(&build_id(*i)))?)
+        self.view.click(id)
+    }
+}
+
+/// The ids of the sidebar's city: its buttons' start with this, and the one
+/// that opens its window.
+pub const PANEL_PREFIX: &str = "panel_";
+pub const PANEL_OPEN_ID: &str = "panel_city_open";
+
+/// One of the player's cities in the sidebar: its view, smaller, and a
+/// button that opens its window (where there is more room, and all about
+/// what it can build).
+pub struct CityPanel {
+    root: WidgetId,
+    view: CityView,
+}
+
+impl CityPanel {
+    /// Build the city's panel into `parent` (a column of the sidebar).
+    pub fn open(
+        ui: &mut Ui,
+        parent: WidgetId,
+        map: &Map,
+        id: CityId,
+        (player, known): (Side, info::Known),
+        icons: &[ImageHandle],
+    ) -> Option<CityPanel> {
+        let root = build::column(ui, parent, 0);
+        let Some(view) = CityView::build(ui, root, map, id, known, icons, (PANEL_PREFIX, true)) else {
+            ui.remove(root);
+            return None;
         };
-        Some(CityOrder::SetProduction(self.city, what))
+        build::gap(ui, root, dp(ui, SPACING_DP));
+        build::button(ui, root, PANEL_OPEN_ID, "Open the city's window");
+        let mut panel = CityPanel { root, view };
+        panel.view.fill(ui, map, player);
+        Some(panel)
+    }
+
+    /// The city it is about.
+    pub fn city(&self) -> CityId {
+        self.view.city
+    }
+
+    /// Take it out of the sidebar.
+    pub fn close(self, ui: &mut Ui) {
+        ui.remove(self.root);
+    }
+
+    /// Bring it up to date with the city. False if the city is gone.
+    pub fn refresh(&mut self, ui: &mut Ui, map: &Map, (player, known): (Side, info::Known)) -> bool {
+        if map.cities().get(self.view.city).is_none() {
+            return false;
+        }
+        self.view.known = known;
+        self.view.fill(ui, map, player);
+        true
+    }
+
+    /// The button of what the city can build that the pointer is on, and
+    /// which it is (the session says all about it in its box).
+    pub fn hovered(&self, ui: &Ui) -> Option<(WidgetId, usize)> {
+        self.view.hovered_button(ui)
+    }
+
+    /// What a click on one of its buttons asks for.
+    pub fn click(&self, id: TbId) -> Option<CityOrder> {
+        if id == TbId::new(PANEL_OPEN_ID) {
+            return Some(CityOrder::Details(self.view.city));
+        }
+        self.view.click(id)
     }
 }
 

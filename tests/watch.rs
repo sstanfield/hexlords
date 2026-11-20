@@ -7,12 +7,12 @@
 
 mod common;
 
-use common::{assets, click, pixel_of, press, widget};
+use common::{assets, choose, click, pixel_of, press, widget};
 use hexgame::battle_window::{BATTLE_AGAIN_ID, BATTLE_SKIP_ID, points};
 use hexgame::game::{Game, REPLAY_ROUNDS};
 use hexgame::info;
 use hexgame::orders::{Event, Order};
-use hexgame::session::{BEGIN_TURN_ID, LOG_ID, Session};
+use hexgame::session::{BEGIN_TURN_ID, LOG_ID, MENU_VIEW_ID, Session};
 use hexgame::setup::Setup;
 use hexgame::state::combat::HITS;
 use hexgame::state::scenario::{self, Scenario};
@@ -198,7 +198,7 @@ fn in_hotseat_the_one_attacked_watches_it_from_their_log() {
     // Closed, the log is still there; L closes it too.
     press(&mut s, SpecialKey::Esc);
     assert!(s.battle().is_none() && !s.log_lines().is_empty());
-    push(&mut s, LOG_ID);
+    choose(&mut s, MENU_VIEW_ID, LOG_ID);
 }
 
 #[test]

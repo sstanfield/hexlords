@@ -10,6 +10,7 @@
 
 pub mod build;
 pub mod map_widget;
+pub mod menu;
 pub mod minimap_widget;
 pub mod root;
 

@@ -154,9 +154,9 @@ fn the_view_follows_the_cursor_when_it_leaves() {
     assert_eq!((s.screen.game.map.cursor, s.screen.view.center()), (Hex::new(50, 41), START));
     press(&mut s, SpecialKey::Left);
     assert_eq!((s.screen.game.map.cursor, s.screen.view.center()), (Hex::new(50, 40), Hex::new(50, 40)));
-    // 13 rows count as shown: six steps down stay, the seventh leaves. Only the
-    // row of the center changes.
-    assert_eq!(s.screen.view.rows_displayed(), 13);
+    // 12 rows count as shown (under the menu bar): six steps down stay, the
+    // seventh leaves. Only the row of the center changes.
+    assert_eq!(s.screen.view.rows_displayed(), 12);
     for _ in 0..6 {
         press(&mut s, SpecialKey::Down);
     }

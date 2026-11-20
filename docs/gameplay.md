@@ -306,6 +306,20 @@ thing to happen. Ideas to try, as the rules grow:
   puts the selected units aside: Next stack passes them by, as if they had
   no moves left, and the selection goes on to the next stack that waits.
   The next turn they are back.
+- **A menu bar** (built, the owner's word 2026-11-20: "start cleaning up the
+  interface"): Game, Units, Cities, View and Help, each item with its keys
+  (every one but the help's topics has one), so the sidebar keeps only End
+  turn, Undo and the city. The treasury sits at the bar's right end ("34
+  +40 -32"). The stack under the map is a box for its leader and one for
+  each of the eight units a hex holds, empty ones dimmed, with Go to, Done
+  and Next beside them. One's own city on the selected hex is in full in
+  the sidebar (what it builds, where its new units go; its window has more
+  room), another's as it shows from outside. In hotseat each person's turn
+  starts at their capital (`Game::capital`: the side's first city in the
+  map's order). The Help menu has the rules of the game in play
+  (`guide`): battles as this game was set up, what each of the map's kinds
+  of unit pays to move, cities and gold, units and captains, orders and
+  turns, what one sees.
 - **A list of tasks** (built): T, or the Tasks button, opens what the
   player has left to do this turn (`Game::tasks`), most pressing first:
   stacks that have had no orders (or whose march stopped short) and cities

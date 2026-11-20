@@ -5,10 +5,10 @@
 
 mod common;
 
-use common::{assets, click, pixel_of, press, type_char, widget};
+use common::{assets, choose, click, pixel_of, press, type_char, widget};
 use hexgame::game::Game;
 use hexgame::orders::{Event, Order};
-use hexgame::session::{NEXT_CITY_ID, NEXT_STACK_ID, Session, UNDO_ID};
+use hexgame::session::{MENU_CITIES_ID, MENU_UNITS_ID, NEXT_CITY_ID, NEXT_STACK_ID, PREV_STACK_ID, Session, UNDO_ID};
 use hexgame::setup::Setup;
 use hexgame::state::scenario::{self, Scenario};
 use hexgame::state::{Hex, Side, UnitId};
@@ -265,12 +265,18 @@ fn n_and_c_go_from_stack_to_stack_and_city_to_city() {
     assert_eq!(s.screen.game.selection(), at(&s.screen.game, SOUTHWICK));
     type_char(&mut s, 'N');
     assert_eq!(s.shown(), REDHOLD);
-    // Cities: C and the button; nothing stays selected, so a click looks.
+    // The menu does the same.
+    choose(&mut s, MENU_UNITS_ID, PREV_STACK_ID);
+    assert_eq!(s.shown(), SOUTHWICK);
+    choose(&mut s, MENU_UNITS_ID, NEXT_STACK_ID);
+    assert_eq!(s.shown(), REDHOLD);
+    // Cities: C and the menu; nothing stays selected, so a click looks.
     type_char(&mut s, 'c');
     assert_eq!(s.shown(), SOUTHWICK);
     assert!(s.screen.game.selection().is_empty());
-    assert_eq!(s.city()[0], "Southwick");
-    push(&mut s, NEXT_CITY_ID);
+    let southwick = s.screen.game.map.city_at(SOUTHWICK).map(|c| c.id);
+    assert_eq!(s.city_panel().map(|p| p.city()), southwick, "red's own: in full in the sidebar");
+    choose(&mut s, MENU_CITIES_ID, NEXT_CITY_ID);
     assert_eq!(s.shown(), REDHOLD);
     type_char(&mut s, 'C');
     assert_eq!(s.shown(), SOUTHWICK);

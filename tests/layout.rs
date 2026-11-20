@@ -10,9 +10,11 @@ use hexgame::session::Session;
 use hexgame::state::{Hex, Map, TileType};
 use turbo_ferret::{Modifiers, Point, Rect, Size, SpecialKey, tbid};
 
+/// The height of the menu bar and the space under it, at 96 DPI.
+const TOP_96: i32 = 32;
 /// The height of the panel under the map and the space above it, at 96 DPI:
-/// four lines, the stack's slots and the spaces between them.
-const PANEL_96: i32 = 144;
+/// three lines, the stack's boxes and the spaces between them.
+const PANEL_96: i32 = 148;
 
 fn map_commands(s: &mut Session) -> Vec<MapCommand> {
     let map = s.screen.map_widget();
@@ -30,31 +32,44 @@ fn the_layout_at_1024_by_768() {
     let s = session();
     assert_eq!(window_rect(&s, "RootWindow"), Rect::new(0, 0, 1024, 768));
     assert_eq!(window_rect(&s, "main_layout"), Rect::new(0, 0, 1024, 768));
-    // The map: 80% of the width and all the height the panel under it
-    // leaves, in the top left corner.
-    assert_eq!(window_rect(&s, "main_map"), Rect::new(0, 0, 819, 768 - PANEL_96));
-    assert_eq!(s.screen.map_rect(), Rect::new(0, 0, 819, 624));
-    // The sidebar is right of it, after the spacing, as tall as the window,
-    // and the minimap tops it.
+    // The menu bar across the top: the menus at its left end, the treasury
+    // at its right.
+    assert_eq!(window_rect(&s, "menu_bar"), Rect::new(0, 0, 1024, TOP_96 - 4));
+    let (game, treasury) = (window_rect(&s, "menu_game"), window_rect(&s, "treasury"));
+    assert!(game.x < 20 && treasury.right() > 1000 && treasury.right() <= 1024, "{game:?} {treasury:?}");
+    // The map: 80% of the width and all the height the menu bar and the
+    // panel under it leave, at the left.
+    assert_eq!(window_rect(&s, "main_map"), Rect::new(0, TOP_96, 819, 768 - TOP_96 - PANEL_96));
+    assert_eq!(s.screen.map_rect(), Rect::new(0, 32, 819, 588));
+    // The sidebar is right of it, after the spacing, as tall as what the
+    // menu bar leaves, and the minimap tops it.
     let sidebar = window_rect(&s, "main_sidebar");
-    assert_eq!((sidebar.x, sidebar.y, sidebar.w, sidebar.h), (824, 0, 200, 768));
-    assert_eq!(window_rect(&s, "mini_map"), Rect::new(824, 0, 200, 231));
-    assert_eq!(s.screen.minimap_rect(), Rect::new(824, 0, 200, 231));
+    assert_eq!((sidebar.x, sidebar.y, sidebar.w, sidebar.h), (824, 32, 200, 736));
+    assert_eq!(window_rect(&s, "mini_map"), Rect::new(824, 32, 200, 221));
+    assert_eq!(s.screen.minimap_rect(), Rect::new(824, 32, 200, 221));
     // The button is under the minimap, at its own size.
     let button = window_rect(&s, "end_turn");
-    assert!(button.y >= 231 + 5 && button.h < 60 && button.w < 200, "{button:?}");
+    assert!(button.y >= 32 + 221 + 5 && button.h < 60 && button.w < 200, "{button:?}");
     assert!(sidebar.x <= button.x && button.right() <= sidebar.right(), "{button:?}");
     // It says whose turn it ends: the demo's one side's.
     assert_eq!(s.screen.ui.text(widget(&s, "end_turn")), Some("End black's turn"));
-    assert_eq!(window_rect(&s, "map_column"), Rect::new(0, 0, 819, 768));
+    assert_eq!(window_rect(&s, "map_column"), Rect::new(0, 32, 819, 736));
     widget(&s, "hex_panel");
     // The status line is under the map, as wide as it, and the panel ends at
     // the window's bottom edge.
     let status = window_rect(&s, "status");
-    assert_eq!(status, Rect::new(0, 624 + 5, 819, 24));
+    assert_eq!(status, Rect::new(0, 32 + 588 + 5, 819, 24));
+    // The stack's boxes, the leader's first, and the buttons beside them,
+    // inside the map's width.
+    let (leader, last, next) =
+        (window_rect(&s, "unit_leader"), window_rect(&s, "unit_7"), window_rect(&s, "next_stack"));
+    assert!(
+        leader.x == 0 && leader.right() < last.x && last.right() < next.x && next.right() <= 819,
+        "{last:?} {next:?}"
+    );
     assert_eq!(window_rect(&s, "unit_line").bottom(), 768);
     // Nothing reaches outside the window.
-    for name in ["map_column", "main_sidebar", "mini_map", "end_turn", "main_map", "status", "hex_panel"] {
+    for name in ["menu_bar", "map_column", "main_sidebar", "mini_map", "end_turn", "main_map", "status", "hex_panel"] {
         let r = window_rect(&s, name);
         assert!(r.x >= 0 && r.y >= 0 && r.right() <= 1024 && r.bottom() <= 768, "{name}: {r:?}");
     }
@@ -80,18 +95,19 @@ fn the_widgets_are_the_games_own() {
 #[test]
 fn the_views_have_the_widgets_sizes() {
     let s = session();
-    assert_eq!(s.screen.view.size(), (819, 624));
-    assert_eq!(s.screen.mini_view.size(), (200, 231));
+    assert_eq!(s.screen.view.size(), (819, 588));
+    assert_eq!(s.screen.mini_view.size(), (200, 221));
 }
 
 #[test]
 fn the_layout_in_framebuffer_pixels_on_a_hidpi_screen() {
     // A 1024 x 768 window on a 2x screen: everything is in the 2048 x 1536 pixels.
     let s = session_at(2048, 1536, 192);
-    // (The panel is 289 pixels here, a pixel more than twice its 96 DPI height.)
-    assert_eq!(s.screen.map_rect(), Rect::new(0, 0, 1638, 1247));
+    // (The menu bar and its space are 65 pixels here and the panel 299, a
+    // pixel or three more than twice their 96 DPI heights.)
+    assert_eq!(s.screen.map_rect(), Rect::new(0, 65, 1638, 1172));
     // The spacing is 5 dp, which is 10 pixels here.
-    assert_eq!(s.screen.minimap_rect(), Rect::new(1648, 0, 400, 461));
+    assert_eq!(s.screen.minimap_rect(), Rect::new(1648, 65, 400, 442));
     let button = window_rect(&s, "end_turn");
     assert!(button.right() <= 2048 && button.h > 40, "{button:?}");
 }
@@ -103,10 +119,10 @@ fn the_layout_follows_the_window() {
     assert!(!s.screen.take_minimap_dirty());
     s.resize(Size::new(1280, 800));
     s.frame(16);
-    assert_eq!(s.screen.map_rect(), Rect::new(0, 0, 1024, 800 - PANEL_96));
-    assert_eq!(s.screen.minimap_rect(), Rect::new(1029, 0, 251, 240));
-    assert_eq!(s.screen.view.size(), (1024, 656));
-    assert_eq!(s.screen.mini_view.size(), (251, 240));
+    assert_eq!(s.screen.map_rect(), Rect::new(0, TOP_96, 1024, 800 - TOP_96 - PANEL_96));
+    assert_eq!(s.screen.minimap_rect(), Rect::new(1029, TOP_96, 251, 231));
+    assert_eq!(s.screen.view.size(), (1024, 620));
+    assert_eq!(s.screen.mini_view.size(), (251, 231));
     // A new size means a new minimap picture.
     assert!(s.screen.take_minimap_dirty());
     // A frame without a change does not.
@@ -121,9 +137,9 @@ fn odd_window_sizes_do_not_break_the_layout() {
         s.frame(16);
         let (map, mini) = (s.screen.map_rect(), s.screen.minimap_rect());
         // Nothing has a negative size, and the map is its share of the width
-        // and what the panel leaves of the height.
+        // and what the menu bar and the panel leave of the height.
         assert!(map.w >= 0 && map.h >= 0 && mini.w >= 0 && mini.h >= 0, "{w}x{h}: {map:?} {mini:?}");
-        assert_eq!((map.w, map.h), ((w as f32 * 0.8) as i32, (h - PANEL_96).max(0)), "{w}x{h}");
+        assert_eq!((map.w, map.h), ((w as f32 * 0.8) as i32, (h - TOP_96 - PANEL_96).max(0)), "{w}x{h}");
         assert_eq!(s.screen.view.size(), (map.w, map.h));
         assert_eq!(s.screen.mini_view.size(), (mini.w, mini.h));
         // The views give finite numbers at any size, the center hex is drawn,
@@ -143,14 +159,16 @@ fn odd_window_sizes_do_not_break_the_layout() {
 #[test]
 fn the_map_records_pointer_moves_presses_and_clicks() {
     let mut s = session();
-    let size = Size::new(819, 624);
-    s.screen.ui.pointer_move(Point::new(100, 50), Modifiers::NONE);
+    // The window's points, and the map's own (under the menu bar).
+    let size = Size::new(819, 588);
+    let at = |x: i32, y: i32| Point::new(x, y + TOP_96);
+    s.screen.ui.pointer_move(at(100, 50), Modifiers::NONE);
     assert_eq!(map_commands(&mut s), [MapCommand::Hover(Point::new(100, 50), size)]);
 
-    assert!(s.screen.ui.pointer_down(Point::new(100, 50), 1, Modifiers::NONE));
+    assert!(s.screen.ui.pointer_down(at(100, 50), 1, Modifiers::NONE));
     assert_eq!(map_commands(&mut s), [MapCommand::Press(Point::new(100, 50), size)], "a press alone is not a click");
-    s.screen.ui.pointer_move(Point::new(102, 51), Modifiers::NONE);
-    assert!(s.screen.ui.pointer_up(Point::new(102, 51), Modifiers::NONE));
+    s.screen.ui.pointer_move(at(102, 51), Modifiers::NONE);
+    assert!(s.screen.ui.pointer_up(at(102, 51), Modifiers::NONE));
     assert_eq!(
         map_commands(&mut s),
         [
@@ -160,7 +178,7 @@ fn the_map_records_pointer_moves_presses_and_clicks() {
         ]
     );
     // A press on the map released outside it is no click.
-    s.screen.ui.pointer_down(Point::new(100, 50), 1, Modifiers::NONE);
+    s.screen.ui.pointer_down(at(100, 50), 1, Modifiers::NONE);
     s.screen.ui.pointer_up(Point::new(900, 700), Modifiers::NONE);
     assert_eq!(map_commands(&mut s), [MapCommand::Press(Point::new(100, 50), size), MapCommand::Release]);
     // Moves elsewhere are not the map's.
@@ -284,8 +302,8 @@ fn another_map_starts_the_views_over() {
     assert!(s.screen.take_minimap_dirty(), "the minimap shows the new map");
     // The view starts on the new cursor, as far as the map's edges let it.
     assert!(s.screen.view.shows(Hex::new(3, 55)), "{}", s.screen.view.center());
-    assert_eq!(s.screen.view.size(), (819, 624));
-    assert_eq!(s.screen.mini_view.size(), (200, 231));
+    assert_eq!(s.screen.view.size(), (819, 588));
+    assert_eq!(s.screen.mini_view.size(), (200, 221));
     // Both views know the new map's size: its far corner is on them.
     let p = s.screen.minimap_pixel(Hex::new(29, 59));
     click(&mut s, p);

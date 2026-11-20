@@ -5,11 +5,11 @@
 
 mod common;
 
-use common::{assets, click, pixel_of, press, type_char, widget};
+use common::{assets, choose, click, pixel_of, press, type_char, widget};
 use hexgame::game::Game;
 use hexgame::info::{log, record_lines};
 use hexgame::orders::{Event, Order, Record};
-use hexgame::session::{BEGIN_TURN_ID, END_TURN_ID, LOG_ID, Session};
+use hexgame::session::{BEGIN_TURN_ID, END_TURN_ID, LOG_ID, MENU_VIEW_ID, Session};
 use hexgame::setup::Setup;
 use hexgame::state::scenario::{self, Scenario};
 use hexgame::state::{Hex, Side, UnitId};
@@ -113,7 +113,7 @@ fn push(s: &mut Session, name: &str) {
 fn the_log_has_the_battles_you_fought_on_both_sides() {
     let mut s = session(|s| s.set_players("blue=simple").unwrap());
     // Nothing yet.
-    push(&mut s, LOG_ID);
+    choose(&mut s, MENU_VIEW_ID, LOG_ID);
     assert_eq!(s.log_lines(), ["Nothing yet."]);
     // Red sends a levy against Bluemoor, with the log open (over the map: by
     // the keys, then): it says so at once, and the report opens over it.
@@ -173,14 +173,14 @@ fn the_next_person_does_not_see_the_last_ones_log() {
     let p = pixel_of(&s, BLUEMOOR);
     click(&mut s, p);
     press(&mut s, SpecialKey::Esc);
-    push(&mut s, LOG_ID);
+    choose(&mut s, MENU_VIEW_ID, LOG_ID);
     assert!(s.log_lines()[1].starts_with("You attacked blue"));
     // The cover closes it; blue opens its own, which tells it from blue's side.
     s.end_turn();
     assert!(s.covered() && s.log_lines().is_empty());
     push(&mut s, BEGIN_TURN_ID);
     press(&mut s, SpecialKey::Esc);
-    push(&mut s, LOG_ID);
+    choose(&mut s, MENU_VIEW_ID, LOG_ID);
     let lines = s.log_lines();
     assert!(lines[1].starts_with("Red attacked you at Bluemoor") && lines[1].ends_with("you held."), "{lines:?}");
 }

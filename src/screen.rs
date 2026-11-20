@@ -41,6 +41,13 @@ pub const MINIMAP_ID: &str = "mini_map";
 /// The help window, and its button that closes it.
 pub const HELP_ID: &str = "help_window";
 pub const HELP_CLOSE_ID: &str = "help_close";
+/// What every window's menus may hold, as the keys for them do: the help's
+/// keys, fullscreen, quit, zoom (`MapScreen::pump_shared` does them).
+pub const HELP_KEYS_ID: &str = "help_keys";
+pub const FULLSCREEN_ID: &str = "fullscreen";
+pub const QUIT_ID: &str = "quit";
+pub const ZOOM_IN_ID: &str = "zoom_in";
+pub const ZOOM_OUT_ID: &str = "zoom_out";
 /// The space between the help's columns, and between its sections, in dp.
 const HELP_COLUMN_DP: i32 = 16;
 const HELP_SECTION_DP: i32 = 8;
@@ -77,8 +84,9 @@ pub struct MapScreen {
     panned: bool,
     /// The scene's own sections of the help, between the map's and the window's.
     help_sections: Vec<HelpSection>,
-    /// The help window, while it is open.
+    /// The help window, while it is open, and its title.
     help: Option<WidgetId>,
+    help_title: String,
 }
 
 /// The button held down on the main map: where it went down, where the
@@ -167,6 +175,7 @@ impl MapScreen {
             panned: false,
             help_sections: Vec::new(),
             help: None,
+            help_title: String::new(),
         })
     }
 
@@ -205,17 +214,36 @@ impl MapScreen {
         }
     }
 
-    /// A window in the middle of the screen with every key: a column of what to
-    /// press and one of what it does, under a heading for each section, and a
-    /// button that closes it. It takes nothing from the map: the keyboard stays
-    /// there, and a click beside the window goes to whatever is under it.
+    /// Show a topic of the help (a scene's Help menu): `sections` of words and
+    /// what they say, in the help window, which stands for whatever it showed.
+    pub fn show_topic(&mut self, title: &str, sections: &[HelpSection]) {
+        self.close_help();
+        self.open_help_window(title, sections);
+    }
+
+    /// The title of what the help window shows, while it is open.
+    pub fn help_title(&self) -> Option<&str> {
+        self.help.filter(|id| self.ui.node(*id).is_some()).map(|_| self.help_title.as_str())
+    }
+
+    /// The help window with every key.
     fn open_help(&mut self) {
+        let sections = help::sections(&self.help_sections);
+        self.open_help_window("Help: keys and mouse", &sections);
+    }
+
+    /// A window in the middle of the screen with `sections`: a column of what
+    /// to press (or a word) and one of what it does, under a heading for each
+    /// section, and a button that closes it. It takes nothing from the map:
+    /// the keyboard stays there, and a click beside the window goes to
+    /// whatever is under it.
+    fn open_help_window(&mut self, title: &str, sections: &[HelpSection]) {
         let dp = |ui: &Ui, dp: i32| ui.dimension_converter().dp_to_px(dp);
         let ui = &mut self.ui;
-        let parts = build::window(ui, self.root_window, HELP_ID, "Help");
+        let parts = build::window(ui, self.root_window, HELP_ID, title);
         let content = parts.content;
         let mut keys = Vec::new();
-        for (i, section) in help::sections(&self.help_sections).iter().enumerate() {
+        for (i, section) in sections.iter().enumerate() {
             if i > 0 {
                 let px = dp(ui, HELP_SECTION_DP);
                 build::gap(ui, content, px);
@@ -239,6 +267,7 @@ impl MapScreen {
         let everywhere = Rect::from_size(ui.rect(self.root_window).size());
         build::place(ui, parts, everywhere, (0.5, 0.5));
         self.help = Some(parts.window);
+        self.help_title = title.to_string();
     }
 
     /// Show another map: the views start over, on its cursor.
@@ -576,6 +605,25 @@ impl MapScreen {
                 RootCommand::Help => self.toggle_help(),
                 // The help's button, and Esc while it is open, close it.
                 RootCommand::Click(id) if id == TbId::new(HELP_CLOSE_ID) => self.close_help(),
+                // The same from a menu; the scene hears of the click too (it
+                // closes the menu).
+                RootCommand::Click(id) if id == TbId::new(HELP_KEYS_ID) => {
+                    self.toggle_help();
+                    rest.push(command);
+                }
+                RootCommand::Click(id) if id == TbId::new(FULLSCREEN_ID) => {
+                    self.fullscreen_toggles += 1;
+                    rest.push(command);
+                }
+                RootCommand::Click(id) if id == TbId::new(QUIT_ID) => {
+                    self.quit = true;
+                    rest.push(command);
+                }
+                RootCommand::Click(id) if id == TbId::new(ZOOM_IN_ID) || id == TbId::new(ZOOM_OUT_ID) => {
+                    let key = if id == TbId::new(ZOOM_IN_ID) { MapKey::ZoomIn } else { MapKey::ZoomOut };
+                    self.navigate(MapCommand::Key(key));
+                    rest.push(command);
+                }
                 RootCommand::Special(SpecialKey::Esc, _) if self.help_open() => self.close_help(),
                 other => rest.push(other),
             }

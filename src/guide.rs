@@ -1,0 +1,435 @@
+//! The help's topics (the Help menu): how battles go in this game, movement,
+//! cities and gold, units and captains, orders and turns, fog of war. Each is
+//! a list of sections of rows, a word and what it says, as the help window
+//! shows them (`MapScreen::show_topic`), written from the game: the rules it
+//! was set up with, the map's kinds of unit. Plain functions of the game's
+//! state, as `info` is.
+//!
+//! Not a port: the C++ had no help.
+
+use crate::game::{CITY_SIGHT, Game, HARD_ODDS, UNIT_SIGHT, emerge_chance};
+use crate::help::HelpSection;
+use crate::info;
+use crate::setup::TurnOrder;
+use crate::state::combat::{HITS, MAX_CHANCE, System, WALL_QUARTERS};
+use crate::state::{Blessing, LEVEL_EXPERIENCE, MAX_STACK};
+
+/// How long a line of a topic's words is, at most, in characters.
+const WIDTH: usize = 64;
+
+/// The topics, in the Help menu's order: the id of its item, its title.
+pub const TOPICS: [(&str, &str); 6] = [
+    ("help_battles", "Battles"),
+    ("help_movement", "Movement"),
+    ("help_cities", "Cities and gold"),
+    ("help_units", "Units and captains"),
+    ("help_orders", "Orders and turns"),
+    ("help_fog", "What you see"),
+];
+
+/// The topic with this id: its title and its sections.
+pub fn topic(game: &Game, id: &str) -> Option<(&'static str, Vec<HelpSection>)> {
+    let (_, title) = TOPICS.iter().find(|(topic, _)| *topic == id)?;
+    let sections = match id {
+        "help_battles" => battles(game),
+        "help_movement" => movement(game),
+        "help_cities" => cities(game),
+        "help_units" => units(game),
+        "help_orders" => orders(game),
+        _ => sight(game),
+    };
+    Some((title, sections))
+}
+
+/// A section: rows of a word and what it says, the words cut into lines (a
+/// row each, the word only on the first).
+fn section(title: &str, rows: &[(&str, String)]) -> HelpSection {
+    let mut out = Vec::new();
+    for (word, text) in rows {
+        for (i, line) in wrap(text, WIDTH).into_iter().enumerate() {
+            out.push((if i == 0 { word.to_string() } else { String::new() }, line));
+        }
+    }
+    HelpSection { title: title.to_string(), rows: out }
+}
+
+/// Text in lines of at most `width` characters, cut between words.
+pub fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() || lines.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+/// How often a strength twice another's wins an exchange, in percent, with
+/// `chance` (0 to 10): `2^k : 1`, `k = 2 (10 - chance) / 5`.
+pub fn twice_wins(chance: u8) -> u32 {
+    let k = 2.0 * f64::from(MAX_CHANCE.saturating_sub(chance)) / 5.0;
+    let a = 2f64.powf(k);
+    (100.0 * a / (a + 1.0)).round() as u32
+}
+
+fn battles(game: &Game) -> Vec<HelpSection> {
+    let rules = game.setup().combat;
+    let system = match rules.system {
+        System::Lines => "Lines. Each stack stands in a line from its weakest to its strongest, its commander \
+                          last; the two at the front fight, the loser of each exchange takes a hit, and when a \
+                          unit dies the next of its line steps up."
+            .to_string(),
+        System::Strength => "Strength against strength. Each exchange matches the two stacks' whole strengths, \
+                             and the loser takes the hit on one of its units drawn by chance: cheap units do not \
+                             shield the dear ones."
+            .to_string(),
+    };
+    let chance = match rules.chance {
+        0 => "0 of 10: the stronger always wins (a tie is the defender's).".to_string(),
+        c if c >= MAX_CHANCE => format!("{c} of 10: strength counts for nothing; every exchange is a coin toss."),
+        c => format!(
+            "{c} of 10. Only the ratio of the strengths counts: one twice as strong as the other wins {}% of \
+             the exchanges. (Less chance: strength counts more.)",
+            twice_wins(c)
+        ),
+    };
+    let walls = match WALL_QUARTERS {
+        1 => "a quarter of a point".to_string(),
+        2 => "half a point".to_string(),
+        3 => "three quarters of a point".to_string(),
+        q => format!("{q} quarters of a point"),
+    };
+    vec![
+        section("In this game", &[("How", system), ("Chance", chance)]),
+        section(
+            "What makes a unit stronger",
+            &[
+                (
+                    "Its own",
+                    "Its kind's strength, a point for each level above the first, and a temple's \
+                             blessing."
+                        .to_string(),
+                ),
+                (
+                    "A commander",
+                    "Every other unit of a stack with a commander is as much stronger as it gives \
+                                 (a point more when it is at its highest level). The commander fights last."
+                        .to_string(),
+                ),
+                ("The ground", "A defender is a point stronger on hills and in forests, two on mountains.".to_string()),
+                ("Walls", format!("A defender in a city is {walls} stronger for each level of its walls.")),
+                ("Attacking", "Attackers get neither the ground nor walls.".to_string()),
+            ],
+        ),
+        section(
+            "A battle",
+            &[
+                (
+                    "Who fights",
+                    format!(
+                        "An attack is at most {MAX_STACK} units and a commander, from one hex or from several. \
+                     All who stand on the hex attacked defend it."
+                    ),
+                ),
+                (
+                    "Hits",
+                    format!(
+                        "A unit dies at its {} hit; one that lives is whole again after the battle.",
+                        if HITS == 2 { "second".to_string() } else { format!("{HITS}th") }
+                    ),
+                ),
+                ("The odds", "Before you attack, the line under the map says how likely you are to win.".to_string()),
+                (
+                    "After",
+                    "If the attackers win, those that live go in, and take the city. A battle cannot be \
+                           undone."
+                        .to_string(),
+                ),
+                (
+                    "Captains",
+                    format!(
+                        "A stack with no captain that wins may see one rise from its ranks: the chance is half \
+                     of how unlikely the win was ({}% for a fight at even odds).",
+                        emerge_chance(50)
+                    ),
+                ),
+            ],
+        ),
+    ]
+}
+
+fn movement(game: &Game) -> Vec<HelpSection> {
+    let mut kinds = Vec::new();
+    for kind in game.map.units().kinds() {
+        let costs = info::enters(&kind.cost, usize::MAX).join(", ");
+        let costs = costs.strip_prefix("Enters: ").unwrap_or(&costs).to_string();
+        kinds.push((kind.name.as_str(), format!("{} moves a turn. {costs}.", kind.moves)));
+    }
+    let mut out = vec![section(
+        "Moving",
+        &[
+            (
+                "Points",
+                "Each unit has its moves to spend each turn; a step costs what that terrain costs it. Up \
+                        to 2 points it does not use are kept for the next turn."
+                    .to_string(),
+            ),
+            (
+                "Roads",
+                "A step along a road costs what a road costs it; a bridge is a road over water, a pass a \
+                       road over a mountain."
+                    .to_string(),
+            ),
+            (
+                "Stacks",
+                "The units selected go together where every one of them can reach; a march goes at \
+                        the pace of the slowest."
+                    .to_string(),
+            ),
+            (
+                "Commanders",
+                "At the start of each turn a commander has the moves of the fastest unit on its hex, \
+                            if they are more than its own: a captain with riders rides."
+                    .to_string(),
+            ),
+            (
+                "Others",
+                "Another side's units cannot be gone through: moving into them is an attack. Another \
+                        side's city, or nobody's, ends a move; an empty one is taken."
+                    .to_string(),
+            ),
+            (
+                "Temples",
+                format!(
+                    "A unit that stops on a temple is blessed, once: {} or {} a turn.",
+                    Blessing::Strength.words(),
+                    Blessing::Moves.words()
+                ),
+            ),
+        ],
+    )];
+    if !kinds.is_empty() {
+        out.push(section("What each kind of unit pays, on this map", &kinds));
+    }
+    out
+}
+
+fn cities(game: &Game) -> Vec<HelpSection> {
+    vec![
+        section(
+            "Cities",
+            &[
+                (
+                    "Taking one",
+                    "Move into a city with nobody in it (after a battle, or empty) and it is yours.".to_string(),
+                ),
+                (
+                    "Building",
+                    "Its holder sets what it builds (its window shows each unit's numbers, turns and \
+                              price). It goes on building the same until told otherwise."
+                        .to_string(),
+                ),
+                (
+                    "Paying",
+                    "What a city finishes is paid for then; if the gold is short, or the city is full, it \
+                            waits in the city until it can come out."
+                        .to_string(),
+                ),
+                (
+                    "New units",
+                    "A city can send what it builds to a hex of your choosing: Send new units to... in \
+                               its window or the sidebar."
+                        .to_string(),
+                ),
+                ("Walls", "Walls make those who defend the city stronger (see Battles).".to_string()),
+                ("Training", "Some cities train their units: they come out veterans.".to_string()),
+                (
+                    "The end",
+                    "A side that has lost its last city is out of the game, its units with it; the last \
+                             side left wins."
+                        .to_string(),
+                ),
+            ],
+        ),
+        section(
+            "Gold",
+            &[
+                ("This game", format!("Each side started with {} gold.", game.setup().gold)),
+                (
+                    "Taxes",
+                    "At the start of each of your turns (from the second round) each of your cities \
+                           brings in its taxes."
+                        .to_string(),
+                ),
+                (
+                    "Upkeep",
+                    "Then your units' upkeep goes out. Units you cannot pay leave you: as few as make up \
+                            what is short, a commander last."
+                        .to_string(),
+                ),
+                (
+                    "At a glance",
+                    "The menu bar shows your gold, what comes in each turn (+) and what goes out (-).".to_string(),
+                ),
+            ],
+        ),
+    ]
+}
+
+fn units(_game: &Game) -> Vec<HelpSection> {
+    let [veteran, elite] = LEVEL_EXPERIENCE;
+    vec![
+        section(
+            "Units",
+            &[
+                (
+                    "A stack",
+                    format!(
+                        "The units on a hex: at most {MAX_STACK}, and a commander besides. The boxes under the map \
+                     show yours: the commander's on the left, then a box for each unit."
+                    ),
+                ),
+                (
+                    "Levels",
+                    format!(
+                        "Regular, veteran, elite: each level above the first is a point of strength. A unit that \
+                     lives through a battle its side won gains a point of experience, two if the odds were \
+                     below {HARD_ODDS}%; {veteran} make a veteran, {elite} elite. A silver ring marks a \
+                     veteran, a gold one elite."
+                    ),
+                ),
+                (
+                    "Blessings",
+                    format!(
+                        "Stopping on a temple blesses a unit, once in its life: {} or {} a turn.",
+                        Blessing::Strength.words(),
+                        Blessing::Moves.words()
+                    ),
+                ),
+                ("Upkeep", "Each unit costs its upkeep every turn (see Cities and gold).".to_string()),
+            ],
+        ),
+        section(
+            "Captains",
+            &[
+                (
+                    "Commanding",
+                    "A captain makes the other units of its stack stronger and fights last. It has a \
+                                name, and rises in level too; at the highest it commands a point more."
+                        .to_string(),
+                ),
+                ("Speed", "It moves as fast as the fastest unit of its stack.".to_string()),
+                (
+                    "New ones",
+                    "Some cities can build captains; and a stack with no captain that wins a battle may \
+                              see one rise from its ranks, the likelier the harder the fight was."
+                        .to_string(),
+                ),
+            ],
+        ),
+    ]
+}
+
+fn orders(game: &Game) -> Vec<HelpSection> {
+    let order = match game.setup().order {
+        TurnOrder::Fixed => "The sides play one after the other, in the same order every round.",
+        TurnOrder::Drawn => "The sides play one after the other, in an order drawn anew every round.",
+    };
+    vec![
+        section(
+            "Turns",
+            &[
+                ("This game", order.to_string()),
+                (
+                    "Your turn",
+                    "Move your stacks, set what your cities build, then End turn. While the others \
+                               play, your log shows what they do to you; Start turn begins yours."
+                        .to_string(),
+                ),
+                (
+                    "Hotseat",
+                    "Several people at one screen: the map is covered between their turns, and each \
+                             turn starts at the side's capital."
+                        .to_string(),
+                ),
+            ],
+        ),
+        section(
+            "Orders",
+            &[
+                (
+                    "Moving",
+                    "Click your stack, then where it goes (or click its units under the map to take some \
+                            of them). Undo takes the last order back, unless chance had a say in it."
+                        .to_string(),
+                ),
+                (
+                    "Go to",
+                    "Sends the selected units somewhere far: they go there over the turns, on their own, \
+                           at the start of each of yours. A march never attacks: if something is in the way it \
+                           stops and waits for orders."
+                        .to_string(),
+                ),
+                ("Done", "Puts the selected units aside for this turn: Next stack passes them by.".to_string()),
+                (
+                    "Tasks",
+                    "What you have left to do this turn: stacks with no orders and cities that build \
+                           nothing first, then what could do more, then the rest."
+                        .to_string(),
+                ),
+            ],
+        ),
+    ]
+}
+
+fn sight(game: &Game) -> Vec<HelpSection> {
+    let fog = if game.setup().fog {
+        format!(
+            "On in this game. You see what is within {UNIT_SIGHT} hexes of your units and {CITY_SIGHT} of your \
+             cities; the rest of the map is dimmed: its terrain and where its cities are show, but no units, \
+             and nobody's colors."
+        )
+    } else {
+        "Off in this game: the whole map is seen.".to_string()
+    };
+    vec![section(
+        "What you see",
+        &[
+            ("Your own", "Your units and cities, all of them, in full.".to_string()),
+            (
+                "The others'",
+                "Another side's stack is a banner in its color, with a pip for each unit; its \
+                             panels say how many and whose, not what. Its cities show their walls, taxes and \
+                             how many stand in them, never what they build."
+                    .to_string(),
+            ),
+            ("Fog of war", fog),
+        ],
+    )]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn words_are_cut_into_lines_between_words() {
+        assert_eq!(wrap("one two three", 7), ["one two", "three"]);
+        assert_eq!(wrap("", 10), [""]);
+        assert!(wrap(&"word ".repeat(40), WIDTH).iter().all(|l| l.chars().count() <= WIDTH));
+    }
+
+    #[test]
+    fn twice_as_strong_wins_as_the_rule_says() {
+        // At 5, k is 2: four in five; at 3, about 87 (docs/gameplay.md).
+        assert_eq!([twice_wins(3), twice_wins(5), twice_wins(10)], [87, 80, 50]);
+    }
+}

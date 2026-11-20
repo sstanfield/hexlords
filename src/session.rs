@@ -2,14 +2,19 @@
 //! with the game's layout and what the player's input does to the game. It
 //! needs no graphics context, so tests drive it the way the window does.
 //!
-//! Under the map is the panel: the line about the hex under the cursor, then
-//! the *selected* hex (the one last clicked), a slot for each unit it can hold
-//! (the unit's icon and its strength and moves; a click selects the unit, and
-//! the pointer on it opens a box with all about it), and a line about the
-//! selected unit. Beside the map, under the minimap, are the buttons for the
-//! lists of cities and the selected hex's city, which opens in full in a
-//! window of its own (`city_windows`). The map takes all the height the panel
-//! leaves. `info` has the words; this module puts them into the widgets.
+//! Along the top is the menu bar: the game's menus (`gui::menu`; each item
+//! has its key) and, at its right end, the player's treasury. Under the map
+//! is the panel: the line about the hex under the cursor, then the *selected*
+//! hex (the one last clicked), the stack: a box for its leader and one for
+//! each of the eight units a hex holds (the unit's icon and its strength and
+//! moves; a click selects the unit, and the pointer on it opens a box with
+//! all about it; empty boxes stay, dimmed), with Go to, Done and Next beside
+//! them, and a line about the selected unit. Beside the map, under the
+//! minimap, are End turn and Undo, and the selected hex's city: one of the
+//! player's in full (what it builds, where its new units go), another's as it
+//! shows from outside; either opens in a window of its own (`city_windows`).
+//! The map takes all the height the menu bar and the panel leave. `info` has
+//! the words; this module puts them into the widgets.
 //!
 //! C++: assets/layouts/main.lua (the layout), src/gui/mapwidget.cpp
 //! MapWidget::OnEvent (what input does to the map)
@@ -22,16 +27,18 @@ use turbo_ferret::{ImageHandle, LayoutParams, Modifiers, Point, Rect, Size, TbId
 
 use crate::agents::{self, Agents};
 use crate::battle_window::{self, BattleWindow};
-use crate::city_windows::{self, CityList, CityOrder, CityWindow};
+use crate::city_windows::{self, CityList, CityOrder, CityPanel, CityWindow};
 use crate::game::{Game, SelectOutcome, Sight, Task};
 use crate::gui::build::{self, WindowParts};
+use crate::gui::menu::{ItemWords, Menu, MenuBar};
 use crate::gui::{MapCommand, MapKey, RootCommand};
-use crate::help::{HelpSection, command_key};
+use crate::guide;
+use crate::help::{HelpSection, command_key, fullscreen_keys};
 use crate::info;
 use crate::log_window::{self, LogWindow};
 use crate::orders::{Event, Order};
-use crate::render::{AssetDirs, unit_icon};
-use crate::screen::{MapScreen, Scene};
+use crate::render::{AssetDirs, coin_icon, unit_icon};
+use crate::screen::{FULLSCREEN_ID, HELP_KEYS_ID, MapScreen, QUIT_ID, Scene, ZOOM_IN_ID, ZOOM_OUT_ID};
 use crate::setup::Controller;
 use crate::state::scenario::side_name;
 use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Side, UnitId};
@@ -49,14 +56,43 @@ const SPACING_DP: i32 = 5;
 /// The height of the line about the cursor, and of the panels' other lines, in dp.
 const STATUS_DP: i32 = 24;
 const LINE_DP: i32 = 20;
-/// A unit's slot in the stack: its width (less if nine do not fit under the
-/// map), the space between two, and the size of the icon in it, in dp.
+/// A unit's box in the stack: its width (less if they do not fit under the
+/// map beside the buttons), the space between two, and the size of the icon
+/// in it, in dp; and the space between the boxes and the buttons.
 const SLOT_DP: i32 = 84;
 const SLOT_SPACING_DP: i32 = 4;
 const ICON_DP: i32 = 40;
-/// How many slots the stack has: one for each unit a hex can hold, and one
-/// more (for a leader, one day).
-pub const STACK_SLOTS: usize = MAX_STACK + 1;
+const STACK_BAR_SPACING_DP: i32 = 8;
+/// The space between the menu bar and what is under it (`spacing: 4`), and
+/// the coin's size, in dp.
+const MENU_SPACING_DP: i32 = 4;
+const COIN_DP: i32 = 18;
+/// How many boxes the stack has for units: one for each a hex can hold. Its
+/// leader (its commander) has one more, on the left: [`LEADER_ID`].
+pub const STACK_SLOTS: usize = MAX_STACK;
+pub const LEADER_ID: &str = "unit_leader";
+/// The menus' titles (their ids are the menus'), and the items only the menus
+/// have; the others share their ids with a button or with what a key does.
+pub const MENU_GAME_ID: &str = "menu_game";
+pub const MENU_UNITS_ID: &str = "menu_units";
+pub const MENU_CITIES_ID: &str = "menu_cities";
+pub const MENU_VIEW_ID: &str = "menu_view";
+pub const MENU_HELP_ID: &str = "menu_help";
+pub const MENU_TITLES: [(&str, &str); 5] = [
+    (MENU_GAME_ID, "Game"),
+    (MENU_UNITS_ID, "Units"),
+    (MENU_CITIES_ID, "Cities"),
+    (MENU_VIEW_ID, "View"),
+    (MENU_HELP_ID, "Help"),
+];
+pub const PREV_STACK_ID: &str = "prev_stack";
+pub const PREV_CITY_ID: &str = "prev_city";
+pub const DESELECT_ID: &str = "deselect";
+pub const CAPITAL_ID: &str = "capital";
+/// The treasury in the menu bar: the gold, what comes in a turn, what goes out.
+pub const GOLD_ID: &str = "gold";
+pub const GOLD_IN_ID: &str = "gold_in";
+pub const GOLD_OUT_ID: &str = "gold_out";
 /// The button that ends the turn, and the line about the cursor.
 pub const END_TURN_ID: &str = "end_turn";
 /// The buttons for the lists of cities, and the one for the selected city.
@@ -160,10 +196,9 @@ struct Slot {
 }
 
 impl Slot {
-    /// The resource the slot is made from (`Session` makes them, so that their
-    /// number is a constant, not a list in the layout).
-    fn resource(i: usize) -> String {
-        let id = unit_button_id(i);
+    /// The resource the slot with the id `id` is made from (`Session` makes
+    /// them, so that their number is a constant, not a list in the layout).
+    fn resource(id: &str) -> String {
         format!(
             "TBButton: id: {id}, skin: UnitSlot, is-focusable: 0\n\
              \tTBLayout: axis: y, spacing: 2\n\
@@ -171,36 +206,65 @@ impl Slot {
              \t\tTBTextField: id: {id}_text, text-align: center\n"
         )
     }
+
+    /// Make the slot `id` in `row`.
+    fn make(screen: &mut MapScreen, row: WidgetId, id: &str) -> Result<Slot, String> {
+        screen.ui.inflate(row, &Slot::resource(id)).map_err(|e| format!("a box of the stack: {e}"))?;
+        let (button, icon) = (find(screen, id)?, find(screen, &format!("{id}_icon"))?);
+        Ok(Slot { button, icon, numbers: Line::find(screen, &format!("{id}_text"))?, shows: None })
+    }
 }
 
 /// The game's keys and clicks, for the help window (F1).
-fn help_section() -> HelpSection {
-    let end_turn = format!("End turn,  or  {}+T", command_key());
+fn help_section() -> Vec<HelpSection> {
+    let end_turn = format!("{}+T,  or  End turn", command_key());
     let undo = format!("{}+Z,  or  Undo", command_key());
-    HelpSection::new(
-        "The game",
-        &[
-            ("Click a hex,  or  Enter", "Choose it: select its stack, or send the selected units there"),
-            ("Click a hex they cannot reach", "Drop the selection (and select the stack there, if it is yours)"),
-            ("A hex with another side's units", "Sending units there attacks them: the line below says the odds"),
-            ("Drag on the map", "Move it (a press that does not move is a click)"),
-            ("Point at a unit below", "All about it"),
-            ("Click a unit below", "Take it into the selection, or leave it out"),
-            ("Esc", "Close the window on top; with none open, drop the selection"),
-            (&undo, "Take back the last move or city order (not a battle)"),
-            ("N,  or  Next stack", "Select the next stack that can still move (Shift+N: the one before)"),
-            ("C,  or  Next city", "Go to your next city (Shift+C: the one before)"),
-            ("G,  or  Go to", "Then click a hex: the selected units go there, over as many turns as it takes"),
-            ("D,  or  Done", "Put the selected units aside for this turn (Next stack passes them by)"),
-            ("T,  or  Tasks", "What you have left to do: stacks with no orders, idle cities, then the rest"),
-            ("L,  or  Log", "Your battles, with who won and who died, and the cities you took and lost"),
-            ("Watch, in the log", "A battle you fought, played out again: both stacks, a hit at a time"),
-            (&end_turn, "End the turn: your log shows what the others do; then Start turn"),
-            ("City details", "All about the selected city; set what it builds (point at one: all about it)"),
-            ("Send new units to...", "In a city's window, then click a hex: what it builds goes there on its own"),
-            ("All cities, My cities", "A list of cities: see where one is, go to it, open it"),
-        ],
-    )
+    vec![
+        HelpSection::new(
+            "The game",
+            &[
+                ("The menus along the top", "Everything there is to do; each item says its keys"),
+                ("Click a hex,  or  Enter", "Choose it: select its stack, or send the selected units there"),
+                ("Click a hex they cannot reach", "Drop the selection (and select the stack there, if it is yours)"),
+                ("A hex with another side's units", "Sending units there attacks them: the line below says the odds"),
+                ("Drag on the map", "Move it (a press that does not move is a click)"),
+                ("Point at a unit below", "All about it"),
+                (
+                    "Click a unit below",
+                    "Take it into the selection, or leave it out (the leader's box is the left one)",
+                ),
+                ("Esc", "Close the menu or the window on top; with none open, drop the selection"),
+                (&undo, "Take back the last move or city order (not a battle)"),
+                (&end_turn, "End the turn: your log shows what the others do; then Start turn"),
+            ],
+        ),
+        HelpSection::new(
+            "Units",
+            &[
+                ("N,  or  Next", "Select the next stack that can still move (Shift+N: the one before)"),
+                ("G,  or  Go to", "Then click a hex: the selected units go there, over as many turns as it takes"),
+                ("D,  or  Done", "Put the selected units aside for this turn (Next stack passes them by)"),
+            ],
+        ),
+        HelpSection::new(
+            "Cities",
+            &[
+                ("C", "Go to your next city (Shift+C: the one before)"),
+                ("Your city, in the sidebar", "Set what it builds (point at one: all about it), where its units go"),
+                ("O,  or  City details", "The selected city's window, with more room"),
+                ("M,  A", "Your cities, all cities: see where one is, go to it, open it"),
+            ],
+        ),
+        HelpSection::new(
+            "View",
+            &[
+                ("T", "Tasks: what you have left to do, stacks with no orders and idle cities first"),
+                ("L", "Your log: your battles, who won and who died, the cities you took and lost"),
+                ("Watch, in the log", "A battle you fought, played out again: both stacks, a hit at a time"),
+                ("H", "Your capital (in hotseat, each turn starts there)"),
+            ],
+        ),
+    ]
 }
 
 pub struct Session {
@@ -215,20 +279,33 @@ pub struct Session {
     stack_row: WidgetId,
     status: Line,
     hex_title: Line,
+    /// The stack's boxes: its leader's, and its units'.
+    leader: Slot,
     slots: Vec<Slot>,
+    stack_actions: WidgetId,
     unit_line: Line,
     tip: WidgetId,
     tip_lines: Vec<Line>,
+    /// Another side's city, as it shows from outside, a line at a time (in
+    /// `city_text`); one of the player's own in full (in `city_box`).
     city: Vec<Line>,
-    /// The player's gold, and its taxes and upkeep.
-    gold: Vec<Line>,
+    city_text: WidgetId,
+    city_box: WidgetId,
+    city_scroll: WidgetId,
+    city_panel: Option<CityPanel>,
+    /// The city, and its holder, the panel was made for.
+    panel_of: Option<(CityId, Side)>,
+    /// A press on the map closed a menu: the click it makes does nothing.
+    swallow_click: bool,
     city_details: WidgetId,
+    /// The menu bar, its menus, and the treasury at its end: the gold, what
+    /// comes in a turn, what goes out.
+    menu_bar: WidgetId,
+    menu_room: WidgetId,
+    menus: MenuBar,
+    treasury: [Line; 3],
     sidebar: WidgetId,
-    city_lists: WidgetId,
     turn_row: WidgetId,
-    next_row: WidgetId,
-    order_row: WidgetId,
-    log_row: WidgetId,
     undo: WidgetId,
     go_to: WidgetId,
     done: WidgetId,
@@ -285,16 +362,24 @@ impl Session {
     pub fn with_game(assets: &Path, viewport: Size, dpi: i32, game: Game) -> Result<Session, String> {
         let dirs = AssetDirs::new(assets, game.assets.as_deref());
         let mut screen = MapScreen::new(assets, viewport, dpi, LAYOUT, game)?;
-        screen.set_help(vec![help_section()]);
+        screen.set_help(help_section());
         screen.set_drag_pans(true);
         let stack_row = find(&screen, STACK_ID)?;
-        let mut slots = Vec::with_capacity(STACK_SLOTS);
-        for i in 0..STACK_SLOTS {
-            screen.ui.inflate(stack_row, &Slot::resource(i)).map_err(|e| format!("a slot of the stack: {e}"))?;
-            let id = unit_button_id(i);
-            let (button, icon) = (find(&screen, &id)?, find(&screen, &format!("{id}_icon"))?);
-            slots.push(Slot { button, icon, numbers: Line::find(&screen, &format!("{id}_text"))?, shows: None });
-        }
+        let leader = Slot::make(&mut screen, stack_row, LEADER_ID)?;
+        let slots = (0..STACK_SLOTS)
+            .map(|i| Slot::make(&mut screen, stack_row, &unit_button_id(i)))
+            .collect::<Result<_, _>>()?;
+        let next = find(&screen, NEXT_STACK_ID)?;
+        screen.ui.set_text(next, "Next \u{bb}");
+        // The menus' titles, and the coin by the treasury.
+        let titles = find(&screen, "menu_titles")?;
+        let menus = MenuBar::new(&mut screen.ui, titles, &MENU_TITLES);
+        let coin_px = screen.ui.dimension_converter().dp_to_px(COIN_DP);
+        let coin = coin_icon(coin_px);
+        let coin_image = screen.ui.image_from_pixels("coin", coin.size, &coin.rgba);
+        let coin_widget = find(&screen, "coin")?;
+        screen.ui.set_layout_params(coin_widget, Some(LayoutParams::fixed(coin_px, coin_px)));
+        screen.ui.with_widget::<ImageWidget, _>(coin_widget, |w, cx| w.set_image(cx, coin_image));
         let lines = |screen: &MapScreen, name: &str, n: usize| -> Result<Vec<Line>, String> {
             (0..n).map(|i| Line::find(screen, &format!("{name}_{i}"))).collect()
         };
@@ -310,19 +395,30 @@ impl Session {
             stack_row,
             status: Line::find(&screen, STATUS_ID)?,
             hex_title: Line::find(&screen, HEX_TITLE_ID)?,
+            leader,
             slots,
+            stack_actions: find(&screen, "stack_actions")?,
             unit_line: Line::find(&screen, UNIT_LINE_ID)?,
             tip,
             tip_lines: lines(&screen, "tip", TIP_LINES)?,
             city: lines(&screen, "city", CITY_LINES)?,
-            gold: lines(&screen, "gold", 2)?,
+            city_text: find(&screen, "city_panel")?,
+            city_box: find(&screen, "city_box")?,
+            city_scroll: find(&screen, "city_scroll")?,
+            city_panel: None,
+            panel_of: None,
+            swallow_click: false,
             city_details: find(&screen, CITY_DETAILS_ID)?,
+            menu_bar: find(&screen, "menu_bar")?,
+            menu_room: find(&screen, "menu_room")?,
+            menus,
+            treasury: [
+                Line::find(&screen, GOLD_ID)?,
+                Line::find(&screen, GOLD_IN_ID)?,
+                Line::find(&screen, GOLD_OUT_ID)?,
+            ],
             sidebar: find(&screen, "main_sidebar")?,
-            city_lists: find(&screen, "city_lists")?,
             turn_row: find(&screen, "turn_row")?,
-            next_row: find(&screen, "next_row")?,
-            order_row: find(&screen, "order_row")?,
-            log_row: find(&screen, "log_row")?,
             undo: find(&screen, UNDO_ID)?,
             go_to: find(&screen, GO_TO_ID)?,
             done: find(&screen, DONE_ID)?,
@@ -469,8 +565,16 @@ impl Session {
         let game = &self.screen.game;
         let side = game.player();
         let person = game.controller(side) == Some(&Controller::Person);
-        if person && game.winner().is_none() && game.setup().people() > 1 && self.last_person != Some(side) {
+        let hotseat = game.setup().people() > 1;
+        if person && game.winner().is_none() && hotseat && self.last_person != Some(side) {
             self.open_cover(side);
+        }
+        // In hotseat, a person's turn starts at their capital.
+        if person && hotseat && self.last_person != Some(side) {
+            if let Some(capital) = self.screen.game.capital(side) {
+                self.screen.game.deselect();
+                self.look_at(capital);
+            }
         }
         if person {
             self.last_person = Some(side);
@@ -531,21 +635,35 @@ impl Session {
     /// them. Called again whenever the window's size changes.
     /// C++: assets/layouts/main.lua
     fn apply_layout_sizes(&mut self) {
-        let Size { w, h } = self.screen.ui.viewport();
+        let Size { w, h: window_h } = self.screen.ui.viewport();
         let dp = |screen: &MapScreen, dp: i32| screen.ui.dimension_converter().dp_to_px(dp);
         let spacing = dp(&self.screen, SPACING_DP);
         let map_w = (w as f32 * MAP_WIDTH_SHARE).floor() as i32;
         let side_w = (w - map_w - spacing).max(0);
+        // The menu bar across the top; everything else under it.
+        let ui = &mut self.screen.ui;
+        let bar_h = ui.preferred_size_free(self.menu_bar).pref.h;
+        ui.set_layout_params(self.menu_bar, Some(LayoutParams::fixed(w.max(0), bar_h)));
+        // The room between the menus and the treasury takes what is left.
+        ui.set_layout_params(
+            self.menu_room,
+            Some(LayoutParams { min_w: Some(0), max_w: Some(w.max(0)), ..LayoutParams::default() }),
+        );
+        let h = (window_h - bar_h - dp(&self.screen, MENU_SPACING_DP)).max(0);
 
         let (status_h, line_h) = (dp(&self.screen, STATUS_DP), dp(&self.screen, LINE_DP));
         let gap = dp(&self.screen, SLOT_SPACING_DP);
-        let fit = (map_w - gap * (STACK_SLOTS as i32 - 1)) / STACK_SLOTS as i32;
+        // The leader's box and the units', beside the buttons.
+        let boxes = STACK_SLOTS as i32 + 1;
+        let actions = self.screen.ui.preferred_size_free(self.stack_actions).pref.w;
+        let room = map_w - actions - dp(&self.screen, STACK_BAR_SPACING_DP);
+        let fit = (room - gap * (boxes - 1)) / boxes;
         let (slot_w, icon) = (dp(&self.screen, SLOT_DP).min(fit).max(0), dp(&self.screen, ICON_DP));
         let ui = &mut self.screen.ui;
         ui.set_layout_params(self.status.widget, Some(LayoutParams::fixed(map_w, status_h)));
         ui.set_layout_params(self.hex_title.widget, Some(LayoutParams::fixed(map_w, line_h)));
         ui.set_layout_params(self.unit_line.widget, Some(LayoutParams::fixed(map_w, line_h)));
-        for slot in &self.slots {
+        for slot in std::iter::once(&self.leader).chain(&self.slots) {
             let mut lp = LayoutParams::default();
             lp.set_width(slot_w);
             ui.set_layout_params(slot.button, Some(lp));
@@ -553,7 +671,7 @@ impl Session {
         }
         // The slots do not push the sidebar off a narrow window.
         ui.set_layout_params(self.stack_row, Some(LayoutParams { max_w: Some(map_w), ..LayoutParams::default() }));
-        for line in self.city.iter().chain(&self.gold) {
+        for line in &self.city {
             ui.set_layout_params(line.widget, Some(LayoutParams::fixed(side_w, line_h)));
         }
         // Nor do the sidebar's buttons push it wider than its share (their
@@ -562,16 +680,18 @@ impl Session {
         // The sidebar is as tall as the window (its rows of buttons alone
         // would make it only as tall as they are).
         ui.set_layout_params(self.sidebar, Some(LayoutParams { max_h: Some(h), ..narrow }));
-        ui.set_layout_params(self.city_lists, Some(narrow));
         ui.set_layout_params(self.turn_row, Some(narrow));
-        ui.set_layout_params(self.next_row, Some(narrow));
-        ui.set_layout_params(self.order_row, Some(narrow));
-        ui.set_layout_params(self.log_row, Some(narrow));
+        ui.set_layout_params(self.city_box, Some(narrow));
         // The panel is as tall as its lines and its slots (an empty slot keeps
         // its room), and the map has the rest.
         let panel_h = ui.preferred_size_free(self.panel).pref.h;
         let map_h = (h - spacing - panel_h).max(0);
         let minimap_h = h - (h as f32 * (1.0 - MINIMAP_HEIGHT_SHARE)).floor() as i32;
+        // The city's box has what the minimap and the turn's buttons leave
+        // of the sidebar (and scrolls if the city needs more).
+        let turn_h = ui.preferred_size_free(self.turn_row).pref.h;
+        let city_h = (h - minimap_h - turn_h - 2 * spacing).max(0);
+        ui.set_layout_params(self.city_scroll, Some(LayoutParams::fixed(side_w, city_h)));
         self.screen.set_map_sizes(Size::new(map_w, map_h), Size::new(side_w, minimap_h.min(h)));
     }
 
@@ -628,14 +748,46 @@ impl Session {
     /// The numbers under the icons of the selected hex's units, the first unit
     /// first.
     pub fn stack(&self) -> Vec<&str> {
-        let units = self.stack_units().len();
-        self.slots.iter().take(units).map(|slot| slot.numbers.text.as_str()).collect()
+        let boxes = self.boxes();
+        std::iter::once(&self.leader)
+            .chain(&self.slots)
+            .zip(boxes)
+            .filter(|(_, unit)| unit.is_some())
+            .map(|(slot, _)| slot.numbers.text.as_str())
+            .collect()
     }
 
-    /// The picture the `i`th slot shows: the image of the unit's kind and its
-    /// side (`None` for an empty slot).
+    /// The picture the `i`th unit's box shows: the image of the unit's kind
+    /// and its side (`None` for an empty box). The leader's: [`Session::leader_icon`].
     pub fn slot_icon(&self, i: usize) -> Option<(&str, Side)> {
         self.slots.get(i)?.shows.as_ref().map(|(image, side, _)| (image.as_str(), *side))
+    }
+
+    /// The picture the leader's box shows, if the stack has one.
+    pub fn leader_icon(&self) -> Option<(&str, Side)> {
+        self.leader.shows.as_ref().map(|(image, side, _)| (image.as_str(), *side))
+    }
+
+    /// The units in the stack's boxes: its leader's first (`None` if it has
+    /// none), then a box for each of the eight a hex holds, its units in their
+    /// order (`None` for an empty box).
+    fn boxes(&self) -> Vec<Option<UnitId>> {
+        let map = &self.screen.game.map;
+        let ids = self.stack_units();
+        let leader = ids.iter().copied().find(|id| map.is_commander(*id));
+        let mut boxes = vec![leader];
+        boxes.extend(ids.iter().copied().filter(|id| Some(*id) != leader).map(Some));
+        boxes.resize(STACK_SLOTS + 1, None);
+        boxes
+    }
+
+    /// The `i`th box: the leader's, then the units'.
+    fn slot(&self, i: usize) -> &Slot {
+        if i == 0 { &self.leader } else { &self.slots[i - 1] }
+    }
+
+    fn slot_mut(&mut self, i: usize) -> &mut Slot {
+        if i == 0 { &mut self.leader } else { &mut self.slots[i - 1] }
     }
 
     /// The line about the selected unit.
@@ -680,18 +832,22 @@ impl Session {
         let map = &game.map;
         let status = info::cursor_line_for(game, &self.sight);
         let title = info::hex_title_for(map, self.shown, self.sight.sees(self.shown));
-        // The units of the selected hex: each one's icon and numbers, and
-        // which of them is the selected one.
-        let ids = self.stack_units();
-        let units: Vec<(IconKey, String)> = ids
+        // The units of the selected hex in their boxes: each one's icon and
+        // numbers, and which of them are selected.
+        let ids = self.boxes();
+        let units: Vec<Option<(IconKey, String)>> = ids
             .iter()
-            .filter_map(|id| map.units().get(*id))
-            .map(|unit| {
+            .map(|id| {
+                let unit = map.units().get((*id)?)?;
                 let image = map.units().kind_of(unit).map_or(DEFAULT_UNIT_IMAGE, |kind| kind.image.as_str());
-                ((image.to_string(), unit.side(), unit.level), info::unit_numbers(unit))
+                Some(((image.to_string(), unit.side(), unit.level), info::unit_numbers(unit)))
             })
             .collect();
-        let chosen: Vec<bool> = ids.iter().map(|id| game.selection().contains(id)).collect();
+        let chosen: Vec<bool> = ids.iter().map(|id| id.is_some_and(|id| game.selection().contains(&id))).collect();
+        // The empty leader's box says whose it is (the map's first kind of
+        // commander).
+        let leader_word =
+            map.units().kinds().iter().find(|k| k.commander > 0).map_or("Leader", |k| k.name.as_str()).to_string();
         // The selected unit in a line, wherever it stands; a stack in a word.
         let line = match game.selected().and_then(|id| map.units().get(id)) {
             _ if self.picking == Some(Pick::GoTo) => match &self.refused {
@@ -713,14 +869,24 @@ impl Session {
                 game.selection().len()
             ),
             Some(unit) => info::unit_line(map, unit),
-            None if ids.is_empty() => String::new(),
+            None if ids.iter().all(Option::is_none) => String::new(),
             None => "Click your units to select them, then a hex to send them there.".to_string(),
         };
-        // All about the unit whose slot the pointer is on.
+        // All about the unit whose box the pointer is on; or what the city in
+        // the sidebar can build, whose button it is on.
         let hovered = self.screen.ui.hovered();
-        let tipped = self.slots.iter().position(|slot| Some(slot.button) == hovered).filter(|i| *i < units.len());
-        let mut tip =
-            tipped.and_then(|i| map.units().get(ids[i])).map_or(Vec::new(), |unit| info::unit_details(map, unit));
+        let tipped = (0..=STACK_SLOTS).find(|i| Some(self.slot(*i).button) == hovered);
+        let unit_tip = tipped.and_then(|i| map.units().get(ids[i]?)).map(|unit| info::unit_details(map, unit));
+        let city_tip = self.city_panel.as_ref().and_then(|panel| {
+            let (button, what) = panel.hovered(&self.screen.ui)?;
+            let city = map.cities().get(panel.city())?;
+            Some((button, info::production_details(map, city.units.get(what)?, city.trains)))
+        });
+        let (mut tip, tip_at) = match (unit_tip, city_tip) {
+            (Some(lines), _) => (lines, tipped.map(|i| (self.slot(i).button, false))),
+            (None, Some((button, lines))) => (lines, Some((button, true))),
+            (None, None) => (Vec::new(), None),
+        };
         tip.truncate(TIP_LINES);
         let city = map.city_at(self.shown).map_or(Vec::new(), |city| {
             let known = info::Known::of(city, self.seer(), &self.sight);
@@ -730,24 +896,28 @@ impl Session {
         self.status.set(&mut self.screen, &status);
         self.hex_title.set(&mut self.screen, &title);
         self.unit_line.set(&mut self.screen, &line);
-        for i in 0..self.slots.len() {
-            let unit = units.get(i);
-            let key = unit.map(|(key, _)| key.clone());
-            if self.slots[i].shows != key {
+        for (i, unit) in units.iter().enumerate() {
+            let key = unit.as_ref().map(|(key, _)| key.clone());
+            if self.slot(i).shows != key {
                 let handle = key.as_ref().map_or(ImageHandle::default(), |key| self.icon(key));
-                let icon = self.slots[i].icon;
+                let icon = self.slot(i).icon;
                 self.screen.ui.with_widget::<ImageWidget, _>(icon, |w, cx| w.set_image(cx, handle));
-                self.slots[i].shows = key;
+                self.slot_mut(i).shows = key;
             }
-            let slot = &mut self.slots[i];
-            slot.numbers.set(&mut self.screen, unit.map_or("", |(_, numbers)| numbers.as_str()));
-            // An empty slot keeps its room.
-            let visibility = if unit.is_some() { Visibility::Visible } else { Visibility::Invisible };
-            set_visibility(&mut self.screen, slot.button, visibility);
-            // The selected unit's slot is the one that is pressed in.
+            let empty_word = if i == 0 { leader_word.clone() } else { String::new() };
+            let numbers = unit.as_ref().map_or(empty_word.as_str(), |(_, numbers)| numbers.as_str()).to_string();
+            let button = self.slot(i).button;
+            let screen = &mut self.screen;
+            let slot = if i == 0 { &mut self.leader } else { &mut self.slots[i - 1] };
+            slot.numbers.set(screen, &numbers);
+            // An empty box stays, dimmed.
+            if screen.ui.node(button).is_some_and(|n| n.is_disabled() != unit.is_none()) {
+                screen.ui.set_disabled(button, unit.is_none());
+            }
+            // The selected units' boxes are pressed in.
             let pressed = i32::from(chosen.get(i).copied().unwrap_or(false));
-            if self.screen.ui.value(slot.button).as_int() != pressed {
-                self.screen.ui.set_value(slot.button, pressed);
+            if screen.ui.value(button).as_int() != pressed {
+                screen.ui.set_value(button, pressed);
             }
         }
         for (i, line) in self.tip_lines.iter_mut().enumerate() {
@@ -756,13 +926,21 @@ impl Session {
             let visibility = if i < tip.len() { Visibility::Visible } else { Visibility::Gone };
             set_visibility(&mut self.screen, line.widget, visibility);
         }
-        match tipped.filter(|_| !tip.is_empty()) {
-            Some(i) => self.open_tip(self.slots[i].button),
+        match tip_at.filter(|_| !tip.is_empty()) {
+            Some((button, beside)) => self.open_tip(button, beside),
             None => set_visibility(&mut self.screen, self.tip, Visibility::Gone),
         }
+        // The city: one of the player's in full in its panel; another's in
+        // lines.
+        let own = self.refresh_city_panel();
+        let city = if own { Vec::new() } else { city };
         for (i, line) in self.city.iter_mut().enumerate() {
             line.set(&mut self.screen, city.get(i).map_or("", String::as_str));
         }
+        let (text, panel) =
+            if own { (Visibility::Gone, Visibility::Visible) } else { (Visibility::Visible, Visibility::Gone) };
+        set_visibility(&mut self.screen, self.city_text, text);
+        set_visibility(&mut self.screen, self.city_scroll, panel);
         let details = if city.is_empty() { Visibility::Gone } else { Visibility::Visible };
         set_visibility(&mut self.screen, self.city_details, details);
         // The button says whose turn it ends (on a map without sides,
@@ -782,12 +960,22 @@ impl Session {
         // It is a person's to press, on their turn.
         self.screen.ui.set_disabled(self.end_turn.widget, !theirs);
         // The treasury of the person at the screen (none on a map without
-        // sides).
+        // sides): "34", "+40", "-32".
         let viewer = self.viewer();
-        let gold =
-            if viewer == Side::Grey { Default::default() } else { info::treasury_lines(&self.screen.game, viewer) };
-        for (line, text) in self.gold.iter_mut().zip(&gold) {
+        let gold = if viewer == Side::Grey {
+            [String::new(), String::new(), String::new()]
+        } else {
+            let game = &self.screen.game;
+            [game.gold(viewer).to_string(), format!("+{}", game.income(viewer)), format!("-{}", game.upkeep(viewer))]
+        };
+        for (line, text) in self.treasury.iter_mut().zip(&gold) {
             line.set(&mut self.screen, text);
+        }
+        // While a menu is open, the pointer on another title opens that one.
+        if let Some(title) = self.menus.hovered_title(&self.screen.ui) {
+            if self.menus.open_menu(&self.screen.ui).is_some_and(|open| open != title) {
+                self.open_menu(title);
+            }
         }
         // Undo is there while there is something to take back.
         let undo = self.screen.game.can_undo();
@@ -871,7 +1059,16 @@ impl Session {
             window.close(&mut self.screen.ui);
         }
         let (root, area) = (self.screen.root_window(), self.window_area());
-        // The icons of what it can build, in its holder's colors.
+        let icons = self.production_icons(id);
+        let seer = self.seer();
+        let (ui, game) = (&mut self.screen.ui, &self.screen.game);
+        let known = game.map.cities().get(id).map_or(info::Known::All, |c| info::Known::of(c, seer, &self.sight));
+        self.city_window =
+            CityWindow::open(ui, root, &game.map, id, (game.player(), known), &icons, (area, CITY_ALIGN));
+    }
+
+    /// The icons of what a city can build, in its holder's colors.
+    fn production_icons(&mut self, id: CityId) -> Vec<ImageHandle> {
         let keys: Vec<IconKey> = self.screen.game.map.cities().get(id).map_or(Vec::new(), |city| {
             let units = self.screen.game.map.units();
             city.units
@@ -882,12 +1079,45 @@ impl Session {
                 })
                 .collect()
         });
-        let icons: Vec<ImageHandle> = keys.iter().map(|key| self.icon(key)).collect();
+        keys.iter().map(|key| self.icon(key)).collect()
+    }
+
+    /// The selected hex's city in the sidebar, if it is one the person at
+    /// the screen knows in full (their own): made anew for another city, or
+    /// when its holder changed; brought up to date. True if it shows.
+    fn refresh_city_panel(&mut self) -> bool {
         let seer = self.seer();
+        let wanted = self.screen.game.map.city_at(self.shown).and_then(|city| {
+            (info::Known::of(city, seer, &self.sight) == info::Known::All).then_some((city.id, city.side))
+        });
+        // Made anew for another city, or for the same one under another
+        // holder (its icons are in its holder's colors).
+        if self.panel_of != wanted || self.city_panel.is_none() != wanted.is_none() {
+            if let Some(panel) = self.city_panel.take() {
+                panel.close(&mut self.screen.ui);
+            }
+            if let Some((id, _)) = wanted {
+                let icons = self.production_icons(id);
+                let (ui, game) = (&mut self.screen.ui, &self.screen.game);
+                self.city_panel =
+                    CityPanel::open(ui, self.city_box, &game.map, id, (game.player(), info::Known::All), &icons);
+            }
+            self.panel_of = wanted;
+        }
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
-        let known = game.map.cities().get(id).map_or(info::Known::All, |c| info::Known::of(c, seer, &self.sight));
-        self.city_window =
-            CityWindow::open(ui, root, &game.map, id, (game.player(), known), &icons, (area, CITY_ALIGN));
+        if let Some(panel) = &mut self.city_panel {
+            if !panel.refresh(ui, &game.map, (game.player(), info::Known::All)) {
+                if let Some(panel) = self.city_panel.take() {
+                    panel.close(ui);
+                }
+            }
+        }
+        self.city_panel.is_some()
+    }
+
+    /// The selected hex's city in the sidebar, while it shows there.
+    pub fn city_panel(&self) -> Option<&CityPanel> {
+        self.city_panel.as_ref()
     }
 
     /// The list of cities, every one or the player's (`own`); the same list
@@ -932,6 +1162,9 @@ impl Session {
     /// False if none was open.
     fn close_top_window(&mut self) -> bool {
         let ui = &mut self.screen.ui;
+        if self.menus.close(ui) {
+            return true;
+        }
         if let Some(battle) = self.battle.take() {
             if battle.is_open(ui) {
                 battle.close(ui);
@@ -991,9 +1224,7 @@ impl Session {
             return true;
         }
         if id == TbId::new(CITY_DETAILS_ID) {
-            if let Some(city) = self.screen.game.map.city_at(self.shown).map(|c| c.id) {
-                self.open_city(city);
-            }
+            self.open_shown_city();
             return true;
         }
         if id == TbId::new(city_windows::CITY_CLOSE_ID) {
@@ -1009,6 +1240,10 @@ impl Session {
             return true;
         }
         if let Some(order) = self.city_window.as_ref().and_then(|w| w.click(id)) {
+            self.obey(order);
+            return true;
+        }
+        if let Some(order) = self.city_panel.as_ref().and_then(|p| p.click(id)) {
             self.obey(order);
             return true;
         }
@@ -1031,16 +1266,22 @@ impl Session {
         handled
     }
 
-    /// Show the box about a unit over its slot (under it if there is no room
-    /// above, and wherever it fits in a window too small for either), inside
-    /// the window.
-    fn open_tip(&mut self, slot: WidgetId) {
+    /// Show the box about a unit over its box (under it if there is no room
+    /// above, and wherever it fits in a window too small for either), or
+    /// `beside` a button of the sidebar (to its left), inside the window.
+    fn open_tip(&mut self, slot: WidgetId, beside: bool) {
         set_visibility(&mut self.screen, self.tip, Visibility::Visible);
         let ui = &mut self.screen.ui;
         let size = ui.preferred_size_free(self.tip).pref;
         let window = ui.viewport();
         let spacing = ui.dimension_converter().dp_to_px(SPACING_DP);
         let at = Rect::from_origin_size(ui.to_root(slot, Point::ZERO), ui.rect(slot).size());
+        if beside {
+            let x = (at.x - spacing - size.w).max(0);
+            let y = at.y.min(window.h - size.h).max(0);
+            ui.set_rect(self.tip, Rect::new(x, y, size.w, size.h));
+            return;
+        }
         let x = at.x.min(window.w - size.w).max(0);
         let (above, below) = (at.y - spacing - size.h, at.bottom() + spacing);
         let y = if above >= 0 {
@@ -1392,6 +1633,86 @@ impl Session {
         self.picking
     }
 
+    /// The window of the selected hex's city (O, City details), if it is one.
+    pub fn open_shown_city(&mut self) {
+        if let Some(city) = self.screen.game.map.city_at(self.shown).map(|c| c.id) {
+            self.open_city(city);
+        }
+    }
+
+    /// Look at the person's capital (H; in hotseat each turn starts there).
+    pub fn go_to_capital(&mut self) {
+        if let Some(capital) = self.screen.game.capital(self.viewer()) {
+            self.look_at(capital);
+        }
+    }
+
+    /// Open the menu with the title `id`, as it is now.
+    fn open_menu(&mut self, id: TbId) {
+        let Some(menu) = self.menu(id) else { return };
+        let root = self.screen.root_window();
+        self.menus.open(&mut self.screen.ui, root, &menu);
+    }
+
+    /// The menu with the title `id`: its items, each with its keys, greyed
+    /// where it can do nothing now.
+    fn menu(&self, id: TbId) -> Option<Menu> {
+        let game = &self.screen.game;
+        let command = |key: char| format!("{}+{key}", command_key());
+        let turn = self.persons_turn() && game.winner().is_none() && !self.covered();
+        let units = game.selected().and_then(|id| game.map.units().get(id));
+        let own = turn && units.is_some_and(|u| u.side() == game.player());
+        let city = game.map.city_at(self.shown).is_some();
+        let people = self.people_in_play();
+        let menu = if id == TbId::new(MENU_GAME_ID) {
+            Menu::new(MENU_GAME_ID)
+                .item(END_TURN_ID, if self.between { "Start turn" } else { "End turn" }, &command('T'), turn)
+                .item(UNDO_ID, "Undo", &command('Z'), turn && game.can_undo())
+                .separator()
+                .item(QUIT_ID, "Quit", &command('Q'), true)
+        } else if id == TbId::new(MENU_UNITS_ID) {
+            Menu::new(MENU_UNITS_ID)
+                .item(NEXT_STACK_ID, "Next stack", "N", people)
+                .item(PREV_STACK_ID, "Previous stack", "Shift+N", people)
+                .separator()
+                .item(GO_TO_ID, "Go to...", "G", own)
+                .item(DONE_ID, "Done for this turn", "D", own)
+                .item(DESELECT_ID, "Drop the selection", "Esc", units.is_some())
+        } else if id == TbId::new(MENU_CITIES_ID) {
+            Menu::new(MENU_CITIES_ID)
+                .item(NEXT_CITY_ID, "Next city", "C", people)
+                .item(PREV_CITY_ID, "Previous city", "Shift+C", people)
+                .item(CITY_DETAILS_ID, "This city's window", "O", city)
+                .separator()
+                .item(MY_CITIES_ID, "My cities", "M", people)
+                .item(ALL_CITIES_ID, "All cities", "A", true)
+        } else if id == TbId::new(MENU_VIEW_ID) {
+            Menu::new(MENU_VIEW_ID)
+                .item(TASKS_ID, "Tasks", "T", people)
+                .item(LOG_ID, "Log", "L", true)
+                .separator()
+                .item(CAPITAL_ID, "Your capital", "H", people)
+                .item(ZOOM_IN_ID, "Zoom in", "2", true)
+                .item(ZOOM_OUT_ID, "Zoom out", "1", true)
+                .item(FULLSCREEN_ID, "Fullscreen", fullscreen_keys(), true)
+        } else if id == TbId::new(MENU_HELP_ID) {
+            let mut menu = Menu::new(MENU_HELP_ID).item(HELP_KEYS_ID, "Keys and mouse", "F1  or  ?", true).separator();
+            for (topic, title) in guide::TOPICS {
+                menu = menu.item(topic, title, "", true);
+            }
+            menu
+        } else {
+            return None;
+        };
+        Some(menu)
+    }
+
+    /// The menu open, if one is, and what its items are: the id, the words
+    /// and the keys of each.
+    pub fn open_menu_items(&self) -> Option<(TbId, Vec<ItemWords<'_>>)> {
+        Some((self.menus.open_menu(&self.screen.ui)?, self.menus.items()))
+    }
+
     /// The cursor goes to a hex, the view to the middle of it, and the panels
     /// are about it.
     fn look_at(&mut self, hex: Hex) {
@@ -1431,6 +1752,22 @@ impl Session {
             return;
         }
         for command in self.screen.take_map_commands() {
+            // A press on the map, or Esc, closes an open menu, and does
+            // nothing else (nor does the click the press makes).
+            let menu_open = self.menus.open_menu(&self.screen.ui).is_some();
+            match command {
+                MapCommand::Press(..) | MapCommand::Key(MapKey::Esc) if menu_open => {
+                    self.menus.close(&mut self.screen.ui);
+                    self.swallow_click = matches!(command, MapCommand::Press(..));
+                    continue;
+                }
+                MapCommand::Press(..) => self.swallow_click = false,
+                MapCommand::Click(..) if self.swallow_click => {
+                    self.swallow_click = false;
+                    continue;
+                }
+                _ => {}
+            }
             // Esc closes the help if it is open, else the window on top, and
             // with none open it drops the selection.
             if command == MapCommand::Key(MapKey::Esc)
@@ -1458,8 +1795,35 @@ impl Session {
             }
         }
         for command in self.screen.pump_shared() {
+            // A title opens its menu, or closes it if it is open; anything
+            // else closes the menu open (a click on an item then does what
+            // it says).
+            if let RootCommand::Click(id) = command {
+                if self.menus.is_title(id) {
+                    if self.menus.open_menu(&self.screen.ui) == Some(id) {
+                        self.menus.close(&mut self.screen.ui);
+                    } else {
+                        self.open_menu(id);
+                    }
+                    continue;
+                }
+            }
+            self.menus.close(&mut self.screen.ui);
             match command {
                 RootCommand::Click(id) if id == TbId::new(END_TURN_ID) => self.turn_button(),
+                RootCommand::Click(id) if id == TbId::new(PREV_STACK_ID) => self.next_stack(true),
+                RootCommand::Click(id) if id == TbId::new(PREV_CITY_ID) => self.next_city(true),
+                RootCommand::Click(id) if id == TbId::new(DESELECT_ID) => {
+                    self.picking = None;
+                    self.screen.game.deselect();
+                }
+                RootCommand::Click(id) if id == TbId::new(CAPITAL_ID) => self.go_to_capital(),
+                RootCommand::Click(id) if guide::TOPICS.iter().any(|(topic, _)| id == TbId::new(topic)) => {
+                    let topic = guide::TOPICS.iter().find(|(topic, _)| id == TbId::new(topic)).map(|(t, _)| *t);
+                    if let Some((title, sections)) = topic.and_then(|t| guide::topic(&self.screen.game, t)) {
+                        self.screen.show_topic(&format!("Help: {}", title.to_lowercase()), &sections);
+                    }
+                }
                 // Ctrl+T (Cmd+T) ends the turn too, or starts it. C++:
                 // main.cpp (the commented-out Ctrl+T)
                 RootCommand::Key(ch, mods)
@@ -1504,6 +1868,10 @@ impl Session {
                         'g' | 'G' => self.start_go_to(),
                         'd' | 'D' => self.done_with_stack(),
                         't' | 'T' => self.toggle_tasks(),
+                        'm' | 'M' => self.toggle_list(true),
+                        'a' | 'A' => self.toggle_list(false),
+                        'o' | 'O' => self.open_shown_city(),
+                        'h' | 'H' => self.go_to_capital(),
                         _ => {}
                     }
                 }

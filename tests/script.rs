@@ -64,7 +64,7 @@ fn hex_pixels_are_inside_the_map_or_none() {
     let s = session();
     let r = s.screen.map_rect();
     let p = s.screen.hex_pixel(Hex::new(50, 50)).unwrap();
-    assert!((p.x - r.w / 2).abs() <= 1 && (p.y - r.h / 2).abs() <= 1, "{p:?}");
+    assert!((p.x - (r.x + r.w / 2)).abs() <= 1 && (p.y - (r.y + r.h / 2)).abs() <= 1, "{p:?} {r:?}");
     assert!(r.contains(s.screen.hex_pixel(Hex::new(45, 41)).unwrap()));
     // Out of view.
     assert_eq!(s.screen.hex_pixel(Hex::new(50, 80)), None);

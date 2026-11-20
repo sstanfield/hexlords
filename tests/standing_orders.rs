@@ -6,11 +6,11 @@
 
 mod common;
 
-use common::{assets, click, pixel_of, press, type_char, widget};
-use hexgame::city_windows::{CITY_NO_RALLY_ID, CITY_RALLY_ID};
+use common::{assets, choose, click, pixel_of, press, type_char, widget};
+use hexgame::city_windows::{CITY_NO_RALLY_ID, CITY_RALLY_ID, PANEL_OPEN_ID};
 use hexgame::game::{CityState, Game, StackState, Task};
 use hexgame::orders::{Event, Order};
-use hexgame::session::{CITY_DETAILS_ID, DONE_ID, GO_TO_ID, Pick, Session, TASKS_ID};
+use hexgame::session::{DONE_ID, GO_TO_ID, MENU_VIEW_ID, Pick, Session, TASKS_ID};
 use hexgame::setup::Setup;
 use hexgame::state::scenario::{self, Scenario};
 use hexgame::state::{Hex, Side, TileType, UnitId};
@@ -332,8 +332,8 @@ fn done_goes_on_to_the_next_stack_and_tasks_lists_what_is_left() {
     type_char(&mut s, 'd');
     let lines = s.tasks_window().unwrap().lines().to_vec();
     assert!(lines.iter().all(|l| !l.contains("no orders")), "{lines:?}");
-    // T, or the button, closes it.
-    push(&mut s, TASKS_ID);
+    // T, or the menu, closes it.
+    choose(&mut s, MENU_VIEW_ID, TASKS_ID);
     assert!(s.tasks_window().is_none());
 }
 
@@ -342,7 +342,7 @@ fn a_city_window_sends_new_units_to_a_picked_hex() {
     let mut s = session(game("garrison soldiers\n"));
     click_hex(&mut s, REDHOLD);
     press(&mut s, SpecialKey::Esc);
-    push(&mut s, CITY_DETAILS_ID);
+    push(&mut s, PANEL_OPEN_ID);
     let says = |s: &Session| -> Vec<String> {
         common::descendants(s, hexgame::city_windows::CITY_WINDOW_ID)
             .into_iter()

@@ -34,6 +34,7 @@ pub mod battle_window;
 pub mod city_windows;
 pub mod game;
 pub mod gui;
+pub mod guide;
 pub mod headless;
 pub mod help;
 pub mod info;

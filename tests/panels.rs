@@ -9,7 +9,7 @@ mod common;
 use common::{assets, click, hover, pixel_of, widget};
 use hexgame::game::Game;
 use hexgame::screen::Scene;
-use hexgame::session::{CITY_LINES, STACK_SLOTS, Session, TIP_LINES, unit_button_id};
+use hexgame::session::{LEADER_ID, STACK_SLOTS, Session, TIP_LINES, unit_button_id};
 use hexgame::state::scenario::{self, Scenario};
 use hexgame::state::{DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Side};
 use turbo_ferret::{Modifiers, Point, Rect, Size, SpecialKey, Visibility};
@@ -78,6 +78,16 @@ fn shown(s: &Session, name: &str) -> bool {
     visibility(s, name) == Visibility::Visible
 }
 
+/// A box of the stack with a unit in it (an empty one is there, dimmed).
+fn filled(s: &Session, name: &str) -> bool {
+    shown(s, name) && s.screen.ui.node(widget(s, name)).is_some_and(|n| !n.is_disabled())
+}
+
+/// What the widgets in this one say.
+fn texts_in(s: &Session, name: &str) -> Vec<String> {
+    common::descendants(s, name).into_iter().filter_map(|id| s.screen.ui.text(id).map(str::to_string)).collect()
+}
+
 fn pressed(s: &Session, name: &str) -> bool {
     s.screen.ui.value(widget(s, name)).as_int() == 1
 }
@@ -98,32 +108,30 @@ fn at_the_start_the_panels_are_about_the_hex_the_cursor_starts_on() {
     // Nothing is selected yet: a word on what to do. No box is open.
     assert_eq!(s.unit_line(), HINT);
     assert!(s.tip().is_empty());
-    assert_eq!(
-        s.city(),
-        [
-            "Wrenfold",
-            "Held by green",
-            "Walls 1, taxes 10",
-            "Garrison: 3 units",
-            "Building nothing",
-            "Can build:",
-            "  Riders: 2 turns, price 9"
-        ]
-    );
+    // Green's own city: in full in the sidebar (no lines of another's).
+    assert_eq!(s.city_panel().map(|p| p.city()), s.screen.game.map.city_at(CITY).map(|c| c.id));
+    assert!(s.city().is_empty());
+    let panel = texts_in(&s, "city_box");
+    for line in ["Wrenfold", "Walls 1, taxes 10", "Garrison: 3 units", "Building nothing", "New units stay here"] {
+        assert!(panel.iter().any(|t| t == line), "{line} is not in {panel:?}");
+    }
     // The widgets say the same.
     assert_eq!(s.screen.ui.text(widget(&s, "status")), Some(s.status()));
     assert_eq!(s.screen.ui.text(widget(&s, "hex_title")), Some(s.hex_title()));
     assert_eq!(s.screen.ui.text(widget(&s, "unit_line")), Some(HINT));
     assert_eq!(s.screen.ui.text(widget(&s, "unit_2_text")), Some("4 \u{b7} 10/10"));
-    assert_eq!(s.screen.ui.text(widget(&s, "city_0")), Some("Wrenfold"));
-    // A slot for each unit that is there; the others keep their room.
-    assert_eq!(STACK_SLOTS, MAX_STACK + 1);
+    // A box for each unit a hex holds, and its leader's on their left: the
+    // empty ones stay, dimmed; the leader's says whose it is.
+    assert_eq!(STACK_SLOTS, MAX_STACK);
     for i in 0..STACK_SLOTS {
         let id = unit_button_id(i);
-        let expected = if i < 3 { Visibility::Visible } else { Visibility::Invisible };
-        assert_eq!(visibility(&s, &id), expected, "{id}");
+        assert!(shown(&s, &id), "{id}");
+        assert_eq!(filled(&s, &id), i < 3, "{id}");
         assert!(!pressed(&s, &id));
     }
+    assert!(shown(&s, LEADER_ID) && !filled(&s, LEADER_ID));
+    assert_eq!(s.screen.ui.text(widget(&s, &format!("{LEADER_ID}_text"))), Some("Leader"));
+    assert_eq!(s.leader_icon(), None);
     assert_eq!(visibility(&s, "unit_tip"), Visibility::Gone);
 }
 
@@ -135,18 +143,22 @@ fn the_map_takes_all_the_room_the_panels_leave() {
         let dp = |n: i32| n * dpi / 96;
         let (map, mini) = (s.screen.map_rect(), s.screen.minimap_rect());
         let inside = |r: Rect| r.x >= 0 && r.y >= 0 && r.right() <= w && r.bottom() <= h;
-        // The map in the top left corner, 80% of the width.
-        assert_eq!((map.x, map.y, map.w), (0, 0, (w as f32 * 0.8) as i32), "{w}x{h}");
+        // The map at the left under the menu bar, 80% of the width.
+        let top = frame(&s, "menu_bar").bottom() + dp(4);
+        assert_eq!((map.x, map.y, map.w), (0, top, (w as f32 * 0.8) as i32), "{w}x{h}");
         // Under it, one below the other and as wide as it: the cursor's line,
         // the heading, the slots, the selected unit's line, down to the
         // window's bottom edge.
         let (status, title, line) = (rect(&s, "status"), rect(&s, "hex_title"), rect(&s, "unit_line"));
-        let slots: Vec<Rect> = (0..STACK_SLOTS).map(|i| rect(&s, &unit_button_id(i))).collect();
+        let ids: Vec<String> =
+            std::iter::once(LEADER_ID.to_string()).chain((0..STACK_SLOTS).map(unit_button_id)).collect();
+        let slots: Vec<Rect> = ids.iter().map(|id| rect(&s, id)).collect();
         assert_eq!(status.y, map.bottom() + dp(5), "{w}x{h}");
         assert!(title.y >= status.bottom() && slots[0].y >= title.bottom() && line.y >= slots[0].bottom());
         assert_eq!((status.x, status.w, title.w, line.w), (0, map.w, map.w, map.w), "{w}x{h}");
         assert_eq!(line.bottom(), h, "{w}x{h}: no room is left under the panel");
-        // Nine slots in a row, the empty ones too, inside the map's width.
+        // Nine boxes in a row (the leader's and eight), the empty ones too,
+        // and the buttons after them, inside the map's width.
         for (i, slot) in slots.iter().enumerate() {
             assert!(inside(*slot) && slot.w > 0 && slot.h > 0 && slot.right() <= map.right(), "{w}x{h}: {i} {slot:?}");
             assert_eq!(slot.y, slots[0].y);
@@ -157,20 +169,22 @@ fn the_map_takes_all_the_room_the_panels_leave() {
         // The icon fills its 40 dp in the slot.
         let icon = rect(&s, "unit_0_icon");
         assert_eq!((icon.w, icon.h), (dp(40), dp(40)), "{w}x{h}");
-        assert!(icon.x >= slots[0].x && icon.right() <= slots[0].right(), "{w}x{h}");
-        // Beside it all, the sidebar: the minimap, the button, the city's lines.
-        assert_eq!((mini.x, mini.y), (map.right() + dp(5), 0), "{w}x{h}");
+        assert!(icon.x >= slots[1].x && icon.right() <= slots[1].right(), "{w}x{h}");
+        let next = rect(&s, "next_stack");
+        assert!(next.x >= slots[8].right() && next.right() <= map.right() && inside(next), "{w}x{h}: {next:?}");
+        // Beside it all, the sidebar: the minimap, the button, the city (the
+        // player's own, in a box that scrolls if it needs more room).
+        assert_eq!((mini.x, mini.y), (map.right() + dp(5), map.y), "{w}x{h}");
         assert_eq!(mini.right(), w);
         let end_turn = rect(&s, "end_turn");
         assert!(end_turn.y >= mini.bottom());
-        let mut below = end_turn.bottom();
-        for i in 0..CITY_LINES {
-            let line = rect(&s, &format!("city_{i}"));
-            assert!(line.y >= below && line.x >= mini.x && line.right() <= w && inside(line), "{w}x{h}: city_{i}");
-            below = line.bottom();
-        }
+        let city = rect(&s, "city_scroll");
+        assert!(
+            city.y >= end_turn.bottom() && city.x >= mini.x && city.right() <= w && inside(city),
+            "{w}x{h}: {city:?}"
+        );
 
-        // A full stack fills eight slots; the ninth stays empty.
+        // A full stack fills the eight boxes; the leader's stays empty.
         let riders = s.screen.game.map.units().kind_named("riders").unwrap();
         for _ in 0..5 {
             let unit = s.screen.game.map.new_unit_of(Side::Green, riders).unwrap();
@@ -179,8 +193,9 @@ fn the_map_takes_all_the_room_the_panels_leave() {
         s.frame(32);
         assert_eq!(s.stack().len(), MAX_STACK);
         for i in 0..STACK_SLOTS {
-            assert_eq!(shown(&s, &unit_button_id(i)), i < MAX_STACK, "{w}x{h}: slot {i}");
+            assert!(filled(&s, &unit_button_id(i)), "{w}x{h}: box {i}");
         }
+        assert!(!filled(&s, LEADER_ID));
         // The map is the size it was: the panel does not grow.
         assert_eq!(s.screen.map_rect(), map, "{w}x{h}");
     }
@@ -274,17 +289,17 @@ fn the_pointer_on_a_unit_opens_a_box_with_all_about_it() {
 
 #[test]
 fn a_box_near_the_windows_edge_stays_inside_it() {
-    // A window so short that the panel is all there is (and more): the box
-    // stays inside the window, as far as it fits in it.
-    let mut s = session_at(300, 120, 96);
+    // A window so short that the menu bar and the panel are all there is:
+    // the box stays inside the window, as far as it fits in it.
+    let mut s = session_at(300, 170, 96);
     point_at(&mut s, "unit_2");
     let tip = frame(&s, "unit_tip");
     assert!(!s.tip().is_empty());
     assert!(tip.x >= 0 && tip.right() <= 300.max(tip.w), "{tip:?}");
-    assert!(tip.y >= 0 && tip.bottom() <= 120, "{tip:?}");
+    assert!(tip.y >= 0 && tip.bottom() <= 170, "{tip:?}");
     // In a window with room under the slot but none over it, it goes under.
     let mut s = session_at(1024, 768, 96);
-    s.screen.ui.set_rect(widget(&s, "hex_panel"), Rect::new(0, 0, 819, 144));
+    s.screen.ui.set_rect(widget(&s, "hex_panel"), Rect::new(0, -40, 819, 148));
     point_at(&mut s, "unit_2");
     let (tip, slot) = (frame(&s, "unit_tip"), frame(&s, "unit_2"));
     assert!(tip.y >= slot.bottom(), "{tip:?} {slot:?}");
@@ -304,7 +319,7 @@ fn the_selected_unit_goes_where_it_is_sent_and_the_panels_follow() {
     assert_eq!(s.hex_title(), "Row 10, column 12: grass, road, 1 unit (green)");
     assert_eq!(s.stack(), ["4 \u{b7} 6/10"]);
     assert_eq!(s.slot_icon(0), Some(("units/riders.png", Side::Green)));
-    assert!(shown(&s, "unit_0") && !shown(&s, "unit_1") && !pressed(&s, "unit_0"));
+    assert!(filled(&s, "unit_0") && !filled(&s, "unit_1") && !pressed(&s, "unit_0"));
     assert_eq!(s.city(), Vec::<&str>::new(), "no city here");
     assert_eq!(s.unit_line(), HINT);
 
@@ -315,7 +330,7 @@ fn the_selected_unit_goes_where_it_is_sent_and_the_panels_follow() {
     assert!(pressed(&s, "unit_0") && pressed(&s, "unit_1"));
     assert_eq!(s.stack().len(), 2);
     assert_eq!(s.slot_icon(0), Some(("units/militia.png", Side::Green)));
-    assert_eq!(s.city()[3], "Garrison: 2 units");
+    assert!(texts_in(&s, "city_box").iter().any(|t| t == "Garrison: 2 units"));
     assert!(s.unit_line().starts_with("2 units selected"), "{}", s.unit_line());
     // A click on its own hex deselects it.
     click_hex(&mut s, CITY);
@@ -326,7 +341,7 @@ fn the_selected_unit_goes_where_it_is_sent_and_the_panels_follow() {
     click_hex(&mut s, Hex::new(8, 8));
     assert_eq!(s.hex_title(), "Row 8, column 8: grass, no units");
     assert!(s.stack().is_empty() && s.unit_line().is_empty() && s.city().is_empty());
-    assert!((0..STACK_SLOTS).all(|i| !shown(&s, &unit_button_id(i))));
+    assert!((0..STACK_SLOTS).all(|i| !filled(&s, &unit_button_id(i))));
     assert!((0..STACK_SLOTS).all(|i| s.slot_icon(i).is_none()));
     // The other city, which is nobody's: what shows from outside (what it
     // builds is not told).

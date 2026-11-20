@@ -28,7 +28,7 @@ pub use minimap_image::minimap_image;
 pub use minimap_renderer::MiniMapRenderer;
 pub use shaders::Pipelines;
 pub use textures::AssetDirs;
-pub use unit_icon::unit_icon;
+pub use unit_icon::{coin_icon, unit_icon};
 
 use turbo_ferret::Rect;
 

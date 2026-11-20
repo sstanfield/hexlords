@@ -324,7 +324,7 @@ pub fn unit_line(map: &Map, unit: &Unit) -> String {
 
 /// What each terrain costs to enter, in words, a few to a line: "grass 2,
 /// forest 3". What cannot be entered is left out.
-fn enters(cost: &MoveCost, per_line: usize) -> Vec<String> {
+pub fn enters(cost: &MoveCost, per_line: usize) -> Vec<String> {
     let words: Vec<String> = cost
         .prices()
         .iter()

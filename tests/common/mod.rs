@@ -64,6 +64,21 @@ pub fn widget(s: &Session, name: &str) -> WidgetId {
     s.screen.ui.find(s.screen.ui.root(), TbId::new(name)).unwrap_or_else(|| panic!("no widget {name}"))
 }
 
+/// Click the middle of the widget with this id (a button).
+pub fn push_widget(s: &mut Session, name: &str) {
+    let r = s.screen.area(widget(s, name));
+    click(s, Point::new(r.x + r.w / 2, r.y + r.h / 2));
+}
+
+/// Choose an item of a menu as a player does: a click on its title, then on
+/// the item.
+pub fn choose(s: &mut Session, menu: &str, item: &str) {
+    push_widget(s, menu);
+    assert!(s.open_menu_items().is_some(), "{menu} opens");
+    push_widget(s, item);
+    assert!(s.open_menu_items().is_none(), "choosing {item} closes {menu}");
+}
+
 /// The widget with this id and all that is in it, the widget first.
 pub fn descendants(s: &Session, name: &str) -> Vec<WidgetId> {
     let mut out = Vec::new();
