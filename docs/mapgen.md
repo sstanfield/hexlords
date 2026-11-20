@@ -122,7 +122,12 @@ with an error that says so.
    Its best inland hexes are the mountains; a ring of hills is laid along
    them by the same score (so what is left out is left out in stretches)
    until `hill_ring` of their edges border hills, thickened outward, and the
-   rest of the hills grow as free patches of a noise of their own.
+   rest of the hills grow as free patches of a noise of their own. Land
+   walled in by mountains is of no use: a hollow of a few hexes fills with
+   mountain, a bigger pocket gets a way out where its wall is lowest (cut
+   into hills). (The owner's eye, on the judged maps of
+   `tests/mapgen/judged`: such pockets, and ranges in straight parallel
+   stripes, were what the worst maps had.)
 3. **Forest, swamp, desert** (`biomes.rs`): a moisture from a slow noise and
    the water near. Swamps grow from one to three seeds where the land is low
    and wet by the water, round about their seed; forest is the wettest

@@ -135,6 +135,9 @@ pub struct Stats {
     pub land: usize,
     pub coastal_land: usize,
     pub land_pieces: Vec<usize>,
+    /// Land walled in by mountains (`pockets`): each pocket's size, the
+    /// biggest first.
+    pub pockets: Vec<usize>,
     /// How many land hexes each land terrain has (`LAND`), and the places
     /// (cities, temples, ruins).
     pub mix: Vec<(TileType, usize)>,
@@ -204,6 +207,9 @@ impl Stats {
         let (_, mut land_pieces) = pieces(rows, cols, |h| !water(h));
         land_pieces.sort_unstable_by(|a, b| b.cmp(a));
         s.land_pieces = land_pieces;
+        let mut walled: Vec<usize> = pockets(rows, cols, &|h| kind(map, h)).iter().map(Vec::len).collect();
+        walled.sort_unstable_by(|a, b| b.cmp(a));
+        s.pockets = walled;
 
         // The mix and the shape of the terrain.
         for t in LAND {
@@ -269,6 +275,14 @@ impl Stats {
         let _ = writeln!(out, "  coastal land {:.1}% of land", pct(self.coastal_land, self.land));
         let pieces: Vec<String> = self.land_pieces.iter().take(8).map(|n| n.to_string()).collect();
         let _ = writeln!(out, "  land pieces {}: {}", self.land_pieces.len(), pieces.join(" / "));
+        let walled: Vec<String> = self.pockets.iter().take(8).map(|n| n.to_string()).collect();
+        let _ = writeln!(
+            out,
+            "  walled in by mountains: {} hexes in {} pockets: {}",
+            self.pockets.iter().sum::<usize>(),
+            self.pockets.len(),
+            walled.join(", ")
+        );
         let mix: Vec<String> =
             LAND.iter().map(|t| format!("{} {:.1}%", terrain_word(*t), self.land_share(*t))).collect();
         let _ = writeln!(out, "land mix: {}, places {:.1}%", mix.join(", "), pct(self.places, self.land));
@@ -372,6 +386,33 @@ pub fn terrain_word(t: TileType) -> &'static str {
 
 fn words(shares: &[(TileType, f64)]) -> String {
     shares.iter().map(|(t, f)| format!("{} {:.0}%", terrain_word(*t), f * 100.0)).collect::<Vec<_>>().join(", ")
+}
+
+/// Land walled in by mountains: each piece of the land a walker can stand
+/// on (not water, not mountain) that is not the biggest of the land it is
+/// on, its hexes. (Pieces cut off by water are islands, not pockets.)
+pub fn pockets(rows: u16, cols: u16, kind: &dyn Fn(Hex) -> TileType) -> Vec<Vec<Hex>> {
+    let (land, _) = pieces(rows, cols, |h| kind(h) != TileType::Water);
+    let (walk, sizes) = pieces(rows, cols, |h| !matches!(kind(h), TileType::Water | TileType::Mountain));
+    let all = Grid::new(rows, cols, ());
+    // Each walkable piece's land, and the biggest walkable piece of each land.
+    let mut land_of = vec![0usize; sizes.len()];
+    let mut hexes: Vec<Vec<Hex>> = vec![Vec::new(); sizes.len()];
+    for h in all.hexes() {
+        if let (Some(w), Some(l)) = (*walk.get(h), *land.get(h)) {
+            land_of[w] = l;
+            hexes[w].push(h);
+        }
+    }
+    let mut main: Vec<(usize, usize)> = Vec::new(); // (land, walkable piece)
+    for (w, size) in sizes.iter().enumerate() {
+        match main.iter_mut().find(|(l, _)| *l == land_of[w]) {
+            Some(entry) if sizes[entry.1] < *size => entry.1 = w,
+            Some(_) => {}
+            None => main.push((land_of[w], w)),
+        }
+    }
+    hexes.into_iter().enumerate().filter(|(w, _)| !main.iter().any(|(_, m)| m == w)).map(|(_, h)| h).collect()
 }
 
 /// True if water at `hex` is no more than 5 wide some way across: along one

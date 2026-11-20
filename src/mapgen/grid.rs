@@ -173,6 +173,51 @@ pub fn cheapest_from(
     (cost, owner)
 }
 
+/// The cheapest way from any of `sources` to a hex `goal` says is one, at
+/// the price `step` says a step into a hex costs (`None`: it cannot be
+/// entered): the hexes after the source, the goal last. `None` if there is
+/// none.
+pub fn cheapest_path(
+    rows: u16,
+    cols: u16,
+    sources: &[Hex],
+    step: impl Fn(Hex) -> Option<u32>,
+    goal: impl Fn(Hex) -> bool,
+) -> Option<Vec<Hex>> {
+    let mut cost: Grid<Option<u32>> = Grid::new(rows, cols, None);
+    let mut from: Grid<Option<Hex>> = Grid::new(rows, cols, None);
+    let mut queue = BinaryHeap::new();
+    for s in sources {
+        cost.set(*s, Some(0));
+        queue.push(Reverse((0, cost.index(*s))));
+    }
+    while let Some(Reverse((spent, at))) = queue.pop() {
+        let hex = cost.hex(at);
+        if *cost.get(hex) != Some(spent) {
+            continue;
+        }
+        if goal(hex) && !sources.contains(&hex) {
+            let mut way = vec![hex];
+            while let Some(prev) = *from.get(*way.last()?) {
+                way.push(prev);
+            }
+            way.pop(); // the source
+            way.reverse();
+            return Some(way);
+        }
+        for next in hex.neighbours(rows, cols) {
+            let Some(price) = step(next) else { continue };
+            let total = spent + price;
+            if cost.get(next).is_none_or(|old| total < old) {
+                cost.set(next, Some(total));
+                from.set(next, Some(hex));
+                queue.push(Reverse((total, cost.index(next))));
+            }
+        }
+    }
+    None
+}
+
 /// The pieces the hexes `member` says are in fall into (six-way joined): each
 /// hex's piece, and each piece's size, the pieces in the order of their first
 /// hex.
@@ -245,6 +290,21 @@ mod tests {
         // Halfway, as dear from both: the first source's.
         assert_eq!(*owner.get(Hex::new(2, 4)), Some(0));
         assert_eq!(*cost.get(Hex::new(2, 4)), Some(13));
+    }
+
+    #[test]
+    fn the_cheapest_path_goes_round_the_dear() {
+        // From column 0 to column 4, dear on column 2 but at row 7.
+        let way = cheapest_path(
+            10,
+            6,
+            &[Hex::new(2, 0)],
+            |h| Some(if h.col == 2 && h.row != 7 { 50 } else { 1 }),
+            |h| h.col == 4,
+        )
+        .unwrap();
+        assert!(way.contains(&Hex::new(7, 2)) && way.last().unwrap().col == 4);
+        assert!(cheapest_path(10, 6, &[Hex::new(2, 0)], |h| (h.col != 2).then_some(1), |h| h.col == 4).is_none());
     }
 
     #[test]

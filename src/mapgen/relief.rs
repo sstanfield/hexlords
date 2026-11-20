@@ -9,7 +9,7 @@ use crate::state::{Hex, TileType};
 
 use super::Gen;
 use super::config::{Config, RangeStyle};
-use super::grid::{Grid, pieces, top};
+use super::grid::{Grid, cheapest_path, pieces, top};
 use super::noise::{center, fbm, ridged};
 use super::rng::Rng;
 
@@ -21,10 +21,18 @@ const DIRECTIONS: [(f64, f64); 8] =
 /// How wide a range's noise is across it, and how much longer along it, in
 /// the noise's units at `feature_scale` 1; how big a region of one direction
 /// is; how far the ranges are bent about.
-const ACROSS: f64 = 26.0;
+const ACROSS: f64 = 34.0;
 const ALONG: f64 = 4.0;
 const REGION: f64 = 90.0;
-const BEND: f64 = 24.0;
+const BEND: f64 = 36.0;
+
+/// How much of the ridge score is lumps (clumps of mountains, ranges thick
+/// in places), against lines.
+const CLUMPS: f64 = 0.25;
+
+/// A hollow in the mountains this small fills with mountain; a bigger pocket
+/// walled in by them gets a way out.
+const HOLLOW: usize = 6;
 
 /// The patches of mountain smaller than this become hills.
 const MIN_RANGE: usize = 4;
@@ -41,7 +49,7 @@ pub fn ridge_score(g: &Gen, cfg: &Config) -> Grid<f64> {
     let mut rng = Rng::stream(cfg.seed, "relief");
     let (a, b) = (rng.next_u64(), rng.next_u64());
     let (warp_x, warp_y, sway) = (rng.next_u64(), rng.next_u64(), rng.next_u64());
-    let mask = rng.next_u64();
+    let (mask, lumps) = (rng.next_u64(), rng.next_u64());
     let first = rng.below(DIRECTIONS.len() as u64) as usize;
     // The second at least two places round the table from the first.
     let second = (first + 2 + rng.below(DIRECTIONS.len() as u64 - 3) as usize) % DIRECTIONS.len();
@@ -65,7 +73,9 @@ pub fn ridge_score(g: &Gen, cfg: &Config) -> Grid<f64> {
                 };
                 let w = spread(fbm(sway, x * fr, y * fr, 2, 0.5));
                 let w = w * w * (3.0 - 2.0 * w);
-                w * along(a, DIRECTIONS[first]) + (1.0 - w) * along(b, DIRECTIONS[second])
+                let lines = w * along(a, DIRECTIONS[first]) + (1.0 - w) * along(b, DIRECTIONS[second]);
+                let clump = spread(fbm(lumps, x * f * 1.2, y * f * 1.2, 3, gain));
+                (1.0 - CLUMPS) * lines + CLUMPS * clump * clump
             }
         };
         // Mountain country and plains: a slow mask gathers the ranges.
@@ -109,7 +119,56 @@ pub fn relief(g: &mut Gen, cfg: &Config) {
         fbm(free_seed, x * f, y * f, 4, 0.5)
     });
     ring(g, (&score, &free), cfg.hill_ring, hills.saturating_sub(placed));
+    open_pockets(g, &score);
     g.ridge = score;
+}
+
+/// Land walled in by mountains is of no use to anyone (the owner's eye, on
+/// the judged maps: `tests/mapgen/judged`): a hollow of a few hexes in a range
+/// fills with mountain; a bigger pocket gets a way out, its wall cut where
+/// the ridge score is lowest (a saddle), the hexes cut hills.
+fn open_pockets(g: &mut Gen, score: &Grid<f64>) {
+    let (rows, cols) = (g.rows(), g.cols());
+    for _ in 0..64 {
+        let t = g.terrain.clone();
+        let mut pockets = super::stats::pockets(rows, cols, &|h| *t.get(h));
+        pockets.sort_by_key(|p| std::cmp::Reverse(p.len()));
+        let Some(pocket) = pockets.into_iter().next() else { return };
+        if pocket.len() < HOLLOW {
+            for h in pocket {
+                g.terrain.set(h, TileType::Mountain);
+            }
+            continue;
+        }
+        let mut inside: Grid<bool> = Grid::new(rows, cols, false);
+        for h in &pocket {
+            inside.set(*h, true);
+        }
+        let way = cheapest_path(
+            rows,
+            cols,
+            &pocket,
+            |h| match *t.get(h) {
+                TileType::Water => None,
+                TileType::Mountain => Some(10 + (score.get(h) * 20.0) as u32),
+                _ => Some(0),
+            },
+            |h| !*inside.get(h) && !matches!(*t.get(h), TileType::Water | TileType::Mountain),
+        );
+        match way {
+            Some(way) => {
+                for h in way.into_iter().filter(|h| *t.get(*h) == TileType::Mountain) {
+                    g.terrain.set(h, TileType::Hill);
+                }
+            }
+            // Walled in by the sea too: it is hills, a highland.
+            None => {
+                for h in pocket {
+                    g.terrain.set(h, TileType::Hill);
+                }
+            }
+        }
+    }
 }
 
 /// How big the free patches of hills are, in the noise's units.

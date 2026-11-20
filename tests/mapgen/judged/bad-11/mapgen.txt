@@ -1,0 +1,40 @@
+# mapgen's config for this map: `mapgen gen --config mapgen.txt` makes it again.
+seed             11
+side_colours     black,white,red,green
+size             77x88
+cities           32
+cities_per_side  10
+aspect           0.87
+water            0.19
+layout           coast
+sea_edges        west,north
+lakes            1/1500
+min_island       30
+mix              grass 49.5 mountain 17 hill 15.5 forest 14 swamp 3 desert 0
+feature_scale    1
+roughness        0.5
+range_style      ridges
+hill_ring        0.85
+rivers           1/2500
+river_width      2..3
+coastal_cities   0.25
+edge_margin      2
+walls            3:8 4:58 5:18 6:16
+temples          0.26
+ruins            0.24
+site_city_gap    3
+site_gap         5
+roads            linked
+road_loops       0.15
+bridges          on
+max_bridge       5
+passes           0.1
+sea_cities       off
+sea_city_count   0.04
+fly_cities       off
+ports            auto
+ports_per_side   1
+fairness         normal
+symmetry         none
+attempts         30
+accept           first

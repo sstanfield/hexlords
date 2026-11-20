@@ -69,7 +69,11 @@ fn measures(size: &str, seeds: u64) -> Vec<(String, f64, f64, Vec<f64>)> {
 fn the_terrain_lies_as_asked(size: &str, seeds: u64, shape_slack: f64) {
     for (name, target, tolerance, values) in measures(size, seeds) {
         let mean = values.iter().sum::<f64>() / values.len() as f64;
-        if name.contains("share") || name.contains("% of land") || name.contains("edges on hill") {
+        if name.contains("share")
+            || name.contains("% of land")
+            || name.contains("edges on hill")
+            || name.contains("walled")
+        {
             // The water, the mix and the ring: on every map.
             for v in &values {
                 assert!((v - target).abs() <= tolerance + 1e-9, "{size}: {name} {v} against {target}");

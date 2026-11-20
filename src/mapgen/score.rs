@@ -75,6 +75,12 @@ pub fn terrain(cfg: &Config, s: &Stats) -> Vec<Metric> {
             tolerance: 0.08,
         });
     }
+    out.push(Metric {
+        name: "land walled in by mountains".to_string(),
+        target: 0.0,
+        value: s.pockets.iter().sum::<usize>() as f64,
+        tolerance: 5.0,
+    });
     if s.shape_of(TileType::Mountain).is_some_and(|m| m.hexes > 0) {
         out.push(Metric {
             name: "mountain edges on hill".to_string(),
