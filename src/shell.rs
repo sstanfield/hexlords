@@ -135,11 +135,7 @@ impl Scene for Shell {
         self.scene().viewer()
     }
 
-    fn sees(&self, hex: Hex) -> bool {
-        self.scene().sees(hex)
-    }
-
-    fn ghost(&self, hex: Hex) -> Option<(crate::state::Side, usize)> {
-        self.scene().ghost(hex)
+    fn sight(&self) -> &crate::game::Sight {
+        self.scene().sight()
     }
 }

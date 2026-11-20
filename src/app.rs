@@ -286,8 +286,8 @@ impl<S: Scene> App<S> {
 
         // The minimap's picture is drawn into its own target, before the frame's
         // pass begins.
-        let seen = |hex| scene.sees(hex);
-        self.minimap_renderer.update(ctx, &self.pipelines, (&screen.game.map, &seen), &screen.mini_view, dirty);
+        let sight = scene.sight();
+        self.minimap_renderer.update(ctx, &self.pipelines, (&screen.game.map, sight), &screen.mini_view, dirty);
 
         let (r, g, b, a) = CLEAR_COLOR;
         ctx.begin_pass(target, PassAction::clear_color(r, g, b, a));
@@ -297,8 +297,7 @@ impl<S: Scene> App<S> {
                 marked: &|hex| scene.marked(hex),
                 front: scene.front_unit(),
                 viewer: scene.viewer(),
-                seen: &seen,
-                ghost: &|hex| scene.ghost(hex),
+                sight,
             };
             self.map_renderer.draw(ctx, &self.pipelines, &screen.game.map, &screen.view, &marks);
         }

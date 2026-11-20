@@ -53,6 +53,38 @@ pub enum WhenOut {
     Disband,
 }
 
+/// How much of the map a side sees (`Game::sight`).
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
+pub enum Fog {
+    /// Everything.
+    #[default]
+    Off,
+    /// What is near its units and cities; beyond them the terrain and where
+    /// the cities are, dimmed, and what it remembers.
+    On,
+    /// The same, and of the land it has never seen, nothing at all: it is
+    /// black until one of its units or cities sees it, and nobody of the side
+    /// can go there before (the owner's word, 2026-11-20).
+    Total,
+}
+
+impl Fog {
+    /// True with fog of war of either kind.
+    pub fn on(self) -> bool {
+        self != Fog::Off
+    }
+
+    /// Its word on the command line and in the agents' text: `off`, `on`,
+    /// `total`.
+    pub fn word(self) -> &'static str {
+        match self {
+            Fog::Off => "off",
+            Fog::On => "on",
+            Fog::Total => "total",
+        }
+    }
+}
+
 /// A game before it starts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Setup {
@@ -68,9 +100,8 @@ pub struct Setup {
     pub combat: CombatRules,
     /// The gold in each side's treasury at the start.
     pub gold: u32,
-    /// Fog of war: a side sees what is near its units and cities, and
-    /// beyond them the terrain and where the cities are, no more.
-    pub fog: bool,
+    /// Fog of war: off, on, or total (see [`Fog`]).
+    pub fog: Fog,
 }
 
 /// The gold each side starts with unless the game is set up otherwise.
@@ -115,7 +146,7 @@ impl Setup {
             when_out: WhenOut::Disband,
             combat: CombatRules::default(),
             gold: START_GOLD,
-            fog: false,
+            fog: Fog::Off,
         }
     }
 

@@ -10,7 +10,7 @@
 use crate::game::{CITY_SIGHT, Game, HARD_ODDS, UNIT_SIGHT, emerge_chance};
 use crate::help::HelpSection;
 use crate::info;
-use crate::setup::TurnOrder;
+use crate::setup::{Fog, TurnOrder};
 use crate::state::combat::{HITS, MAX_CHANCE, System, WALL_QUARTERS};
 use crate::state::{Blessing, LEVEL_EXPERIENCE, MAX_STACK};
 
@@ -391,14 +391,18 @@ fn orders(game: &Game) -> Vec<HelpSection> {
 }
 
 fn sight(game: &Game) -> Vec<HelpSection> {
-    let fog = if game.setup().fog {
-        format!(
-            "On in this game. You see what is within {UNIT_SIGHT} hexes of your units and {CITY_SIGHT} of your \
-             cities; the rest of the map is dimmed: its terrain and where its cities are show, but no units, \
-             and nobody's colors."
-        )
-    } else {
-        "Off in this game: the whole map is seen.".to_string()
+    let near = format!("You see what is within {UNIT_SIGHT} hexes of your units and {CITY_SIGHT} of your cities");
+    let fog = match game.setup().fog {
+        Fog::Off => "Off in this game: the whole map is seen.".to_string(),
+        Fog::On => format!(
+            "On in this game. {near}; the rest of the map is dimmed: its terrain and where its cities \
+             are show, but no units, and who held each city when you saw it last."
+        ),
+        Fog::Total => format!(
+            "Total in this game. {near}. Land you have never seen is black: nothing of it shows, not \
+             even its cities. Once you have seen it, it is dimmed when it is out of your sight: its \
+             terrain and its cities show, but no units, and who held each city when you saw it last."
+        ),
     };
     let mut sections = vec![section(
         "What you see",
@@ -414,32 +418,41 @@ fn sight(game: &Game) -> Vec<HelpSection> {
             ("Fog of war", fog),
         ],
     )];
-    if game.setup().fog {
-        sections.push(section(
-            "In the fog",
-            &[
-                ("On the way", "What your units see as they go stays in sight until your turn ends.".to_string()),
-                (
-                    "Remembered",
-                    "Another side's stack you saw stays on the map, faint, where you saw it last (or \
-                                where it went out of your sight), until that hex is in sight again. The line \
-                                under the map says how many and when."
-                        .to_string(),
-                ),
-                (
-                    "Orders",
-                    "You may send units into the fog: they go as far as you know the way. Units of \
-                            another side you could not see, met on the way, stop them there, in a battle."
-                        .to_string(),
-                ),
-                (
-                    "Undo",
-                    "A move that showed you what you had not seen (another side's units, who holds a city) \
-                          cannot be taken back."
-                        .to_string(),
-                ),
-            ],
-        ));
+    if game.setup().fog.on() {
+        let black = (game.setup().fog == Fog::Total).then(|| {
+            (
+                "The black",
+                "Your units cannot go into land you have never seen, nor find a way through it: they \
+                 go to its edge, and see on. Go to and a city's new units go only by the land you have seen."
+                    .to_string(),
+            )
+        });
+        let items: Vec<(&str, String)> = [
+            ("On the way", "What your units see as they go stays in sight until your turn ends.".to_string()),
+            (
+                "Remembered",
+                "Another side's stack you saw stays on the map, faint, where you saw it last (or where it \
+                 went out of your sight), until that hex is in sight again; a city keeps the colors of who \
+                 held it then. The line under the map says how many and when."
+                    .to_string(),
+            ),
+            (
+                "Orders",
+                "You may send units into the fog: they go as far as you know the way. Units of another \
+                 side you could not see, met on the way, stop them there, in a battle."
+                    .to_string(),
+            ),
+        ]
+        .into_iter()
+        .chain(black)
+        .chain([(
+            "Undo",
+            "A move that showed you what you had not seen (another side's units, who holds a city, \
+             land) cannot be taken back."
+                .to_string(),
+        )])
+        .collect();
+        sections.push(section("In the fog", &items));
     }
     sections
 }

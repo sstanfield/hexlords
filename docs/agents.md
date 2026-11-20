@@ -91,8 +91,16 @@ cities' work weighs). Each turn, order by order, it:
    it knows the way (never into a stack it has not chosen to attack).
 
 With fog of war it never attacks a city it cannot see: it goes where it can
-see it first. A place the game refuses to send it, it leaves be for three
-rounds, and a way that is shut shows itself as it goes. Its sense of worth
+see it first, and weighs it by the garrison it saw there last. A stack it
+saw near one of its cities in the last two rounds, now out of its sight, is
+a threat to that city still. A place the game refuses to send it, it leaves
+be for three rounds, and a way that is shut shows itself as it goes. With
+total fog it goes by the land it has seen: while it knows of no city to go
+for, every stack goes to see more, a few steps a turn, toward the nearest
+edge of that land it can get to and away from where its others went; and
+while there is land it has not seen, its fastest spare unit goes on looking.
+Under total fog its styles win 76 to 80 games in 100 against `simple` (which
+explores too), and games last half again as long. Its sense of worth
 is plain arithmetic (no `powf`), so a seed plays the same game on every
 machine.
 
@@ -124,10 +132,12 @@ output, and the turn goes on without that order.
 
 The game as the program's side knows it (`Game::view_for`; every agent is
 given the same). With fog of war, the other sides' units out of its sight
-are not in it, and a city in the fog is nobody's as far as it knows; what
-its side remembers of stacks seen before is in it (`Game::ghosts`), and its
-orders go as far as it knows the way (a stack it could not see, met on the
-way, is a battle there). Fog or
+are not in it, and a city in the fog is held by who held it when the side
+saw it last (nobody, if it never did); what its side remembers of stacks
+seen before is in the view (`Sight::ghosts`), and its orders go as far as
+it knows the way (a stack it could not see, met on the way, is a battle
+there). With total fog, land the side has never seen is `?` in the terrain
+and its cities are not listed; no order can go there or through it. Fog or
 not, it is not told what the other sides' cities build or can build, their
 gold, their units' standing orders or the moves they have left.
 
@@ -135,11 +145,12 @@ gold, their units' standing orders or the moves they have left.
 turn 3 red
 order red green blue yellow
 battles lines chance 5
+fog off
 gold 34 income 40 upkeep 32
 terrain
 46
 72
-wwwwwwww...                      (the map file's rows: docs/map-format.md)
+wwwwwwww...                      (the map file's rows: docs/map-format.md; `?`: never seen)
 end terrain
 kind riders strength 4 moves 18 upkeep 3 price 10 commander 0 enter grass 2 forest 5 city 1 road 1 bridge 1
 kind captain strength 3 moves 14 upkeep 4 price 20 commander 1 enter grass 2 forest 3 city 1 road 1 bridge 1
@@ -157,15 +168,17 @@ end
 - `order`: this round's order of turns.
 - `battles <lines or strength> chance <0 to 10>`: how the game's battles go
   (`docs/gameplay.md`, "Fighting").
+- `fog <off, on or total>`: fog of war (`docs/gameplay.md`).
 - `gold <n> income <n> upkeep <n>`: the side's treasury, what its cities
   bring in a turn, what its units cost a turn.
 - `terrain` ... `end terrain`: the map, as in a map file (rows, columns, a
-  letter per hex; a capital is a road).
+  letter per hex; a capital is a road), but `?` for a hex never seen (total
+  fog of war).
 - `kind`: each kind of unit: its numbers, whether it is a commander (the
   bonus it gives its stack, 0 if it is not one), and what each terrain costs
   it to enter.
 - `city <row> <col> <side> walls <n> income <n> builds <index or none>
-  progress <turns done> name <name>`: every city; `can <row> <col> <index> <kind> <turns>
+  progress <turns done> name <name>`: every city the side knows of; `can <row> <col> <index> <kind> <turns>
   <cost>`: what each of the side's own cities can build.
 - `unit <name> <side> <row> <col> <kind> strength <n> moves <left>/<a turn's>
   level <n>`: every unit on the map; its strength is what it fights with

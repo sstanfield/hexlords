@@ -11,7 +11,7 @@ use hexgame::city_windows::{
     BUILD_NOTHING_ID, CITY_CLOSE_ID, CITY_RALLY_ID, CITY_WINDOW_ID, LIST_CLOSE_ID, LIST_DETAILS_ID, LIST_GOTO_ID,
     LIST_WINDOW_ID, PANEL_OPEN_ID, PANEL_PREFIX, build_id, row_id,
 };
-use hexgame::game::Game;
+use hexgame::game::{Game, Sight};
 use hexgame::session::{ALL_CITIES_ID, CITY_DETAILS_ID, MENU_CITIES_ID, MY_CITIES_ID, Session};
 use hexgame::setup::Setup;
 use hexgame::state::scenario::{self, Scenario};
@@ -133,8 +133,15 @@ fn my_cities_lists_the_players_with_what_they_build() {
     choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     let root = s.screen.root_window();
     let area = s.screen.map_rect();
-    let list =
-        CityList::open(&mut s.screen.ui, root, &s.screen.game.map, true, Side::Purple, (area, (0.0, 0.0)), &|_| true);
+    let list = CityList::open(
+        &mut s.screen.ui,
+        root,
+        &s.screen.game.map,
+        true,
+        Side::Purple,
+        (area, (0.0, 0.0)),
+        &Sight::all(),
+    );
     assert!(list.rows().is_empty());
     let says: Vec<String> =
         descendants(&s, LIST_WINDOW_ID).into_iter().filter_map(|id| s.screen.ui.text(id).map(str::to_string)).collect();

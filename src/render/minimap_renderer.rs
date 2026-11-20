@@ -17,8 +17,9 @@ use super::map_renderer::{RING_COLOR, side_color};
 use super::mesh::{BufferPool, MAX_VERTICES, Mesh};
 use super::shaders::{BlitVertex, FlatVertex, Pipelines};
 use super::textures::texture_params;
+use crate::game::Sight;
 use crate::minimap_view::MiniMapView;
-use crate::state::{Hex, Map, Side, TileType};
+use crate::state::{Hex, Map, TileType};
 
 /// Behind the hexes. C++: MiniMapRenderer::renderMap ("Map backing color")
 pub const BACKING: (f32, f32, f32, f32) = (0.0, 0.0, 0.0, 1.0);
@@ -61,13 +62,14 @@ pub fn minimap_hex(map: &Map, view: &MiniMapView, hex: Hex) -> [FlatVertex; HEX_
 
 /// The cities' marks: for each city a dark square and over it one a little
 /// smaller in its holder's color (nobody's grey), bigger than a hex of a big
-/// map so that every city can be found. Quads of four vertices.
-pub fn city_marks(map: &Map, view: &MiniMapView, seen: &dyn Fn(Hex) -> bool) -> Vec<FlatVertex> {
+/// map so that every city can be found. Quads of four vertices. With fog of
+/// war, as `sight` knows them: in the fog, in the colors of who held them
+/// when they were seen last; on land never seen, none.
+pub fn city_marks(map: &Map, view: &MiniMapView, sight: &Sight) -> Vec<FlatVertex> {
     let edge = (view.city_mark_reach() / 4.0).max(1.0);
     let mut quads = Vec::with_capacity(map.cities().len() * 8);
-    for city in map.cities().iter() {
-        // In the fog, nobody's: who holds it is not seen.
-        let [r, g, b] = side_color(if seen(city.pos) { city.side } else { Side::Grey });
+    for city in map.cities().iter().filter(|c| sight.knows(c.pos)) {
+        let [r, g, b] = side_color(sight.holder(city));
         quads.extend(quad_corners(view.city_mark(city.pos, edge)).map(|pos| FlatVertex { pos, color: RING_COLOR }));
         quads.extend(quad_corners(view.city_mark(city.pos, 0.0)).map(|pos| FlatVertex { pos, color: [r, g, b, 1.0] }));
     }
@@ -121,7 +123,7 @@ impl MiniMapRenderer {
         &mut self,
         ctx: &mut dyn RenderingBackend,
         pipelines: &Pipelines,
-        (map, seen): (&Map, &dyn Fn(Hex) -> bool),
+        (map, sight): (&Map, &Sight),
         view: &MiniMapView,
         dirty: bool,
     ) {
@@ -160,8 +162,12 @@ impl MiniMapRenderer {
             mesh.vertices.clear();
             mesh.indices.clear();
         };
+        // (Land never seen is left black.)
         for row in 0..map.rows() {
             for col in 0..map.cols() {
+                if !sight.knows(Hex::new(row, col)) {
+                    continue;
+                }
                 if mesh.vertices.len() / HEX_VERTICES >= hexes_per_batch {
                     flush(&mut mesh, &mut self.hex_buffers, ctx);
                 }
@@ -172,7 +178,7 @@ impl MiniMapRenderer {
         }
         flush(&mut mesh, &mut self.hex_buffers, ctx);
         // The cities over the hexes.
-        for quad in city_marks(map, view, seen).chunks(4) {
+        for quad in city_marks(map, view, sight).chunks(4) {
             if mesh.vertices.len() + 4 > MAX_VERTICES {
                 flush(&mut mesh, &mut self.hex_buffers, ctx);
             }
@@ -333,7 +339,7 @@ mod tests {
         map.add_city("Birch", Hex::new(20, 30), 0).unwrap();
         let mut view = MiniMapView::new(30, 40);
         view.resize(200, 231);
-        let marks = city_marks(&map, &view, &|_| true);
+        let marks = city_marks(&map, &view, &Sight::all());
         assert_eq!(marks.len(), 16, "two quads for each of the two cities");
         let colors: Vec<[f32; 4]> = marks.chunks(4).map(|q| q[0].color).collect();
         let [r, g, b] = side_color(crate::state::Side::Red);

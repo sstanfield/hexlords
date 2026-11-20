@@ -15,22 +15,25 @@ use crate::state::{City, Hex, Map, MoveCost, Side, Unit, UnitProd};
 /// units can go there, what it costs (one unit) or that they can (a stack),
 /// and the odds of winning if going there is an attack.
 pub fn cursor_line(game: &Game) -> String {
-    cursor_line_for(game, &Sight::all(), None)
+    cursor_line_for(game, &Sight::all())
 }
 
-/// [`cursor_line`] as a side sees it: of a hex in the fog, no units, and no
-/// odds; what was seen there last (`ghost`), if anything.
-pub fn cursor_line_for(game: &Game, sight: &Sight, ghost: Option<&Ghost>) -> String {
+/// [`cursor_line`] as a side knows it (`sight`): of a hex in the fog, no
+/// units, and no odds, but what was seen there last, if anything; of land
+/// never seen, nothing.
+pub fn cursor_line_for(game: &Game, sight: &Sight) -> String {
     let (map, hex) = (&game.map, game.map.cursor);
     let seen = sight.sees(hex);
     let mut parts = vec![format!("Turn {}", game.turn())];
-    if let Some(tile) = map.tile(hex) {
+    if !sight.knows(hex) {
+        parts.push(format!("row {}, column {}: {NEVER_SEEN}", hex.row, hex.col));
+    } else if let Some(tile) = map.tile(hex) {
         parts.push(format!("row {}, column {}: {}", hex.row, hex.col, describe_terrain(tile.kind, tile.road)));
         if let Some(city) = map.city_at(hex) {
             parts.push(city.name.clone());
         }
         match tile.units().len() {
-            _ if !seen => parts.push(match ghost {
+            _ if !seen => parts.push(match sight.ghost_at(hex) {
                 Some(g) => format!("not seen: {} there in round {}", last_seen(g), g.round),
                 None => "not seen".to_string(),
             }),
@@ -243,13 +246,17 @@ fn who(side: Side) -> &'static str {
 
 /// The heading of the selected hex: where it is, what it is, who is there.
 pub fn hex_title(map: &Map, hex: Hex) -> String {
-    hex_title_for(map, hex, true, None)
+    hex_title_for(map, hex, &Sight::all())
 }
 
 /// [`hex_title`] of a hex that is `seen` or not (fog of war: in the fog, who
 /// is there is not told; what was seen there last, `ghost`, is).
-pub fn hex_title_for(map: &Map, hex: Hex, seen: bool, ghost: Option<&Ghost>) -> String {
+pub fn hex_title_for(map: &Map, hex: Hex, sight: &Sight) -> String {
     let Some(tile) = map.tile(hex) else { return String::new() };
+    if !sight.knows(hex) {
+        return format!("Row {}, column {}: {NEVER_SEEN}", hex.row, hex.col);
+    }
+    let seen = sight.sees(hex);
     let mut title = format!("Row {}, column {}: {}", hex.row, hex.col, describe_terrain(tile.kind, tile.road));
     if let Some(city) = map.city_at(hex) {
         title.push_str(&format!(" ({})", city.name));
@@ -262,7 +269,7 @@ pub fn hex_title_for(map: &Map, hex: Hex, seen: bool, ghost: Option<&Ghost>) -> 
         }
     }
     match tile.units().len() {
-        _ if !seen => match ghost {
+        _ if !seen => match sight.ghost_at(hex) {
             Some(g) => title.push_str(&format!(", not seen: {} there in round {}", last_seen(g), g.round)),
             None => title.push_str(", not seen"),
         },
@@ -271,6 +278,19 @@ pub fn hex_title_for(map: &Map, hex: Hex, seen: bool, ghost: Option<&Ghost>) -> 
         n => title.push_str(&format!(", {n} units ({})", sides.join(", "))),
     }
     title
+}
+
+/// What land never seen is called (total fog of war).
+pub const NEVER_SEEN: &str = "never seen";
+
+/// Who held a city in the fog when it was seen last, as more words for its
+/// name: "; held by blue in round 3", "; nobody's in round 1" (nothing if
+/// it was never seen).
+pub fn last_held(sight: &Sight, city: &City) -> String {
+    match sight.held(city.pos) {
+        Some((side, round)) => format!("; {} in round {round}", holder(side).to_lowercase()),
+        None => String::new(),
+    }
 }
 
 /// A stack remembered (fog of war) in words: "2 units (blue)", "1 unit
@@ -572,12 +592,13 @@ pub fn task_line(game: &Game, task: &Task) -> String {
 }
 
 /// What a side knows of a city: all of it (its own), what shows from
-/// outside (another's, or nobody's, in sight), or where it is (in the fog).
+/// outside (another's, or nobody's, in sight), or where it is (in the fog),
+/// and who held it, in which round, when it was seen last.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Known {
     All,
     Outside,
-    Fog,
+    Fog(Option<(Side, u32)>),
 }
 
 impl Known {
@@ -589,7 +610,7 @@ impl Known {
         } else if sight.sees(city.pos) {
             Known::Outside
         } else {
-            Known::Fog
+            Known::Fog(sight.held(city.pos))
         }
     }
 }
@@ -608,8 +629,19 @@ pub fn city_lines_for(map: &Map, city: &City, room: usize, known: Known) -> Vec<
             };
             vec![city.name.clone(), holder(city.side), format!("Walls {}, taxes {}", city.walls, city.income), garrison]
         }
-        Known::Fog => {
-            vec![city.name.clone(), "Not seen".to_string(), format!("Walls {}, taxes {}", city.walls, city.income)]
+        Known::Fog(held) => {
+            let walls = format!("Walls {}, taxes {}", city.walls, city.income);
+            match held {
+                Some((side, round)) => {
+                    vec![
+                        city.name.clone(),
+                        format!("Not seen since round {round}"),
+                        format!("{} then", holder(side)),
+                        walls,
+                    ]
+                }
+                None => vec![city.name.clone(), "Not seen".to_string(), walls],
+            }
         }
     }
 }

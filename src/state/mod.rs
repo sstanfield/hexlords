@@ -17,7 +17,7 @@ pub use cities::{Cities, City, CityId, UnitProd};
 pub use hex::{Direction, Hex, HexSide};
 pub use map::{MAX_COLS, MAX_ROWS, MAX_STACK, MIN_COLS, MIN_ROWS, Map, MapError, PlaceError, Tile};
 pub use movement::{
-    MoveRange, Passage, compute_range, hostile, passage, path_with, reach_with, step_cost, step_toward,
+    MoveRange, Passage, compute_range, hostile, passage, path_with, reach_with, step_cost, step_toward, step_toward_by,
     step_toward_with, way_over_land,
 };
 pub use rng::Rng;

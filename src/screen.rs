@@ -726,15 +726,10 @@ pub trait Scene {
         None
     }
 
-    /// True if the hex is seen by who is at the screen (fog of war).
-    fn sees(&self, _hex: Hex) -> bool {
-        true
-    }
-
-    /// What the one at the screen remembers on a hex in the fog: another
-    /// side's stack, and how many, where it was seen last.
-    fn ghost(&self, _hex: Hex) -> Option<(crate::state::Side, usize)> {
-        None
+    /// What who is at the screen knows of the map (fog of war): all of it,
+    /// in a tool.
+    fn sight(&self) -> &crate::game::Sight {
+        &crate::game::SEE_ALL
     }
 
     /// A round in one step, for scripts (`turn`): the person's turn ends, the

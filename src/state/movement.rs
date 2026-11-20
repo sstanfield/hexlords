@@ -102,8 +102,9 @@ pub fn hostile(map: &Map, side: Side, hex: Hex) -> bool {
 
 /// True if a unit that pays `costs` could get from `from` to `to` over the
 /// terrain, in as many turns as it takes, whoever stands on the way (units
-/// move; the terrain stays).
-pub fn way_over_land(map: &Map, costs: &MoveCost, from: Hex, to: Hex) -> bool {
+/// move; the terrain stays), going only over the hexes `known` says it may
+/// (with total fog of war, those its side has seen).
+pub fn way_over_land(map: &Map, costs: &MoveCost, (from, to): (Hex, Hex), known: &dyn Fn(Hex) -> bool) -> bool {
     if !map.contains(from) || !map.contains(to) {
         return false;
     }
@@ -117,7 +118,7 @@ pub fn way_over_land(map: &Map, costs: &MoveCost, from: Hex, to: Hex) -> bool {
             return true;
         }
         for next in map.neighbours(hex) {
-            if !seen[index(next)] && step_cost(map, costs, hex, next).is_some() {
+            if !seen[index(next)] && known(next) && step_cost(map, costs, hex, next).is_some() {
                 seen[index(next)] = true;
                 queue.push_back(next);
             }
@@ -138,12 +139,23 @@ pub fn step_toward(map: &Map, unit: &Unit, target: Hex) -> Option<(Hex, u32)> {
 /// that goes along with `unit`, say). Another side's units always have
 /// room: going in is an attack.
 pub fn step_toward_with(map: &Map, unit: &Unit, target: Hex, room: &dyn Fn(Hex) -> bool) -> Option<(Hex, u32)> {
+    step_toward_by(map, (unit, target), room, &|hex| passage(map, unit.side(), hex))
+}
+
+/// [`step_toward_with`], where `open` says what each hex is to the unit (as
+/// its side knows the map, say: `Game::known_step_toward`).
+pub fn step_toward_by(
+    map: &Map,
+    (unit, target): (&Unit, Hex),
+    room: &dyn Fn(Hex) -> bool,
+    open: &dyn Fn(Hex) -> Passage,
+) -> Option<(Hex, u32)> {
     let costs = map.units().move_cost(unit.move_cost)?;
     let side = unit.side();
     let cols = usize::from(map.cols());
     let index = |h: Hex| usize::from(h.row) * cols + usize::from(h.col);
     let size = usize::from(map.rows()) * cols;
-    let (origin, open) = (unit.pos(), |hex: Hex| passage(map, side, hex));
+    let origin = unit.pos();
     if !map.contains(origin) || !map.contains(target) || target == origin {
         return None;
     }

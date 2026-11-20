@@ -8,12 +8,12 @@ mod common;
 use common::{assets, click, widget};
 use hexgame::game::Game;
 use hexgame::new_game::{
-    BATTLES_STRENGTH_ID, CHANCE_LESS_ID, CHANCE_MORE_ID, GOLD_LESS_ID, GOLD_MORE_ID, MODE_ROUNDS_ID, ORDER_DRAWN_ID,
-    START_ID, map_id, map_name, seat_id,
+    BATTLES_STRENGTH_ID, CHANCE_LESS_ID, CHANCE_MORE_ID, FOG_ON_ID, FOG_TOTAL_ID, GOLD_LESS_ID, GOLD_MORE_ID,
+    MODE_ROUNDS_ID, ORDER_DRAWN_ID, START_ID, map_id, map_name, seat_id,
 };
 use hexgame::screen::Scene;
 use hexgame::session::{BEGIN_TURN_ID, COVER_ID, END_TURN_ID, GAME_OVER_ID, NEW_GAME_ID, Session};
-use hexgame::setup::{Controller, Setup, TurnOrder};
+use hexgame::setup::{Controller, Fog, Setup, TurnOrder};
 use hexgame::shell::Shell;
 use hexgame::state::combat::{Rules, System};
 use hexgame::state::scenario::{self, Scenario};
@@ -136,10 +136,16 @@ fn the_battles_are_set_up_on_the_screen_and_carried_into_the_game() {
             .iter()
             .any(|t| *t == format!("{gold} gold for each side at the start"))
     );
+    // Fog of war: off, on, or total.
+    assert_eq!(shell.new_game_screen().unwrap().setup().fog, Fog::Off);
+    push(&mut shell, FOG_ON_ID);
+    assert_eq!(shell.new_game_screen().unwrap().setup().fog, Fog::On);
+    push(&mut shell, FOG_TOTAL_ID);
     push(&mut shell, START_ID);
     let game = &shell.session().unwrap().screen.game;
     assert_eq!(game.setup().combat, Rules { chance: 10, system: System::Strength });
     assert_eq!((game.setup().gold, game.gold(Side::Red)), (gold, gold));
+    assert_eq!(game.setup().fog, Fog::Total);
 }
 
 fn descendants_of(shell: &Shell, name: &str) -> Vec<String> {

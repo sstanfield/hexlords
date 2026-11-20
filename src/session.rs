@@ -338,12 +338,13 @@ pub struct Session {
     /// Between a person's turns: from End turn (or, in hotseat, the next
     /// person's Begin) to Start turn, while the log shows what the others do.
     between: bool,
-    /// What the person at the screen sees (fog of war), as of the map's
-    /// revision and the person it was worked out for; and which cities they
-    /// saw then (the minimap's picture is drawn again when that changes).
+    /// What the person at the screen knows (fog of war), as of the map's
+    /// revision, the round and the person it was worked out for; and what the
+    /// minimap showed of it then: who holds each city it knows of, how much
+    /// land it knows (its picture is drawn again when that changes).
     sight: Sight,
-    sight_of: Option<(u64, Side)>,
-    cities_seen: Vec<bool>,
+    sight_of: Option<(u64, u32, Side)>,
+    minimap_of: (Vec<Option<Side>>, Option<usize>),
     /// When the computer last played a turn, in ms (it plays one at a time,
     /// [`COMPUTER_TURN_MS`] apart, so that the log can be followed).
     last_play: Option<u64>,
@@ -449,7 +450,7 @@ impl Session {
             last_play: None,
             sight: Sight::all(),
             sight_of: None,
-            cities_seen: Vec::new(),
+            minimap_of: (Vec::new(), None),
             cycled: None,
             city_window: None,
             city_list: None,
@@ -793,19 +794,22 @@ impl Session {
         map.units_at(self.shown).iter().copied().filter(mine).collect()
     }
 
-    /// Work out what the person at the screen sees, if the map or the
-    /// person changed; and draw the minimap again if what it shows of the
-    /// cities changed.
+    /// Work out what the person at the screen knows, if the map, the round
+    /// or the person changed; and draw the minimap again if what it shows of
+    /// it changed (the cities' holders, the land seen).
     fn see(&mut self) {
-        let (revision, viewer) = (self.screen.game.map.revision(), self.seer());
-        if self.sight_of == Some((revision, viewer)) {
+        let game = &self.screen.game;
+        let key = (game.map.revision(), game.turn(), self.seer());
+        if self.sight_of == Some(key) {
             return;
         }
-        self.sight_of = Some((revision, viewer));
-        self.sight = self.screen.game.sight(viewer);
-        let seen: Vec<bool> = self.screen.game.map.cities().iter().map(|c| self.sight.sees(c.pos)).collect();
-        if seen != self.cities_seen {
-            self.cities_seen = seen;
+        self.sight_of = Some(key);
+        self.sight = game.sight(key.2);
+        let sight = &self.sight;
+        let holders = game.map.cities().iter().map(|c| sight.knows(c.pos).then(|| sight.holder(c))).collect();
+        let shown = (holders, sight.known_count());
+        if shown != self.minimap_of {
+            self.minimap_of = shown;
             self.screen.redraw_minimap();
         }
     }
@@ -900,11 +904,8 @@ impl Session {
         self.see();
         let game = &self.screen.game;
         let map = &game.map;
-        let cursor = game.map.cursor;
-        let remembered = game.ghost_at(self.seer(), cursor).filter(|_| !self.sight.sees(cursor));
-        let status = info::cursor_line_for(game, &self.sight, remembered);
-        let ghost = game.ghost_at(self.seer(), self.shown).filter(|_| !self.sight.sees(self.shown));
-        let title = info::hex_title_for(map, self.shown, self.sight.sees(self.shown), ghost);
+        let status = info::cursor_line_for(game, &self.sight);
+        let title = info::hex_title_for(map, self.shown, &self.sight);
         // The units of the selected hex in their boxes: each one's icon and
         // numbers, and which of them are selected.
         let ids = self.boxes();
@@ -961,7 +962,8 @@ impl Session {
             (None, None) => (Vec::new(), None),
         };
         tip.truncate(TIP_LINES);
-        let city = map.city_at(self.shown).map_or(Vec::new(), |city| {
+        // (A city on land never seen is not known to be there.)
+        let city = map.city_at(self.shown).filter(|c| self.sight.knows(c.pos)).map_or(Vec::new(), |city| {
             let known = info::Known::of(city, self.seer(), &self.sight);
             info::city_lines_for(map, city, CITY_LINES, known)
         });
@@ -1118,8 +1120,7 @@ impl Session {
         }
         if let Some(list) = &mut self.city_list {
             if list.is_open(ui) {
-                let sight = &self.sight;
-                list.refresh(ui, &game.map, &|hex| sight.sees(hex));
+                list.refresh(ui, &game.map, &self.sight);
             } else {
                 self.city_list = None;
             }
@@ -1204,12 +1205,10 @@ impl Session {
         let (root, area) = (self.screen.root_window(), self.window_area());
         let viewer = self.viewer();
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
-        let sight = &self.sight;
-        let seen = |hex| sight.sees(hex);
-        let mut list = CityList::open(ui, root, &game.map, own, viewer, (area, LIST_ALIGN), &seen);
+        let mut list = CityList::open(ui, root, &game.map, own, viewer, (area, LIST_ALIGN), &self.sight);
         // The selected hex's city, if it is in the list, is the chosen one.
         if let Some(city) = game.map.city_at(self.shown) {
-            list.choose(ui, &game.map, city.id, &seen);
+            list.choose(ui, &game.map, city.id, &self.sight);
         }
         self.city_list = Some(list);
     }
@@ -1328,7 +1327,7 @@ impl Session {
                 || id == TbId::new(city_windows::LIST_DETAILS_ID)
                 || id == TbId::new(city_windows::LIST_GOTO_ID);
             if is_list_button {
-                order = list.click(ui, map, id, &|hex| sight.sees(hex));
+                order = list.click(ui, map, id, sight);
                 handled = true;
             }
         }
@@ -1730,7 +1729,8 @@ impl Session {
 
     /// The window of the selected hex's city (O, City details), if it is one.
     pub fn open_shown_city(&mut self) {
-        if let Some(city) = self.screen.game.map.city_at(self.shown).map(|c| c.id) {
+        let city = self.screen.game.map.city_at(self.shown).filter(|c| self.sight.knows(c.pos));
+        if let Some(city) = city.map(|c| c.id) {
             self.open_city(city);
         }
     }
@@ -1757,7 +1757,7 @@ impl Session {
         let turn = self.persons_turn() && game.winner().is_none() && !self.covered();
         let units = game.selected().and_then(|id| game.map.units().get(id));
         let own = turn && units.is_some_and(|u| u.side() == game.player());
-        let city = game.map.city_at(self.shown).is_some();
+        let city = game.map.city_at(self.shown).is_some_and(|c| self.sight.knows(c.pos));
         let people = self.people_in_play();
         let menu = if id == TbId::new(MENU_GAME_ID) {
             Menu::new(MENU_GAME_ID)
@@ -2060,13 +2060,6 @@ impl Scene for Session {
         self.screen.game.can_move_to(hex)
     }
 
-    /// The other sides' stack the person remembers on a hex in the fog: its
-    /// side and how many (a ghost of it, on the map).
-    fn ghost(&self, hex: Hex) -> Option<(Side, usize)> {
-        let seer = self.seer();
-        (!self.sight.sees(hex)).then(|| self.screen.game.ghost_at(seer, hex).map(|g| (g.side, g.count))).flatten()
-    }
-
     /// The selected unit shows on its hex, over the others of its stack (in a
     /// city, its pip is ringed).
     fn front_unit(&self) -> Option<UnitId> {
@@ -2079,8 +2072,8 @@ impl Scene for Session {
         Some(self.seer()).filter(|side| *side != Side::Grey)
     }
 
-    fn sees(&self, hex: Hex) -> bool {
-        self.sight.sees(hex)
+    fn sight(&self) -> &Sight {
+        &self.sight
     }
 }
 

@@ -224,9 +224,10 @@ fn the_game_as_text_and_orders_from_text() {
     assert_eq!(lines[0], "turn 1 red");
     assert_eq!(lines[1], "order red green blue");
     assert_eq!(lines[2], "battles lines chance 5");
-    assert_eq!(lines[3], "gold 50 income 10 upkeep 0", "its treasury, its taxes, its upkeep");
-    assert_eq!(lines[4], "terrain");
-    assert_eq!(lines[5..7], ["20", "20"]);
+    assert_eq!(lines[3], "fog off");
+    assert_eq!(lines[4], "gold 50 income 10 upkeep 0", "its treasury, its taxes, its upkeep");
+    assert_eq!(lines[5], "terrain");
+    assert_eq!(lines[6..8], ["20", "20"]);
     assert!(lines.contains(&"end terrain") && lines.last() == Some(&"end"));
     assert!(
         lines.contains(&"kind riders strength 4 moves 12 upkeep 0 price 5 commander 0 enter grass 2 city 1"),

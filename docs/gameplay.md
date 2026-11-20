@@ -237,9 +237,21 @@ and the rules use integers, not floats.
    `--fog`, `Setup::fog`): a side sees what is within 2 hexes of its units
    (`UNIT_SIGHT`) and 3 of its cities (`CITY_SIGHT`) (`Game::sight`); the
    rest of the map is dimmed: its terrain and where its cities are show,
-   but no units, and no city's holder (on the map, the minimap and the
-   lists of cities). It is worked out anew whenever the map changes. With
-   nobody at the screen (the computer against itself) all is seen.
+   but no units, and a city in the colors of who held it when the side saw
+   it last (`Sight::holder`; nobody's, if it never did; a side is told who
+   took a city of its own); on the map, the minimap and the lists of
+   cities. It is worked out anew whenever the map changes. With nobody at
+   the screen (the computer against itself) all is seen.
+   **Total fog of war** (`Fog::Total`, `--total-fog`; the owner's word,
+   2026-11-20) is the same, and of the land a side has never seen, nothing
+   at all: it is black, on the map and the minimap, and its cities are not
+   in the lists, until a unit or a city of the side sees it; then it is
+   dimmed as above when it is out of sight (`Sight::knows`). Nobody of the
+   side can go there, nor find a way through it: a move, Go to, a march and
+   a city's rally go only over land the side has seen (`game::UNSEEN` says
+   why an order to it is refused), so units explore by going to the edge of
+   what they know and seeing on (the owner: "the safe bet is slow
+   explore"). A move that showed land never seen cannot be undone.
    The rules go by what the moving side knows (the owner's word, 2026-11-20:
    "giving orders into fog should not be effected by units in the fog"):
    the reach of a selection, an order, a march are worked out as if no unit

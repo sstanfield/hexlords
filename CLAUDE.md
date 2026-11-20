@@ -21,7 +21,8 @@ for when it is done; a side that has lost its cities is out. Orders can
 last (a stack sent far goes over turns, a city sends what it builds), a
 stack can be put aside for the turn, and a list says what is left to do; a
 side sees the others' stacks only as banners with their size, and fog of
-war is a choice made with the game (`Game::sight`).
+war is a choice made with the game: off, on, or total, where land never
+seen is black and shut until explored (`Game::sight`, `Sight`).
 **`docs/gameplay.md` is the plan for the rules**: two modes (turns one side
 after the other, and rounds where all sides give orders at once) on one set
 of rules made of orders. The computer's players are agents, which also play

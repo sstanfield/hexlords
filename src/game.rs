@@ -8,17 +8,21 @@
 use std::path::{Path, PathBuf};
 
 use crate::orders::{Event, Fallen, Order, Record};
-use crate::setup::{Controller, Setup, TurnOrder, WhenOut};
+use crate::setup::{Controller, Fog, Setup, TurnOrder, WhenOut};
 use crate::state::Blessing;
 use crate::state::combat::{self, Fighter};
 use crate::state::scenario::{self, Scenario, side_name};
 use crate::state::{
-    CityId, Direction, Hex, MAX_STACK, Map, MoveRange, NUM_SIDES, Passage, Rng, Side, TileType, Unit, UnitId,
-    compute_range, hostile, passage, path_with, reach_with, step_toward_with, way_over_land,
+    City, CityId, Direction, Hex, MAX_STACK, Map, MoveRange, NUM_SIDES, Passage, Rng, Side, TileType, Unit, UnitId,
+    compute_range, hostile, passage, path_with, reach_with, step_toward_by, way_over_land,
 };
 
 /// The agent that passes its turns: the computer's, when nothing else is said.
 pub const PASSIVE: &str = "passive";
+
+/// Why an order to land the side has never seen is refused (total fog of
+/// war).
+pub const UNSEEN: &str = "nobody of the side has seen that land yet";
 
 /// What `Game::select_hex` did.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -149,27 +153,115 @@ type MarchState = (Option<Hex>, bool, bool);
 pub const UNIT_SIGHT: u32 = 2;
 pub const CITY_SIGHT: u32 = 3;
 
-/// What a side sees: every hex (no fog of war), or those near its units and
-/// cities (`Game::sight`).
+/// What a side knows of the map (`Game::sight`): what it sees now (every
+/// hex, with no fog of war; else those near its units and cities); with total
+/// fog, the land it has ever seen; and what it remembers of the rest: the
+/// other sides' stacks (`Ghost`), and who held each city when it saw it
+/// last.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Sight {
     cols: u16,
     /// Row-major; `None`: everything.
     seen: Option<Vec<bool>>,
+    /// Row-major; `None`: everything (no total fog).
+    known: Option<Vec<bool>>,
+    ghosts: Vec<Ghost>,
+    /// Where each city it has seen is, who held it then, and the round.
+    held: Vec<(Hex, Side, u32)>,
 }
+
+/// Sight of everything, to lend (`Sight::ALL`).
+pub static SEE_ALL: Sight = Sight::ALL;
 
 impl Sight {
     /// Sight of everything.
+    pub const ALL: Sight = Sight { cols: 0, seen: None, known: None, ghosts: Vec::new(), held: Vec::new() };
+
+    /// Sight of everything.
     pub fn all() -> Sight {
-        Sight::default()
+        Sight::ALL
+    }
+
+    /// A sight made by hand (a test's, say): of a map of `map`'s size, the
+    /// hexes `seen` says are seen, those `known` says are known (`None`: all
+    /// of them), and the stacks remembered.
+    pub fn by_hand(
+        map: &Map,
+        seen: &dyn Fn(Hex) -> bool,
+        known: Option<&dyn Fn(Hex) -> bool>,
+        ghosts: Vec<Ghost>,
+    ) -> Sight {
+        let hexes = || (0..map.rows()).flat_map(|row| (0..map.cols()).map(move |col| Hex::new(row, col)));
+        Sight {
+            cols: map.cols(),
+            seen: Some(hexes().map(seen).collect()),
+            known: known.map(|known| hexes().map(known).collect()),
+            ghosts,
+            held: Vec::new(),
+        }
+    }
+
+    fn at(&self, hex: Hex) -> usize {
+        usize::from(hex.row) * usize::from(self.cols) + usize::from(hex.col)
     }
 
     /// True if the hex is seen: who stands there, who holds its city.
     pub fn sees(&self, hex: Hex) -> bool {
         match &self.seen {
             None => true,
-            Some(seen) => seen.get(usize::from(hex.row) * usize::from(self.cols) + usize::from(hex.col)) == Some(&true),
+            Some(seen) => hex.col < self.cols && seen.get(self.at(hex)) == Some(&true),
         }
+    }
+
+    /// True if the side knows the hex: its terrain, its road, the city on it.
+    /// Every hex, but with total fog of war: then those it has ever seen.
+    pub fn knows(&self, hex: Hex) -> bool {
+        match &self.known {
+            None => true,
+            Some(known) => hex.col < self.cols && known.get(self.at(hex)) == Some(&true),
+        }
+    }
+
+    /// How many hexes it knows (`None`: all of them): it only grows.
+    pub fn known_count(&self) -> Option<usize> {
+        self.known.as_ref().map(|known| known.iter().filter(|k| **k).count())
+    }
+
+    /// Who holds `city` as far as the side knows: in sight, who does; in the
+    /// fog, who did when it saw the city last (nobody, if it never did).
+    pub fn holder(&self, city: &City) -> Side {
+        if self.sees(city.pos) { city.side } else { self.held(city.pos).map_or(Side::Grey, |(side, _)| side) }
+    }
+
+    /// Who held the city on `hex` when the side saw it last, and in which
+    /// round.
+    pub fn held(&self, hex: Hex) -> Option<(Side, u32)> {
+        self.held.iter().find(|(at, _, _)| *at == hex).map(|(_, side, round)| (*side, *round))
+    }
+
+    /// The other sides' stacks it remembers where it saw them last: those in
+    /// its sight as they are now, the others as they were.
+    pub fn ghosts(&self) -> &[Ghost] {
+        &self.ghosts
+    }
+
+    /// The stack it remembers on a hex out of its sight, if any: what shows
+    /// there in the fog.
+    pub fn ghost_at(&self, hex: Hex) -> Option<&Ghost> {
+        if self.sees(hex) {
+            return None;
+        }
+        self.ghosts.iter().find(|g| g.at == hex)
+    }
+
+    /// The hexes it knows next to land it has never seen (total fog of
+    /// war): where it goes to see more. None without total fog.
+    pub fn frontier(&self, map: &Map) -> Vec<Hex> {
+        if self.known.is_none() {
+            return Vec::new();
+        }
+        let hexes = (0..map.rows()).flat_map(|row| (0..map.cols()).map(move |col| Hex::new(row, col)));
+        hexes.filter(|h| self.knows(*h) && map.neighbours(*h).into_iter().any(|n| !self.knows(n))).collect()
     }
 }
 
@@ -284,6 +376,11 @@ pub struct Game {
     /// the other sides' stacks it saw last where they were (`Ghost`).
     trail: Vec<Vec<bool>>,
     memory: Vec<Vec<Ghost>>,
+    /// With fog of war, each side's: who held each city it has seen, when it
+    /// saw it last (`Sight::held`); with total fog, the hexes it has ever
+    /// seen.
+    held: Vec<Vec<(Hex, Side, u32)>>,
+    explored: Vec<Vec<bool>>,
     /// The sides that are out, in the order they went.
     out: Vec<Side>,
     winner: Option<Side>,
@@ -319,6 +416,8 @@ impl Game {
             out: Vec::new(),
             trail: vec![Vec::new(); NUM_SIDES + 1],
             memory: vec![Vec::new(); NUM_SIDES + 1],
+            held: vec![Vec::new(); NUM_SIDES + 1],
+            explored: vec![Vec::new(); NUM_SIDES + 1],
             winner: None,
             undo: None,
             undo_mark: 0,
@@ -331,6 +430,8 @@ impl Game {
             setup,
         };
         game.name_commanders();
+        // What each side sees at the start, it knows.
+        game.note_sightings();
         game
     }
 
@@ -529,14 +630,19 @@ impl Game {
                     }
                 }
                 let lead = lead.ok_or("no units")?;
-                // As far as there is room for all of them.
+                // As far as there is room for all of them, on the way the side
+                // knows.
+                let sight = self.sight(side);
+                if !sight.knows(to) {
+                    return Err(UNSEEN.to_string());
+                }
                 let room = |hex: Hex| self.fits(hex, &units);
-                let (hex, _) = step_toward_with(&self.map, lead, to, &room).ok_or("there is no way there")?;
+                let (hex, _) = self.known_step_toward(lead, to, &room, &sight).ok_or("there is no way there")?;
                 let map = &self.map;
                 let coming: Vec<UnitId> = units
                     .iter()
                     .copied()
-                    .filter(|id| map.units().get(*id).is_some_and(|u| compute_range(map, u).cost(hex).is_some()))
+                    .filter(|id| map.units().get(*id).is_some_and(|u| self.known_range(u, &sight).cost(hex).is_some()))
                     .collect();
                 self.move_units(side, &coming, hex)
             }
@@ -566,11 +672,17 @@ impl Game {
                     return Err("no units".to_string());
                 }
                 // Each of them can get there over the land, in as many turns
-                // as it takes (whoever is on the way now: units move).
+                // as it takes (whoever is on the way now: units move), over
+                // the land its side knows.
+                let sight = self.sight(side);
+                if !sight.knows(to) {
+                    return Err(UNSEEN.to_string());
+                }
+                let known = |hex: Hex| sight.knows(hex);
                 for id in &units {
                     let Some(unit) = self.map.units().get(*id) else { continue };
                     let costs = self.map.units().move_cost(unit.move_cost);
-                    if !costs.is_some_and(|c| way_over_land(&self.map, c, unit.pos(), to)) {
+                    if !costs.is_some_and(|c| way_over_land(&self.map, c, (unit.pos(), to), &known)) {
                         return Err(format!("{} cannot get there", unit.title()));
                     }
                 }
@@ -621,12 +733,18 @@ impl Game {
                 if to.is_some_and(|hex| !self.map.contains(hex)) {
                     return Err("that is not on the map".to_string());
                 }
-                // Somewhere what it builds can get to.
+                // Somewhere what it builds can get to, over the land the side
+                // knows.
                 if let (Some(to), Some(c)) = (to, self.map.cities().get(city)) {
+                    let sight = self.sight(side);
+                    if !sight.knows(to) {
+                        return Err(UNSEEN.to_string());
+                    }
                     let units = self.map.units();
+                    let known = |hex: Hex| sight.knows(hex);
                     let reaches = c.units.iter().any(|prod| {
                         let kind = units.kind_named(&prod.basename).and_then(|k| units.kind(k));
-                        kind.is_some_and(|k| way_over_land(&self.map, &k.cost, c.pos, to))
+                        kind.is_some_and(|k| way_over_land(&self.map, &k.cost, (c.pos, to), &known))
                     });
                     if !reaches {
                         return Err(format!("nothing {} builds can get there", c.name));
@@ -798,6 +916,9 @@ impl Game {
         let mut goals = Vec::with_capacity(ids.len());
         // Where they can go is what the side knows of the map (fog of war).
         let sight = self.sight(side);
+        if !sight.knows(to) {
+            return Err(UNSEEN.to_string());
+        }
         let mut ways: Vec<Vec<Hex>> = Vec::new();
         for id in &ids {
             let unit = self.own_unit(side, *id)?;
@@ -916,9 +1037,10 @@ impl Game {
         // A move can be taken back unless it was a battle, put a side out, or
         // a temple's blessing came of it (chance had a say); nor, with fog of
         // war, if it showed what was not seen before (another side's units,
-        // who holds a city): what was seen cannot be unseen.
+        // who holds a city, land never seen): what was seen cannot be unseen.
         let final_ = events.iter().any(|e| matches!(e, Event::Battle { .. } | Event::Out { .. } | Event::Won { .. }));
-        let showed = self.setup.fog && !revealing(self).is_empty();
+        let explored = self.sight(side).known_count() != sight.known_count();
+        let showed = self.setup.fog.on() && (explored || !revealing(self).is_empty());
         if !final_ && !blessed && !showed {
             self.undo = Some(Undo::Moved { units: before, to, stacks, taken, goals });
         }
@@ -1262,7 +1384,7 @@ impl Game {
     /// within [`UNIT_SIGHT`] of its units and [`CITY_SIGHT`] of its cities.
     /// (Nobody, `Side::Grey`, sees everything.)
     pub fn sight(&self, side: Side) -> Sight {
-        if !self.setup.fog || side == Side::Grey {
+        if !self.setup.fog.on() || side == Side::Grey {
             return Sight::all();
         }
         let (rows, cols) = (self.map.rows(), self.map.cols());
@@ -1286,7 +1408,18 @@ impl Game {
                 *s |= *t;
             }
         }
-        Sight { cols, seen: Some(seen) }
+        // With total fog, it knows what it has ever seen.
+        let known = (self.setup.fog == Fog::Total).then(|| {
+            let mut known = seen.clone();
+            if let Some(explored) = self.explored.get(side.index()).filter(|e| e.len() == known.len()) {
+                for (k, e) in known.iter_mut().zip(explored) {
+                    *k |= *e;
+                }
+            }
+            known
+        });
+        let held = self.held.get(side.index()).cloned().unwrap_or_default();
+        Sight { cols, seen: Some(seen), known, ghosts: self.ghosts(side).to_vec(), held }
     }
 
     /// The other sides' stacks `side` remembers where it saw them last (fog
@@ -1301,11 +1434,12 @@ impl Game {
         self.ghosts(side).iter().find(|g| g.at == hex)
     }
 
-    /// Where `unit` can go this turn as its side knows the map: with fog of
-    /// war, the other sides' units stop it only where its side sees them
-    /// (`sight`); in the fog only cities do. The rules go by what is known: a
+    /// Where `unit` can go this turn as its side knows the map (`sight`, the
+    /// side's): with fog of war, the other sides' units stop it only where its
+    /// side sees them; in the fog only cities do; with total fog, land the
+    /// side has never seen is shut to it. The rules go by what is known: a
     /// unit seen nowhere is met on the way (`move_units`).
-    fn known_range(&self, unit: &Unit, sight: &Sight) -> MoveRange {
+    pub fn known_range(&self, unit: &Unit, sight: &Sight) -> MoveRange {
         let Some(costs) = self.map.units().move_cost(unit.move_cost) else { return compute_range(&self.map, unit) };
         let pass = |hex: Hex| self.known_passage(unit.side(), hex, sight);
         reach_with(&self.map, unit.pos(), costs, unit.movement, &pass)
@@ -1314,7 +1448,9 @@ impl Game {
     /// What `hex` is to a unit of `side` that sees as `sight` (`passage`, as
     /// far as it knows).
     fn known_passage(&self, side: Side, hex: Hex, sight: &Sight) -> Passage {
-        if sight.sees(hex) {
+        if !sight.knows(hex) {
+            Passage::Blocked
+        } else if sight.sees(hex) {
             passage(&self.map, side, hex)
         } else if self.map.city_at(hex).is_some_and(|c| c.side != side) {
             Passage::Stop
@@ -1331,11 +1467,41 @@ impl Game {
         path_with(&self.map, (unit.pos(), to), costs, limit, &pass)
     }
 
-    /// What `side` sees now goes into what it remembers: of the hexes it
-    /// sees, the other sides' stacks there now (or none); of those it does
-    /// not, what it saw last. Called after every order.
+    /// The edge of the land `unit`'s side knows (`Sight::frontier`) that it
+    /// can get to over that land, in as many turns as it takes, and how much
+    /// that costs it, the cheapest first: where it goes to see more (total
+    /// fog of war). Nothing without total fog.
+    pub fn frontier_for(&self, unit: &Unit, sight: &Sight) -> Vec<(Hex, u32)> {
+        let edge = sight.frontier(&self.map);
+        if edge.is_empty() {
+            return Vec::new();
+        }
+        let mut far = unit.clone();
+        far.movement = u32::MAX / 2;
+        let range = self.known_range(&far, sight);
+        let mut ways: Vec<(Hex, u32)> = edge.into_iter().filter_map(|h| range.cost(h).map(|c| (h, c))).collect();
+        ways.sort_by_key(|(h, cost)| (*cost, h.row, h.col));
+        ways
+    }
+
+    /// Where `unit` gets to this turn on its way toward `target` (see
+    /// `step_toward_with`), as its side knows the map (`sight`).
+    pub fn known_step_toward(
+        &self,
+        unit: &Unit,
+        target: Hex,
+        room: &dyn Fn(Hex) -> bool,
+        sight: &Sight,
+    ) -> Option<(Hex, u32)> {
+        step_toward_by(&self.map, (unit, target), room, &|hex| self.known_passage(unit.side(), hex, sight))
+    }
+
+    /// What each side sees now goes into what it remembers: of the hexes it
+    /// sees, the other sides' stacks there now (or none), and who holds the
+    /// cities (and of its own, who took them); of those it does not, what it
+    /// saw last; with total fog, all it has seen. Called after every order.
     fn note_sightings(&mut self) {
-        if !self.setup.fog {
+        if !self.setup.fog.on() {
             return;
         }
         let round = self.round;
@@ -1352,9 +1518,25 @@ impl Game {
                     None => stacks.push(Ghost { at: unit.pos(), side: unit.side(), count: 1, round }),
                 }
             }
-            let Some(memory) = self.memory.get_mut(side.index()) else { continue };
-            memory.retain(|g| !sight.sees(g.at));
-            memory.extend(stacks);
+            // A side is told when it loses a city: it knows who took it.
+            let holders: Vec<(Hex, Side)> = self
+                .map
+                .cities()
+                .iter()
+                .filter(|c| sight.sees(c.pos) || c.side == side || sight.held(c.pos).is_some_and(|(s, _)| s == side))
+                .map(|c| (c.pos, c.side))
+                .collect();
+            if let Some(memory) = self.memory.get_mut(side.index()) {
+                memory.retain(|g| !sight.sees(g.at));
+                memory.extend(stacks);
+            }
+            if let Some(held) = self.held.get_mut(side.index()) {
+                held.retain(|(at, _, _)| !holders.iter().any(|(h, _)| h == at));
+                held.extend(holders.into_iter().map(|(at, holder)| (at, holder, round)));
+            }
+            if let (Some(known), Some(explored)) = (sight.known, self.explored.get_mut(side.index())) {
+                *explored = known;
+            }
         }
     }
 
@@ -1362,7 +1544,7 @@ impl Game {
     /// with fog of war, what they saw on the way stays seen until its turn
     /// ends.
     fn see_along(&mut self, side: Side, way: &[Hex]) {
-        if !self.setup.fog || way.is_empty() {
+        if !self.setup.fog.on() || way.is_empty() {
             return;
         }
         let (rows, cols) = (self.map.rows(), self.map.cols());
@@ -1388,7 +1570,7 @@ impl Game {
     /// hex first) and out of their sight remember it where it went into the
     /// fog.
     fn seen_leaving(&mut self, side: Side, way: &[Hex], count: usize) {
-        if !self.setup.fog || way.len() < 2 {
+        if !self.setup.fog.on() || way.len() < 2 {
             return;
         }
         let round = self.round;
@@ -1407,7 +1589,11 @@ impl Game {
     /// The game as `side` knows it: what the computer's players are given
     /// (`agents::play_turn`), so that they know what a person in their place
     /// is told. With fog of war, the other sides' units out of its sight are
-    /// not in it, and a city in the fog is nobody's as far as it knows. Fog
+    /// not in it (what it remembers of them is: `Sight::ghosts`), and a city
+    /// in the fog is held by who held it when the side saw it last (nobody,
+    /// if it never did). With total fog, land it has never seen is grass with
+    /// no road, and a city there is nobody's, with no name, walls or taxes:
+    /// `Sight::knows` says which (a program is sent none of it). Fog
     /// or not, it is not told what the other sides' cities build (nor what
     /// they can) and where they send it, the other sides' gold, their units'
     /// standing orders and the moves they have left; nor the history. Its
@@ -1418,10 +1604,18 @@ impl Game {
     pub fn view_for(&self, side: Side) -> Game {
         let mut view = self.clone();
         (view.history, view.fights, view.fought, view.undo) = (Vec::new(), Vec::new(), None, None);
-        for (i, (memory, trail)) in view.memory.iter_mut().zip(view.trail.iter_mut()).enumerate() {
+        for (i, ((memory, trail), (held, explored))) in view
+            .memory
+            .iter_mut()
+            .zip(view.trail.iter_mut())
+            .zip(view.held.iter_mut().zip(view.explored.iter_mut()))
+            .enumerate()
+        {
             if i != side.index() {
                 memory.clear();
                 trail.clear();
+                held.clear();
+                explored.clear();
             }
         }
         view.rng = Rng::new((u64::from(self.round) << 8) ^ (side.index() as u64) ^ 0x005e_ed0f_1e55);
@@ -1437,14 +1631,29 @@ impl Game {
                 unit.movement = unit.base_move_points;
             }
         }
-        let cities: Vec<(CityId, bool)> =
-            view.map.cities().iter().filter(|c| c.side != side).map(|c| (c.id, sight.sees(c.pos))).collect();
-        for (id, seen) in cities {
+        let cities: Vec<(CityId, Side, bool)> = view
+            .map
+            .cities()
+            .iter()
+            .filter(|c| c.side != side)
+            .map(|c| (c.id, sight.holder(c), sight.knows(c.pos)))
+            .collect();
+        for (id, holder, known) in cities {
             if let Some(city) = view.map.city_mut(id) {
                 (city.building, city.progress, city.rally) = (None, 0, None);
                 city.units.clear();
-                if !seen {
-                    city.side = Side::Grey;
+                city.side = holder;
+                if !known {
+                    (city.side, city.walls, city.income) = (Side::Grey, 0, 0);
+                    city.name.clear();
+                }
+            }
+        }
+        if self.setup.fog == Fog::Total {
+            let hexes = (0..self.map.rows()).flat_map(|row| (0..self.map.cols()).map(move |col| Hex::new(row, col)));
+            for hex in hexes.filter(|h| !sight.knows(*h)) {
+                if let Some(tile) = view.map.tile_mut(hex) {
+                    (tile.kind, tile.road) = (TileType::Grass, false);
                 }
             }
         }

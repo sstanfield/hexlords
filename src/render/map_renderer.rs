@@ -25,6 +25,7 @@ use super::mesh::{BufferPool, MeshList};
 use super::roads::{self, ROAD_PICTURES};
 use super::shaders::{FlatVertex, HexVertex, Pipelines};
 use super::textures::{AssetDirs, Sampling};
+use crate::game::{Ghost, SEE_ALL, Sight};
 use crate::state::scenario::side_name;
 use crate::state::{DEFAULT_UNIT_IMAGE, Hex, Map, Side, TileType, UnitId};
 use crate::view::{HEX_HEIGHT_ADJUST, MapView};
@@ -104,23 +105,25 @@ pub struct Marks<'a> {
     /// Whose units show what they are (their picture): the others' are
     /// banners, their size and no more. `None`: everyone's show.
     pub viewer: Option<Side>,
-    /// The hexes seen (fog of war): the others are dimmed, with no units on
-    /// them and their cities nobody's to look at.
-    pub seen: &'a dyn Fn(Hex) -> bool,
-    /// On a hex in the fog, another side's stack remembered there (where it
-    /// was seen last): its side and how many. Drawn as a ghost of a banner.
-    pub ghost: &'a dyn Fn(Hex) -> Option<(Side, usize)>,
+    /// What is known of the map (fog of war): the hexes out of sight are
+    /// dimmed, with no units on them (another side's stack remembered on one
+    /// shows as a ghost of its banner) and their cities in the colors of who
+    /// held them when they were seen last; land never seen is black, and
+    /// nothing of it shows (`UNKNOWN`).
+    pub sight: &'a Sight,
 }
 
 impl Marks<'_> {
     /// Marks of a map seen whole, everyone's units shown: a tool's.
     pub fn plain(color: [f32; 4], marked: &dyn Fn(Hex) -> bool, front: Option<UnitId>) -> Marks<'_> {
-        Marks { color, marked, front, viewer: None, seen: &|_| true, ghost: &|_| None }
+        Marks { color, marked, front, viewer: None, sight: &SEE_ALL }
     }
 }
 
 /// The dimming over a hex in the fog.
 pub const FOG: [f32; 4] = [0.02, 0.02, 0.06, 0.5];
+/// A hex never seen (total fog of war): all of it this color.
+pub const UNKNOWN: [u8; 3] = [6, 6, 12];
 /// How much of a remembered stack shows in the fog (its ghost).
 pub const GHOST_ALPHA: f32 = 0.85;
 
@@ -177,6 +180,8 @@ pub struct MapGeometry {
     units: Vec<(String, MeshList<HexVertex>)>,
     /// The marked hexes.
     overlay: MeshList<FlatVertex>,
+    /// The hexes never seen.
+    unknown: MeshList<HexVertex>,
     /// What `units_with` gives for an image nothing is drawn with.
     none: MeshList<HexVertex>,
 }
@@ -325,6 +330,7 @@ impl MapGeometry {
             list.clear();
         }
         self.overlay.clear();
+        self.unknown.clear();
 
         let (rows, cols) = (map.rows(), map.cols());
         for visible in view.visible_hexes() {
@@ -340,9 +346,16 @@ impl MapGeometry {
 
             let vertices: [HexVertex; HEX_VERTICES] =
                 std::array::from_fn(|i| HexVertex { pos: corner(i), uv: uvs[i], bary: HEX_BARY[i], border });
-            // A city is drawn with its owner's picture (nobody's, in the fog).
-            let seen = (marks.seen)(hex);
-            let owner = if seen { map.city_at(hex).map_or(Side::Grey, |city| city.side) } else { Side::Grey };
+            // Land never seen: black (its border too, but the cursor's), and
+            // nothing on it.
+            if !marks.sight.knows(hex) {
+                self.unknown.push(&vertices, &HEX_INDICES);
+                continue;
+            }
+            // A city is drawn with its owner's picture (in the fog, of who held
+            // it when it was seen last).
+            let seen = marks.sight.sees(hex);
+            let owner = map.city_at(hex).map_or(Side::Grey, |city| marks.sight.holder(city));
             match tile.kind {
                 TileType::City => self.cities[owner.index()].push(&vertices, &HEX_INDICES),
                 kind => self.terrain[kind.index()].push(&vertices, &HEX_INDICES),
@@ -416,7 +429,7 @@ impl MapGeometry {
             if !seen {
                 // What was seen there last, under the fog: a ghost of its banner
                 // (in a city, of its garrison's pips).
-                if let Some((side, count)) = (marks.ghost)(hex) {
+                if let Some(&Ghost { side, count, .. }) = marks.sight.ghost_at(hex) {
                     if tile.kind != TileType::City {
                         push_banner(&mut self.signs, view, visible.center, variant, side_color(side), GHOST_ALPHA);
                     }
@@ -427,6 +440,11 @@ impl MapGeometry {
                 self.overlay.push(&flat, &HEX_INDICES);
             }
         }
+    }
+
+    /// The hexes never seen (total fog of war), drawn in [`UNKNOWN`].
+    pub fn unknown(&self) -> &MeshList<HexVertex> {
+        &self.unknown
     }
 
     /// The hexes of one terrain (no cities: see [`MapGeometry::cities`]).
@@ -486,6 +504,8 @@ pub struct MapRenderer {
     units: HashMap<String, Option<TextureId>>,
     /// The picture of a unit without one.
     unit: TextureId,
+    /// A pixel of [`UNKNOWN`], for the land never seen.
+    black: TextureId,
     geometry: MapGeometry,
     buffers: BufferPool,
 }
@@ -561,6 +581,8 @@ impl MapRenderer {
     /// C++: MapRenderer::MapRenderer
     pub fn new(ctx: &mut dyn RenderingBackend, dirs: AssetDirs) -> Result<MapRenderer, String> {
         let Textures { tiles, cities, roads, unit } = load_all(ctx, &dirs)?;
+        let [r, g, b] = UNKNOWN;
+        let pixel = turbo_ferret::Image { size: turbo_ferret::Size::new(1, 1), rgba: vec![r, g, b, 255] };
         Ok(MapRenderer {
             dirs,
             tiles,
@@ -568,6 +590,7 @@ impl MapRenderer {
             roads,
             units: HashMap::new(),
             unit,
+            black: super::textures::upload(ctx, &pixel, Sampling::Nearest),
             geometry: MapGeometry::new(),
             buffers: BufferPool::new(),
         })
@@ -634,6 +657,7 @@ impl MapRenderer {
         for side in CITY_SIDES {
             draw_textured(ctx, buffers, geometry.cities(side), self.cities[side.index()]);
         }
+        draw_textured(ctx, buffers, geometry.unknown(), self.black);
         for (picture, texture) in self.roads.iter().enumerate() {
             draw_textured(ctx, buffers, geometry.roads(picture), *texture);
         }
@@ -666,6 +690,7 @@ impl MapRenderer {
     /// Free the GPU objects.
     pub fn delete(&mut self, ctx: &mut dyn RenderingBackend) {
         self.delete_textures(ctx);
+        ctx.delete_texture(self.black);
         self.buffers.delete_all(ctx);
     }
 }
@@ -1069,13 +1094,9 @@ mod tests {
         let mut view = MapView::new(20, 20, Hex::new(10, 10));
         view.resize(819, 537);
         let mut g = MapGeometry::new();
-        let (none, ghost) = (|_: Hex| false, |hex: Hex| (hex == Hex::new(10, 12)).then_some((Side::Blue, 3)));
-        let marks = Marks {
-            viewer: Some(Side::Red),
-            seen: &none,
-            ghost: &ghost,
-            ..Marks::plain(RANGE_OVERLAY, &|_| false, None)
-        };
+        let ghost = Ghost { at: Hex::new(10, 12), side: Side::Blue, count: 3, round: 1 };
+        let sight = Sight::by_hand(&map, &|_| false, None, vec![ghost]);
+        let marks = Marks { viewer: Some(Side::Red), sight: &sight, ..Marks::plain(RANGE_OVERLAY, &|_| false, None) };
         g.build(&map, &view, &marks);
         // A banner and three pips in blue, not quite solid, where it was seen.
         let [r, gr, b] = side_color(Side::Blue);
@@ -1104,8 +1125,8 @@ mod tests {
         let mut view = MapView::new(20, 20, Hex::new(10, 10));
         view.resize(819, 537);
         let mut g = MapGeometry::new();
-        let seen_all = |_: Hex| true;
-        let marks = Marks { viewer: Some(Side::Red), seen: &seen_all, ..Marks::plain(RANGE_OVERLAY, &|_| false, None) };
+        let sight = Sight::by_hand(&map, &|_| true, None, Vec::new());
+        let marks = Marks { viewer: Some(Side::Red), sight: &sight, ..Marks::plain(RANGE_OVERLAY, &|_| false, None) };
         g.build(&map, &view, &marks);
         // Red's own unit shows what it is; blue's stack is a banner in blue
         // with three pips, and no picture.
@@ -1118,8 +1139,8 @@ mod tests {
 
         // In the fog (all but the west of the map): no blue at all, the city
         // nobody's, no garrison pips, and the hexes dimmed.
-        let near = |hex: Hex| hex.col < 7;
-        let marks = Marks { viewer: Some(Side::Red), seen: &near, ..Marks::plain(RANGE_OVERLAY, &|_| false, None) };
+        let sight = Sight::by_hand(&map, &|hex| hex.col < 7, None, Vec::new());
+        let marks = Marks { viewer: Some(Side::Red), sight: &sight, ..Marks::plain(RANGE_OVERLAY, &|_| false, None) };
         g.build(&map, &view, &marks);
         assert_eq!(at_all(&g, "units/militia.png"), 1, "red's own, in sight");
         let all_flat = g.signs().meshes().iter().chain(g.discs().meshes()).flat_map(|m| m.vertices.clone());
@@ -1128,6 +1149,52 @@ mod tests {
         assert_eq!(hexes(g.cities(Side::Grey)).len(), 1);
         let fogged = g.overlay().meshes().iter().flat_map(|m| &m.vertices).filter(|v| v.color == FOG).count();
         assert!(fogged > 0 && fogged % HEX_VERTICES == 0);
+    }
+
+    #[test]
+    fn land_never_seen_is_black_and_nothing_on_it_shows() {
+        // Blue's city and a blue stack east of column 9, red's unit west;
+        // red has seen columns 0 to 8 only (total fog of war).
+        let mut rows = vec!["g".repeat(20); 20];
+        rows[10] = "gggggggggggggcgggggg".to_string();
+        rows[11] = "GGGGGGGGGGGGGGGGGGGG".to_string();
+        let terrain = format!("20\n20\n{}\n", rows.join("\n"));
+        let cities = "city 10 13\nname Far\nside blue\ngarrison a\n";
+        let (mut map, _) = crate::state::scenario::parse(&terrain, Some(KINDS), Some(cities)).unwrap();
+        let kind = map.units().kind_named("a").unwrap();
+        let red = map.new_unit_of(Side::Red, kind).unwrap();
+        map.place_unit(red, Hex::new(10, 5)).unwrap();
+        let blue = map.new_unit_of(Side::Blue, kind).unwrap();
+        map.place_unit(blue, Hex::new(10, 11)).unwrap();
+        map.cursor = Hex::new(5, 15);
+        let mut view = MapView::new(20, 20, Hex::new(10, 10));
+        view.resize(819, 537);
+        let known = |hex: Hex| hex.col < 9;
+        let sight = Sight::by_hand(&map, &|hex| hex.col < 7, Some(&known), Vec::new());
+        let marks = Marks { viewer: Some(Side::Red), sight: &sight, ..Marks::plain(RANGE_OVERLAY, &|_| false, None) };
+        let mut g = MapGeometry::new();
+        g.build(&map, &view, &marks);
+        let black = hexes(g.unknown());
+        // Every hex east of column 8 in view is black: no terrain, no city,
+        // no road, no unit, no fog over it (it is darker than fog).
+        let shown_east = view.visible_hexes().filter(|v| v.hex.col >= 9).count();
+        assert_eq!(black.len(), shown_east);
+        assert!(g.cities(Side::Blue).is_empty() && g.cities(Side::Grey).is_empty(), "the city is not known");
+        let blue = solid(Side::Blue);
+        let all_flat = g.signs().meshes().iter().chain(g.discs().meshes()).flat_map(|m| m.vertices.clone());
+        assert!(all_flat.into_iter().all(|v| v.color != blue), "nor blue's stack");
+        assert_eq!(at_all(&g, "units/militia.png"), 1, "red's own shows");
+        let road_hexes: usize = (0..ROAD_PICTURES).map(|p| hexes(g.roads(p)).len()).sum();
+        let known_road = view.visible_hexes().filter(|v| v.hex.row == 11 && v.hex.col < 9).count();
+        assert_eq!(road_hexes, known_road, "the road only where it is known");
+        let fogged = g.overlay().meshes().iter().flat_map(|m| &m.vertices).filter(|v| v.color == FOG).count();
+        assert_eq!(fogged / HEX_VERTICES, view.visible_hexes().filter(|v| (7..9).contains(&v.hex.col)).count());
+        // The cursor keeps its red border on a black hex.
+        let cursor = center_of(&view, map.cursor);
+        let on_cursor =
+            black.iter().find(|h| (h[0].pos[0] - cursor[0]).abs() < 1e-4 && (h[0].pos[1] - cursor[1]).abs() < 1e-4);
+        let border = on_cursor.expect("the cursor's hex is black")[0].border;
+        assert_eq!([border[0], border[1], border[2]], CURSOR_BORDER);
     }
 
     #[test]

@@ -5,12 +5,12 @@
 use hexgame::agents::{self, Agents};
 use hexgame::game::Game;
 use hexgame::headless;
-use hexgame::orders::Event;
+use hexgame::orders::{Event, Order};
 use hexgame::planner::{self, Planner, STEADY};
-use hexgame::setup::Setup;
+use hexgame::setup::{Fog, Setup};
 use hexgame::state::combat::System;
 use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side};
+use hexgame::state::{Hex, Side, UnitId};
 
 /// 30 x 30 grass: red's Redhold with `red`, blue's Bluemoor far off.
 fn game(red: &str, setup: impl FnOnce(&mut Setup)) -> Game {
@@ -80,7 +80,7 @@ fn with_fog_of_war_it_does_not_strike_what_it_cannot_see() {
     // A blue levy four hexes from Redhold: out of sight in the fog (a city
     // sees three), an easy kill to one that sees all.
     let fight = |fog: bool| {
-        let mut game = game("garrison militia 2\ngarrison riders\n", |s| s.fog = fog);
+        let mut game = game("garrison militia 2\ngarrison riders\n", |s| s.fog = if fog { Fog::On } else { Fog::Off });
         let levy = game.map.units().kind_named("levy").unwrap();
         let blue = game.map.new_unit_of(Side::Blue, levy).unwrap();
         game.map.place_unit(blue, Hex::new(5, 9)).unwrap();
@@ -110,7 +110,7 @@ fn corridor(red: &str, others: &str, setup: impl FnOnce(&mut Setup)) -> Game {
     let game = Game::from_scenario(Scenario { map, assets: None, warnings });
     let mut s = Setup::solo(&game.map, None, "steady");
     s.set_players("red=steady").unwrap();
-    s.fog = true;
+    s.fog = Fog::On;
     setup(&mut s);
     game.with_setup(s)
 }
@@ -217,4 +217,44 @@ fn worth_is_plain_arithmetic() {
     assert_eq!([at(5), at(0)], [16.0, 256.0]);
     // 4 to the 0.4th, its fifth root of 4 squared.
     assert!((at(9) - 16f64.powf(0.2)).abs() < 1e-9);
+}
+
+#[test]
+fn under_total_fog_it_goes_to_see_and_finds_what_to_take() {
+    for style in planner::STYLES {
+        let mut game = game("garrison militia 2\ngarrison riders 2\n", |s| {
+            s.set_players(&format!("red={},blue=simple", style.name)).unwrap();
+            (s.fog, s.seed) = (Fog::Total, 5);
+        });
+        assert!(!game.sight(Side::Red).knows(Hex::new(25, 25)), "Bluemoor is not known at the start");
+        let outcome = headless::play(&mut game, 150, &mut |_, _| {}).unwrap();
+        assert_eq!(outcome.winner, Some(Side::Red), "{}", style.name);
+    }
+}
+
+#[test]
+fn a_stack_it_saw_near_its_city_keeps_its_defenders_home() {
+    // Six militia in Redhold; three blue riders, seen four hexes off (or
+    // never seen), go east into the fog on blue's turn. Red's next turn:
+    let stayed = |seen: bool| {
+        let mut game = game("garrison militia 6\n", |s| s.fog = Fog::On);
+        let riders = game.map.units().kind_named("riders").unwrap();
+        let start = if seen { Hex::new(5, 8) } else { Hex::new(5, 12) };
+        let blue: Vec<UnitId> = (0..3)
+            .map(|_| {
+                let unit = game.map.new_unit_of(Side::Blue, riders).unwrap();
+                game.map.place_unit(unit, start).unwrap();
+                unit
+            })
+            .collect();
+        game.apply(Order::EndTurn).unwrap();
+        let away = Hex::new(start.row, start.col + 3);
+        game.apply(Order::Move { units: blue, to: away }).unwrap();
+        game.apply(Order::EndTurn).unwrap();
+        assert!(!game.sight(Side::Red).sees(away));
+        agents::play_turn(&mut game, &mut Planner::new(STEADY));
+        game.map.units_at(Hex::new(5, 5)).len()
+    };
+    assert_eq!(stayed(true), 6, "the stack it remembers may come back: all stay");
+    assert!(stayed(false) < 6, "with nothing seen, an army goes out");
 }

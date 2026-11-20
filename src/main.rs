@@ -9,7 +9,8 @@
 //!   one drawn anew; `--seed <n>`: the seed of the game's chance;
 //! - `--chance <0-10>`: how much chance there is in a battle (5); `--battles
 //!   lines|strength`: how a battle goes (lines); `--gold <n>`: the gold each
-//!   side starts with (50); `--fog`: fog of war;
+//!   side starts with (50); `--fog`: fog of war; `--total-fog`: fog of war,
+//!   and the land a side has never seen is black;
 //! - `--headless`: no window: the computer plays every side of `--map` until
 //!   one is left or `--rounds <n>` (200) have gone by, then says how it went
 //!   (`--log`: and everything that happened on the way);
@@ -30,7 +31,7 @@ use hexgame::headless;
 use hexgame::new_game::COMPUTER;
 use hexgame::script;
 use hexgame::session::Session;
-use hexgame::setup::{Controller, Setup, TurnOrder};
+use hexgame::setup::{Controller, Fog, Setup, TurnOrder};
 use hexgame::shell::Shell;
 use hexgame::state::combat::{MAX_CHANCE, System};
 
@@ -53,13 +54,13 @@ struct Args {
     chance: Option<u8>,
     battles: Option<System>,
     gold: Option<u32>,
-    fog: bool,
+    fog: Fog,
 }
 
 fn usage() -> String {
     format!(
         "usage: hexgame [--map <file.map or map directory>] [--players <side>=<person|agent>,...] [--order fixed|drawn] \
-         [--seed <n>] [--chance <0-10>] [--battles lines|strength] [--gold <n>] [--fog] [--headless [--rounds <n>] \
+         [--seed <n>] [--chance <0-10>] [--battles lines|strength] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] \
          [--log]] \
          [--script <steps>] {OPTIONS_USAGE}"
     )
@@ -93,7 +94,8 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
                 parsed.rounds = Some(n.parse().map_err(|_| format!("--rounds: \"{n}\" is not a number"))?);
             }
             "--headless" => parsed.headless = true,
-            "--fog" => parsed.fog = true,
+            "--fog" => parsed.fog = parsed.fog.max(Fog::On),
+            "--total-fog" => parsed.fog = Fog::Total,
             "--chance" => {
                 let n = value("a number from 0 to 10")?;
                 let chance = n.parse::<u8>().ok().filter(|c| *c <= MAX_CHANCE);
@@ -164,7 +166,9 @@ fn main() {
             setup.combat.chance = chance.unwrap_or(setup.combat.chance);
             setup.combat.system = battles.unwrap_or(setup.combat.system);
             setup.gold = gold.unwrap_or(setup.gold);
-            setup.fog = setup.fog || fog;
+            if fog.on() {
+                setup.fog = fog;
+            }
             Some(game.with_setup(setup))
         }
         None => None,

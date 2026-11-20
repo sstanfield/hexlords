@@ -14,7 +14,7 @@ use hexgame::session::{
     ALL_CITIES_ID, BEGIN_TURN_ID, CAPITAL_ID, DESELECT_ID, GO_TO_ID, LOG_ID, MENU_CITIES_ID, MENU_GAME_ID,
     MENU_HELP_ID, MENU_TITLES, MENU_UNITS_ID, MENU_VIEW_ID, Session, TASKS_ID, UNDO_ID,
 };
-use hexgame::setup::Setup;
+use hexgame::setup::{Fog, Setup};
 use hexgame::state::combat::System;
 use hexgame::state::scenario::{self, Scenario};
 use hexgame::state::{Hex, Side};
@@ -157,7 +157,7 @@ fn the_help_menu_has_the_keys_and_the_rules_of_this_game() {
     let mut s = session(|setup| {
         setup.combat.chance = 3;
         setup.combat.system = System::Strength;
-        setup.fog = true;
+        setup.fog = Fog::On;
     });
     choose(&mut s, MENU_HELP_ID, HELP_KEYS_ID);
     assert!(s.screen.help_open());

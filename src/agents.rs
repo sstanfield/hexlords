@@ -17,7 +17,7 @@ use crate::game::Game;
 use crate::orders::{Event, Order};
 use crate::setup::Controller;
 use crate::state::scenario::{side_name, side_named};
-use crate::state::{Hex, MAX_STACK, Side, UnitId, compute_range, step_toward};
+use crate::state::{Hex, MAX_STACK, Side, UnitId};
 
 /// What a side's agent is asked for.
 pub trait Agent {
@@ -158,9 +158,14 @@ pub struct Simple {
     /// order this turn.
     turn: Option<(u32, Side)>,
     done: Vec<UnitId>,
+    /// How many steps each unit has taken this turn to see more (total fog
+    /// of war): a few, while it has the moves.
+    explored: Vec<(UnitId, u32)>,
 }
 
 impl Simple {
+    /// How many steps a turn a stack takes to see more, at the most.
+    const SCOUT_STEPS: u32 = 3;
     /// How many units stay in each of its cities.
     pub const KEEP: usize = 2;
     /// The odds, in percent, it attacks at; and at which it attacks with
@@ -191,6 +196,7 @@ impl Agent for Simple {
         if self.turn != Some((game.turn(), side)) {
             self.turn = Some((game.turn(), side));
             self.done.clear();
+            self.explored.clear();
         }
         let map = &game.map;
         // What its taxes leave after the upkeep of its units and of one more
@@ -236,7 +242,11 @@ impl Agent for Simple {
         if let Some((city, i)) = choice {
             return Order::Build { city, what: Some(i) };
         }
-        let targets: Vec<Hex> = map.cities().iter().filter(|c| c.side != side).map(|c| c.pos).collect();
+        // (What it knows of: with total fog of war, not the cities of land
+        // it has never seen.)
+        let sight = game.sight(side);
+        let targets: Vec<Hex> =
+            map.cities().iter().filter(|c| c.side != side && sight.knows(c.pos)).map(|c| c.pos).collect();
         // The units free to go: not given an order this turn, with points
         // left, and not the first KEEP of one of its cities.
         let keeps = |id: UnitId, at: Hex| {
@@ -253,7 +263,7 @@ impl Agent for Simple {
         }
         // An attack: all the free units that can get to a target this turn,
         // from wherever they are, if together they are likely to win.
-        let ranges: Vec<_> = free.iter().map(|u| (u.id(), compute_range(map, u))).collect();
+        let ranges: Vec<_> = free.iter().map(|u| (u.id(), game.known_range(u, &sight))).collect();
         // The cities first; then the other sides' stacks out in the field
         // near its free units (in the way, it may be).
         let mut field: Vec<Hex> = map
@@ -311,7 +321,22 @@ impl Agent for Simple {
             let lead = stack.iter().copied().min_by_key(|u| u.movement).unwrap_or(unit);
             let mut near = targets.clone();
             near.sort_by_key(|t| (t.distance(here), *t));
-            let Some(target) = near.into_iter().find(|t| step_toward(map, lead, *t).is_some()) else { continue };
+            let room = |hex: Hex| map.has_room(hex, lead.id());
+            let way = |to: Hex| game.known_step_toward(lead, to, &room, &sight).is_some();
+            let Some(target) = near.into_iter().find(|t| way(*t)) else {
+                // Nowhere it knows of to go: it goes to see more of the map
+                // (total fog of war), to the nearest edge of what it knows.
+                let edge = game.frontier_for(lead, &sight);
+                if let Some((to, _)) = edge.into_iter().filter(|(h, _)| *h != here).take(6).find(|(h, _)| way(*h)) {
+                    let steps = self.explored.iter().filter(|(id, _)| *id == lead.id()).count() as u32;
+                    self.explored.push((lead.id(), steps + 1));
+                    if steps + 1 < Simple::SCOUT_STEPS {
+                        self.done.retain(|id| !ids.contains(id));
+                    }
+                    return Order::Toward { units: ids, to };
+                }
+                continue;
+            };
             let waits = ids.iter().all(|id| ranges.iter().any(|(u, r)| u == id && r.cost(target).is_some()));
             if !waits {
                 return Order::Toward { units: ids, to: target };
@@ -391,9 +416,21 @@ pub fn describe(game: &Game, side: Side) -> String {
     out.push_str(&format!("order {}\n", game.order().iter().map(|s| side_name(*s)).collect::<Vec<_>>().join(" ")));
     let combat = game.setup().combat;
     out.push_str(&format!("battles {} chance {}\n", combat.system.name(), combat.chance));
+    out.push_str(&format!("fog {}\n", game.setup().fog.word()));
     out.push_str(&format!("gold {} income {} upkeep {}\n", game.gold(side), game.income(side), game.upkeep(side)));
+    // With total fog of war, a hex the side has never seen is a `?`.
+    let sight = game.sight(side);
     out.push_str("terrain\n");
-    out.push_str(&map.to_text());
+    for (i, line) in map.to_text().lines().enumerate() {
+        let Some(row) = i.checked_sub(2) else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        };
+        let known = |(col, c): (usize, char)| if sight.knows(Hex::new(row as u16, col as u16)) { c } else { '?' };
+        out.extend(line.chars().enumerate().map(known));
+        out.push('\n');
+    }
     out.push_str("end terrain\n");
     for kind in map.units().kinds() {
         let prices: Vec<String> =
@@ -409,7 +446,7 @@ pub fn describe(game: &Game, side: Side) -> String {
             prices.join(" ")
         ));
     }
-    for city in map.cities().iter() {
+    for city in map.cities().iter().filter(|c| sight.knows(c.pos)) {
         let builds = city.building.map_or("none".to_string(), |i| i.to_string());
         out.push_str(&format!(
             "city {} {} {} walls {} income {} builds {} progress {} name {}\n",

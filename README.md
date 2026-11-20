@@ -21,7 +21,8 @@ direction. So far:
   fight, led by captains who rise in level; cities are taken, pay taxes and
   build what their holder sets and can pay for; stacks can be sent far over
   turns, cities can send what they build, and a list says what is left to
-  do; the other sides show only as banners, and fog of war is a choice; the
+  do; the other sides show only as banners, and fog of war is a choice (in
+  part, or total: land never seen is black until it is explored); the
   last side left wins. [docs/gameplay.md](docs/gameplay.md) is the plan for
   the rules, in two modes (sides taking turns, built; or all giving orders
   at once);
@@ -165,7 +166,7 @@ waits in the city until there is enough ([docs/gameplay.md](docs/gameplay.md)).
 
 ```
 hexgame [--map <file.map or map directory>] [--players <side>=<who>,...] [--order fixed|drawn] [--seed <n>]
-        [--chance <0-10>] [--battles lines|strength] [--gold <n>] [--fog] [--headless [--rounds <n>] [--log]]
+        [--chance <0-10>] [--battles lines|strength] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] [--log]]
         [--script <steps>]
         [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
 ```
@@ -186,7 +187,8 @@ Without `--map` the window opens on the new game screen.
   `--battles lines|strength`: how a battle goes (lines unless it is said;
   [docs/gameplay.md](docs/gameplay.md), "Fighting"). `--gold <n>`: the gold
   each side starts with (50). `--fog`: fog of war: each side sees only what
-  is near its units and cities.
+  is near its units and cities. `--total-fog`: that, and the land a side has
+  never seen is black, and shut to its units, until it has seen it.
 - `--headless`: no window: the computer plays every side of `--map` until one
   side is left or `--rounds` (200) have gone by, and says how it went
   (`--log`: and all that happened). [docs/agents.md](docs/agents.md) says
