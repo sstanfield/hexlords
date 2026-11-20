@@ -44,6 +44,11 @@ pub struct TasksWindow {
 }
 
 impl TasksWindow {
+    /// Its window (the session closes the one on top first).
+    pub fn window(&self) -> WidgetId {
+        self.parts.window
+    }
+
     /// Open the list of `side`'s tasks on `parent` (the root window), placed
     /// in `area` at `align` (see `build::place`).
     pub fn open(

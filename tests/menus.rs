@@ -227,3 +227,28 @@ fn the_menus_items_do_not_need_the_mouse() {
     s.pump();
     assert_eq!(s.screen.game.map.units_at(REDHOLD).len(), 2, "undone");
 }
+
+#[test]
+fn keys_and_mouse_shows_the_keys_over_a_topic() {
+    let mut s = session(|_| {});
+    choose(&mut s, MENU_HELP_ID, "help_cities");
+    assert_eq!(s.screen.help_title(), Some("Help: cities and gold"));
+    choose(&mut s, MENU_HELP_ID, HELP_KEYS_ID);
+    assert_eq!(s.screen.help_title(), Some(hexgame::screen::KEYS_TITLE));
+    choose(&mut s, MENU_HELP_ID, HELP_KEYS_ID);
+    assert!(!s.screen.help_open(), "the keys again close them");
+}
+
+#[test]
+fn esc_closes_the_window_on_top_first() {
+    let mut s = session(|_| {});
+    let log_open = |s: &Session| s.screen.ui.find(s.screen.ui.root(), TbId::new(LOG_WINDOW_ID)).is_some();
+    type_char(&mut s, 'l');
+    type_char(&mut s, 'a');
+    assert!(log_open(&s) && s.city_list().is_some());
+    // The list came last: it goes first.
+    press(&mut s, SpecialKey::Esc);
+    assert!(s.city_list().is_none() && log_open(&s));
+    press(&mut s, SpecialKey::Esc);
+    assert!(!log_open(&s));
+}

@@ -50,6 +50,11 @@ pub struct LogWindow {
 }
 
 impl LogWindow {
+    /// Its window (the session closes the one on top first).
+    pub fn window(&self) -> WidgetId {
+        self.parts.window
+    }
+
     /// Open `side`'s log of `game` on `parent` (the root window), what came
     /// after the history was `new_from` long marked new, placed in `area` at
     /// `align` (see `build::place`).

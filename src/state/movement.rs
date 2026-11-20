@@ -100,6 +100,32 @@ pub fn hostile(map: &Map, side: Side, hex: Hex) -> bool {
     map.units_at(hex).iter().filter_map(|id| map.units().get(*id)).any(|u| u.side() != side)
 }
 
+/// True if a unit that pays `costs` could get from `from` to `to` over the
+/// terrain, in as many turns as it takes, whoever stands on the way (units
+/// move; the terrain stays).
+pub fn way_over_land(map: &Map, costs: &MoveCost, from: Hex, to: Hex) -> bool {
+    if !map.contains(from) || !map.contains(to) {
+        return false;
+    }
+    let cols = usize::from(map.cols());
+    let index = |h: Hex| usize::from(h.row) * cols + usize::from(h.col);
+    let mut seen = vec![false; usize::from(map.rows()) * cols];
+    seen[index(from)] = true;
+    let mut queue = std::collections::VecDeque::from([from]);
+    while let Some(hex) = queue.pop_front() {
+        if hex == to {
+            return true;
+        }
+        for next in map.neighbours(hex) {
+            if !seen[index(next)] && step_cost(map, costs, hex, next).is_some() {
+                seen[index(next)] = true;
+                queue.push_back(next);
+            }
+        }
+    }
+    false
+}
+
 /// Where `unit` gets to this turn on the cheapest way toward `target`, and
 /// what that costs: the target itself if it is in reach, else the farthest
 /// hex along that way that it can pay for (and that has room for it). `None`

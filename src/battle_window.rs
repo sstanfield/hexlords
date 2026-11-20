@@ -124,6 +124,11 @@ fn side_line(fight: &Fight, defending: bool) -> String {
 }
 
 impl BattleWindow {
+    /// Its window (the session closes the one on top first).
+    pub fn window(&self) -> WidgetId {
+        self.parts.window
+    }
+
     /// Open a battle's window on `parent` (the root window), placed in `area`
     /// at `align` (see `build::place`). `icons` are the units' pictures, the
     /// attackers' and the defenders', in the fight's order; `place` is where

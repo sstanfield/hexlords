@@ -289,7 +289,7 @@ fn go_to_is_a_key_or_a_button_and_then_a_hex() {
     assert_eq!(s.picking(), Some(Pick::GoTo));
     click_hex(&mut s, Hex::new(9, 9));
     assert_eq!(s.picking(), Some(Pick::GoTo));
-    assert_eq!(s.unit_line(), "Go to: there is no way there. Click another hex (Esc: never mind).");
+    assert_eq!(s.unit_line(), "Go to: Soldiers cannot get there. Click another hex (Esc: never mind).");
     // A far hex (out of this turn's reach).
     click_hex(&mut s, FAR);
     let unit = s.screen.game.map.units().get(id).unwrap();
@@ -358,4 +358,149 @@ fn a_city_window_sends_new_units_to_a_picked_hex() {
     assert!(says(&s).contains(&"New units go to row 10, column 10.".to_string()), "{:?}", says(&s));
     push(&mut s, CITY_NO_RALLY_ID);
     assert_eq!(s.screen.game.map.city_at(REDHOLD).unwrap().rally, None);
+}
+
+// What the review found.
+
+#[test]
+fn go_to_is_taken_with_no_moves_left_and_marches_next_turn() {
+    let mut game = game("garrison soldiers\n");
+    let id = at(&game, REDHOLD)[0];
+    game.apply(Order::Move { units: vec![id], to: Hex::new(5, 11) }).unwrap();
+    assert_eq!(game.map.units().get(id).unwrap().movement, 0, "spent");
+    // No moves left this turn: the order stands all the same.
+    game.apply(Order::GoTo { units: vec![id], to: FAR }).unwrap();
+    assert_eq!((pos(&game, id), goto(&game, id)), (Hex::new(5, 11), Some(FAR)));
+    round(&mut game);
+    assert!(pos(&game, id).distance(FAR) < Hex::new(5, 11).distance(FAR), "on its way");
+    // A hex no unit of it can get to over the land is refused, naming it.
+    game.map.tile_mut(Hex::new(20, 20)).unwrap().kind = hexgame::state::TileType::Water;
+    let refused = game.apply(Order::GoTo { units: vec![id], to: Hex::new(20, 20) }).unwrap_err();
+    assert_eq!(refused, "Soldiers cannot get there");
+}
+
+#[test]
+fn go_to_from_several_hexes_sends_each_stack() {
+    let mut game = game("garrison soldiers\n");
+    let a = at(&game, REDHOLD)[0];
+    let kind = game.map.units().kind_named("riders").unwrap();
+    let b = game.map.new_unit_of(Side::Red, kind).unwrap();
+    game.map.place_unit(b, Hex::new(5, 12)).unwrap();
+    // The soldiers are already where the riders are sent: they stay, and the
+    // riders go.
+    let to = Hex::new(5, 5);
+    game.apply(Order::GoTo { units: vec![a, b], to }).unwrap();
+    assert_eq!(pos(&game, a), to);
+    assert_eq!((pos(&game, b), goto(&game, b)), (to, None), "the riders went, and arrived");
+}
+
+#[test]
+fn a_rally_point_is_somewhere_the_city_s_units_can_get_and_is_lost_with_the_city() {
+    let mut game = game("");
+    let city = game.map.city_at(REDHOLD).unwrap().id;
+    game.map.tile_mut(Hex::new(20, 20)).unwrap().kind = hexgame::state::TileType::Water;
+    let refused = game.apply(Order::Rally { city, to: Some(Hex::new(20, 20)) }).unwrap_err();
+    assert_eq!(refused, "nothing Redhold builds can get there");
+    game.apply(Order::Rally { city, to: Some(FAR) }).unwrap();
+    // Blue takes it: where red sent its units is not blue's.
+    let kind = game.map.units().kind_named("riders").unwrap();
+    let blue = game.map.new_unit_of(Side::Blue, kind).unwrap();
+    game.map.place_unit(blue, Hex::new(6, 5)).unwrap();
+    game.apply(Order::EndTurn).unwrap();
+    game.apply(Order::Move { units: vec![blue], to: REDHOLD }).unwrap();
+    let redhold = game.map.cities().get(city).unwrap();
+    assert_eq!((redhold.side, redhold.rally), (Side::Blue, None));
+}
+
+#[test]
+fn undo_gives_a_stalled_stack_back_all_it_was() {
+    let mut game = game("garrison soldiers\n");
+    let id = at(&game, REDHOLD)[0];
+    let kind = game.map.units().kind_named("soldiers").unwrap();
+    let blue = game.map.new_unit_of(Side::Blue, kind).unwrap();
+    game.map.place_unit(blue, Hex::new(5, 13)).unwrap();
+    game.apply(Order::GoTo { units: vec![id], to: Hex::new(5, 13) }).unwrap();
+    round(&mut game);
+    let unit = game.map.units().get(id).unwrap();
+    assert!(unit.stalled && !unit.moved);
+    let here = unit.pos();
+    let next = game.map.neighbours(here).find(|h| game.map.units_at(*h).is_empty()).unwrap();
+    game.apply(Order::Move { units: vec![id], to: next }).unwrap();
+    game.apply(Order::Undo).unwrap();
+    let unit = game.map.units().get(id).unwrap();
+    assert_eq!((unit.pos(), unit.goto, unit.stalled, unit.moved), (here, Some(Hex::new(5, 13)), true, false));
+    assert!(game.tasks(Side::Red).iter().any(|t| matches!(t, Task::Stack { state: StackState::Stalled, .. })));
+}
+
+#[test]
+fn what_a_turn_s_start_brings_is_that_turn_s_in_the_history() {
+    let mut game = game("");
+    let city = game.map.city_at(REDHOLD).unwrap().id;
+    game.apply(Order::Build { city, what: Some(0) }).unwrap();
+    round(&mut game);
+    let built = game.history().iter().find(|r| matches!(r.event, Event::Built { .. })).unwrap();
+    assert_eq!((built.turn, built.round), (Side::Red, 2), "red's, in the round it began");
+}
+
+#[test]
+fn a_pick_does_not_outlive_its_turn() {
+    let mut s = session(game("garrison soldiers\n"));
+    click_hex(&mut s, REDHOLD);
+    type_char(&mut s, 'g');
+    assert_eq!(s.picking(), Some(Pick::GoTo));
+    s.end_turn();
+    assert_eq!(s.picking(), None);
+}
+
+#[test]
+fn a_box_selects_the_unit_it_shows_the_leader_s_too() {
+    let mut s = session(game("garrison captain\ngarrison soldiers\ngarrison riders\n"));
+    let ids = at(&s.screen.game, REDHOLD);
+    let named = |s: &Session, name: &str| {
+        ids.iter().copied().find(|id| s.screen.game.map.units().get(*id).unwrap().title().starts_with(name)).unwrap()
+    };
+    let (captain, soldiers, riders) = (named(&s, "Captain"), named(&s, "Soldiers"), named(&s, "Riders"));
+    click_hex(&mut s, REDHOLD);
+    assert_eq!(s.screen.game.selection().len(), 3);
+    // The boxes: the captain's on the left, then the soldiers, the riders.
+    assert!(s.leader_icon().is_some());
+    push(&mut s, "unit_1");
+    assert!(!s.screen.game.selection().contains(&riders), "the riders' box leaves the riders out");
+    assert!(s.screen.game.selection().contains(&soldiers));
+    push(&mut s, hexgame::session::LEADER_ID);
+    assert!(!s.screen.game.selection().contains(&captain), "the leader's box is the captain's");
+}
+
+#[test]
+fn on_another_side_s_turn_the_screen_looks_and_orders_nothing() {
+    let mut red = game("garrison soldiers\n");
+    let kind = red.map.units().kind_named("soldiers").unwrap();
+    let blue = red.map.new_unit_of(Side::Blue, kind).unwrap();
+    red.map.place_unit(blue, Hex::new(5, 20)).unwrap();
+    let mut s = session(red);
+    s.end_turn();
+    assert_eq!(s.screen.game.player(), Side::Blue, "the computer's turn, not played yet");
+    press(&mut s, SpecialKey::Esc);
+    // A click on blue's soldiers looks; it selects nothing, and a second
+    // click moves nothing.
+    click_hex(&mut s, Hex::new(5, 20));
+    assert!(s.screen.game.selection().is_empty());
+    assert!(s.stack().is_empty(), "blue's units are not shown in boxes");
+    click_hex(&mut s, Hex::new(5, 18));
+    assert_eq!(s.screen.game.map.units_at(Hex::new(5, 20)), [blue]);
+    // N goes to red's stacks (and selects none), C to red's cities, M lists
+    // red's.
+    type_char(&mut s, 'n');
+    assert_eq!(s.shown(), REDHOLD);
+    assert!(s.screen.game.selection().is_empty());
+    type_char(&mut s, 'm');
+    assert!(
+        s.city_list()
+            .is_some_and(|l| l.cities().iter().all(|c| s.screen.game.map.cities().get(*c).unwrap().side == Side::Red))
+    );
+    // And red's own city's buttons give no orders while blue plays.
+    press(&mut s, SpecialKey::Esc);
+    click_hex(&mut s, REDHOLD);
+    push(&mut s, &format!("{}{}", hexgame::city_windows::PANEL_PREFIX, hexgame::city_windows::build_id(0)));
+    assert_eq!(s.screen.game.map.city_at(REDHOLD).unwrap().building, None);
 }

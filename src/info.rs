@@ -8,19 +8,19 @@
 use crate::game::{CityState, Game, Sight, StackState, Task, describe_terrain};
 use crate::orders::{Event, Fallen, Record};
 use crate::state::scenario::side_name;
-use crate::state::{City, Hex, Map, MoveCost, Side, Unit, UnitProd};
+use crate::state::{City, Hex, Map, MoveCost, MoveRange, Side, Unit, UnitProd};
 
 /// The line about the hex under the cursor: the turn, the hex's terrain and
 /// road, its city's name, how many units stand there, and, if the selected
 /// units can go there, what it costs (one unit) or that they can (a stack),
 /// and the odds of winning if going there is an attack.
 pub fn cursor_line(game: &Game) -> String {
-    cursor_line_for(game, &Sight::all())
+    cursor_line_for(game, &Sight::all(), game.range())
 }
 
-/// [`cursor_line`] as a side sees it: of a hex in the fog, no units, and no
-/// odds.
-pub fn cursor_line_for(game: &Game, sight: &Sight) -> String {
+/// [`cursor_line`] as a side sees it, the selection's reach as it knows it
+/// (`Game::range_seen`): of a hex in the fog, no units, and no odds.
+pub fn cursor_line_for(game: &Game, sight: &Sight, range: Option<&MoveRange>) -> String {
     let (map, hex) = (&game.map, game.map.cursor);
     let seen = sight.sees(hex);
     let mut parts = vec![format!("Turn {}", game.turn())];
@@ -37,7 +37,7 @@ pub fn cursor_line_for(game: &Game, sight: &Sight) -> String {
         }
     }
     let selected = game.selected().and_then(|id| map.units().get(id));
-    if let (Some(unit), Some(cost)) = (selected, game.range().and_then(|r| r.cost(hex))) {
+    if let (Some(unit), Some(cost)) = (selected, range.and_then(|r| r.cost(hex))) {
         match game.battle_odds(game.selection(), hex).filter(|_| seen) {
             Some(odds) => parts.push(format!("attack: {odds}% likely to win")),
             None if game.selection().len() > 1 => {

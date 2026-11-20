@@ -399,6 +399,11 @@ pub struct CityWindow {
 }
 
 impl CityWindow {
+    /// Its window (the session closes the one on top first).
+    pub fn window(&self) -> WidgetId {
+        self.parts.window
+    }
+
     /// Open a city's window on `parent` (the root window), placed in `area`
     /// at `align` (see `build::place`). `icons` are the pictures of what it
     /// can build, in its order. `None` if there is no such city.
@@ -562,6 +567,11 @@ pub struct CityList {
 }
 
 impl CityList {
+    /// Its window (the session closes the one on top first).
+    pub fn window(&self) -> WidgetId {
+        self.parts.window
+    }
+
     /// Open the list of every city, or of `player`'s (`own`), on `parent`
     /// (the root window), placed in `area` at `align` (see `build::place`).
     pub fn open(

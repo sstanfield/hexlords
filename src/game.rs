@@ -13,8 +13,8 @@ use crate::state::Blessing;
 use crate::state::combat::{self, Fighter};
 use crate::state::scenario::{self, Scenario, side_name};
 use crate::state::{
-    CityId, Direction, Hex, MAX_STACK, Map, MoveRange, NUM_SIDES, Rng, Side, TileType, Unit, UnitId, compute_range,
-    hostile, step_toward, step_toward_with,
+    CityId, Direction, Hex, MAX_STACK, Map, MoveRange, NUM_SIDES, Passage, Rng, Side, TileType, Unit, UnitId,
+    compute_range, hostile, passage, reach_with, step_toward_with, way_over_land,
 };
 
 /// The agent that passes its turns: the computer's, when nothing else is said.
@@ -63,8 +63,9 @@ enum Undo {
         to: Hex,
         stacks: Vec<(Hex, Vec<UnitId>)>,
         taken: Option<(CityId, Side, Option<usize>, u32)>,
-        /// The standing orders they had (each unit's `goto`), given back.
-        goals: Vec<(UnitId, Option<Hex>)>,
+        /// Where each was going, given back: its standing order, whether it
+        /// had stalled, whether it had moved this turn.
+        goals: Vec<(UnitId, MarchState)>,
     },
     /// A city was set to build something else: what it was building, how far.
     Built { city: CityId, building: Option<usize>, progress: u32 },
@@ -128,6 +129,10 @@ impl Task {
         }
     }
 }
+
+/// What a unit is doing about a standing order: its `goto`, whether it has
+/// stalled, whether it has moved this turn.
+type MarchState = (Option<Hex>, bool, bool);
 
 /// How far a side sees, with fog of war: from its units, and from its cities.
 pub const UNIT_SIGHT: u32 = 2;
@@ -452,9 +457,17 @@ impl Game {
     /// Keep what an order of `turn`'s, in `round`, did that is worth keeping:
     /// not the moves (there are too many, and they say little afterwards), the
     /// turns' beginnings, or an undo.
+    /// (What comes after a turn's beginning, in the same order, is that
+    /// turn's: the marches, the units built, what they take.)
     fn remember(&mut self, round: u32, turn: Side, events: &[Event]) {
-        let kept = events.iter().filter(|e| !matches!(e, Event::Moved { .. } | Event::Began { .. } | Event::Undone));
-        for event in kept {
+        let (mut round, mut turn) = (round, turn);
+        for event in events {
+            if let Event::Began { side, round: began } = event {
+                (round, turn) = (*began, *side);
+            }
+            if matches!(event, Event::Moved { .. } | Event::Began { .. } | Event::Undone) {
+                continue;
+            }
             // A battle's fight is kept beside its record.
             if matches!(event, Event::Battle { .. }) {
                 if let Some(fight) = self.fought.take() {
@@ -525,25 +538,47 @@ impl Game {
                 if !self.map.contains(to) {
                     return Err(format!("{to} is not on the map"));
                 }
-                let goals: Vec<Option<Hex>> =
-                    units.iter().map(|id| self.own_unit(side, *id).map(|u| u.goto)).collect::<Result<_, _>>()?;
+                let before: Vec<(UnitId, MarchState)> = units
+                    .iter()
+                    .map(|id| self.own_unit(side, *id).map(|u| (*id, (u.goto, u.stalled, u.moved))))
+                    .collect::<Result<_, _>>()?;
                 if units.is_empty() {
                     return Err("no units".to_string());
                 }
-                let lead = units.iter().filter_map(|id| self.map.units().get(*id)).min_by_key(|u| u.movement);
-                if lead.is_some_and(|u| u.pos() != to && step_toward(&self.map, u, to).is_none()) {
-                    return Err("there is no way there".to_string());
+                // Each of them can get there over the land, in as many turns
+                // as it takes (whoever is on the way now: units move).
+                for id in &units {
+                    let Some(unit) = self.map.units().get(*id) else { continue };
+                    let costs = self.map.units().move_cost(unit.move_cost);
+                    if !costs.is_some_and(|c| way_over_land(&self.map, c, unit.pos(), to)) {
+                        return Err(format!("{} cannot get there", unit.title()));
+                    }
                 }
                 for id in &units {
                     if let Some(unit) = self.map.unit_mut(*id) {
                         (unit.goto, unit.stalled) = (Some(to), false);
                     }
                 }
-                // This turn's step, as the march would; an undo gives the
-                // units back what they were going to before.
-                let events = self.march(side, &units, to);
-                if let Some(Undo::Moved { goals: old, .. }) = &mut self.undo {
-                    *old = units.iter().copied().zip(goals).collect();
+                // This turn's step, as the march would, a stack (the units of a
+                // hex) at a time.
+                let mut groups: Vec<(Hex, Vec<UnitId>)> = Vec::new();
+                for id in &units {
+                    let Some(at) = self.map.units().get(*id).map(|u| u.pos()) else { continue };
+                    match groups.iter_mut().find(|(hex, _)| *hex == at) {
+                        Some((_, ids)) => ids.push(*id),
+                        None => groups.push((at, vec![*id])),
+                    }
+                }
+                let mut events = Vec::new();
+                self.undo = None;
+                for (_, ids) in &groups {
+                    events.extend(self.march(side, ids, to));
+                }
+                // An undo gives the units back what they were doing before (a
+                // stack from one hex: units from several cannot be taken back).
+                match &mut self.undo {
+                    Some(Undo::Moved { goals, .. }) if groups.len() == 1 => *goals = before,
+                    _ => self.undo = None,
                 }
                 Ok(events)
             }
@@ -566,6 +601,17 @@ impl Game {
                 if to.is_some_and(|hex| !self.map.contains(hex)) {
                     return Err("that is not on the map".to_string());
                 }
+                // Somewhere what it builds can get to.
+                if let (Some(to), Some(c)) = (to, self.map.cities().get(city)) {
+                    let units = self.map.units();
+                    let reaches = c.units.iter().any(|prod| {
+                        let kind = units.kind_named(&prod.basename).and_then(|k| units.kind(k));
+                        kind.is_some_and(|k| way_over_land(&self.map, &k.cost, c.pos, to))
+                    });
+                    if !reaches {
+                        return Err(format!("nothing {} builds can get there", c.name));
+                    }
+                }
                 if let Some(c) = self.map.city_mut(city) {
                     c.rally = to;
                 }
@@ -583,7 +629,9 @@ impl Game {
         let units: Vec<&Unit> = ids.iter().filter_map(|id| self.map.units().get(*id)).collect();
         let Some(lead) = units.iter().copied().min_by_key(|u| u.movement) else { return Vec::new() };
         let at = lead.pos();
-        let ids: Vec<UnitId> = units.iter().map(|u| u.id()).collect();
+        // (A stack: the units of one hex.)
+        let ids: Vec<UnitId> = units.iter().filter(|u| u.pos() == at).map(|u| u.id()).collect();
+        let units: Vec<&Unit> = units.into_iter().filter(|u| u.pos() == at).collect();
         if at == to {
             self.arrive(&ids);
             return Vec::new();
@@ -673,9 +721,9 @@ impl Game {
                 for (hex, order) in &stacks {
                     self.map.set_stack_order(*hex, order);
                 }
-                for (id, goal) in goals {
+                for (id, (goto, stalled, moved)) in goals {
                     if let Some(unit) = self.map.unit_mut(id) {
-                        unit.goto = goal;
+                        (unit.goto, unit.stalled, unit.moved) = (goto, stalled, moved);
                     }
                 }
                 // They are where they were, and selected again, to go
@@ -727,7 +775,7 @@ impl Game {
             let cost = cost.ok_or(format!("{} cannot get there this turn", unit.name))?;
             going.push((*id, unit.pos(), cost));
             before.push((*id, unit.pos(), unit.movement));
-            goals.push((*id, unit.goto));
+            goals.push((*id, (unit.goto, unit.stalled, unit.moved)));
         }
         let city_before = self.map.city_at(to).map(|c| (c.id, c.side, c.building, c.progress));
         let mut stacks: Vec<(Hex, Vec<UnitId>)> = Vec::new();
@@ -1012,7 +1060,8 @@ impl Game {
     /// that has lost its last city is out.
     fn take(&mut self, city: CityId, from: Side, by: Side) -> Vec<Event> {
         if let Some(c) = self.map.city_mut(city) {
-            c.side = by;
+            // Where its old holder sent its new units is not the new one's.
+            (c.side, c.rally) = (by, None);
         }
         self.map.set_production(city, None);
         let mut events = vec![Event::Taken { city, from, by }];
@@ -1188,6 +1237,45 @@ impl Game {
         self.range.as_ref()
     }
 
+    /// The selected units' reach as a side that sees `sight` knows it: other
+    /// sides' units stop them where they are seen, and nowhere else (in the
+    /// fog only cities do). What the map marks and the panels say, so that
+    /// the fog tells nothing; the rules go by what is there.
+    pub fn range_seen(&self, sight: &Sight) -> Option<MoveRange> {
+        let mut range: Option<MoveRange> = None;
+        for id in &self.selected {
+            let unit = self.map.units().get(*id)?;
+            let costs = self.map.units().move_cost(unit.move_cost)?;
+            let side = unit.side();
+            let pass = |hex: Hex| {
+                if sight.sees(hex) {
+                    passage(&self.map, side, hex)
+                } else if self.map.city_at(hex).is_some_and(|c| c.side != side) {
+                    Passage::Stop
+                } else {
+                    Passage::Open
+                }
+            };
+            let one = reach_with(&self.map, unit.pos(), costs, unit.movement, &pass);
+            range = Some(match range {
+                Some(all) => all.both(&one),
+                None => one,
+            });
+        }
+        range
+    }
+
+    /// The next stack of `side` that can still go somewhere after the one on
+    /// `from` (see [`Game::next_stack`]).
+    pub fn next_stack_of(&self, side: Side, from: Option<Hex>, back: bool) -> Option<Hex> {
+        self.stack_after(side, from, back)
+    }
+
+    /// The next city of `side` after the one on `from` (see [`Game::next_city`]).
+    pub fn next_city_of(&self, side: Side, from: Hex, back: bool) -> Option<Hex> {
+        self.city_after(side, from, back)
+    }
+
     /// True if units are selected and all of them can move to `hex` with the
     /// movement they have left (into an enemy: an attack). These are the hexes
     /// the map marks.
@@ -1339,7 +1427,10 @@ impl Game {
     /// turn it is that can still go somewhere; if none can, with any of its
     /// stacks. `None` if it has no units.
     pub fn next_stack(&self, from: Option<Hex>, back: bool) -> Option<Hex> {
-        let side = self.player();
+        self.stack_after(self.player(), from, back)
+    }
+
+    fn stack_after(&self, side: Side, from: Option<Hex>, back: bool) -> Option<Hex> {
         let map = &self.map;
         let mut hexes: Vec<Hex> = map.units().of_side(side).map(|u| u.pos()).filter(|h| map.contains(*h)).collect();
         hexes.sort_by_key(|h| (h.row, h.col));
@@ -1424,7 +1515,10 @@ impl Game {
     /// The next city of the side whose turn it is after the one on `from` (or
     /// before it), in the map's order of cities. `None` if it has none.
     pub fn next_city(&self, from: Hex, back: bool) -> Option<Hex> {
-        let side = self.player();
+        self.city_after(self.player(), from, back)
+    }
+
+    fn city_after(&self, side: Side, from: Hex, back: bool) -> Option<Hex> {
         let own: Vec<Hex> = self.map.cities().iter().filter(|c| c.side == side).map(|c| c.pos).collect();
         let here = own.iter().position(|h| *h == from);
         let n = own.len();

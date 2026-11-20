@@ -240,6 +240,12 @@ and the rules use integers, not floats.
    but no units, and no city's holder (on the map, the minimap and the
    lists of cities). It is worked out anew whenever the map changes. With
    nobody at the screen (the computer against itself) all is seen. The
+   reach the map marks for the selected units is as far as the person
+   knows: units unseen do not stop it (`Game::range_seen`); a move the
+   rules refuse because of one says "Something in the fog is in the way."
+   While another side plays, the screen only looks: a click selects
+   nothing, Next stack and the lists of cities are the person's own, and
+   their city's buttons give no orders. The
    agents still read the whole game (they do not respect the fog yet).
    Rounds need fog far more than turns do.
 10. **Saved games.** The state and the orders, in text, like the maps.
@@ -291,7 +297,10 @@ thing to happen. Ideas to try, as the rules grow:
   hex: `Order::GoTo`) sends the selected units to a far hex: they take this
   turn's part at once, and the rest at the start of each of their side's
   turns, before the player plays (`Game::marches`), as far as the slowest
-  of them goes, until they are there. A march never attacks: if its next
+  of them goes, until they are there. It is taken if each unit could get
+  there over the land in as many turns as it takes (`way_over_land`:
+  whoever stands on the way now does not count, nor do the moves left this
+  turn); units on several hexes go as a stack from each. A march never attacks: if its next
   step is into another side's units, or there is no way, the stack stops
   (`Event::Stalled`, and a line in the log), keeps its order, and goes
   back among the stacks that wait for orders (Next stack, the tasks); left
@@ -301,7 +310,11 @@ thing to happen. Ideas to try, as the rules grow:
   a stack follows another.
 - **Rally points** (built): a city's window has "Send new units to..."
   (then a hex) and "Keep them here" (`Order::Rally`): what it builds is
-  sent there with a standing order the moment it is done.
+  sent there with a standing order the moment it is done. The hex has to
+  be one that something the city builds can get to over the land; a city
+  taken forgets its old holder's rally point. What a turn's start brings
+  (the marches, the units built, what they take) is that turn's in the
+  history.
 - **Done for the turn** (built): D, or the Done button (`Order::Done`),
   puts the selected units aside: Next stack passes them by, as if they had
   no moves left, and the selection goes on to the next stack that waits.

@@ -16,7 +16,10 @@ pub mod units;
 pub use cities::{Cities, City, CityId, UnitProd};
 pub use hex::{Direction, Hex, HexSide};
 pub use map::{MAX_COLS, MAX_ROWS, MAX_STACK, MIN_COLS, MIN_ROWS, Map, MapError, PlaceError, Tile};
-pub use movement::{MoveRange, Passage, compute_range, hostile, passage, step_cost, step_toward, step_toward_with};
+pub use movement::{
+    MoveRange, Passage, compute_range, hostile, passage, reach_with, step_cost, step_toward, step_toward_with,
+    way_over_land,
+};
 pub use rng::Rng;
 pub use scenario::{Scenario, ScenarioError};
 pub use terrain::{MoveCost, TileType};

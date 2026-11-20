@@ -41,6 +41,8 @@ pub const MINIMAP_ID: &str = "mini_map";
 /// The help window, and its button that closes it.
 pub const HELP_ID: &str = "help_window";
 pub const HELP_CLOSE_ID: &str = "help_close";
+/// The help window's title when it has the keys.
+pub const KEYS_TITLE: &str = "Help: keys and mouse";
 /// What every window's menus may hold, as the keys for them do: the help's
 /// keys, fullscreen, quit, zoom (`MapScreen::pump_shared` does them).
 pub const HELP_KEYS_ID: &str = "help_keys";
@@ -229,7 +231,7 @@ impl MapScreen {
     /// The help window with every key.
     fn open_help(&mut self) {
         let sections = help::sections(&self.help_sections);
-        self.open_help_window("Help: keys and mouse", &sections);
+        self.open_help_window(KEYS_TITLE, &sections);
     }
 
     /// A window in the middle of the screen with `sections`: a column of what
@@ -608,7 +610,13 @@ impl MapScreen {
                 // The same from a menu; the scene hears of the click too (it
                 // closes the menu).
                 RootCommand::Click(id) if id == TbId::new(HELP_KEYS_ID) => {
-                    self.toggle_help();
+                    // The keys: over a topic too (the keys again close them).
+                    if self.help_title() == Some(KEYS_TITLE) {
+                        self.close_help();
+                    } else {
+                        self.close_help();
+                        self.open_help();
+                    }
                     rest.push(command);
                 }
                 RootCommand::Click(id) if id == TbId::new(FULLSCREEN_ID) => {

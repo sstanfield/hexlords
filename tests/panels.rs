@@ -203,11 +203,19 @@ fn the_map_takes_all_the_room_the_panels_leave() {
 
 #[test]
 fn a_narrow_window_has_narrower_slots() {
-    let s = session_at(640, 700, 96);
-    let map = s.screen.map_rect();
-    let last = rect(&s, &unit_button_id(STACK_SLOTS - 1));
-    assert!(last.right() <= map.right(), "{last:?} {map:?}");
-    assert!(rect(&s, "mini_map").right() <= 640);
+    for (w, h, dpi) in [(640, 700, 96), (640, 480, 96), (500, 400, 96), (640, 700, 192)] {
+        let s = session_at(w, h, dpi);
+        let map = s.screen.map_rect();
+        let last = rect(&s, &unit_button_id(STACK_SLOTS - 1));
+        assert!(last.right() <= map.right(), "{w}x{h}: {last:?} {map:?}");
+        assert!(rect(&s, "mini_map").right() <= w);
+        // Each icon fits its box.
+        let (slot, icon) = (rect(&s, "unit_0"), rect(&s, "unit_0_icon"));
+        assert!(icon.w <= slot.w && icon.x >= slot.x && icon.right() <= slot.right(), "{w}x{h}: {icon:?} {slot:?}");
+        // The treasury is in the window, or not there at all.
+        let treasury = frame(&s, "treasury");
+        assert!(treasury.right() <= w || visibility(&s, "treasury") == Visibility::Gone, "{w}x{h}: {treasury:?}");
+    }
 }
 
 #[test]

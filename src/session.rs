@@ -41,7 +41,7 @@ use crate::render::{AssetDirs, coin_icon, unit_icon};
 use crate::screen::{FULLSCREEN_ID, HELP_KEYS_ID, MapScreen, QUIT_ID, Scene, ZOOM_IN_ID, ZOOM_OUT_ID};
 use crate::setup::Controller;
 use crate::state::scenario::side_name;
-use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Side, UnitId};
+use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, MoveRange, Side, UnitId};
 use crate::tasks_window::{self, TasksWindow};
 
 /// The layout, relative to the asset directory.
@@ -302,6 +302,8 @@ pub struct Session {
     /// comes in a turn, what goes out.
     menu_bar: WidgetId,
     menu_room: WidgetId,
+    menu_titles: WidgetId,
+    treasury_box: WidgetId,
     menus: MenuBar,
     treasury: [Line; 3],
     sidebar: WidgetId,
@@ -315,6 +317,12 @@ pub struct Session {
     picking: Option<Pick>,
     /// Why the last pick was refused, said until the next one.
     refused: Option<String>,
+    /// A word on the last click (something in the fog was in the way), said
+    /// until the next.
+    notice: Option<String>,
+    /// With fog of war, the selection's reach as the person knows it: as of
+    /// the map's revision and the selection it was worked out for.
+    seen_range: Option<(u64, Vec<UnitId>, MoveRange)>,
     /// The list of tasks, while it is open; and the map's revision and the
     /// side it was last brought up to date for.
     tasks: Option<TasksWindow>,
@@ -411,6 +419,8 @@ impl Session {
             city_details: find(&screen, CITY_DETAILS_ID)?,
             menu_bar: find(&screen, "menu_bar")?,
             menu_room: find(&screen, "menu_room")?,
+            menu_titles: titles,
+            treasury_box: find(&screen, "treasury")?,
             menus,
             treasury: [
                 Line::find(&screen, GOLD_ID)?,
@@ -424,6 +434,8 @@ impl Session {
             done: find(&screen, DONE_ID)?,
             picking: None,
             refused: None,
+            notice: None,
+            seen_range: None,
             tasks: None,
             tasks_of: None,
             log: None,
@@ -475,6 +487,7 @@ impl Session {
         if self.cover.is_some() || self.screen.game.winner().is_some() || !self.persons_turn() {
             return;
         }
+        (self.picking, self.refused, self.notice) = (None, None, None);
         let side = self.screen.game.player();
         let length = self.screen.game.history().len();
         match self.seen.iter_mut().find(|(s, _)| *s == side) {
@@ -562,6 +575,8 @@ impl Session {
     /// who played last (hotseat), the map is covered until they say they are
     /// there.
     fn turn_passed(&mut self) {
+        // Nothing picked, nothing said, carries over to another turn.
+        (self.picking, self.refused, self.notice) = (None, None, None);
         let game = &self.screen.game;
         let side = game.player();
         let person = game.controller(side) == Some(&Controller::Person);
@@ -644,6 +659,14 @@ impl Session {
         let ui = &mut self.screen.ui;
         let bar_h = ui.preferred_size_free(self.menu_bar).pref.h;
         ui.set_layout_params(self.menu_bar, Some(LayoutParams::fixed(w.max(0), bar_h)));
+        // The treasury, if there is room for it beside the menus.
+        let (titles, treasury) =
+            (ui.preferred_size_free(self.menu_titles).pref.w, ui.preferred_size_free(self.treasury_box).pref.w);
+        let fits = titles + treasury + 4 * spacing <= w;
+        let visibility = if fits { Visibility::Visible } else { Visibility::Gone };
+        if ui.node(self.treasury_box).is_some_and(|n| n.visibility() != visibility) {
+            ui.set_visibility(self.treasury_box, visibility);
+        }
         // The room between the menus and the treasury takes what is left.
         ui.set_layout_params(
             self.menu_room,
@@ -658,7 +681,10 @@ impl Session {
         let actions = self.screen.ui.preferred_size_free(self.stack_actions).pref.w;
         let room = map_w - actions - dp(&self.screen, STACK_BAR_SPACING_DP);
         let fit = (room - gap * (boxes - 1)) / boxes;
-        let (slot_w, icon) = (dp(&self.screen, SLOT_DP).min(fit).max(0), dp(&self.screen, ICON_DP));
+        let slot_w = dp(&self.screen, SLOT_DP).min(fit).max(0);
+        // (Inside the box's padding and its layout's: 8 dp each side.)
+        let inside = (slot_w - dp(&self.screen, 16)).max(0);
+        let icon = dp(&self.screen, ICON_DP).min(inside);
         let ui = &mut self.screen.ui;
         ui.set_layout_params(self.status.widget, Some(LayoutParams::fixed(map_w, status_h)));
         ui.set_layout_params(self.hex_title.widget, Some(LayoutParams::fixed(map_w, line_h)));
@@ -668,6 +694,10 @@ impl Session {
             lp.set_width(slot_w);
             ui.set_layout_params(slot.button, Some(lp));
             ui.set_layout_params(slot.icon, Some(LayoutParams::fixed(icon, icon)));
+            // The numbers are cut short, not the box made wider, when it is
+            // narrow.
+            let numbers = LayoutParams { min_w: Some(0), max_w: Some(inside), ..LayoutParams::default() };
+            ui.set_layout_params(slot.numbers.widget, Some(numbers));
         }
         // The slots do not push the sidebar off a narrow window.
         ui.set_layout_params(self.stack_row, Some(LayoutParams { max_w: Some(map_w), ..LayoutParams::default() }));
@@ -738,6 +768,22 @@ impl Session {
             self.cities_seen = seen;
             self.screen.redraw_minimap();
         }
+    }
+
+    /// With fog of war, the selection's reach as the person knows it (what
+    /// the map marks), worked out again when the map or the selection
+    /// changed; without, none (the game's own is the truth).
+    fn see_range(&mut self) {
+        let game = &self.screen.game;
+        if !game.setup().fog || game.selection().is_empty() {
+            self.seen_range = None;
+            return;
+        }
+        let key = (game.map.revision(), game.selection().to_vec());
+        if self.seen_range.as_ref().is_some_and(|(revision, units, _)| (*revision, units) == (key.0, &key.1)) {
+            return;
+        }
+        self.seen_range = game.range_seen(&self.sight).map(|range| (key.0, key.1, range));
     }
 
     /// What the person at the screen sees.
@@ -828,9 +874,11 @@ impl Session {
     /// Bring the panels up to date with the game.
     fn refresh(&mut self) {
         self.see();
+        self.see_range();
         let game = &self.screen.game;
         let map = &game.map;
-        let status = info::cursor_line_for(game, &self.sight);
+        let range = self.seen_range.as_ref().map(|(_, _, range)| range).or(game.range());
+        let status = info::cursor_line_for(game, &self.sight, range);
         let title = info::hex_title_for(map, self.shown, self.sight.sees(self.shown));
         // The units of the selected hex in their boxes: each one's icon and
         // numbers, and which of them are selected.
@@ -856,6 +904,7 @@ impl Session {
                     "Go to: click the hex they go to, over as many turns as it takes (Esc: never mind).".to_string()
                 }
             },
+            _ if self.notice.is_some() => self.notice.clone().unwrap_or_default(),
             _ if matches!(self.picking, Some(Pick::Rally(_))) => {
                 "Click the hex the city sends its new units to (Esc: never mind).".to_string()
             }
@@ -1030,7 +1079,7 @@ impl Session {
                 self.screen.settle();
             }
         }
-        let seer = self.seer();
+        let (seer, actor) = (self.seer(), self.actor());
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
         if let Some(window) = &mut self.city_window {
             let known = game
@@ -1038,7 +1087,7 @@ impl Session {
                 .cities()
                 .get(window.city())
                 .map_or(info::Known::All, |c| info::Known::of(c, seer, &self.sight));
-            if !window.is_open(ui) || !window.refresh(ui, &game.map, (game.player(), known)) {
+            if !window.is_open(ui) || !window.refresh(ui, &game.map, (actor, known)) {
                 window.close(ui);
                 self.city_window = None;
             }
@@ -1060,11 +1109,10 @@ impl Session {
         }
         let (root, area) = (self.screen.root_window(), self.window_area());
         let icons = self.production_icons(id);
-        let seer = self.seer();
+        let (seer, actor) = (self.seer(), self.actor());
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
         let known = game.map.cities().get(id).map_or(info::Known::All, |c| info::Known::of(c, seer, &self.sight));
-        self.city_window =
-            CityWindow::open(ui, root, &game.map, id, (game.player(), known), &icons, (area, CITY_ALIGN));
+        self.city_window = CityWindow::open(ui, root, &game.map, id, (actor, known), &icons, (area, CITY_ALIGN));
     }
 
     /// The icons of what a city can build, in its holder's colors.
@@ -1097,16 +1145,16 @@ impl Session {
                 panel.close(&mut self.screen.ui);
             }
             if let Some((id, _)) = wanted {
-                let icons = self.production_icons(id);
+                let (icons, actor) = (self.production_icons(id), self.actor());
                 let (ui, game) = (&mut self.screen.ui, &self.screen.game);
-                self.city_panel =
-                    CityPanel::open(ui, self.city_box, &game.map, id, (game.player(), info::Known::All), &icons);
+                self.city_panel = CityPanel::open(ui, self.city_box, &game.map, id, (actor, info::Known::All), &icons);
             }
             self.panel_of = wanted;
         }
+        let actor = self.actor();
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
         if let Some(panel) = &mut self.city_panel {
-            if !panel.refresh(ui, &game.map, (game.player(), info::Known::All)) {
+            if !panel.refresh(ui, &game.map, (actor, info::Known::All)) {
                 if let Some(panel) = self.city_panel.take() {
                     panel.close(ui);
                 }
@@ -1130,10 +1178,11 @@ impl Session {
             }
         }
         let (root, area) = (self.screen.root_window(), self.window_area());
+        let viewer = self.viewer();
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
         let sight = &self.sight;
         let seen = |hex| sight.sees(hex);
-        let mut list = CityList::open(ui, root, &game.map, own, game.player(), (area, LIST_ALIGN), &seen);
+        let mut list = CityList::open(ui, root, &game.map, own, viewer, (area, LIST_ALIGN), &seen);
         // The selected hex's city, if it is in the list, is the chosen one.
         if let Some(city) = game.map.city_at(self.shown) {
             list.choose(ui, &game.map, city.id, &seen);
@@ -1158,40 +1207,37 @@ impl Session {
         self.city_list.as_ref()
     }
 
-    /// Close the window on top (a battle's, the log, a city's, the list).
-    /// False if none was open.
+    /// Close the menu, or else the window on top (the one opened last of a
+    /// battle's, the log, a city's, the list, the tasks). False if none was
+    /// open.
     fn close_top_window(&mut self) -> bool {
+        let root = self.screen.root_window();
         let ui = &mut self.screen.ui;
         if self.menus.close(ui) {
             return true;
         }
-        if let Some(battle) = self.battle.take() {
-            if battle.is_open(ui) {
-                battle.close(ui);
-                return true;
-            }
+        let open = |w: WidgetId| build::is_open(ui, w).then_some(w);
+        let windows = [
+            self.battle.as_ref().and_then(|w| open(w.window())),
+            self.log.as_ref().and_then(|w| open(w.window())),
+            self.city_window.as_ref().and_then(|w| open(w.window())),
+            self.city_list.as_ref().and_then(|w| open(w.window())),
+            self.tasks.as_ref().and_then(|w| open(w.window())),
+        ];
+        // The one on top: the last of them among the root window's children.
+        let order = ui.children(root).to_vec();
+        let top = (0..windows.len())
+            .filter_map(|i| Some((order.iter().position(|c| Some(*c) == windows[i])?, i)))
+            .max()
+            .map(|(_, i)| i);
+        match top {
+            Some(0) => self.battle.take().map(|w| w.close(ui)).is_some(),
+            Some(1) => self.log.take().map(|w| w.close(ui)).is_some(),
+            Some(2) => self.city_window.take().map(|w| w.close(ui)).is_some(),
+            Some(3) => self.city_list.take().map(|w| w.close(ui)).is_some(),
+            Some(4) => self.tasks.take().map(|w| w.close(ui)).is_some(),
+            _ => false,
         }
-        if let Some(log) = self.log.take() {
-            if log.is_open(ui) {
-                log.close(ui);
-                return true;
-            }
-        }
-        if let Some(window) = self.city_window.take() {
-            window.close(ui);
-            return true;
-        }
-        if let Some(list) = self.city_list.take() {
-            list.close(ui);
-            return true;
-        }
-        if let Some(tasks) = self.tasks.take() {
-            if tasks.is_open(ui) {
-                tasks.close(ui);
-                return true;
-            }
-        }
-        false
     }
 
     /// Do what a window asked.
@@ -1325,10 +1371,24 @@ impl Session {
     /// the game selects or moves a unit, and the panels are about that hex
     /// from now on.
     fn choose(&mut self, hex: Hex) {
+        // While another side plays, a click only looks.
+        if !self.persons_turn() {
+            self.screen.game.deselect();
+            self.shown = hex;
+            return;
+        }
         // An order starts the turn, if it has not been started.
-        if self.between && self.persons_turn() {
+        if self.between {
             self.start_turn();
         }
+        // In the fog: a hex the selection seems to reach, but something
+        // unseen is in the way of (going there tells as much).
+        let fog = self.seen_range.as_ref().map(|(_, _, range)| range);
+        if fog.is_some_and(|r| r.cost(hex).is_some()) && !self.screen.game.can_move_to(hex) {
+            self.notice = Some("Something in the fog is in the way.".to_string());
+            return;
+        }
+        self.notice = None;
         let before = self.screen.game.history().len();
         if let SelectOutcome::Fought(_) = self.screen.game.select_hex(hex) {
             // The battle, played out.
@@ -1453,6 +1513,13 @@ impl Session {
         if game.controller(side) == Some(&Controller::Person) { side } else { self.last_person.unwrap_or(side) }
     }
 
+    /// Who gives the orders at this screen now: the side whose turn it is, if
+    /// a person plays it here; else nobody (`Side::Grey`: the buttons that
+    /// give orders are greyed).
+    fn actor(&self) -> Side {
+        if self.persons_turn() && !self.covered() { self.screen.game.player() } else { Side::Grey }
+    }
+
     /// Whom the map and the panels show what they know: the person at the
     /// screen (fog of war, the other sides' details hidden). Nobody
     /// (`Side::Grey`, all shown) while no person plays here, or none is left
@@ -1486,12 +1553,16 @@ impl Session {
     /// before, `back`), and look at it: the one after the selected stack, or
     /// else after the last one this went to (at first, the first).
     pub fn next_stack(&mut self, back: bool) {
+        let (side, mine) = (self.viewer(), self.persons_turn());
         let game = &self.screen.game;
         let selected = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos());
-        let Some(hex) = game.next_stack(selected.or(self.cycled), back) else { return };
+        let Some(hex) = game.next_stack_of(side, selected.or(self.cycled), back) else { return };
         let game = &mut self.screen.game;
         game.deselect();
-        game.select_hex(hex);
+        // (On another side's turn, only looked at.)
+        if mine {
+            game.select_hex(hex);
+        }
         self.cycled = Some(hex);
         self.look_at(hex);
     }
@@ -1499,7 +1570,8 @@ impl Session {
     /// Go to the next city of the player's (or the one before), and look at
     /// it; nothing stays selected.
     pub fn next_city(&mut self, back: bool) {
-        let Some(hex) = self.screen.game.next_city(self.shown, back) else { return };
+        let side = self.viewer();
+        let Some(hex) = self.screen.game.next_city_of(side, self.shown, back) else { return };
         self.screen.game.deselect();
         self.look_at(hex);
     }
@@ -1579,10 +1651,15 @@ impl Session {
     /// its city.
     fn see_to(&mut self, task: Task) {
         self.picking = None;
+        let mine = self.persons_turn();
         match task {
             Task::Stack { at, .. } => {
                 let game = &mut self.screen.game;
                 game.deselect();
+                if !mine {
+                    self.look_at(at);
+                    return;
+                }
                 if game
                     .map
                     .units_at(at)
@@ -1905,9 +1982,14 @@ impl Session {
                 RootCommand::Click(id) if self.window_click(id) => {}
                 // A unit's slot: that unit is the selected one.
                 RootCommand::Click(id) => {
-                    let unit = (0..STACK_SLOTS).find(|i| id == TbId::new(&unit_button_id(*i)));
-                    let unit = unit.and_then(|i| self.stack_units().get(i).copied());
-                    if let Some(unit) = unit {
+                    // A box of the stack: the leader's, or the `i`th unit's.
+                    let i = if id == TbId::new(LEADER_ID) {
+                        Some(0)
+                    } else {
+                        (0..STACK_SLOTS).find(|i| id == TbId::new(&unit_button_id(*i))).map(|i| i + 1)
+                    };
+                    let unit = i.and_then(|i| self.boxes().get(i).copied().flatten());
+                    if let (Some(unit), true) = (unit, self.persons_turn()) {
                         self.screen.game.toggle_unit(unit);
                     }
                 }
@@ -1945,7 +2027,10 @@ impl Scene for Session {
 
     /// Where the selected unit can go.
     fn marked(&self, hex: Hex) -> bool {
-        self.screen.game.can_move_to(hex)
+        match &self.seen_range {
+            Some((_, _, range)) => range.cost(hex).is_some(),
+            None => self.screen.game.can_move_to(hex),
+        }
     }
 
     /// The selected unit shows on its hex, over the others of its stack (in a

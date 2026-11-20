@@ -111,3 +111,33 @@ fn with_nobody_at_the_screen_all_is_seen() {
     assert_eq!(Scene::viewer(&s), None);
     assert!(s.sees(BLUEMOOR));
 }
+
+#[test]
+fn in_the_fog_the_reach_marked_is_as_far_as_is_known() {
+    // A road through water: red's soldiers at one end, a blue soldier on it
+    // out of sight.
+    let mut rows = vec!["w".repeat(30); 30];
+    rows[5] = format!("{}c{}", "g".repeat(5), "g".repeat(24));
+    let terrain = format!("30\n30\n{}\n", rows.join("\n"));
+    let units = "unit soldiers\nname Soldiers\nstrength 3\nmoves 20\nenter grass 2, city 1\n";
+    let cities = "city 5 5\nname Redhold\nside red\ngarrison soldiers\n";
+    let (mut map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+    let kind = map.units().kind_named("soldiers").unwrap();
+    let blue = map.new_unit_of(Side::Blue, kind).unwrap();
+    map.place_unit(blue, Hex::new(5, 10)).unwrap();
+    let game = Game::from_scenario(Scenario { map, assets: None, warnings });
+    let mut setup = Setup::solo(&game.map, Some(Side::Red), "passive");
+    setup.fog = true;
+    let mut s = session(game.with_setup(setup));
+    look(&mut s, REDHOLD);
+    let beyond = Hex::new(5, 12);
+    assert!(!s.sees(Hex::new(5, 10)));
+    // The map marks the way on past the unseen soldier, as if nobody were
+    // there; the rules know better.
+    assert!(!s.screen.game.can_move_to(beyond));
+    assert!(Scene::marked(&s, beyond), "the reach does not stop at what is not seen");
+    // Going there finds out: something is in the way, and nothing moves.
+    look(&mut s, beyond);
+    assert_eq!(s.unit_line(), "Something in the fog is in the way.");
+    assert_eq!(s.screen.game.map.units_at(REDHOLD).len(), 1);
+}
