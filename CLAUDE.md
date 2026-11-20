@@ -57,8 +57,10 @@ touching the rules.
 | `src/script.rs` | Scripted input (`--script`) for any scene, for screenshots and tests |
 | `src/app.rs`, `src/main.rs` | The miniquad window (`App<S: Scene>`, `app::run`): forwards input to the scene, draws the frame. `main.rs` is the game's command line |
 | `tools/mapeditor/` | The map editor, a workspace member on the game's library: `Editor` (a scene: the sidebar, painting, files), `brush`, `history` (undo), `check` (`--check`) |
+| `src/mapgen/` | The random map generator, pure (`docs/mapgen.md`): `config` (the knobs, the presets, the size), `land`, `relief`, `biomes`, `cleanup` (the stages so far), `grid`, `noise`, `rng`, `reach` (movement classes, who gets where), `stats` (what any map measures), `check`, `score`, `preview` (pictures, contact sheets) |
+| `tools/mapgen/` | Its command line, a workspace member on the game's library: `gen`, `batch`, `stats`, `check` |
 | `tools/assetgen/` | The picture generator, a workspace member with no dependencies: `terrain` (a function for each terrain's art), `noise` and `scatter` (what repeats on the hex grid), `tile` (the image, the atlas), `overlay`, `road` and `icons` (the pictures that go over a tile), `preview` (maps drawn without the game), `png` (the writer) |
-| `assets/` | `layouts/main.tb.txt` (the game), `layouts/editor.tb.txt` (the editor), Turbo Badger's default skin and `skin/hexgame.tb.txt` (our changes, loaded on top), `tiles/`, `roads/` and the signs in `units/` (what `assetgen` makes, and nothing else), `units/default_unit.png` (the C++ demo's), `maps/` (`*.map` files and map directories) |
+| `assets/` | `layouts/main.tb.txt` (the game), `layouts/editor.tb.txt` (the editor), Turbo Badger's default skin and `skin/hexgame.tb.txt` (our changes, loaded on top), `tiles/`, `roads/` and the signs in `units/` (what `assetgen` makes, and nothing else), `units/default_unit.png` (the C++ demo's), `maps/` (`*.map` files and map directories), `mapgen/` (the generator's presets and units template) |
 | `tests/`, `tools/*/tests/` | Headless tests of the layouts, the widgets and the interaction; of the generator against the game |
 | `docs/` | `map-format.md` (the map file, for people and agents who write maps); `tiles.md` (the tiles, for those who draw them); `gameplay.md` (the plan for the rules); `deviations.md`; `screenshots/` |
 | `reference/hexGame/` | The C++ original, for reference. **Read-only, never edit it.** Gitignored: if it is missing, `git clone https://github.com/sstanfield/hexGame reference/hexGame` |
@@ -92,6 +94,8 @@ cargo run -p mapeditor -- x.map --screenshot target/ed.png --script "press:brush
 cargo run -- --map assets/maps/continent    # the game on a whole map: roads, cities, units
 cargo run -p assetgen --release                                  # draw the game's pictures again
 cargo run -p assetgen --release -- --previews target/previews    # and maps drawn with the tiles
+cargo run -p mapgen --release -- batch --seeds 1..16 --size medium --out target/maps --sheet   # random maps, a contact sheet
+cargo run -p mapgen --release -- stats assets/maps/continent     # what a map measures
 cargo +1.86 check --workspace --all-targets # MSRV
 ```
 

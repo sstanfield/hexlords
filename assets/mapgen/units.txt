@@ -1,0 +1,106 @@
+# The units of a generated map: the game's own kinds, as the continent has them
+# (docs/map-format.md says what the lines mean). mapgen copies this file into
+# each map it makes, unless told to use another (--units).
+
+unit militia
+  name     Militia
+  image    units/militia.png
+  strength 2
+  moves    10
+  upkeep   1
+  price    4
+  enter    grass 2, forest 3, hill 4, swamp 5, desert 3
+  enter    city 1, road 1, bridge 1
+
+unit wardens
+  name     Wardens
+  image    units/wardens.png
+  strength 4
+  moves    8
+  upkeep   2
+  price    8
+  enter    grass 2, forest 4, hill 4, swamp 6, desert 4
+  enter    city 1, road 1, bridge 1
+
+unit archers
+  name     Archers
+  image    units/archers.png
+  strength 3
+  moves    10
+  upkeep   2
+  price    6
+  enter    grass 2, forest 2, hill 3, swamp 5, desert 3
+  enter    city 1, road 1, bridge 1
+
+# Fast on open ground and on roads, slow in rough country, and no good in a swamp.
+unit riders
+  name     Riders
+  image    units/riders.png
+  strength 4
+  moves    18
+  upkeep   3
+  price    10
+  enter    grass 2, forest 5, hill 5, desert 3
+  enter    city 1, road 1, bridge 1
+
+# A commander: a captain makes every other unit of its stack fight 1 the
+# stronger, and fights last itself. A stack has one.
+unit captain
+  name      Captain
+  image     units/captain.png
+  strength  3
+  moves     14
+  upkeep    4
+  price     20
+  commander 1
+  enter     grass 2, forest 3, hill 4, swamp 5, desert 3
+  enter     city 1, road 1, bridge 1
+
+# Ships: over water, and into their own side's cities (ports). "carries" is
+# how many land units one takes aboard; a stack's commander goes besides.
+# Who rides a ship that sinks goes down with it.
+unit warship
+  name     Warship
+  image    units/warship.png
+  strength 6
+  moves    16
+  upkeep   3
+  price    14
+  travels  sea
+  carries  1
+  enter    water 2, city 2
+
+unit transport
+  name     Transport
+  image    units/transport.png
+  strength 1
+  moves    12
+  upkeep   2
+  price    10
+  travels  sea
+  carries  6
+  enter    water 2, city 2
+
+# Flyers: over any ground, mountains and water too. A commander with flyers
+# and no one else flies with them.
+unit hawkriders
+  name     Hawk Riders
+  image    units/hawkriders.png
+  strength 3
+  moves    16
+  upkeep   3
+  price    12
+  travels  air
+  enter    grass 2, forest 2, hill 2, swamp 2, desert 2, mountain 2, water 2
+  enter    city 1
+
+unit wyverns
+  name     Wyverns
+  image    units/wyverns.png
+  strength 5
+  moves    12
+  upkeep   4
+  price    18
+  travels  air
+  enter    grass 2, forest 2, hill 2, swamp 2, desert 2, mountain 2, water 2
+  enter    city 1

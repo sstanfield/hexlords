@@ -28,6 +28,9 @@ direction. So far:
   the rules, in two modes (sides taking turns, built; or all giving orders
   at once);
 - a [map editor](#the-map-editor) for the terrain and the roads;
+- a random map generator, `mapgen`, with a ruler for any map
+  ([docs/mapgen.md](docs/mapgen.md)): the terrain so far; rivers, cities,
+  sites and roads to come;
 - [tiles, roads and unit signs](#the-pictures) drawn by a program in the
   repository, so the art is original and can be made again.
 

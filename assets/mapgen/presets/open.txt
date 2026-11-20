@@ -1,0 +1,2 @@
+# open: much grass, few mountains: armies get anywhere fast; short games.
+mix              grass 60 mountain 10 hill 12 forest 14 swamp 4 desert 0

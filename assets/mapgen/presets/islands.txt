@@ -1,0 +1,5 @@
+# islands: big islands and many small ones, a city or two only ships get to.
+# The units template needs a ship.
+layout           archipelago
+water            0.45
+sea_cities       on

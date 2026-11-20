@@ -1,0 +1,4 @@
+# rugged: many mountains and hills, and more passes through them: slow,
+# defensive games.
+mix              grass 40 mountain 22 hill 20 forest 15 swamp 3 desert 0
+passes           0.2
