@@ -21,9 +21,9 @@ turbo-ferret = { workspace = true }
 turbo-ferret-miniquad = { workspace = true }
 
 # The game is the root package; the tools are members (`cargo run -p mapeditor`,
-# `cargo run -p assetgen --release`).
+# `cargo run -p assetgen --release`, `cargo run -p mapgen`).
 [workspace]
-members = ["tools/assetgen", "tools/mapeditor"]
+members = ["tools/assetgen", "tools/mapeditor", "tools/mapgen"]
 
 [workspace.dependencies]
 miniquad = "=0.4.11" # the version turbo-ferret-miniquad is built against

@@ -23,6 +23,8 @@
 //! - [`agents`]: the computer's players, which also play without a window
 //!   ([`headless`]).
 //! - [`app`]: the window (a miniquad `EventHandler`) that runs a scene.
+//! - [`mapgen`]: the random map generator, pure (`tools/mapgen` is its
+//!   command line).
 
 // `unsafe` is for calling C or Objective-C where miniquad leaves something out,
 // and only in `platform` (today: `platform::bring_to_front` on macOS).
@@ -39,6 +41,7 @@ pub mod headless;
 pub mod help;
 pub mod info;
 pub mod log_window;
+pub mod mapgen;
 pub mod minimap_view;
 pub mod new_game;
 pub mod orders;

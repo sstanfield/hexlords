@@ -1,0 +1,13 @@
+[package]
+name = "mapgen"
+description = "The HexGame random map generator's command line: make maps, measure them, check them."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+license = "Zlib"
+publish = false
+
+# The game's library (which holds the generator, `hexgame::mapgen`), and
+# nothing else (see CLAUDE.md).
+[dependencies]
+hexgame = { path = "../.." }
