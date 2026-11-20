@@ -24,6 +24,10 @@ pub trait Agent {
     /// The next order of `side`, whose turn it is in `game`: `Order::EndTurn`
     /// when it has done.
     fn next_order(&mut self, game: &Game, side: Side) -> Order;
+
+    /// The game refused the last order it gave, and why (something it could
+    /// not see may be in the way). By default it hears nothing.
+    fn refused(&mut self, _order: &Order, _why: &str) {}
 }
 
 /// The agents there are, by name (and `cmd:<program> [<argument> ...]`, a
@@ -84,10 +88,10 @@ pub struct TurnReport {
 }
 
 /// A whole turn of the side whose turn it is, played by `agent`: its orders,
-/// then the end of its turn. With fog of war the agent is shown the game as
-/// its side knows it (`Game::view_for`), worked out anew for each order; the
-/// orders are carried out in the game itself, where something it could not
-/// see may be in the way.
+/// then the end of its turn. The agent is shown the game as its side knows
+/// it (`Game::view_for`), worked out anew for each order; the orders are
+/// carried out in the game itself, where something it could not see may be
+/// in the way (it hears of a refusal: `Agent::refused`).
 pub fn play_turn(game: &mut Game, agent: &mut dyn Agent) -> TurnReport {
     let side = game.player();
     let mut report = TurnReport::default();
@@ -96,13 +100,16 @@ pub fn play_turn(game: &mut Game, agent: &mut dyn Agent) -> TurnReport {
             return report;
         }
         let view = game.view_for(side);
-        let order = agent.next_order(view.as_ref().unwrap_or(game), side);
+        let order = agent.next_order(&view, side);
         if order == Order::EndTurn {
             break;
         }
         match game.apply(order.clone()) {
             Ok(events) => report.events.extend(events),
-            Err(why) => report.refused.push((order, why)),
+            Err(why) => {
+                agent.refused(&order, &why);
+                report.refused.push((order, why));
+            }
         }
     }
     if game.winner().is_none() {

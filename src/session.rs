@@ -641,6 +641,10 @@ impl Session {
 
     /// The game is over: a window says who won.
     fn open_game_over(&mut self, winner: Side) {
+        // It is over: nothing asks whether to leave it any more.
+        if let Some(ask) = self.ask_new.take() {
+            build::close(&mut self.screen.ui, ask.window);
+        }
         let root = self.screen.root_window();
         let area = self.window_area();
         let ui = &mut self.screen.ui;
@@ -1258,14 +1262,9 @@ impl Session {
         if self.menus.close(ui) {
             return true;
         }
-        if let Some(ask) = self.ask_new.take() {
-            if build::is_open(ui, ask.window) {
-                build::close(ui, ask.window);
-                return true;
-            }
-        }
         let open = |w: WidgetId| build::is_open(ui, w).then_some(w);
         let windows = [
+            self.ask_new.as_ref().and_then(|w| open(w.window)),
             self.battle.as_ref().and_then(|w| open(w.window())),
             self.log.as_ref().and_then(|w| open(w.window())),
             self.city_window.as_ref().and_then(|w| open(w.window())),
@@ -1279,11 +1278,12 @@ impl Session {
             .max()
             .map(|(_, i)| i);
         match top {
-            Some(0) => self.battle.take().map(|w| w.close(ui)).is_some(),
-            Some(1) => self.log.take().map(|w| w.close(ui)).is_some(),
-            Some(2) => self.city_window.take().map(|w| w.close(ui)).is_some(),
-            Some(3) => self.city_list.take().map(|w| w.close(ui)).is_some(),
-            Some(4) => self.tasks.take().map(|w| w.close(ui)).is_some(),
+            Some(0) => self.ask_new.take().map(|w| build::close(ui, w.window)).is_some(),
+            Some(1) => self.battle.take().map(|w| w.close(ui)).is_some(),
+            Some(2) => self.log.take().map(|w| w.close(ui)).is_some(),
+            Some(3) => self.city_window.take().map(|w| w.close(ui)).is_some(),
+            Some(4) => self.city_list.take().map(|w| w.close(ui)).is_some(),
+            Some(5) => self.tasks.take().map(|w| w.close(ui)).is_some(),
             _ => false,
         }
     }

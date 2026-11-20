@@ -152,7 +152,7 @@ fn the_computer_knows_what_a_person_in_its_place_would() {
     game.apply(hexgame::orders::Order::EndTurn).unwrap();
     // Red's view: its own all there; blue's soldiers in their city out of
     // sight, and so is who holds it; what blue builds, blue's gold: not told.
-    let view = game.view_for(Side::Red).expect("fog of war");
+    let view = game.view_for(Side::Red);
     assert_eq!(view.map.units().of_side(Side::Red).count(), game.map.units().of_side(Side::Red).count());
     assert_eq!(view.map.units().of_side(Side::Blue).count(), 0);
     let city = view.map.city_at(BLUEMOOR).unwrap();
@@ -164,8 +164,17 @@ fn the_computer_knows_what_a_person_in_its_place_would() {
     let kind = game.map.units().kind_named("soldiers").unwrap();
     let near = game.map.new_unit_of(Side::Blue, kind).unwrap();
     game.map.place_unit(near, Hex::new(15, 16)).unwrap();
-    let view = game.view_for(Side::Red).unwrap();
+    let view = game.view_for(Side::Red);
     assert_eq!(view.map.units().of_side(Side::Blue).map(|u| u.id()).collect::<Vec<_>>(), [near]);
-    // Without fog, no view: the whole game is seen.
-    assert!(self::game(false, Controller::Person).view_for(Side::Red).is_none());
+    // Without fog, every unit is in it; what nobody is told is not, fog or no
+    // fog (what the others build, their gold).
+    let mut clear = self::game(false, Controller::Person);
+    clear.apply(hexgame::orders::Order::EndTurn).unwrap();
+    let bluemoor = clear.map.city_at(BLUEMOOR).unwrap().id;
+    clear.apply(hexgame::orders::Order::Build { city: bluemoor, what: Some(0) }).unwrap();
+    let view = clear.view_for(Side::Red);
+    assert_eq!(view.map.units().iter().count(), clear.map.units().iter().count());
+    let city = view.map.city_at(BLUEMOOR).unwrap();
+    assert_eq!((city.side, city.building, city.units.len()), (Side::Blue, None, 0));
+    assert_eq!(view.gold(Side::Blue), 0);
 }

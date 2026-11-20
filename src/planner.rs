@@ -15,9 +15,10 @@
 //!    temples on the way, and sends each toward the city most worth taking
 //!    for the trouble.
 //!
-//! With fog of war it is given its side's view of the game (`Game::view_for`)
-//! and knows no more than a person would: a city it cannot see is one it
-//! goes to look at with a force, not one it takes for empty.
+//! It is given its side's view of the game (`Game::view_for`) and knows no
+//! more than a person would: with fog of war, a city it cannot see is one it
+//! goes to look at before it attacks; a place the game refuses to send it
+//! (something unseen in the way) it leaves be for a while.
 //!
 //! Not a port: the C++ had no players.
 
@@ -25,7 +26,10 @@ use crate::agents::Agent;
 use crate::game::Game;
 use crate::orders::Order;
 use crate::state::combat::System;
-use crate::state::{CityId, Hex, MAX_STACK, Side, TileType, Unit, UnitId, UnitProd, compute_range, step_toward};
+use crate::state::{
+    CityId, Hex, MAX_STACK, Side, TileType, Unit, UnitId, UnitProd, compute_range, hostile, step_toward,
+    step_toward_with,
+};
 
 /// What makes one style of play another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,26 +84,69 @@ pub struct Planner {
     done: Vec<UnitId>,
     /// What threatens each of its cities, worked out once a turn.
     threats: Option<((u32, Side), Threats)>,
+    /// Where its armies gather this turn: its commander's hex at the start
+    /// of the turn (or its biggest stack's).
+    hub: Option<Hex>,
+    /// Hexes the game refused to send it to (something it could not see is
+    /// in the way, likely), and the round until which it leaves them be.
+    blocked: Vec<(Hex, u32)>,
+    /// The orders refused this turn.
+    refusals: usize,
 }
 
 impl Planner {
     pub fn new(style: Style) -> Planner {
-        Planner { style, turn: None, done: Vec::new(), threats: None }
+        Planner { style, turn: None, done: Vec::new(), threats: None, hub: None, blocked: Vec::new(), refusals: 0 }
+    }
+
+    /// True while it leaves `hex` be (the game refused to send it there).
+    fn is_blocked(&self, hex: Hex, game: &Game) -> bool {
+        self.blocked.iter().any(|(h, until)| *h == hex && game.turn() <= *until)
     }
 }
+
+/// How many rounds it leaves a hex be after the game refused to send it
+/// there.
+const BLOCKED_ROUNDS: u32 = 3;
+/// How many refused orders a turn it tries again with other orders for the
+/// same units.
+const MAX_REFUSALS: usize = 4;
 
 /// How much a unit is worth in battle under the rules in effect, against
 /// one of strength 1: in lines a unit fights its duels alone, and its odds go
 /// as its strength to the power the chance gives (`combat`: `k = 2 (10 -
 /// chance) / 5`); in strength against strength, a stack's strengths add up.
+///
+/// (In plain arithmetic, with no `powf`: `k` is a fifth of a whole number,
+/// so `s^k` is the fifth root of `s` to that number; the same on every
+/// machine, so a seed plays the same game everywhere.)
 pub fn worth(strength: u32, game: &Game) -> f64 {
     let rules = game.setup().combat;
-    let k = 2.0 * f64::from(10u8.saturating_sub(rules.chance)) / 5.0;
+    // k = m / 5.
+    let m = 2 * u32::from(10u8.saturating_sub(rules.chance));
     let s = f64::from(strength.max(1));
     match rules.system {
-        System::Lines => s.powf(k.max(0.4)),
-        System::Strength => s * (1.0 + k / 4.0),
+        System::Lines => fifth_root(power(s, m.max(2))),
+        System::Strength => s * (1.0 + f64::from(m) / 20.0),
     }
+}
+
+/// `x` to the `n`th, by multiplying.
+fn power(x: f64, n: u32) -> f64 {
+    (0..n).fold(1.0, |p, _| p * x)
+}
+
+/// The fifth root of `x` (positive), by Newton's steps from a start above it.
+fn fifth_root(x: f64) -> f64 {
+    let mut r = x.max(1.0);
+    for _ in 0..200 {
+        let next = (4.0 * r + x / power(r, 4)) / 5.0;
+        if (r - next).abs() <= 1e-12 * r {
+            return next;
+        }
+        r = next;
+    }
+    r
 }
 
 /// The odds a style attacks at, and starts a wave at, under the rules in
@@ -164,6 +211,36 @@ fn threat(game: &Game, side: Side, hex: Hex) -> f64 {
         .sum()
 }
 
+/// This turn's step of the stack `ids` toward `to`, as its side knows the
+/// map: as far as the slowest (`lead`) gets on its cheapest way, where there
+/// is room for them, and never into another side's units (an attack is
+/// decided on its own odds): a move of those of them that can get there.
+/// Worked out on what it sees, not left to the game (a way through the fog
+/// that is shut shows itself as it goes).
+fn advance(
+    game: &Game,
+    side: Side,
+    (ids, lead): (&[UnitId], &Unit),
+    to: Hex,
+    blocked: &dyn Fn(Hex) -> bool,
+) -> Option<Order> {
+    let map = &game.map;
+    let room = |hex: Hex| {
+        let there = map.units_at(hex);
+        !blocked(hex) && (there.iter().all(|id| ids.contains(id)) || there.len() + ids.len() <= MAX_STACK)
+    };
+    let (step, _) = step_toward_with(map, lead, to, &room)?;
+    if step == lead.pos() || hostile(map, side, step) {
+        return None;
+    }
+    let coming: Vec<UnitId> = ids
+        .iter()
+        .copied()
+        .filter(|id| map.units().get(*id).is_some_and(|u| compute_range(map, u).cost(step).is_some()))
+        .collect();
+    (!coming.is_empty()).then_some(Order::Move { units: coming, to: step })
+}
+
 /// The side's capital: where it builds its commanders (or its first city).
 fn capital(game: &Game, side: Side) -> Option<CityId> {
     let map = &game.map;
@@ -178,10 +255,42 @@ fn capital(game: &Game, side: Side) -> Option<CityId> {
 }
 
 impl Agent for Planner {
+    fn refused(&mut self, order: &Order, _why: &str) {
+        // It leaves the place be for a while; the units may do something
+        // else this turn.
+        let Some(round) = self.turn.map(|(round, _)| round) else { return };
+        if let Order::Move { units, to } | Order::Toward { units, to } = order {
+            self.blocked.push((*to, round + BLOCKED_ROUNDS));
+            // A few times a turn: then they stay where they are till the next.
+            self.refusals += 1;
+            if self.refusals <= MAX_REFUSALS {
+                self.done.retain(|id| !units.contains(id));
+            }
+        }
+    }
+
     fn next_order(&mut self, game: &Game, side: Side) -> Order {
+        self.decide(game, side)
+    }
+}
+
+impl Planner {
+    fn decide(&mut self, game: &Game, side: Side) -> Order {
         if self.turn != Some((game.turn(), side)) {
             self.turn = Some((game.turn(), side));
             self.done.clear();
+            self.refusals = 0;
+            self.blocked.retain(|(_, until)| game.turn() <= *until);
+            // Where the armies gather: its commander, else its biggest stack
+            // out of its cities.
+            let map = &game.map;
+            let mine = || map.units().of_side(side).filter(|u| map.contains(u.pos()));
+            self.hub = mine().find(|u| map.is_commander(u.id())).map(|u| u.pos()).or_else(|| {
+                mine()
+                    .filter(|u| map.city_at(u.pos()).is_none())
+                    .max_by_key(|u| (map.units_at(u.pos()).len(), u.pos().row, u.pos().col))
+                    .map(|u| u.pos())
+            });
         }
         if let Some(order) = self.economy(game, side) {
             return order;
@@ -241,7 +350,7 @@ impl Agent for Planner {
         let sight = game.sight(side);
 
         // A threatened city first: free units that can get in this turn do.
-        for city in &short {
+        for city in short.iter().filter(|c| !self.is_blocked(**c, game)) {
             let coming: Vec<UnitId> = free
                 .iter()
                 .filter(|u| u.pos() != *city && reaches(u.id(), *city) && !map.is_commander(u.id()))
@@ -272,6 +381,8 @@ impl Agent for Planner {
         }
         targets.sort_by_key(|(h, value)| (std::cmp::Reverse(*value), h.row, h.col));
         targets.dedup_by_key(|(h, _)| *h);
+        // (A city it cannot see may hold anyone: it goes to look first.)
+        targets.retain(|(h, _)| sight.sees(*h) && !self.is_blocked(*h, game));
         for (target, _) in &targets {
             let able: Vec<UnitId> = free.iter().filter(|u| reaches(u.id(), *target)).map(|u| u.id()).collect();
             let more = able.len();
@@ -279,16 +390,9 @@ impl Agent for Planner {
             if able.is_empty() {
                 continue;
             }
-            // A city it cannot see may hold anyone: it goes with a force.
-            let seen = sight.sees(*target);
             let odds = game.battle_odds(&able, *target).unwrap_or(100);
             let (dare, wear, _) = daring(&style, game);
-            let go = if seen {
-                odds >= dare || (more > able.len() && odds >= wear)
-            } else {
-                able.len() >= style.muster.min(MAX_STACK)
-            };
-            if go {
+            if odds >= dare || (more > able.len() && odds >= wear) {
                 self.done.extend(able.iter().copied());
                 return Order::Move { units: able, to: *target };
             }
@@ -299,14 +403,7 @@ impl Agent for Planner {
             .flat_map(|row| (0..map.cols()).map(move |col| Hex::new(row, col)))
             .filter(|h| map.tile(*h).is_some_and(|t| t.kind == TileType::Temple))
             .collect();
-        // Where the armies gather: its commander's hex, if it has one out
-        // of its cities, or its biggest free stack's.
-        let hub = free
-            .iter()
-            .filter(|u| map.is_commander(u.id()))
-            .map(|u| u.pos())
-            .next()
-            .or_else(|| free.iter().max_by_key(|u| map.units_at(u.pos()).len()).map(|u| u.pos()));
+        let hub = self.hub.filter(|h| !self.is_blocked(*h, game));
         let mut seen_hexes: Vec<Hex> = Vec::new();
         for unit in &free {
             let here = unit.pos();
@@ -320,19 +417,31 @@ impl Agent for Planner {
             let all_reach = |hex: Hex| ids.iter().all(|id| reaches(*id, hex));
             // A temple this turn, while some of them are not blessed.
             if stack.iter().any(|u| u.blessing.is_none()) {
-                if let Some(temple) =
-                    temples.iter().copied().find(|t| *t != here && all_reach(*t) && map.has_room(*t, ids[0]))
+                let room = |t: Hex| {
+                    let there = map.units_at(t);
+                    there.iter().filter_map(|id| map.units().get(*id)).all(|u| u.side() == side)
+                        && there.len() + ids.len() <= MAX_STACK
+                };
+                if let Some(temple) = temples
+                    .iter()
+                    .copied()
+                    .find(|t| *t != here && all_reach(*t) && room(*t) && !self.is_blocked(*t, game))
                 {
                     return Order::Move { units: ids, to: temple };
                 }
             }
             let lead = stack.iter().copied().min_by_key(|u| u.movement).unwrap_or(unit);
-            // A small stack joins the army first, if the army is near.
-            let small = map.units_at(here).len() < style.muster;
+            // A small stack joins the army first, if the army is near; the
+            // army's own, while small, waits for them.
+            let small = ids.len() < style.muster;
+            if small && hub == Some(here) {
+                continue;
+            }
             if let Some(hub) = hub.filter(|h| *h != here && small && h.distance(here) <= 12) {
                 let room = map.units_at(hub).len() + ids.len() <= MAX_STACK + 1;
-                if room && step_toward(map, lead, hub).is_some() {
-                    return Order::Toward { units: ids, to: hub };
+                let blocked = |h: Hex| self.is_blocked(h, game);
+                if let Some(order) = room.then(|| advance(game, side, (&ids, lead), hub, &blocked)).flatten() {
+                    return order;
                 }
             }
             // Too few to go alone: in one of its cities, they wait for more.
@@ -340,12 +449,40 @@ impl Agent for Planner {
                 continue;
             }
             let Some(target) = self.objective(game, side, here, lead, ids.len()) else { continue };
+            // A city it cannot see: near enough, it goes where it can see
+            // it (no nearer), to know what holds it.
+            if !sight.sees(target) {
+                let look = (0..map.rows())
+                    .flat_map(|row| (0..map.cols()).map(move |col| Hex::new(row, col)))
+                    .filter(|h| *h != target && h.distance(target) <= crate::game::UNIT_SIGHT)
+                    .filter(|h| {
+                        all_reach(*h)
+                            && map
+                                .units_at(*h)
+                                .iter()
+                                .all(|id| ids.contains(id) || map.units().get(*id).is_some_and(|u| u.side() == side))
+                    })
+                    .filter(|h| map.units_at(*h).len() + ids.len() <= MAX_STACK && !self.is_blocked(*h, game))
+                    .min_by_key(|h| (h.distance(here), h.row, h.col));
+                if let Some(look) = look {
+                    return Order::Move { units: ids, to: look };
+                }
+                if all_reach(target) {
+                    continue;
+                }
+                match advance(game, side, (&ids, lead), target, &|h| self.is_blocked(h, game)) {
+                    Some(order) => return order,
+                    None => continue,
+                }
+            }
             // Near enough to strike, but not strong enough: it waits there for
             // more, out of the way.
             if all_reach(target) {
                 continue;
             }
-            return Order::Toward { units: ids, to: target };
+            if let Some(order) = advance(game, side, (&ids, lead), target, &|h| self.is_blocked(h, game)) {
+                return order;
+            }
         }
         Order::EndTurn
     }
@@ -421,7 +558,7 @@ impl Planner {
         let map = &game.map;
         let sight = game.sight(side);
         let mut best: Option<(i64, Hex)> = None;
-        for city in map.cities().iter().filter(|c| c.side != side) {
+        for city in map.cities().iter().filter(|c| c.side != side && !self.is_blocked(c.pos, game)) {
             let defenders = if sight.sees(city.pos) { map.units_at(city.pos).len() as i64 } else { 2 };
             let value = 20 + i64::from(city.income) * 3 + if city.side == Side::Grey { 0 } else { 10 };
             let trouble = i64::from(here.distance(city.pos)) + 3 * (defenders + i64::from(city.walls))

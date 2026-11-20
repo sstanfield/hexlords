@@ -285,3 +285,24 @@ fn new_game_asks_while_the_game_goes_on_and_not_once_it_is_over() {
     choose(&mut s, MENU_GAME_ID, hexgame::session::NEW_GAME_ASK_ID);
     assert!(s.wants_new_game() && !s.asks_new_game());
 }
+
+#[test]
+fn the_new_game_question_goes_the_way_of_the_other_windows() {
+    let mut s = session(|_| {});
+    let log_open = |s: &Session| s.screen.ui.find(s.screen.ui.root(), TbId::new(LOG_WINDOW_ID)).is_some();
+    s.ask_new_game();
+    type_char(&mut s, 'l');
+    assert!(s.asks_new_game() && log_open(&s));
+    // The log came last: Esc closes it first.
+    press(&mut s, SpecialKey::Esc);
+    assert!(s.asks_new_game() && !log_open(&s));
+    // When the game ends, the question goes.
+    let game = &mut s.screen.game;
+    let red = game.map.units_at(REDHOLD)[0];
+    let blue = game.map.units_at(BLUEMOOR)[0];
+    game.map.kill_unit(blue);
+    game.map.move_unit(red, Hex::new(15, 14)).unwrap();
+    game.apply(hexgame::orders::Order::Move { units: vec![red], to: BLUEMOOR }).unwrap();
+    s.frame(16);
+    assert!(!s.asks_new_game());
+}

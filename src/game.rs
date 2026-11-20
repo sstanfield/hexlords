@@ -1207,31 +1207,39 @@ impl Game {
         Sight { cols, seen: Some(seen) }
     }
 
-    /// The game as `side` knows it, with fog of war: what it does not see is
-    /// not in it (the other sides' units out of its sight; who holds a city
-    /// in the fog: nobody, as far as it knows), nor what it is not told (what
-    /// the other sides' cities build and where they send it, the other
-    /// sides' gold, the history). What the computer's players are given, so
-    /// that they know what a person in their place would. `None` without fog
-    /// of war: then the whole game is seen.
-    pub fn view_for(&self, side: Side) -> Option<Game> {
-        if !self.setup.fog || side == Side::Grey {
-            return None;
-        }
-        let sight = self.sight(side);
+    /// The game as `side` knows it: what the computer's players are given
+    /// (`agents::play_turn`), so that they know what a person in their place
+    /// is told. With fog of war, the other sides' units out of its sight are
+    /// not in it, and a city in the fog is nobody's as far as it knows. Fog
+    /// or not, it is not told what the other sides' cities build (nor what
+    /// they can) and where they send it, the other sides' gold, their units'
+    /// standing orders and the moves they have left; nor the history. Its
+    /// chance is a generator of its own, seeded from the round and the side:
+    /// a battle tried in the view says nothing of how the game's will go.
+    /// (What it does keep of the other sides' units in sight, their kinds
+    /// and strengths, is what the odds before an attack tell a person.)
+    pub fn view_for(&self, side: Side) -> Game {
         let mut view = self.clone();
         (view.history, view.fights, view.fought, view.undo) = (Vec::new(), Vec::new(), None, None);
+        view.rng = Rng::new((u64::from(self.round) << 8) ^ (side.index() as u64) ^ 0x005e_ed0f_1e55);
         view.deselect();
-        let hidden: Vec<UnitId> =
-            view.map.units().iter().filter(|u| u.side() != side && !sight.sees(u.pos())).map(|u| u.id()).collect();
-        for id in hidden {
-            view.map.kill_unit(id);
-        }
-        let theirs: Vec<(CityId, bool)> =
-            view.map.cities().iter().filter(|c| c.side != side).map(|c| (c.id, sight.sees(c.pos))).collect();
+        let sight = self.sight(side);
+        let theirs: Vec<(UnitId, bool)> =
+            view.map.units().iter().filter(|u| u.side() != side).map(|u| (u.id(), sight.sees(u.pos()))).collect();
         for (id, seen) in theirs {
+            if !seen {
+                view.map.kill_unit(id);
+            } else if let Some(unit) = view.map.unit_mut(id) {
+                (unit.goto, unit.stalled, unit.moved, unit.done) = (None, false, false, false);
+                unit.movement = unit.base_move_points;
+            }
+        }
+        let cities: Vec<(CityId, bool)> =
+            view.map.cities().iter().filter(|c| c.side != side).map(|c| (c.id, sight.sees(c.pos))).collect();
+        for (id, seen) in cities {
             if let Some(city) = view.map.city_mut(id) {
                 (city.building, city.progress, city.rally) = (None, 0, None);
+                city.units.clear();
                 if !seen {
                     city.side = Side::Grey;
                 }
@@ -1242,7 +1250,10 @@ impl Game {
                 *gold = 0;
             }
         }
-        Some(view)
+        if let Some(home) = self.capital(side) {
+            view.map.cursor = home;
+        }
+        view
     }
 
     /// The gold in a side's treasury.

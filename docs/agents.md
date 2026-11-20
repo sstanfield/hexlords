@@ -55,6 +55,10 @@ done
 | `cmd:<program> [<argument> ...]` | A program that plays (below) |
 
 A new agent is a type that implements `Agent` and a name in `agents::by_name`.
+It is shown its side's view of the game for each order (`Game::view_for`,
+whose chance is a generator of its own: a battle tried in it says nothing
+of the game's), and hears of each order the game refused
+(`Agent::refused`): under fog, something it could not see is in the way.
 The new game screen gives each computer's seat a style: a click on its
 Computer button again takes the next (`new_game::COMPUTERS`).
 
@@ -79,10 +83,18 @@ cities' work weighs). Each turn, order by order, it:
    in them) are good enough for its style, waves at walls when more than a
    stack can follow, and takes on stacks in the field near its cities and
    units;
-4. gathers the rest around its commander, sends small stacks to the army
-   or keeps them home until there is a force, stops at temples on the way,
-   and sends each army toward the city most worth the trouble (its taxes
-   against the way there and what defends it).
+4. gathers the rest around its commander (where it stood at the turn's
+   start), sends small stacks to the army or keeps them home until there is
+   a force, stops at temples on the way (free of others, with room), and
+   sends each army toward the city most worth the trouble (its taxes
+   against the way there and what defends it), a step at a time as far as
+   it knows the way (never into a stack it has not chosen to attack).
+
+With fog of war it never attacks a city it cannot see: it goes where it can
+see it first. A place the game refuses to send it, it leaves be for three
+rounds, and a way that is shut shows itself as it goes. Its sense of worth
+is plain arithmetic (no `powf`), so a seed plays the same game on every
+machine.
 
 With much chance in battle it waits for better odds and keeps fewer at home
 (walls and strength do little for defenders then); a long game makes it
@@ -91,9 +103,11 @@ bolder, so two that wait for each other do not wait for ever.
 How the styles were chosen: tournaments without a window on the continent,
 every arrangement of two styles on the four seats, over seeds, under each
 set of rules (chance 1, 5, 7, 9; lines and strength against strength; fog of
-war). Against `simple` the three styles win from about half the games (with
-chance 9, where luck decides most) to nearly all of them (little chance, or
-fog), and they finish off a passive side, an all-out rusher and a turtle.
+war). Against `simple`, two seats each, the three styles win most games
+under every set of rules: 56 to 67 in 100 with chance 9 (where luck decides
+most), 61 to 71 with strength against strength, 72 to 82 at the default
+rules, nearly all with little chance or fog. They finish off a passive
+side, an all-out rusher and a turtle.
 Among themselves no style beats another by much, and each has rules it
 does best under.
 
@@ -108,10 +122,11 @@ output, and the turn goes on without that order.
 
 ### What it reads
 
-With fog of war, the game as the program's side knows it (`Game::view_for`):
-the other sides' units out of its sight are not in it, a city in the fog
-is nobody's as far as it knows, and the other sides' production and gold
-are not told. Without fog, all of the game. (Every agent is given the same.)
+The game as the program's side knows it (`Game::view_for`; every agent is
+given the same). With fog of war, the other sides' units out of its sight
+are not in it, and a city in the fog is nobody's as far as it knows. Fog or
+not, it is not told what the other sides' cities build or can build, their
+gold, their units' standing orders or the moves they have left.
 
 ```
 turn 3 red

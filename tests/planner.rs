@@ -92,3 +92,129 @@ fn with_fog_of_war_it_does_not_strike_what_it_cannot_see() {
     assert!(fight(false), "it sees the levy, and takes it");
     assert!(!fight(true), "in the fog it does not know it is there");
 }
+
+// What the review found.
+
+/// A road through water from Redhold, (5, 5), east; nothing else.
+fn corridor(red: &str, others: &str, setup: impl FnOnce(&mut Setup)) -> Game {
+    let mut rows = vec!["w".repeat(30); 30];
+    rows[5] = format!("{}c{}c{}", "g".repeat(5), "g".repeat(18), "g".repeat(5));
+    let terrain = format!("30\n30\n{}\n", rows.join("\n"));
+    let units = "unit militia\nname Militia\nstrength 2\nmoves 10\nprice 4\nupkeep 1\nenter grass 2, city 1\n\
+                 unit levy\nname Levy\nstrength 1\nmoves 10\nenter grass 2, city 1\n";
+    let cities = format!(
+        "city 5 5\nname Redhold\nside red\nincome 30\nproduce militia 1\n{red}\
+         city 5 24\nname Farfield\n{others}"
+    );
+    let (map, warnings) = scenario::parse(&terrain, Some(units), Some(&cities)).unwrap();
+    let game = Game::from_scenario(Scenario { map, assets: None, warnings });
+    let mut s = Setup::solo(&game.map, None, "steady");
+    s.set_players("red=steady").unwrap();
+    s.fog = true;
+    setup(&mut s);
+    game.with_setup(s)
+}
+
+#[test]
+fn it_hears_of_a_refusal_and_does_not_give_the_same_order_turn_after_turn() {
+    // A blue levy on the road, unseen: the way east is shut, and the game
+    // says so.
+    let mut game = corridor("garrison militia 5\n", "garrison levy\n", |_| {});
+    let levy = game.map.units().kind_named("levy").unwrap();
+    let blue = game.map.new_unit_of(Side::Blue, levy).unwrap();
+    game.map.place_unit(blue, Hex::new(5, 14)).unwrap();
+    let mut steady = Planner::new(STEADY);
+    let mut refused = 0;
+    for _ in 0..8 {
+        refused += agents::play_turn(&mut game, &mut steady).refused.len();
+        game.apply(hexgame::orders::Order::EndTurn).ok();
+        while game.player() != Side::Red {
+            game.apply(hexgame::orders::Order::EndTurn).unwrap();
+        }
+    }
+    assert!(refused <= 3, "{refused} refusals in 8 turns");
+    // Going on as far as it knows, it came upon the levy, and it is gone:
+    // the way is open.
+    assert!(game.map.units().get(blue).is_none(), "the levy on the road is dealt with");
+}
+
+#[test]
+fn a_city_it_cannot_see_it_goes_to_look_at_and_then_takes() {
+    // Farfield, nobody's and empty, out of sight down the road; two militia
+    // (fewer than steady's army) go and look, then take it.
+    let mut game = corridor("garrison militia 3\n", "", |_| {});
+    let (mut steady, mut battles) = (Planner::new(STEADY), 0);
+    for _ in 0..12 {
+        let events = agents::play_turn(&mut game, &mut steady).events;
+        battles += events.iter().filter(|e| matches!(e, Event::Battle { .. })).count();
+        if game.map.city_at(Hex::new(5, 24)).unwrap().side == Side::Red {
+            break;
+        }
+        while game.player() != Side::Red {
+            game.apply(hexgame::orders::Order::EndTurn).unwrap();
+        }
+    }
+    assert_eq!(game.map.city_at(Hex::new(5, 24)).unwrap().side, Side::Red, "taken");
+    assert_eq!(battles, 0);
+}
+
+#[test]
+fn it_does_not_attack_blind() {
+    // Farfield held by two levies, out of sight: the first a stack near it
+    // does is look, not attack.
+    let mut game = corridor("garrison militia 8\n", "garrison levy 2\n", |_| {});
+    let mut steady = Planner::new(STEADY);
+    for _ in 0..6 {
+        let events = agents::play_turn(&mut game, &mut steady).events;
+        let seen_before = game.sight(Side::Red).sees(Hex::new(5, 24));
+        for event in &events {
+            if let Event::Battle { at, .. } = event {
+                assert!(*at != Hex::new(5, 24) || seen_before, "it attacked Farfield before it saw it");
+            }
+        }
+        while game.player() != Side::Red {
+            game.apply(hexgame::orders::Order::EndTurn).unwrap();
+        }
+    }
+}
+
+#[test]
+fn a_battle_tried_in_the_view_says_nothing_of_the_game_s() {
+    // An even fight, over seeds: in the view and in the game it goes one
+    // way or the other, and not always the same way.
+    let mut alike = 0;
+    for seed in 0..40 {
+        let mut game = game("garrison militia\n", |s| (s.seed, s.combat.chance) = (seed, 10));
+        let kind = game.map.units().kind_named("militia").unwrap();
+        let blue = game.map.new_unit_of(Side::Blue, kind).unwrap();
+        game.map.place_unit(blue, Hex::new(6, 5)).unwrap();
+        let red = game.map.units_at(Hex::new(5, 5))[0];
+        let mut view = game.view_for(Side::Red);
+        let try_it = |g: &mut Game| g.apply(hexgame::orders::Order::Move { units: vec![red], to: Hex::new(6, 5) });
+        let (a, b) = (try_it(&mut view).unwrap(), try_it(&mut game).unwrap());
+        let won = |events: &[Event]| events.iter().any(|e| matches!(e, Event::Battle { won: true, .. }));
+        alike += usize::from(won(&a) == won(&b));
+    }
+    assert!(alike < 40, "the view foretold all 40");
+}
+
+#[test]
+fn it_does_not_take_its_unblessed_into_another_side_s_stack_on_a_temple() {
+    let mut game = game("garrison militia 3\n", |_| {});
+    game.map.tile_mut(Hex::new(5, 8)).unwrap().kind = hexgame::state::TileType::Temple;
+    let riders = game.map.units().kind_named("riders").unwrap();
+    for _ in 0..6 {
+        let blue = game.map.new_unit_of(Side::Blue, riders).unwrap();
+        game.map.place_unit(blue, Hex::new(5, 8)).unwrap();
+    }
+    let events = agents::play_turn(&mut game, &mut Planner::new(planner::CAREFUL)).events;
+    assert!(!events.iter().any(|e| matches!(e, Event::Battle { at, .. } if *at == Hex::new(5, 8))));
+}
+
+#[test]
+fn worth_is_plain_arithmetic() {
+    let at = |chance: u8| planner::worth(4, &game("", |s| s.combat.chance = chance));
+    assert_eq!([at(5), at(0)], [16.0, 256.0]);
+    // 4 to the 0.4th, its fifth root of 4 squared.
+    assert!((at(9) - 16f64.powf(0.2)).abs() < 1e-9);
+}
