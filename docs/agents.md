@@ -48,7 +48,7 @@ done
 | Name | What it does |
 |---|---|
 | `passive` | Ends every turn at once |
-| `simple` | Builds a commander where it can when its side has none; sets each idle city to build what gives the most strength for its turns, of what its taxes can keep (after its units' upkeep and that of what its cities are already building), and stops the dearest work when they cannot; keeps two units in each of its cities; attacks a city that is not its own, or another side's stack near its free units, with the strongest stack's worth of the free units that can reach it this turn, when the odds are at least 60 in 100 (or 15, when more than a stack can reach it: the first wave); else sends each stack's free units together toward the nearest such city, where they wait for the others |
+| `simple` | Builds a commander where it can when its side has none; takes a stack with units not yet blessed to a temple it can reach this turn; sets each idle city to build what gives the most strength for its turns, of what its taxes can keep (after its units' upkeep and that of what its cities are already building), and stops the dearest work when they cannot; keeps two units in each of its cities; attacks a city that is not its own, or another side's stack near its free units, with the strongest stack's worth of the free units that can reach it this turn, when the odds are at least 60 in 100 (or 15, when more than a stack can reach it: the first wave); else sends each stack's free units together toward the nearest such city, where they wait for the others |
 | `cmd:<program> [<argument> ...]` | A program that plays (below) |
 
 A new agent is a type that implements `Agent` and a name in `agents::by_name`.
@@ -81,8 +81,8 @@ can 13 7 0 militia 1 4
 can 13 7 1 archers 2 6
 can 13 7 2 riders 3 10
 city 19 42 green walls 2 income 20 builds none progress 0 name Eskerfall
-unit red.0.0 red 13 7 militia strength 2 moves 10/10
-unit green.3.0 green 19 42 archers strength 3 moves 12/12
+unit red.0.0 red 13 7 militia strength 2 moves 10/10 level 1
+unit green.3.0 green 19 42 archers strength 3 moves 12/12 level 2
 end
 ```
 
@@ -100,8 +100,10 @@ end
 - `city <row> <col> <side> walls <n> income <n> builds <index or none>
   progress <turns done> name <name>`: every city; `can <row> <col> <index> <kind> <turns>
   <cost>`: what each of the side's own cities can build.
-- `unit <name> <side> <row> <col> <kind> strength <n> moves <left>/<a turn's>`:
-  every unit on the map. A unit's name (`red.0.0`) stays the same from turn
+- `unit <name> <side> <row> <col> <kind> strength <n> moves <left>/<a turn's>
+  level <n>`: every unit on the map; its strength is what it fights with
+  before its stack, the ground and walls (its kind's, a point for each level
+  above 1, a temple's blessing), its level 1 to 3 (`docs/gameplay.md`). A unit's name (`red.0.0`) stays the same from turn
   to turn while the unit lives.
 
 ### What it writes

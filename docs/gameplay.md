@@ -181,8 +181,36 @@ and the rules use integers, not floats.
    has a captain in each side's first city, and those cities can build
    captains (4 turns, 20 gold), to replace one that is lost; a captain done
    in a city that has one waits for room. The simple agent builds one when
-   its side has none. Later: they grow with battles won, carry things, lead
-   bigger stacks.
+   its side has none. Captains have names (put together by the game's chance
+   from syllables of our own: "Captain Aldric"), given when the game starts,
+   when one is built, or when one rises from the ranks (below), and they
+   rise in level like other units (a captain of the highest level commands a
+   point more). Later: they carry things, lead bigger stacks.
+7b. **Levels, blessings, captains from the ranks** (built, the owner's word
+   2026-11-19: "a tiny bit of role-playing feel"):
+   - **Levels** 1 to 3 (`MAX_LEVEL`): regular, veteran, elite; a captain's
+     are numbers. Each level above the first makes a unit a point stronger
+     (`Unit::power`). They come with experience: each unit that lives
+     through a battle its side won gains a point, two if its side's odds
+     were below half (`HARD_ODDS`); 2 make a veteran, 5 elite
+     (`LEVEL_EXPERIENCE`).
+   - **Training**: a city whose record says `trains veteran` (or `elite`)
+     makes its units at that level (the continent's Gorsehaven trains
+     veterans).
+   - **Blessings**: a unit that stops on a temple is blessed, once in its
+     life: +1 strength or +2 moves a turn, chance says which. A move that
+     brings a blessing cannot be undone. (The continent has a temple near
+     each side's first city.)
+   - **Captains from the ranks**: when a stack with no commander wins a
+     battle it was at most 65% likely to win (`EMERGE_ODDS`, the odds the
+     game gives before an attack), one time in four (`EMERGE_ONE_IN`) a
+     captain of the map's first kind of commander rises among its
+     survivors, named, with no moves that turn.
+   - What shows: a unit's ring is silver for a veteran (or a captain of
+     level 2) and gold for elite (level 3), on the map and on its icons; the
+     panels say its rank, its experience and what it needs for the next
+     level, and its blessing; the log tells of each level, blessing and
+     captain. A captain's card in a battle shows its name.
 8. **The end** (decided): a side that has lost all its cities is out of the
    game, and its units with it; the game ends when one side is left. (More
    ways to win can come later: a share of the cities, a number of rounds.)

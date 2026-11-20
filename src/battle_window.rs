@@ -406,7 +406,7 @@ fn card(ui: &mut Ui, row: WidgetId, id: &str, unit: &Combatant, icon: ImageHandl
             Some(LayoutParams { min_w: Some(width), max_w: Some(width), ..LayoutParams::default() }),
         );
     }
-    ui.set_text(name, &unit.name);
+    ui.set_text(name, &unit.title);
     // Its strength, and what of it is bonus.
     let bonus = unit.quarters.saturating_sub(unit.strength * QUARTER);
     let text = if bonus > 0 { format!("{} +{}", unit.strength, points(bonus)) } else { unit.strength.to_string() };

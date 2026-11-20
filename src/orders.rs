@@ -3,7 +3,7 @@
 //! clicks become orders, an agent makes them, and (later) a saved game and a
 //! network game are made of them (`docs/gameplay.md`).
 
-use crate::state::{CityId, Hex, Side, UnitId};
+use crate::state::{Blessing, CityId, Hex, Side, UnitId};
 
 /// What a side asks for.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -45,9 +45,33 @@ pub enum Event {
         /// The attackers won: the defenders are gone, and the attackers that
         /// live stand on the hex (a `Moved` each follows).
         won: bool,
-        /// Who died, in the order they fell: each one's side and name (the
-        /// units themselves are gone).
-        dead: Vec<(Side, String)>,
+        /// Who died, in the order they fell (the units themselves are
+        /// gone).
+        dead: Vec<Fallen>,
+    },
+    /// A unit rose to a level (`name`, its title: "Captain Aldric"; a
+    /// commander's levels are numbers, the others' ranks).
+    Promoted {
+        unit: UnitId,
+        side: Side,
+        name: String,
+        level: u8,
+        commander: bool,
+    },
+    /// A unit was blessed at a temple.
+    Blessed {
+        unit: UnitId,
+        side: Side,
+        name: String,
+        blessing: Blessing,
+    },
+    /// A captain rose from the ranks of a stack that won a hard battle
+    /// without one.
+    Emerged {
+        unit: UnitId,
+        side: Side,
+        at: Hex,
+        name: String,
     },
     /// A side's unit went into another's (or nobody's) city with nobody in it.
     Taken {
@@ -81,6 +105,16 @@ pub enum Event {
     Won {
         side: Side,
     },
+}
+
+/// A unit that fell in a battle: its side, what it was called (its kind,
+/// "Militia", or a captain's title, "Captain Aldric"), and whether that is a
+/// person's name.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Fallen {
+    pub side: Side,
+    pub name: String,
+    pub person: bool,
 }
 
 /// Something that happened, as the game keeps it (`Game::history`): the

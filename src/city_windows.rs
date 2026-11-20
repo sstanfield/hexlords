@@ -191,7 +191,7 @@ impl CityWindow {
         if let Some(first) = details.first() {
             let mut widest = 0;
             let hint = ["Point at one: all about it shows here.".to_string()];
-            for line in city.units.iter().flat_map(|p| info::production_details(map, p)).chain(hint) {
+            for line in city.units.iter().flat_map(|p| info::production_details(map, p, city.trains)).chain(hint) {
                 ui.set_text(first.widget, &line);
                 widest = widest.max(ui.preferred_size_free(first.widget).pref.w);
             }
@@ -276,7 +276,7 @@ impl CityWindow {
         // All about what is under the pointer; else about what it builds.
         let shown = self.hovered(ui).or(city.building);
         let details = match shown.and_then(|i| city.units.get(i)) {
-            Some(prod) => info::production_details(map, prod),
+            Some(prod) => info::production_details(map, prod, city.trains),
             None if city.units.is_empty() => Vec::new(),
             None => vec!["Point at one: all about it shows here.".to_string()],
         };

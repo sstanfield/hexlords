@@ -93,7 +93,7 @@ const PANEL_ID: &str = "hex_panel";
 const STACK_ID: &str = "stack";
 /// The box about the unit under the pointer, and its lines (`tip_0` ...).
 pub const UNIT_TIP_ID: &str = "unit_tip";
-pub const TIP_LINES: usize = 5;
+pub const TIP_LINES: usize = 7;
 /// The lines about the selected city: `city_0` ...
 pub const CITY_LINES: usize = 9;
 
@@ -133,7 +133,8 @@ fn set_visibility(screen: &mut MapScreen, widget: WidgetId, visibility: Visibili
 }
 
 /// The picture a unit is drawn with in a slot: its kind's image and its side.
-type IconKey = (String, Side);
+/// A unit's icon: its kind's picture, its side, its level (the ring).
+type IconKey = (String, Side, u8);
 
 /// A unit's place in the stack: a button with the unit's icon and its numbers.
 struct Slot {
@@ -556,7 +557,7 @@ impl Session {
     /// The picture the `i`th slot shows: the image of the unit's kind and its
     /// side (`None` for an empty slot).
     pub fn slot_icon(&self, i: usize) -> Option<(&str, Side)> {
-        self.slots.get(i)?.shows.as_ref().map(|(image, side)| (image.as_str(), *side))
+        self.slots.get(i)?.shows.as_ref().map(|(image, side, _)| (image.as_str(), *side))
     }
 
     /// The line about the selected unit.
@@ -584,11 +585,11 @@ impl Session {
         if let Some(handle) = self.icons.get(key) {
             return handle.clone();
         }
-        let (image, side) = key;
+        let (image, side, level) = key;
         let picture = self.assets.image(image).or_else(|_| self.assets.image(DEFAULT_UNIT_IMAGE)).ok();
         let size = self.screen.ui.dimension_converter().dp_to_px(ICON_DP);
-        let icon = unit_icon(picture.as_ref(), *side, size);
-        let name = format!("unit icon {image} {side:?} {size}");
+        let icon = unit_icon(picture.as_ref(), *side, *level, size);
+        let name = format!("unit icon {image} {side:?} {level} {size}");
         let handle = self.screen.ui.image_from_pixels(&name, icon.size, &icon.rgba);
         self.icons.insert(key.clone(), handle.clone());
         handle
@@ -608,7 +609,7 @@ impl Session {
             .filter_map(|id| map.units().get(*id))
             .map(|unit| {
                 let image = map.units().kind_of(unit).map_or(DEFAULT_UNIT_IMAGE, |kind| kind.image.as_str());
-                ((image.to_string(), unit.side()), info::unit_numbers(unit))
+                ((image.to_string(), unit.side(), unit.level), info::unit_numbers(unit))
             })
             .collect();
         let chosen: Vec<bool> = ids.iter().map(|id| game.selection().contains(id)).collect();
@@ -751,7 +752,7 @@ impl Session {
                 .iter()
                 .map(|p| {
                     let kind = units.kind_named(&p.basename).and_then(|k| units.kind(k));
-                    (kind.map_or(DEFAULT_UNIT_IMAGE, |k| k.image.as_str()).to_string(), city.side)
+                    (kind.map_or(DEFAULT_UNIT_IMAGE, |k| k.image.as_str()).to_string(), city.side, city.trains)
                 })
                 .collect()
         });
@@ -966,7 +967,7 @@ impl Session {
             old.close(&mut self.screen.ui);
         }
         let icons = [&fight.attackers, &fight.defenders]
-            .map(|units| units.iter().map(|u| self.icon(&(u.image.clone(), u.side))).collect::<Vec<_>>());
+            .map(|units| units.iter().map(|u| self.icon(&(u.image.clone(), u.side, u.level))).collect::<Vec<_>>());
         let game = &self.screen.game;
         let place = game
             .map

@@ -45,6 +45,20 @@ const NO_BORDER: [f32; 4] = [0.0, 0.0, 0.0, 2.0];
 pub const DISC_RADIUS: f32 = 0.5;
 pub const DISC_RING: f32 = 0.05;
 pub const RING_COLOR: [f32; 4] = [0.08, 0.07, 0.07, 1.0];
+/// A veteran's ring, and an elite unit's (or a captain's of level 2 and 3):
+/// silver and gold, and wider.
+pub const VETERAN_RING: [f32; 4] = [0.80, 0.82, 0.86, 1.0];
+pub const ELITE_RING: [f32; 4] = [0.96, 0.76, 0.22, 1.0];
+pub const LEVEL_RING: f32 = 0.09;
+
+/// The ring around a unit of a level: its color and how wide it is.
+pub fn level_ring(level: u8) -> ([f32; 4], f32) {
+    match level {
+        0 | 1 => (RING_COLOR, DISC_RING),
+        2 => (VETERAN_RING, LEVEL_RING),
+        _ => (ELITE_RING, LEVEL_RING),
+    }
+}
 /// A city shows its own picture, not a unit: its garrison is a pip for each
 /// unit, in its side's color, in rows over the gate, the first unit at the
 /// left of the bottom row. `pip_at` places them.
@@ -265,7 +279,8 @@ impl MapGeometry {
             if let Some(unit) = shown.and_then(|id| map.units().get(id)) {
                 let [r, g, b] = side_color(unit.side());
                 let middle = [0.0, 0.0];
-                push_disc(&mut self.discs, view, visible.center, variant, middle, DISC_RADIUS + DISC_RING, RING_COLOR);
+                let (ring, width) = level_ring(unit.level);
+                push_disc(&mut self.discs, view, visible.center, variant, middle, DISC_RADIUS + width, ring);
                 push_disc(&mut self.discs, view, visible.center, variant, middle, DISC_RADIUS, [r, g, b, 1.0]);
                 let image = map.units().kind_of(unit).map_or(UNIT_IMAGE, |kind| kind.image.as_str());
                 let sign: [HexVertex; HEX_VERTICES] =

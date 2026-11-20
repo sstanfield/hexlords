@@ -4,7 +4,8 @@
 # Four sides start with a city each, and a captain in it; their cities can
 # build captains, to replace one that is lost. The other five cities are
 # nobody's. "income" is the gold a city brings its holder each turn: the
-# sides' cities 20, the others 8 to 15.
+# sides' cities 20, the others 8 to 15. Gorsehaven trains its units: they
+# come out veterans.
 
 city 13 7
   name     Brindlewick
@@ -86,6 +87,7 @@ city 25 32
   name     Gorsehaven
   income   15
   walls    3
+  trains   veteran
   produce  wardens 2
   produce  riders 4
   garrison wardens 2

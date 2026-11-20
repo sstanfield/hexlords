@@ -235,7 +235,7 @@ fn the_game_as_text_and_orders_from_text() {
     assert!(lines.contains(&"city 5 5 red walls 0 income 10 builds none progress 0 name Redhold"), "{text}");
     assert!(lines.contains(&"can 5 5 0 riders 1 5"), "its own cities say what they can build");
     assert!(!lines.iter().any(|l| l.starts_with("can 5 9")), "others' do not");
-    let unit = format!("unit {} red 5 5 riders strength 4 moves 12/12", unit_name(id));
+    let unit = format!("unit {} red 5 5 riders strength 4 moves 12/12 level 1", unit_name(id));
     assert!(lines.contains(&unit.as_str()), "{text}");
     // Orders, and back.
     for line in [

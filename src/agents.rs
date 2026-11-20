@@ -269,6 +269,10 @@ impl Agent for Simple {
         }
         // Else each stack's free units go together toward the nearest target
         // they can get to; those already near a target wait for the others.
+        let temples: Vec<Hex> = (0..map.rows())
+            .flat_map(|row| (0..map.cols()).map(move |col| Hex::new(row, col)))
+            .filter(|h| map.tile(*h).is_some_and(|t| t.kind == crate::state::TileType::Temple))
+            .collect();
         let mut seen: Vec<Hex> = Vec::new();
         for unit in &free {
             let here = unit.pos();
@@ -279,6 +283,17 @@ impl Agent for Simple {
             let stack: Vec<&crate::state::Unit> = free.iter().copied().filter(|u| u.pos() == here).collect();
             let ids: Vec<UnitId> = stack.iter().map(|u| u.id()).collect();
             self.done.extend(ids.iter().copied());
+            // A temple all of them can get to this turn, while some of them
+            // have not been blessed: there first.
+            if stack.iter().any(|u| u.blessing.is_none()) {
+                let reach =
+                    |hex: Hex| ids.iter().all(|id| ranges.iter().any(|(u, r)| u == id && r.cost(hex).is_some()));
+                if let Some(temple) =
+                    temples.iter().copied().find(|t| *t != here && reach(*t) && map.has_room(*t, ids[0]))
+                {
+                    return Order::Move { units: ids, to: temple };
+                }
+            }
             let lead = stack.iter().copied().min_by_key(|u| u.movement).unwrap_or(unit);
             let mut near = targets.clone();
             near.sort_by_key(|t| (t.distance(here), *t));
@@ -405,15 +420,16 @@ pub fn describe(game: &Game, side: Side) -> String {
     for unit in map.units().iter().filter(|u| map.contains(u.pos())) {
         let kind = map.units().kind_of(unit).map_or("-", |k| k.id.as_str());
         out.push_str(&format!(
-            "unit {} {} {} {} {} strength {} moves {}/{}\n",
+            "unit {} {} {} {} {} strength {} moves {}/{} level {}\n",
             unit_name(unit.id()),
             side_name(unit.side()),
             unit.pos().row,
             unit.pos().col,
             kind,
-            unit.strength,
+            unit.power(),
             unit.movement,
-            unit.base_move_points
+            unit.base_move_points,
+            unit.level
         ));
     }
     out.push_str("end\n");

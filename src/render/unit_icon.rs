@@ -8,7 +8,7 @@
 
 use turbo_ferret::{Image, Size};
 
-use super::map_renderer::{DISC_RADIUS, DISC_RING, RING_COLOR, side_color};
+use super::map_renderer::{DISC_RADIUS, level_ring, side_color};
 use crate::state::Side;
 
 /// How far the drawn part of the picture reaches from the disc's middle
@@ -84,13 +84,13 @@ fn over(top: Premul, bottom: Premul) -> Premul {
 
 /// The icon of a unit of `side` whose kind is drawn with `picture` (`None`:
 /// the disc alone), `size` pixels across: straight-alpha RGBA, top row first.
-pub fn unit_icon(picture: Option<&Image>, side: Side, size: i32) -> Image {
+pub fn unit_icon(picture: Option<&Image>, side: Side, level: u8, size: i32) -> Image {
     let size = size.max(0);
     let n = size as usize;
     let outer = size as f32 / 2.0;
-    let inner = outer * DISC_RADIUS / (DISC_RADIUS + DISC_RING);
+    let (ring, width) = level_ring(level);
+    let inner = outer * DISC_RADIUS / (DISC_RADIUS + width);
     let [r, g, b] = side_color(side);
-    let ring = RING_COLOR;
     // Where the picture goes: the middle of its drawn part on the middle of
     // the disc, as large as fits inside the ring.
     let placed = picture.and_then(|p| drawn_part(p).map(|(middle, reach)| (p, middle, inner * PICTURE_REACH / reach)));
@@ -130,6 +130,7 @@ pub fn unit_icon(picture: Option<&Image>, side: Side, size: i32) -> Image {
 
 #[cfg(test)]
 mod tests {
+    use super::super::map_renderer::{DISC_RING, RING_COLOR};
     use super::*;
     use crate::render::AssetDirs;
     use std::path::Path;
@@ -149,7 +150,7 @@ mod tests {
 
     #[test]
     fn a_disc_of_the_sides_color_in_a_dark_ring() {
-        let icon = unit_icon(None, Side::Blue, 40);
+        let icon = unit_icon(None, Side::Blue, 1, 40);
         assert_eq!(icon.size, Size::new(40, 40));
         assert_eq!(icon.rgba.len(), 40 * 40 * 4);
         let [r, g, b] = side_color(Side::Blue);
@@ -166,7 +167,7 @@ mod tests {
     #[test]
     fn the_kinds_picture_is_in_the_middle_of_the_disc() {
         let sign = assets().image("units/riders.png").unwrap();
-        let icon = unit_icon(Some(&sign), Side::Red, 48);
+        let icon = unit_icon(Some(&sign), Side::Red, 1, 48);
         // The sign's light body shows on the disc, and the disc around it.
         let light = |p: &[u8]| p[0] > 200 && p[1] > 200 && p[2] > 180 && p[3] == 255;
         let lights = icon.rgba.chunks(4).filter(|p| light(p)).count();
@@ -175,10 +176,10 @@ mod tests {
         assert!(icon.rgba.chunks(4).any(|p| p == [byte(r), byte(g), byte(b), 255]));
         // At any size.
         for size in [1, 2, 17, 80] {
-            let icon = unit_icon(Some(&sign), Side::Red, size);
+            let icon = unit_icon(Some(&sign), Side::Red, 1, size);
             assert_eq!(icon.rgba.len(), (size * size * 4) as usize);
         }
-        assert!(unit_icon(Some(&sign), Side::Red, 0).rgba.is_empty());
+        assert!(unit_icon(Some(&sign), Side::Red, 1, 0).rgba.is_empty());
     }
 
     #[test]
@@ -186,7 +187,7 @@ mod tests {
         // The default unit's picture is a frame to its edges: none of it is
         // drawn over the ring.
         let picture = assets().image(crate::state::DEFAULT_UNIT_IMAGE).unwrap();
-        let icon = unit_icon(Some(&picture), Side::Black, 40);
+        let icon = unit_icon(Some(&picture), Side::Black, 1, 40);
         let inner = 20.0 * DISC_RADIUS / (DISC_RADIUS + DISC_RING);
         let [rr, rg, rb, _] = RING_COLOR;
         let mut ring = 0;
@@ -204,9 +205,9 @@ mod tests {
         assert!(icon.rgba.chunks(4).any(|p| p[0] < 10 && p[3] == 255));
         // A picture with nothing drawn on it is the disc alone.
         let empty = Image { size: Size::new(8, 8), rgba: vec![0; 8 * 8 * 4] };
-        assert_eq!(unit_icon(Some(&empty), Side::Black, 30).rgba, unit_icon(None, Side::Black, 30).rgba);
+        assert_eq!(unit_icon(Some(&empty), Side::Black, 1, 30).rgba, unit_icon(None, Side::Black, 1, 30).rgba);
         // So is one whose bytes run short.
         let short = Image { size: Size::new(8, 8), rgba: vec![255; 10] };
-        assert_eq!(unit_icon(Some(&short), Side::Black, 30).rgba, unit_icon(None, Side::Black, 30).rgba);
+        assert_eq!(unit_icon(Some(&short), Side::Black, 1, 30).rgba, unit_icon(None, Side::Black, 1, 30).rgba);
     }
 }

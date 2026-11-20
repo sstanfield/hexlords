@@ -124,6 +124,12 @@ your log is open and fills as they go; Start turn begins yours. When the
 last person is out, the computer plays on, a turn at a time, to the end. A side that loses its last
 city is out, and the last side left wins.
 
+Units rise in level from the battles they win: veteran (a silver ring), then
+elite (gold), each a point stronger; a city may train its units a level up.
+A temple blesses a unit that stops on it, once: +1 strength or +2 moves.
+Captains have names and levels too, and a stack with no captain that wins a
+hard fight may see one rise from its ranks.
+
 Each side has a treasury (the sidebar shows yours: "Gold 34", "Taxes +40,
 upkeep -32"). At the start of each of its turns its cities' taxes come in
 and its units' upkeep goes out; units it cannot pay leave it. What a city

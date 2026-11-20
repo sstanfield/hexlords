@@ -64,3 +64,5 @@ TBLayout: id: unit_tip, skin: UnitTip, axis: y, distribution-position: top, posi
 	TBTextField: id: tip_2, text-align: left
 	TBTextField: id: tip_3, text-align: left
 	TBTextField: id: tip_4, text-align: left
+	TBTextField: id: tip_5, text-align: left
+	TBTextField: id: tip_6, text-align: left

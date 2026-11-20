@@ -33,6 +33,9 @@ pub struct City {
     /// The gold it brings its holder at the start of each of its turns (its
     /// taxes).
     pub income: u32,
+    /// The level the units it builds start at: 1, or more where it trains
+    /// them (a veteran, 2; elite, 3).
+    pub trains: u8,
     /// What it is building: an index into `units`, or nothing. Set it with
     /// `Map::set_production`.
     pub building: Option<usize>,
@@ -72,6 +75,7 @@ impl Cities {
             pos,
             walls,
             income: DEFAULT_INCOME,
+            trains: 1,
             building: None,
             progress: 0,
         };

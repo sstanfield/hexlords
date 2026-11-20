@@ -6,7 +6,7 @@
 //! Not a port: the C++ had no panels.
 
 use crate::game::{Game, describe_terrain};
-use crate::orders::{Event, Record};
+use crate::orders::{Event, Fallen, Record};
 use crate::state::scenario::side_name;
 use crate::state::{City, Hex, Map, MoveCost, Side, Unit, UnitProd};
 
@@ -62,8 +62,8 @@ pub fn record_lines(map: &Map, record: &Record, side: Side) -> Vec<String> {
                     sentence(side_name(*attacker))
                 )
             };
-            let ours: Vec<&str> = dead.iter().filter(|(s, _)| *s == side).map(|(_, n)| n.as_str()).collect();
-            let theirs: Vec<&str> = dead.iter().filter(|(s, _)| *s != side).map(|(_, n)| n.as_str()).collect();
+            let ours: Vec<&Fallen> = dead.iter().filter(|f| f.side == side).collect();
+            let theirs: Vec<&Fallen> = dead.iter().filter(|f| f.side != side).collect();
             vec![first, format!("You lost {}; they lost {}.", counted(&ours), counted(&theirs))]
         }
         Event::Taken { city, from, by } if *by == side || *from == side => {
@@ -73,6 +73,15 @@ pub fn record_lines(map: &Map, record: &Record, side: Side) -> Vec<String> {
             } else {
                 vec![format!("{} took {name} from you.", sentence(side_name(*by)))]
             }
+        }
+        Event::Promoted { side: whose, name, level, commander, .. } if *whose == side => {
+            vec![format!("Your {name} rose to {}.", rank(*level, *commander))]
+        }
+        Event::Blessed { side: whose, name, blessing, .. } if *whose == side => {
+            vec![format!("Your {name} were blessed at a temple: {}.", blessing.words())]
+        }
+        Event::Emerged { side: whose, at, name, .. } if *whose == side => {
+            vec![format!("From the ranks at {}, a leader rose: {name}.", place(map, *at))]
         }
         Event::Deserted { side: whose, name } if *whose == side => {
             vec![format!("Unpaid, your {name} left you: the treasury could not pay their upkeep.")]
@@ -120,36 +129,66 @@ pub fn log(game: &Game, side: Side, new_from: usize) -> Vec<(u32, Vec<LogEntry>)
 }
 
 /// How a battle went, for `side` (who fought it): the battle's record's
-/// lines, and those of what came of it in the same order (a city taken, a
-/// side out, the winner).
+/// lines, and those of what came of it in the same order (levels won, a
+/// captain from the ranks, a city taken, a side out, the winner).
 pub fn battle_outcome(game: &Game, record: usize, side: Side) -> Vec<String> {
     let history = game.history();
     let Some(battle) = history.get(record) else { return Vec::new() };
     let mut lines = record_lines(&game.map, battle, side);
     for next in history.iter().skip(record + 1) {
-        let after = matches!(next.event, Event::Taken { .. } | Event::Out { .. } | Event::Won { .. });
+        let after = matches!(
+            next.event,
+            Event::Taken { .. }
+                | Event::Out { .. }
+                | Event::Won { .. }
+                | Event::Promoted { .. }
+                | Event::Emerged { .. }
+        );
         if !after || next.round != battle.round || next.turn != battle.turn {
             break;
         }
         lines.extend(record_lines(&game.map, next, side));
     }
-    lines
+    // The same line again and again (three units risen alike) once, counted.
+    let mut counted: Vec<(String, usize)> = Vec::new();
+    for line in lines {
+        match counted.last_mut() {
+            Some((last, n)) if *last == line => *n += 1,
+            _ => counted.push((line, 1)),
+        }
+    }
+    counted.into_iter().map(|(line, n)| if n > 1 { format!("{line} (\u{d7}{n})") } else { line }).collect()
 }
 
-/// Units by name, counted: "2 Militia, 1 Riders", in the order they first
-/// come; "nothing" for none.
-fn counted(names: &[&str]) -> String {
-    let mut counts: Vec<(&str, usize)> = Vec::new();
-    for name in names {
-        match counts.iter_mut().find(|(n, _)| n == name) {
-            Some((_, count)) => *count += 1,
-            None => counts.push((name, 1)),
+/// The fallen by kind, counted, and captains by name: "2 Militia, 1
+/// Riders, Captain Aldric", in the order they first come; "nothing" for
+/// none.
+fn counted(fallen: &[&Fallen]) -> String {
+    let mut counts: Vec<(&str, usize, bool)> = Vec::new();
+    for f in fallen {
+        match counts.iter_mut().find(|(n, _, person)| *n == f.name && !*person) {
+            Some((_, count, _)) => *count += 1,
+            None => counts.push((&f.name, 1, f.person)),
         }
     }
     if counts.is_empty() {
         return "nothing".to_string();
     }
-    counts.iter().map(|(name, count)| format!("{count} {name}")).collect::<Vec<_>>().join(", ")
+    let each = |(name, count, person): &(&str, usize, bool)| {
+        if *person { name.to_string() } else { format!("{count} {name}") }
+    };
+    counts.iter().map(each).collect::<Vec<_>>().join(", ")
+}
+
+/// A unit's level in words: a commander's is a number ("level 2"), the
+/// others' a rank ("veteran").
+pub fn rank(level: u8, commander: bool) -> String {
+    match (commander, level) {
+        (true, level) => format!("level {level}"),
+        (false, 0 | 1) => "regular".to_string(),
+        (false, 2) => "veteran".to_string(),
+        (false, _) => "elite".to_string(),
+    }
 }
 
 /// Another side's units, in a sentence: "blue", or "nobody's units".
@@ -198,25 +237,57 @@ pub fn hex_title(map: &Map, hex: Hex) -> String {
 /// A unit in numbers, under its icon in the stack: its strength, and the
 /// movement points it has left of those it gets a turn ("4 · 7/10").
 pub fn unit_numbers(unit: &Unit) -> String {
-    format!("{} \u{b7} {}/{}", unit.strength, unit.movement, unit.base_move_points)
+    format!("{} \u{b7} {}/{}", unit.power(), unit.movement, unit.base_move_points)
+}
+
+/// A unit's name with its side, and its rank if it has one to tell: "Riders
+/// (red)", "Riders (red), veteran", "Captain Aldric (red), level 1".
+fn named(map: &Map, unit: &Unit) -> String {
+    let commander = map.is_commander(unit.id());
+    let head = format!("{} ({})", unit.title(), side_name(unit.side()));
+    if commander || unit.level > 1 { format!("{head}, {}", rank(unit.level, commander)) } else { head }
+}
+
+/// A unit's strength in words: "4", or with what its level and a blessing
+/// add, "5 (4 +1)".
+fn strength_words(unit: &Unit) -> String {
+    let (power, own) = (unit.power(), unit.strength);
+    if power > own { format!("{power} ({own} +{})", power - own) } else { own.to_string() }
+}
+
+/// What a unit has won and been given: its experience and how far the next
+/// level is, a temple's blessing. None for a unit with neither.
+fn growth_line(unit: &Unit) -> Option<String> {
+    let mut parts = Vec::new();
+    if unit.experience > 0 || unit.level > 1 {
+        let next = crate::state::LEVEL_EXPERIENCE.get(usize::from(unit.level.max(1)) - 1);
+        parts.push(match next {
+            Some(need) => format!("Experience {} (next level at {need})", unit.experience),
+            None => format!("Experience {} (the highest level)", unit.experience),
+        });
+    }
+    if let Some(blessing) = unit.blessing {
+        parts.push(format!("blessed: {}", blessing.words()));
+    }
+    (!parts.is_empty()).then(|| sentence(&parts.join("; ")))
 }
 
 /// The selected unit in a line: who it is, its numbers, and its price (and
 /// what it does for its stack, if it is a commander).
 pub fn unit_line(map: &Map, unit: &Unit) -> String {
     let mut line = format!(
-        "{} ({}): strength {}, moves {}/{}, upkeep {}",
-        unit.name,
-        side_name(unit.side()),
-        unit.strength,
+        "{}: strength {}, moves {}/{}, upkeep {}",
+        named(map, unit),
+        strength_words(unit),
         unit.movement,
         unit.base_move_points,
         unit.upkeep
     );
     if let Some(kind) = map.units().kind_of(unit) {
         line.push_str(&format!(", price {}", kind.price));
-        if kind.commander > 0 {
-            line.push_str(&format!(", commands (+{})", kind.commander));
+        let command = crate::state::command_bonus(kind.commander, unit.level);
+        if command > 0 {
+            line.push_str(&format!(", commands (+{command})"));
         }
     }
     line
@@ -242,20 +313,25 @@ fn enters(cost: &MoveCost, per_line: usize) -> Vec<String> {
 /// Everything about a unit, a line at a time (the box over its icon): who it
 /// is, its numbers, and what every terrain costs it to enter.
 pub fn unit_details(map: &Map, unit: &Unit) -> Vec<String> {
-    let mut lines = vec![format!("{} ({})", unit.name, side_name(unit.side()))];
+    let mut lines = vec![named(map, unit)];
     let mut numbers = format!(
         "Strength {}   Moves {}/{}   Upkeep {}",
-        unit.strength, unit.movement, unit.base_move_points, unit.upkeep
+        strength_words(unit),
+        unit.movement,
+        unit.base_move_points,
+        unit.upkeep
     );
     let mut leads = None;
     if let Some(kind) = map.units().kind_of(unit) {
         numbers.push_str(&format!("   Price {}", kind.price));
-        if kind.commander > 0 {
-            leads = Some(format!("Commands: +{} to its stack; fights last", kind.commander));
+        let command = crate::state::command_bonus(kind.commander, unit.level);
+        if command > 0 {
+            leads = Some(format!("Commands: +{command} to its stack; fights last"));
         }
     }
     lines.push(numbers);
     lines.extend(leads);
+    lines.extend(growth_line(unit));
     match map.units().move_cost(unit.move_cost) {
         Some(cost) => lines.extend(enters(cost, 5)),
         None => lines.push("Enters nothing".to_string()),
@@ -295,11 +371,15 @@ pub fn production_button(map: &Map, prod: &UnitProd) -> String {
 /// What a city can build, in full: the unit's strength and moves (and what it
 /// does for its stack, a commander); the turns it takes here, its price
 /// here, its upkeep; what each terrain costs it to enter.
-pub fn production_details(map: &Map, prod: &UnitProd) -> Vec<String> {
+pub fn production_details(map: &Map, prod: &UnitProd, trains: u8) -> Vec<String> {
     let kind = map.units().kind_named(&prod.basename).and_then(|k| map.units().kind(k));
     let name = kind_name(map, prod);
     let mut lines = vec![format!("{name}: strength {}, moves {}", prod.strength, prod.movement)];
     lines.push(format!("Builds in {}, price {}; upkeep {}", turns(prod.time), prod.cost, prod.upkeep));
+    if trains > 1 {
+        let commander = kind.is_some_and(|k| k.commander > 0);
+        lines.push(format!("Trained here: it starts {}", rank(trains, commander)));
+    }
     if let Some(kind) = kind {
         if kind.commander > 0 {
             lines.push(format!("Commands: +{} to its stack; fights last", kind.commander));

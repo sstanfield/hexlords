@@ -247,8 +247,8 @@ fn the_pointer_on_a_unit_opens_a_box_with_all_about_it() {
     // lines.
     let (tip, slot) = (frame(&s, "unit_tip"), frame(&s, "unit_2"));
     assert!(tip.bottom() <= slot.y && tip.x == slot.x && tip.right() <= 1024 && tip.y >= 0, "{tip:?} {slot:?}");
-    assert!(shown(&s, "tip_2") && !shown(&s, "tip_3") && !shown(&s, "tip_4"));
-    assert_eq!(TIP_LINES, 5);
+    assert!(shown(&s, "tip_2") && !shown(&s, "tip_3") && !shown(&s, "tip_6"));
+    assert_eq!(TIP_LINES, 7);
     // It takes no input: the pointer on it is on what is under it, and that
     // closes it.
     let under = Point::new(tip.x + 5, tip.y + 5);

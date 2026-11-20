@@ -513,6 +513,11 @@ impl Map {
             if self.place_unit(unit, pos).is_ok() {
                 *gold -= prod.cost;
                 made.push(unit);
+                // A city that trains its units makes them a level up.
+                let trains = self.cities.get(id).map_or(1, |c| c.trains);
+                if let Some(new) = self.units.get_mut(unit) {
+                    new.train(trains);
+                }
                 if let Some(city) = self.cities.get_mut(id) {
                     city.progress = 0;
                 }

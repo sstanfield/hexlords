@@ -7,8 +7,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::orders::{Event, Order, Record};
+use crate::orders::{Event, Fallen, Order, Record};
 use crate::setup::{Controller, Setup, TurnOrder, WhenOut};
+use crate::state::Blessing;
 use crate::state::combat::{self, Fighter};
 use crate::state::scenario::{self, Scenario, side_name};
 use crate::state::{
@@ -70,6 +71,24 @@ enum Undo {
 /// How many rounds a battle can be watched again for (`Game::fight`).
 pub const REPLAY_ROUNDS: u32 = 5;
 
+/// A stack with no commander that wins a battle it was this likely to win
+/// or less (in percent) may see a captain rise from its ranks, one time in
+/// [`EMERGE_ONE_IN`].
+pub const EMERGE_ODDS: u32 = 65;
+pub const EMERGE_ONE_IN: u64 = 4;
+/// A battle won against odds below this (percent) is worth a point more of
+/// experience to who lived through it.
+pub const HARD_ODDS: u32 = 50;
+
+/// The parts of the names captains are given, put together by chance: our
+/// own, not anyone's in particular.
+const NAME_STARTS: [&str; 24] = [
+    "Al", "Bran", "Cor", "Dag", "Ed", "Fen", "Gar", "Hal", "Is", "Jor", "Kel", "Lor", "Mor", "Nor", "Os", "Per", "Ren",
+    "Sel", "Tam", "Ul", "Ver", "Wil", "Yor", "Ash",
+];
+const NAME_ENDS: [&str; 16] =
+    ["ric", "wen", "dan", "mund", "eth", "ra", "win", "bert", "ia", "mir", "ton", "sa", "na", "dred", "wyn", "ald"];
+
 /// A unit in a battle, as the battle saw it: who it was, and what its
 /// strength was made of, in points (the walls' in quarters of a point, as a
 /// battle counts them: `combat::QUARTER`).
@@ -81,8 +100,14 @@ pub struct Combatant {
     /// Its kind's picture.
     pub image: String,
     pub commander: bool,
-    /// Its own strength, a commander's bonus, the ground's (a defender's).
+    /// What it is called in the battle: its own name if it has one (a
+    /// captain's), else its kind's; and its level.
+    pub title: String,
+    pub level: u8,
+    /// Its kind's strength, what its level and a blessing add to it, a
+    /// commander's bonus, the ground's (a defender's).
     pub strength: u32,
+    pub growth: u32,
     pub led: u32,
     pub ground: u32,
     /// The walls' bonus, in quarters (a defender's in a city).
@@ -142,6 +167,11 @@ pub struct Game {
     /// the order being carried out fought, until it is kept.
     fights: Vec<(usize, u32, Fight)>,
     fought: Option<Fight>,
+    /// After a battle won by a stack with no commander against the odds:
+    /// its side, and the hex its captain would rise on.
+    emerging: Option<(Side, Hex)>,
+    /// The levels the last battle brought, to be told after it.
+    promoted: Vec<Event>,
     /// The sides that are out, in the order they went.
     out: Vec<Side>,
     winner: Option<Side>,
@@ -164,7 +194,7 @@ impl Game {
         if setup.order == TurnOrder::Drawn {
             rng.shuffle(&mut order);
         }
-        Game {
+        let mut game = Game {
             map,
             selected: Vec::new(),
             range: None,
@@ -182,8 +212,12 @@ impl Game {
             treasury: [setup.gold; NUM_SIDES + 1],
             fights: Vec::new(),
             fought: None,
+            emerging: None,
+            promoted: Vec::new(),
             setup,
-        }
+        };
+        game.name_commanders();
+        game
     }
 
     /// The side whose turn it is (on a map without sides, nobody's).
@@ -248,6 +282,39 @@ impl Game {
     pub fn with_setup(self, setup: Setup) -> Game {
         let Game { map, assets, .. } = self;
         Game { assets, ..Game::start(map, setup) }
+    }
+
+    /// Give every commander on the map that has no name one (the game's
+    /// chance picks them).
+    fn name_commanders(&mut self) {
+        let nameless: Vec<UnitId> = self
+            .map
+            .units()
+            .iter()
+            .filter(|u| u.given_name.is_none() && self.map.is_commander(u.id()))
+            .map(|u| u.id())
+            .collect();
+        for id in nameless {
+            let name = self.captain_name();
+            if let Some(unit) = self.map.unit_mut(id) {
+                unit.given_name = Some(name);
+            }
+        }
+    }
+
+    /// A name for a captain, put together by chance; one no captain on the
+    /// map has, if a few tries find one.
+    fn captain_name(&mut self) -> String {
+        let mut name = String::new();
+        for _ in 0..8 {
+            let start = NAME_STARTS[self.rng.below(NAME_STARTS.len() as u64) as usize];
+            let end = NAME_ENDS[self.rng.below(NAME_ENDS.len() as u64) as usize];
+            name = format!("{start}{end}");
+            if !self.map.units().iter().any(|u| u.given_name.as_deref() == Some(name.as_str())) {
+                break;
+            }
+        }
+        name
     }
 
     /// The round that is being played: 1 at the start.
@@ -448,9 +515,13 @@ impl Game {
             }
             let (won, battle) = self.battle(side, &ids, to);
             events.push(battle);
+            events.append(&mut self.promoted);
             if !won {
                 for (id, _, cost) in &going {
                     self.pay(*id, *cost);
+                }
+                if let Some((side, at)) = self.emerging.take() {
+                    events.extend(self.emerge(side, at));
                 }
                 return Ok(events);
             }
@@ -458,12 +529,29 @@ impl Game {
         } else if !self.fits(to, &ids) {
             return Err("there is no room there".to_string());
         }
+        let mut arrived = Vec::new();
         for (id, from, cost) in going {
             // After a battle, those that do not fit stay where they were.
             if self.map.move_unit(id, to).is_ok() {
                 events.push(Event::Moved { unit: id, from, to, cost });
+                arrived.push(id);
             }
             self.pay(id, cost);
+        }
+        if let Some((side, at)) = self.emerging.take() {
+            events.extend(self.emerge(side, at));
+        }
+        // A temple blesses who stops on it, once in a unit's life: chance
+        // says how.
+        let mut blessed = false;
+        if self.map.tile(to).is_some_and(|t| t.kind == TileType::Temple) {
+            for id in arrived {
+                let blessing = if self.rng.below(2) == 0 { Blessing::Strength } else { Blessing::Moves };
+                let Some(unit) = self.map.unit_mut(id).filter(|u| u.blessing.is_none()) else { continue };
+                unit.bless(blessing);
+                events.push(Event::Blessed { unit: id, side: unit.side(), name: unit.title(), blessing });
+                blessed = true;
+            }
         }
         self.selected.retain(|id| !ids.contains(id));
         if self.selected.is_empty() {
@@ -474,8 +562,10 @@ impl Game {
             events.extend(self.take(city, holder, side));
             taken = city_before;
         }
-        // A move can be taken back unless it was a battle or put a side out.
-        if !events.iter().any(|e| matches!(e, Event::Battle { .. } | Event::Out { .. } | Event::Won { .. })) {
+        // A move can be taken back unless it was a battle, put a side out, or
+        // a temple's blessing came of it (chance had a say).
+        let final_ = events.iter().any(|e| matches!(e, Event::Battle { .. } | Event::Out { .. } | Event::Won { .. }));
+        if !final_ && !blessed {
             self.undo = Some(Undo::Moved { units: before, to, stacks, taken });
         }
         Ok(events)
@@ -507,7 +597,8 @@ impl Game {
         own.saturating_add(led).saturating_add(ground).saturating_mul(combat::QUARTER).saturating_add(walls)
     }
 
-    /// What `battle_strength` is made of: the unit's own strength, the best
+    /// What `battle_strength` is made of: the unit's own strength (with its
+    /// level and blessing, `Unit::power`), the best
     /// bonus of a commander in its stack, the ground's bonus (a defender's),
     /// in points; and the walls' (a defender's in a city), in quarters.
     pub fn strength_parts(&self, unit: &Unit, at: Hex, defending: bool, stack: &[UnitId]) -> (u32, u32, u32, u32) {
@@ -515,16 +606,23 @@ impl Game {
         let led = stack
             .iter()
             .filter(|id| **id != unit.id())
-            .filter_map(|id| units.get(*id).and_then(|u| units.kind_of(u)))
-            .map(|kind| kind.commander)
+            .filter_map(|id| units.get(*id))
+            .map(|u| self.command(u))
             .max()
             .unwrap_or(0);
         if !defending {
-            return (unit.strength, led, 0, 0);
+            return (unit.power(), led, 0, 0);
         }
         let ground = self.map.tile(at).map_or(0, |t| combat::ground_bonus(t.kind));
         let walls = self.map.city_at(at).map_or(0, |c| c.walls).saturating_mul(combat::WALL_QUARTERS);
-        (unit.strength, led, ground, walls)
+        (unit.power(), led, ground, walls)
+    }
+
+    /// How much stronger a commander makes the others of its stack: what its
+    /// kind says, and a point more at the highest level. 0 for a unit that is
+    /// not one.
+    pub fn command(&self, unit: &Unit) -> u32 {
+        crate::state::command_bonus(self.map.units().kind_of(unit).map_or(0, |k| k.commander), unit.level)
     }
 
     /// The two sides of a battle of `attackers` against whoever is on `at`.
@@ -561,6 +659,9 @@ impl Game {
     fn battle(&mut self, side: Side, attackers: &[UnitId], at: Hex) -> (bool, Event) {
         let (a, d) = self.fighters(attackers, at);
         let defender = d.first().map_or(Side::Grey, |f| f.unit.side);
+        // How likely the attackers were to win (asked with a chance of its
+        // own: the game's is not touched).
+        let odds = self.battle_odds(attackers, at).unwrap_or(100);
         let battle = combat::fight(&a, &d, &self.setup.combat, &mut self.rng);
         // As it was, to be watched again.
         let defending: Vec<UnitId> = d.iter().map(|f| f.unit).collect();
@@ -578,7 +679,12 @@ impl Game {
         });
         let lost = |s: Side| battle.dead.iter().filter(|u| u.side == s).count();
         let units = self.map.units();
-        let dead = battle.dead.iter().filter_map(|id| units.get(*id)).map(|u| (u.side(), u.name.clone())).collect();
+        let dead = battle
+            .dead
+            .iter()
+            .filter_map(|id| units.get(*id))
+            .map(|u| Fallen { side: u.side(), name: u.title(), person: u.given_name.is_some() })
+            .collect();
         let event = Event::Battle {
             at,
             attacker: side,
@@ -593,7 +699,49 @@ impl Game {
         for unit in &battle.dead {
             self.map.kill_unit(*unit);
         }
+        // Those who lived through it won it: experience, a point more if the
+        // odds were against them; and, if no commander led them and it was a
+        // hard fight, maybe a captain from their ranks.
+        let (winners, winner_odds): (Vec<UnitId>, u32) = if battle.attackers_won {
+            (attackers.to_vec(), odds)
+        } else {
+            (d.iter().map(|f| f.unit).collect(), 100 - odds.min(100))
+        };
+        let living: Vec<UnitId> = winners.into_iter().filter(|id| self.map.units().get(*id).is_some()).collect();
+        let worth = 1 + u32::from(winner_odds < HARD_ODDS);
+        let mut after = Vec::new();
+        for id in &living {
+            let commander = self.map.is_commander(*id);
+            let Some(unit) = self.map.unit_mut(*id) else { continue };
+            if let Some(level) = unit.gain(worth) {
+                after.push(Event::Promoted { unit: *id, side: unit.side(), name: unit.title(), level, commander });
+            }
+        }
+        let led = living.iter().any(|id| self.map.is_commander(*id));
+        self.emerging = None;
+        if !led && !living.is_empty() && winner_odds <= EMERGE_ODDS && self.rng.below(EMERGE_ONE_IN) == 0 {
+            let side = if battle.attackers_won { side } else { defender };
+            self.emerging = Some((side, at));
+        }
+        self.promoted = after;
         (battle.attackers_won, event)
+    }
+
+    /// A captain rises on `at` for `side` (`emerging`), if the map has a kind
+    /// of commander and there is room for one: named, with no moves left this
+    /// turn.
+    fn emerge(&mut self, side: Side, at: Hex) -> Option<Event> {
+        let kind = self.map.units().kinds().iter().position(|k| k.commander > 0)?;
+        let id = self.map.new_unit_of(side, crate::state::UnitKindId(kind as u32))?;
+        if self.map.place_unit(id, at).is_err() {
+            self.map.kill_unit(id);
+            return None;
+        }
+        let name = self.captain_name();
+        let unit = self.map.unit_mut(id)?;
+        unit.given_name = Some(name);
+        unit.movement = 0;
+        Some(Event::Emerged { unit: id, side, at, name: unit.title() })
     }
 
     /// The units of `ids` in a battle on `at`, as the battle sees them (the
@@ -603,17 +751,20 @@ impl Game {
         ids.iter()
             .filter_map(|id| units.get(*id))
             .map(|unit| {
-                let (strength, led, ground, walls) = self.strength_parts(unit, at, defending, ids);
+                let (power, led, ground, walls) = self.strength_parts(unit, at, defending, ids);
                 Combatant {
                     unit: unit.id(),
                     side: unit.side(),
                     name: unit.name.clone(),
+                    title: unit.given_name.clone().unwrap_or_else(|| unit.name.clone()),
+                    level: unit.level,
                     image: units
                         .kind_of(unit)
                         .map_or(crate::state::DEFAULT_UNIT_IMAGE, |k| k.image.as_str())
                         .to_string(),
                     commander: self.map.is_commander(unit.id()),
-                    strength,
+                    strength: unit.strength,
+                    growth: power.saturating_sub(unit.strength),
                     led,
                     ground,
                     walls,
@@ -723,6 +874,7 @@ impl Game {
                 events.push(Event::Built { city, unit });
             }
         }
+        self.name_commanders();
         self.treasury[side.index()] = gold;
         events
     }

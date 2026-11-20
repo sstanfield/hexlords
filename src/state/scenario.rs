@@ -246,6 +246,8 @@ pub struct CityEntry {
     pub walls: u32,
     /// The gold it brings in a turn, if the file says.
     pub income: Option<u32>,
+    /// The level the units it builds start at (1: regular).
+    pub trains: u8,
     /// What it can build.
     pub produce: Vec<Produce>,
     /// Who stands in it at the start: a unit's id and how many.
@@ -281,6 +283,7 @@ pub fn parse_cities(text: &str) -> Result<Vec<CityEntry>, ScenarioError> {
             side: Side::Grey,
             walls: 0,
             income: None,
+            trains: 1,
             produce: Vec::new(),
             garrison: Vec::new(),
         };
@@ -305,6 +308,14 @@ pub fn parse_cities(text: &str) -> Result<Vec<CityEntry>, ScenarioError> {
                 }
                 "walls" => city.walls = number(file, line, "walls", value, 0)?,
                 "income" => city.income = Some(number(file, line, "income", value, 0)?),
+                "trains" => {
+                    city.trains = match value {
+                        "regular" => 1,
+                        "veteran" => 2,
+                        "elite" => 3,
+                        _ => return error(file, line, format!("trains: \"{value}\" is not regular, veteran or elite")),
+                    };
+                }
                 "produce" => {
                     let (unit, turns, cost) = match words[..] {
                         [unit, turns] => (unit, turns, None),
@@ -327,7 +338,7 @@ pub fn parse_cities(text: &str) -> Result<Vec<CityEntry>, ScenarioError> {
                     city.garrison.push((unit.to_string(), count));
                 }
                 _ => {
-                    let keys = "name, side, walls, income, produce, garrison";
+                    let keys = "name, side, walls, income, trains, produce, garrison";
                     return error(file, line, format!("\"{key}\" is not one of {keys}"));
                 }
             }
@@ -389,6 +400,7 @@ pub fn build(mut map: Map, kinds: Vec<UnitKind>, cities: &[CityEntry]) -> Result
         if let Some(city) = map.city_mut(id) {
             city.side = entry.side;
             city.income = entry.income.unwrap_or(city.income);
+            city.trains = entry.trains;
         }
         // The kinds do not change from here on.
         let known: Vec<String> = map.units().kinds().iter().map(|k| k.id.clone()).collect();
@@ -641,12 +653,13 @@ city 12 14
             (city("name A\nwalls high\n"), "cities.txt line 3: walls must be a number, found \"high\""),
             (
                 city("name A\nmayor Bo\n"),
-                "cities.txt line 3: \"mayor\" is not one of name, side, walls, income, produce, garrison",
+                "cities.txt line 3: \"mayor\" is not one of name, side, walls, income, trains, produce, garrison",
             ),
             (city("name A\nproduce scouts\n"), "cities.txt line 3: expected \"produce <unit> <turns> [<cost>]\""),
             (city("name A\nproduce scouts 1 2 3\n"), "cities.txt line 3: expected \"produce <unit> <turns> [<cost>]\""),
             (city("name A\nproduce scouts 1 dear\n"), "cities.txt line 3: the cost must be a number, found \"dear\""),
             (city("name A\nproduce scouts 0\n"), "cities.txt line 3: the turns to build must be at least 1"),
+            (city("name A\ntrains heroes\n"), "cities.txt line 3: trains: \"heroes\" is not regular, veteran or elite"),
             (city("name A\nproduce scouts 1\nproduce scouts 2\n"), "cities.txt line 4: scouts is produced twice"),
             (city("name A\nproduce pikes 1\n"), "cities.txt line 1: A: there is no unit \"pikes\" (spearmen, scouts)"),
             (city("name A\ngarrison pikes\n"), "cities.txt line 1: A: there is no unit \"pikes\" (spearmen, scouts)"),

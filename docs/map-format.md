@@ -164,6 +164,7 @@ city 13 7
 | `side` | Who holds it at the start: `black`, `white`, `red`, `green`, `blue`, `orange`, `yellow`, `purple`, or `neutral` | `neutral` |
 | `walls` | How strong its walls are | 0 |
 | `income` | The gold it brings its holder at the start of each of the holder's turns (its taxes) | 10 |
+| `trains` | The level the units it builds start at: `regular`, `veteran` or `elite` (`docs/gameplay.md`, levels) | `regular` |
 | `produce` | A kind of unit it can build, the turns one takes, and what one costs this city: `produce <unit> <turns> [<cost>]`; without a cost, the unit's `price`. The cost is paid from its holder's treasury when the unit is done; until it can be, the unit waits. A line for each. The game starts with the city building none of them: its holder chooses | it can build nothing |
 | `garrison` | Units that stand in it at the start, on its side: `garrison <unit> [<how many>]`. A line for each kind; at most 8 units in a city, and a commander besides | nobody |
 

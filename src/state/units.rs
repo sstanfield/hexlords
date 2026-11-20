@@ -93,6 +93,53 @@ pub struct Unit {
     /// The kind it was made as, if it was made from one.
     pub kind: Option<UnitKindId>,
     pos: Hex,
+    /// Its level, 1 to [`MAX_LEVEL`], from the battles it has won
+    /// (`experience`) or its training; each above the first makes it 1
+    /// stronger (`Unit::power`).
+    pub level: u8,
+    pub experience: u32,
+    /// Its own name, if it has one (a captain).
+    pub given_name: Option<String>,
+    /// What a temple gave it, once.
+    pub blessing: Option<Blessing>,
+}
+
+/// The highest level, and the battles won a unit needs for each level above
+/// the first: a veteran after 2, elite after 5.
+pub const MAX_LEVEL: u8 = 3;
+pub const LEVEL_EXPERIENCE: [u32; 2] = [2, 5];
+
+/// How much stronger a commander makes the others of its stack: what its
+/// kind says (`kind_bonus`, 0 for a unit that is not one), and a point more
+/// at the highest level.
+pub fn command_bonus(kind_bonus: u32, level: u8) -> u32 {
+    if kind_bonus == 0 { 0 } else { kind_bonus + u32::from(level >= MAX_LEVEL) }
+}
+
+/// The level that so much experience makes.
+pub fn level_for(experience: u32) -> u8 {
+    1 + LEVEL_EXPERIENCE.iter().filter(|need| experience >= **need).count() as u8
+}
+
+/// What a temple gives a unit, once: a point of strength, or two of
+/// movement a turn.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Blessing {
+    Strength,
+    Moves,
+}
+
+impl Blessing {
+    pub const STRENGTH: u32 = 1;
+    pub const MOVES: u32 = 2;
+
+    /// What it gives, in words: "+1 strength".
+    pub fn words(self) -> String {
+        match self {
+            Blessing::Strength => format!("+{} strength", Blessing::STRENGTH),
+            Blessing::Moves => format!("+{} moves", Blessing::MOVES),
+        }
+    }
 }
 
 impl Unit {
@@ -112,6 +159,57 @@ impl Unit {
 
     pub(super) fn set_pos(&mut self, pos: Hex) {
         self.pos = pos;
+    }
+
+    /// The strength it fights with, before its stack and the ground and the
+    /// walls: its own, a point for each level above the first, and a
+    /// temple's blessing.
+    pub fn power(&self) -> u32 {
+        let blessed = if self.blessing == Some(Blessing::Strength) { Blessing::STRENGTH } else { 0 };
+        self.strength.saturating_add(u32::from(self.level.saturating_sub(1))).saturating_add(blessed)
+    }
+
+    /// What it is called: its own name with its kind's ("Captain Aldric"),
+    /// or its kind's.
+    pub fn title(&self) -> String {
+        match &self.given_name {
+            Some(name) => format!("{} {name}", self.name),
+            None => self.name.clone(),
+        }
+    }
+
+    /// Experience from a battle won: the level it brings, if it is a new
+    /// one.
+    pub fn gain(&mut self, experience: u32) -> Option<u8> {
+        self.experience = self.experience.saturating_add(experience);
+        let level = level_for(self.experience).max(self.level);
+        (level > self.level).then(|| {
+            self.level = level;
+            level
+        })
+    }
+
+    /// Start at a level (a city that trains its units), with the experience
+    /// it takes.
+    pub fn train(&mut self, level: u8) {
+        let level = level.clamp(1, MAX_LEVEL);
+        if level > self.level {
+            self.level = level;
+            self.experience = self.experience.max(LEVEL_EXPERIENCE[usize::from(level) - 2]);
+        }
+    }
+
+    /// Bless it (a temple): false if it has been blessed already.
+    pub fn bless(&mut self, blessing: Blessing) -> bool {
+        if self.blessing.is_some() {
+            return false;
+        }
+        self.blessing = Some(blessing);
+        if blessing == Blessing::Moves {
+            self.base_move_points = self.base_move_points.saturating_add(Blessing::MOVES);
+            self.movement = self.movement.saturating_add(Blessing::MOVES);
+        }
+        true
     }
 }
 
@@ -170,6 +268,10 @@ impl Units {
             base_move_points: movement,
             kind: None,
             pos: Hex::default(),
+            level: 1,
+            experience: 0,
+            given_name: None,
+            blessing: None,
         });
         id
     }

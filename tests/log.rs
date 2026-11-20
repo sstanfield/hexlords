@@ -55,7 +55,8 @@ fn the_history_keeps_battles_and_cities_and_not_moves() {
     let [Record { round: 1, turn: Side::Red, event: Event::Battle { won: false, dead, .. } }] = game.history() else {
         panic!("{:?}", game.history())
     };
-    assert_eq!(dead, &[(Side::Red, "Levy".to_string())], "who died, by name");
+    let fallen = hexgame::orders::Fallen { side: Side::Red, name: "Levy".to_string(), person: false };
+    assert_eq!(dead, &[fallen], "who died, by name");
     // Blue's turn: it takes empty Southwick, and the record says it was
     // blue's turn in round 1.
     game.end_turn();
