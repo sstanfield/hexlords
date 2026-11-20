@@ -18,6 +18,10 @@ use super::rng::Rng;
 /// How big the wet and dry lands are, in the noise's units.
 const MOISTURE: f64 = 26.0;
 
+/// How much wetter the land by the water is (more, and forests come out in
+/// strips along the rivers).
+const NEAR_WATER: f64 = 0.1;
+
 /// The most swamps a map has.
 const MAX_SWAMPS: usize = 6;
 
@@ -34,7 +38,7 @@ pub fn biomes(g: &mut Gen, cfg: &Config) {
     g.moisture = Grid::from_fn(rows, cols, |h| {
         let (x, y) = center(h);
         let near = to_water.get(h).map_or(0.0, |d| ((6.0 - f64::from(d)) / 5.0).clamp(0.0, 1.0));
-        fbm(seed, x * f, y * f, 4, gain) + 0.25 * near
+        fbm(seed, x * f, y * f, 4, gain) + NEAR_WATER * near
     });
     let land = t.cells().iter().filter(|k| **k != TileType::Water).count();
     let quota = |share: f64| (share / 100.0 * land as f64).round() as usize;

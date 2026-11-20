@@ -17,7 +17,54 @@ const LONE_TREES: f64 = 40.0;
 /// mountains.
 const SOFT: [TileType; 5] = [TileType::Grass, TileType::Hill, TileType::Forest, TileType::Swamp, TileType::Desert];
 
+/// The ring of hills put back where the rivers took it: grass and forest
+/// beside the mountains (those beside the most first) become hills until
+/// `hill_ring` of the mountains' edges border hills; as many hills away from
+/// the mountains, where the ridge score is lowest, become grass.
+fn ring(g: &mut Gen, cfg: &Config) {
+    let t = g.terrain.clone();
+    let mountain = |h: Hex| *t.get(h) == TileType::Mountain;
+    let (mut all, mut covered) = (0usize, 0usize);
+    for h in t.hexes().filter(|h| mountain(*h)) {
+        for n in t.neighbours(h).filter(|n| !mountain(*n)) {
+            all += 1;
+            covered += usize::from(*t.get(n) == TileType::Hill);
+        }
+    }
+    let want = (cfg.hill_ring * all as f64).ceil() as usize;
+    if covered >= want {
+        return;
+    }
+    let mut ring: Vec<(Hex, usize)> = t
+        .hexes()
+        .filter(|h| matches!(*t.get(*h), TileType::Grass | TileType::Forest))
+        .map(|h| (h, t.neighbours(h).filter(|n| mountain(*n)).count()))
+        .filter(|(_, n)| *n > 0)
+        .collect();
+    ring.sort_by(|a, b| {
+        b.1.cmp(&a.1).then(g.ridge.get(b.0).total_cmp(g.ridge.get(a.0))).then(t.index(a.0).cmp(&t.index(b.0)))
+    });
+    let mut added = 0;
+    for (h, edges) in ring {
+        if covered >= want {
+            break;
+        }
+        g.terrain.set(h, TileType::Hill);
+        covered += edges;
+        added += 1;
+    }
+    let free: Vec<(usize, f64)> = t
+        .hexes()
+        .filter(|h| *t.get(*h) == TileType::Hill && !t.neighbours(*h).any(mountain))
+        .map(|h| (t.index(h), -g.ridge.get(h)))
+        .collect();
+    for i in top(&free, added) {
+        g.terrain.cells_mut()[i] = TileType::Grass;
+    }
+}
+
 pub fn cleanup(g: &mut Gen, cfg: &Config) {
+    ring(g, cfg);
     let mut rng = Rng::stream(cfg.seed, "cleanup");
     let forest = g.terrain.cells().iter().filter(|t| **t == TileType::Forest).count();
     let mut lone_left = (LONE_TREES * forest as f64 / 1000.0).round() as usize;

@@ -9,8 +9,9 @@
 //! what came before as it was.
 //!
 //! The stages, in order: [`land`] (land and water), [`relief`] (mountains and
-//! hills), [`biomes`] (forest, swamp, desert, grass), [`cleanup`]. Rivers,
-//! cities, sites and roads are to come (the plan's milestones G3 to G6).
+//! hills), [`rivers`] (and lakes), [`biomes`] (forest, swamp, desert,
+//! grass), [`cleanup`]. Cities, sites and roads are to come (the plan's
+//! milestones G4 to G6).
 //!
 //! - [`config`]: the knobs, the presets, the size.
 //! - [`grid`]: the hex grid's helpers: walks, shortest ways, pieces, the
@@ -34,6 +35,7 @@ pub mod noise;
 pub mod preview;
 pub mod reach;
 pub mod relief;
+pub mod rivers;
 pub mod rng;
 pub mod score;
 pub mod stats;
@@ -57,6 +59,10 @@ pub struct Gen {
     pub ridge: Grid<f64>,
     /// The land made for cities only ships reach.
     pub island: Grid<bool>,
+    /// Each river, from its source to its mouth (where bridges go across).
+    pub rivers: Vec<Vec<crate::state::Hex>>,
+    /// The rivers' and the lakes' water (the sea's rebalance leaves it be).
+    pub fresh: Grid<bool>,
 }
 
 impl Gen {
@@ -68,6 +74,8 @@ impl Gen {
             moisture: Grid::new(rows, cols, 0.0),
             ridge: Grid::new(rows, cols, 0.0),
             island: Grid::new(rows, cols, false),
+            rivers: Vec::new(),
+            fresh: Grid::new(rows, cols, false),
         }
     }
 
@@ -97,11 +105,25 @@ pub fn generate(config: &Config, units: &str, template: &str) -> Result<Generate
     let plan = config.plan()?;
     let kinds = parse_units(units).map_err(|e| format!("{template}: {e}"))?;
     config.check_units(&kinds, template)?;
-    let mut g = Gen::new(plan.rows, plan.cols);
     let hexes = usize::from(plan.rows) * usize::from(plan.cols);
-    let sea = (config.water.clamp(0.0, 0.95) * hexes as f64).round() as usize;
-    land::land(&mut g, config, sea);
-    relief::relief(&mut g, config);
+    let water = (config.water.clamp(0.0, 0.95) * hexes as f64).round() as usize;
+    // The rivers and lakes take water of their own: the sea is made smaller
+    // by what they took, and the land made again (at most three times),
+    // until the water is near its share; the sea's shore then makes it so.
+    let mut sea = water;
+    let mut g = Gen::new(plan.rows, plan.cols);
+    for _ in 0..3 {
+        g = Gen::new(plan.rows, plan.cols);
+        land::land(&mut g, config, sea);
+        relief::relief(&mut g, config, hexes - water);
+        rivers::rivers(&mut g, config);
+        let have = g.terrain.cells().iter().filter(|t| **t == TileType::Water).count();
+        if have.abs_diff(water) * 100 <= hexes {
+            break;
+        }
+        sea = (sea + water).saturating_sub(have);
+    }
+    land::rebalance_sea(&mut g, water);
     biomes::biomes(&mut g, config);
     cleanup::cleanup(&mut g, config);
     Ok(Generated { config: config.clone(), plan, state: g, units: units.to_string() })

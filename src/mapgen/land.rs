@@ -210,6 +210,65 @@ pub fn rebalance(g: &mut Gen, want: usize) {
     }
 }
 
+/// Back to `want` water hexes along the sea only (the water at the map's
+/// edge, or the biggest water if none is), so the rivers and lakes stay as
+/// they are: its lowest shore (not a mountain, not an island made for
+/// cities) becomes sea, or its highest shallows land.
+pub fn rebalance_sea(g: &mut Gen, want: usize) {
+    // A shore at a time.
+    for _ in 0..24 {
+        if water_count(g) == want || !rebalance_shore(g, want) {
+            return;
+        }
+    }
+}
+
+/// One shore of [`rebalance_sea`]; false if there was nothing to change.
+fn rebalance_shore(g: &mut Gen, want: usize) -> bool {
+    let (rows, cols) = (g.rows(), g.cols());
+    let t = g.terrain.clone();
+    let water = |h: Hex| *t.get(h) == TileType::Water;
+    let (piece, sizes) = pieces(rows, cols, water);
+    let mut sea = vec![false; sizes.len()];
+    for h in t.hexes().filter(|h| t.on_edge(*h)) {
+        if let Some(p) = *piece.get(h) {
+            sea[p] = true;
+        }
+    }
+    if !sea.contains(&true) {
+        if let Some((biggest, _)) = sizes.iter().enumerate().max_by_key(|(i, n)| (**n, std::cmp::Reverse(*i))) {
+            sea[biggest] = true;
+        }
+    }
+    // (Not the rivers' and lakes' own water.)
+    let is_sea = |h: Hex| piece.get(h).is_some_and(|p| sea[p]) && !*g.fresh.get(h);
+    let have = water_count(g);
+    if have < want {
+        let shore: Vec<(usize, f64)> = t
+            .hexes()
+            .filter(|h| !water(*h) && *t.get(*h) != TileType::Mountain && !*g.island.get(*h))
+            .filter(|h| t.neighbours(*h).any(is_sea))
+            .map(|h| (t.index(h), -g.elevation.get(h)))
+            .collect();
+        for i in top(&shore, want - have) {
+            g.terrain.cells_mut()[i] = TileType::Water;
+        }
+        !shore.is_empty()
+    } else if have > want {
+        let shallows: Vec<(usize, f64)> = t
+            .hexes()
+            .filter(|h| is_sea(*h) && t.neighbours(*h).any(|n| !water(n)))
+            .map(|h| (t.index(h), *g.elevation.get(h)))
+            .collect();
+        for i in top(&shallows, have - want) {
+            g.terrain.cells_mut()[i] = TileType::Grass;
+        }
+        !shallows.is_empty()
+    } else {
+        false
+    }
+}
+
 /// Islands out at sea, for cities only ships reach: one for every two or
 /// three of them, 6 to 60 hexes each, grown as blobs in open water at least
 /// 3 hexes from other land; the water they take is given back by the lowest

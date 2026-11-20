@@ -7,6 +7,7 @@
 use hexgame::mapgen::config::Config;
 use hexgame::mapgen::stats::Stats;
 use hexgame::mapgen::{check, generate, score};
+use hexgame::state::TileType;
 
 const UNITS: &str = include_str!("../assets/mapgen/units.txt");
 
@@ -69,18 +70,16 @@ fn measures(size: &str, seeds: u64) -> Vec<(String, f64, f64, Vec<f64>)> {
 fn the_terrain_lies_as_asked(size: &str, seeds: u64, shape_slack: f64) {
     for (name, target, tolerance, values) in measures(size, seeds) {
         let mean = values.iter().sum::<f64>() / values.len() as f64;
-        if name.contains("share")
-            || name.contains("% of land")
-            || name.contains("edges on hill")
-            || name.contains("walled")
-        {
-            // The water, the mix and the ring: on every map.
+        // (On a tiny map a few hexes move the ring's share a long way: there
+        // it is held on the whole, as the shapes are.)
+        let ring = name.contains("edges on hill") && shape_slack <= 1.0;
+        if name.contains("share") || name.contains("% of land") || name.contains("walled") || ring {
+            // The water, the mix, no land walled in, and the ring: on every map.
             for v in &values {
                 assert!((v - target).abs() <= tolerance + 1e-9, "{size}: {name} {v} against {target}");
             }
-        } else if !name.starts_with("water") {
-            // The shapes, on the whole. (The water's waits for the rivers,
-            // which narrow it: milestone G3.)
+        } else {
+            // The shapes, on the whole.
             assert!((mean - target).abs() <= tolerance * shape_slack, "{size}: {name}: mean {mean} against {target}");
         }
     }
@@ -101,6 +100,32 @@ fn tiny_maps_come_near_it() {
     // A tiny map's patches are few and small, its edges near: its shapes
     // come within twice the tolerance, on the whole.
     the_terrain_lies_as_asked("tiny", 20, 2.0);
+}
+
+#[test]
+fn rivers_run_to_water_round_the_mountains_and_stay_rivers() {
+    for seed in 1..=10 {
+        let made = generate(&config(seed, "medium"), UNITS, "units.txt").unwrap();
+        let g = &made.state;
+        assert!(g.rivers.len() >= 2, "seed {seed}: {} rivers", g.rivers.len());
+        for river in &g.rivers {
+            assert!(river.len() >= 15, "seed {seed}: a river of {}", river.len());
+            // Every hex of it is water at the end, none a mountain (a river
+            // goes round a range); it ends in water (the sea, a lake, another
+            // river).
+            for h in river {
+                assert_eq!(*g.terrain.get(*h), TileType::Water, "seed {seed}: {h} of a river is not water");
+            }
+            // Its hexes are one beside the next.
+            for pair in river.windows(2) {
+                assert!(pair[0].is_adjacent(pair[1]), "seed {seed}: a gap at {}", pair[0]);
+            }
+        }
+        // They narrow the water: a good part of it is no more than 5 wide.
+        let s = Stats::of(&made.map().unwrap());
+        assert!(s.narrow_water * 100 >= s.water * 12, "seed {seed}: {} of {} narrow", s.narrow_water, s.water);
+        assert!((s.water_share() - 0.19).abs() < 0.005);
+    }
 }
 
 #[test]

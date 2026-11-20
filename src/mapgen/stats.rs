@@ -388,31 +388,25 @@ fn words(shares: &[(TileType, f64)]) -> String {
     shares.iter().map(|(t, f)| format!("{} {:.0}%", terrain_word(*t), f * 100.0)).collect::<Vec<_>>().join(", ")
 }
 
-/// Land walled in by mountains: each piece of the land a walker can stand
-/// on (not water, not mountain) that is not the biggest of the land it is
-/// on, its hexes. (Pieces cut off by water are islands, not pockets.)
+/// Land walled in by mountains: each piece of the map that mountains alone
+/// cut off from the rest (water does not: a river is bridged, the sea
+/// sailed), the land of it. A lake in a ring of mountains is one too.
 pub fn pockets(rows: u16, cols: u16, kind: &dyn Fn(Hex) -> TileType) -> Vec<Vec<Hex>> {
-    let (land, _) = pieces(rows, cols, |h| kind(h) != TileType::Water);
-    let (walk, sizes) = pieces(rows, cols, |h| !matches!(kind(h), TileType::Water | TileType::Mountain));
+    let (piece, sizes) = pieces(rows, cols, |h| kind(h) != TileType::Mountain);
+    let Some(biggest) = sizes.iter().enumerate().max_by_key(|(i, n)| (**n, std::cmp::Reverse(*i))).map(|(i, _)| i)
+    else {
+        return Vec::new();
+    };
     let all = Grid::new(rows, cols, ());
-    // Each walkable piece's land, and the biggest walkable piece of each land.
-    let mut land_of = vec![0usize; sizes.len()];
     let mut hexes: Vec<Vec<Hex>> = vec![Vec::new(); sizes.len()];
     for h in all.hexes() {
-        if let (Some(w), Some(l)) = (*walk.get(h), *land.get(h)) {
-            land_of[w] = l;
-            hexes[w].push(h);
+        if let Some(p) = *piece.get(h) {
+            if kind(h) != TileType::Water {
+                hexes[p].push(h);
+            }
         }
     }
-    let mut main: Vec<(usize, usize)> = Vec::new(); // (land, walkable piece)
-    for (w, size) in sizes.iter().enumerate() {
-        match main.iter_mut().find(|(l, _)| *l == land_of[w]) {
-            Some(entry) if sizes[entry.1] < *size => entry.1 = w,
-            Some(_) => {}
-            None => main.push((land_of[w], w)),
-        }
-    }
-    hexes.into_iter().enumerate().filter(|(w, _)| !main.iter().any(|(_, m)| m == w)).map(|(_, h)| h).collect()
+    hexes.into_iter().enumerate().filter(|(p, h)| *p != biggest && !h.is_empty()).map(|(_, h)| h).collect()
 }
 
 /// True if water at `hex` is no more than 5 wide some way across: along one

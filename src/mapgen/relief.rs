@@ -21,7 +21,7 @@ const DIRECTIONS: [(f64, f64); 8] =
 /// How wide a range's noise is across it, and how much longer along it, in
 /// the noise's units at `feature_scale` 1; how big a region of one direction
 /// is; how far the ranges are bent about.
-const ACROSS: f64 = 34.0;
+const ACROSS: f64 = 31.0;
 const ALONG: f64 = 4.0;
 const REGION: f64 = 90.0;
 const BEND: f64 = 36.0;
@@ -89,13 +89,14 @@ pub fn ridge_score(g: &Gen, cfg: &Config) -> Grid<f64> {
 /// units.
 const MOUNTAIN_COUNTRY: f64 = 70.0;
 
-/// Lay the mountains and hills on the land.
-pub fn relief(g: &mut Gen, cfg: &Config) {
+/// Lay the mountains and hills on the land: their shares are of `land`, the
+/// land the map will have when the rivers and lakes have taken theirs.
+pub fn relief(g: &mut Gen, cfg: &Config, land_hexes: usize) {
     let score = ridge_score(g, cfg);
     let t = g.terrain.clone();
     let water = |h: Hex| *t.get(h) == TileType::Water;
     let land: Vec<Hex> = t.hexes().filter(|h| !water(*h)).collect();
-    let quota = |share: f64| (share / 100.0 * land.len() as f64).round() as usize;
+    let quota = |share: f64| (share / 100.0 * land_hexes as f64).round() as usize;
     let (mountains, hills) = (quota(cfg.mix[1]), quota(cfg.mix[2]));
     // The mountains: the best scores, away from the sea.
     let inland: Vec<(usize, f64)> =
@@ -221,7 +222,7 @@ fn ring(g: &mut Gen, (score, free_score): (&Grid<f64>, &Grid<f64>), share: f64, 
         .filter(|h| !beside(*h, TileType::Water) && !beside(*h, TileType::Mountain))
         .map(|h| (t.index(h), *score.get(h)))
         .collect();
-    let thick = hills / 2;
+    let thick = hills * 2 / 5;
     for i in top(&outer, thick) {
         g.terrain.cells_mut()[i] = TileType::Hill;
     }

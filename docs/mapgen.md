@@ -14,10 +14,10 @@ numbers are used.
 
 **Where it stands.** Built: the ruler (stats, reach, check), the skeleton
 (knobs, presets, sizes, files, pictures) and the terrain (land and water,
-mountains and hills, forest, swamp, desert, grass, cleanup). To come, in
-order: rivers and lakes; cities (capitals, neutrals, sea and air cities,
-fairness, names, production); temples and ruins; roads, bridges and passes;
-scoring with retries. Until cities come, a generated map has terrain only:
+mountains and hills, rivers and lakes, forest, swamp, desert, grass,
+cleanup). To come, in order: cities (capitals, neutrals, sea and air
+cities, fairness, names, production); temples and ruins; roads, bridges and
+passes; scoring with retries. Until cities come, a generated map has terrain only:
 the game opens it, but there is nobody to play.
 
 ## Commands
@@ -86,7 +86,8 @@ archipelago; cities only ships reach; the units template needs a ship).
 | `water` | 0.19 | the share of all hexes that are water |
 | `layout` | `coast` | `coast` (the sea from `sea_edges`), `continent`, `inland`, `twin` (two masses, a land bridge), `archipelago` |
 | `sea_edges` | `west,north` | for `coast` |
-| `lakes`, `rivers` | 1/1500, 1/2500 | per hex (`1/1500`) or a count (to come) |
+| `lakes`, `rivers` | 1/1500, 1/2500 | per hex (`1/1500`) or a count |
+| `river_width` | `2..3` | a river's width, from its source to its mouth |
 | `min_island` | 30 | land pieces smaller become water |
 | `mix` | `grass 49.5 mountain 17 hill 15.5 forest 14 swamp 3 desert 0` | shares of the land, percent; grass also holds the cities and sites |
 | `feature_scale` | 1 | how big the blobs and ranges are |
@@ -99,7 +100,7 @@ the density; `size` alone: the cities at the density; neither: the size for
 the cities). It warns of a density outside 100 to 300, or fewer than 3
 cities a side. The knobs of the stages to come (cities, sites, roads,
 fairness, ships and flyers, retries) are read and written already, and do
-nothing yet: `river_width`, `city_min_gap`, `city_gap_target`,
+nothing yet: `city_min_gap`, `city_gap_target`,
 `coastal_cities`, `edge_margin`, `walls`, `temples`, `ruins`,
 `site_city_gap`, `site_gap`, `roads`, `road_loops`, `bridges`, `max_bridge`,
 `passes`, `sea_cities`, `sea_city_count`, `fly_cities`, `fly_city_count`,
@@ -128,11 +129,24 @@ with an error that says so.
    into hills). (The owner's eye, on the judged maps of
    `tests/mapgen/judged`: such pockets, and ranges in straight parallel
    stripes, were what the worst maps had.)
-3. **Forest, swamp, desert** (`biomes.rs`): a moisture from a slow noise and
+3. **Rivers and lakes** (`rivers.rs`): the land is flooded from the water
+   up (a priority flood over all but the mountains, on the elevation with
+   a wandering noise, higher by the map's edges and at the foot of a
+   range), which gives every hex the neighbour it drains to. Rivers start
+   by the mountains and, by turns, at the map's land edge (a river from
+   beyond it, which cuts the land in two), far from the sea and from each
+   other; each follows the drainage to the sea or another river (joining
+   one it comes alongside), so it never crosses a range, and widens toward
+   its mouth (`river_width`). It is kept as its list of hexes, for the
+   bridges. Then the lakes, mostly small, in the deepest hollows. The sea
+   is made smaller by what they took and the land made again (at most three
+   times), and its shore makes the water share exact.
+4. **Forest, swamp, desert** (`biomes.rs`): a moisture from a slow noise and
    the water near. Swamps grow from one to three seeds where the land is low
    and wet by the water, round about their seed; forest is the wettest
    grass; desert the driest, far from water and swamps.
-4. **Cleanup** (`cleanup.rs`): two passes of a majority filter (a hex with
+5. **Cleanup** (`cleanup.rs`): the ring of hills put back where rivers took
+   it, two passes of a majority filter (a hex with
    five or six neighbours of one other terrain becomes it; water and
    mountains stay; some lone trees too), then each terrain back on its
    quota.
@@ -148,9 +162,11 @@ Over 20 seeds each of medium and huge maps (`tests/mapgen_terrain.rs`):
 water and every land share within a point of the config on every map; the
 mountains' edges on hills within 0.08 of `hill_ring` on every map; and how
 each terrain keeps to itself, on average, within 0.08 of the target map's
-(grass 0.84, forest 0.79, hill 0.60, mountain 0.80, swamp 0.82). Water keeps
-to itself more (0.95 against 0.87) until rivers narrow it. Tiny maps come
-within twice that.
+(grass 0.84, forest 0.79, hill 0.60, mountain 0.80, swamp 0.82, water
+0.87); no land walled in by mountains. Over 10 medium seeds, every river runs
+from its source to water, one hex beside the next, all of it water at the
+end; a good part of the water is narrow. Tiny maps come within twice the
+tolerance, on the whole.
 
 `tests/mapgen_target.rs` holds the ruler to the target map's numbers. It
 reads the map from `MAPGEN_TARGET_DIR` and is ignored unless asked for:
