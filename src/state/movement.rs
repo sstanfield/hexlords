@@ -216,6 +216,59 @@ pub fn reach(map: &Map, origin: Hex, costs: &MoveCost, limit: u32) -> MoveRange 
     reach_with(map, origin, costs, limit, &|_| Passage::Open)
 }
 
+/// The cheapest way from `origin` to `to` for a unit that pays `costs`, with
+/// what each hex is to it (`passage`), at most `limit` points: each hex of it
+/// after the origin, with what it costs to get that far. `None` if there is
+/// no such way.
+pub fn path_with(
+    map: &Map,
+    (origin, to): (Hex, Hex),
+    costs: &MoveCost,
+    limit: u32,
+    passage: &dyn Fn(Hex) -> Passage,
+) -> Option<Vec<(Hex, u32)>> {
+    if !map.contains(origin) || !map.contains(to) || origin == to {
+        return None;
+    }
+    let cols = usize::from(map.cols());
+    let index = |h: Hex| usize::from(h.row) * cols + usize::from(h.col);
+    let size = usize::from(map.rows()) * cols;
+    let mut best: Vec<Option<u32>> = vec![None; size];
+    let mut from: Vec<Option<Hex>> = vec![None; size];
+    best[index(origin)] = Some(0);
+    let mut queue = BinaryHeap::from([Reverse((0u32, origin))]);
+    while let Some(Reverse((spent, hex))) = queue.pop() {
+        if best[index(hex)] != Some(spent) || hex == to {
+            continue;
+        }
+        if hex != origin && passage(hex) == Passage::Stop {
+            continue;
+        }
+        for next in map.neighbours(hex) {
+            if passage(next) == Passage::Blocked {
+                continue;
+            }
+            let Some(step) = step_cost(map, costs, hex, next) else { continue };
+            let total = spent + u32::from(step);
+            if total <= limit && best[index(next)].is_none_or(|old| total < old) {
+                best[index(next)] = Some(total);
+                from[index(next)] = Some(hex);
+                queue.push(Reverse((total, next)));
+            }
+        }
+    }
+    best[index(to)]?;
+    let mut way = vec![(to, best[index(to)]?)];
+    while let Some(prev) = from[index(way.last()?.0)] {
+        if prev == origin {
+            break;
+        }
+        way.push((prev, best[index(prev)]?));
+    }
+    way.reverse();
+    Some(way)
+}
+
 /// The same, with what each hex is to the one who moves (see [`passage`]).
 pub fn reach_with(map: &Map, origin: Hex, costs: &MoveCost, limit: u32, passage: &dyn Fn(Hex) -> Passage) -> MoveRange {
     let cols = usize::from(map.cols());

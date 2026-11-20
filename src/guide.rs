@@ -400,7 +400,7 @@ fn sight(game: &Game) -> Vec<HelpSection> {
     } else {
         "Off in this game: the whole map is seen.".to_string()
     };
-    vec![section(
+    let mut sections = vec![section(
         "What you see",
         &[
             ("Your own", "Your units and cities, all of them, in full.".to_string()),
@@ -413,7 +413,35 @@ fn sight(game: &Game) -> Vec<HelpSection> {
             ),
             ("Fog of war", fog),
         ],
-    )]
+    )];
+    if game.setup().fog {
+        sections.push(section(
+            "In the fog",
+            &[
+                ("On the way", "What your units see as they go stays in sight until your turn ends.".to_string()),
+                (
+                    "Remembered",
+                    "Another side's stack you saw stays on the map, faint, where you saw it last (or \
+                                where it went out of your sight), until that hex is in sight again. The line \
+                                under the map says how many and when."
+                        .to_string(),
+                ),
+                (
+                    "Orders",
+                    "You may send units into the fog: they go as far as you know the way. Units of \
+                            another side you could not see, met on the way, stop them there, in a battle."
+                        .to_string(),
+                ),
+                (
+                    "Undo",
+                    "A move that showed you what you had not seen (another side's units, who holds a city) \
+                          cannot be taken back."
+                        .to_string(),
+                ),
+            ],
+        ));
+    }
+    sections
 }
 
 #[cfg(test)]

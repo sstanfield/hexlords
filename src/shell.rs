@@ -138,4 +138,8 @@ impl Scene for Shell {
     fn sees(&self, hex: Hex) -> bool {
         self.scene().sees(hex)
     }
+
+    fn ghost(&self, hex: Hex) -> Option<(crate::state::Side, usize)> {
+        self.scene().ghost(hex)
+    }
 }

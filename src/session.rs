@@ -41,7 +41,7 @@ use crate::render::{AssetDirs, coin_icon, unit_icon};
 use crate::screen::{FULLSCREEN_ID, HELP_KEYS_ID, MapScreen, QUIT_ID, Scene, ZOOM_IN_ID, ZOOM_OUT_ID};
 use crate::setup::Controller;
 use crate::state::scenario::side_name;
-use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, MoveRange, Side, UnitId};
+use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Side, UnitId};
 use crate::tasks_window::{self, TasksWindow};
 
 /// The layout, relative to the asset directory.
@@ -325,12 +325,7 @@ pub struct Session {
     picking: Option<Pick>,
     /// Why the last pick was refused, said until the next one.
     refused: Option<String>,
-    /// A word on the last click (something in the fog was in the way), said
-    /// until the next.
-    notice: Option<String>,
-    /// With fog of war, the selection's reach as the person knows it: as of
-    /// the map's revision and the selection it was worked out for.
-    seen_range: Option<(u64, Vec<UnitId>, MoveRange)>,
+
     /// The list of tasks, while it is open; and the map's revision and the
     /// side it was last brought up to date for.
     tasks: Option<TasksWindow>,
@@ -445,8 +440,7 @@ impl Session {
             done: find(&screen, DONE_ID)?,
             picking: None,
             refused: None,
-            notice: None,
-            seen_range: None,
+
             tasks: None,
             tasks_of: None,
             log: None,
@@ -499,7 +493,7 @@ impl Session {
         if self.cover.is_some() || self.screen.game.winner().is_some() || !self.persons_turn() {
             return;
         }
-        (self.picking, self.refused, self.notice) = (None, None, None);
+        (self.picking, self.refused) = (None, None);
         let side = self.screen.game.player();
         let length = self.screen.game.history().len();
         match self.seen.iter_mut().find(|(s, _)| *s == side) {
@@ -588,7 +582,7 @@ impl Session {
     /// there.
     fn turn_passed(&mut self) {
         // Nothing picked, nothing said, carries over to another turn.
-        (self.picking, self.refused, self.notice) = (None, None, None);
+        (self.picking, self.refused) = (None, None);
         let game = &self.screen.game;
         let side = game.player();
         let person = game.controller(side) == Some(&Controller::Person);
@@ -816,22 +810,6 @@ impl Session {
         }
     }
 
-    /// With fog of war, the selection's reach as the person knows it (what
-    /// the map marks), worked out again when the map or the selection
-    /// changed; without, none (the game's own is the truth).
-    fn see_range(&mut self) {
-        let game = &self.screen.game;
-        if !game.setup().fog || game.selection().is_empty() {
-            self.seen_range = None;
-            return;
-        }
-        let key = (game.map.revision(), game.selection().to_vec());
-        if self.seen_range.as_ref().is_some_and(|(revision, units, _)| (*revision, units) == (key.0, &key.1)) {
-            return;
-        }
-        self.seen_range = game.range_seen(&self.sight).map(|range| (key.0, key.1, range));
-    }
-
     /// What the person at the screen sees.
     pub fn sight(&self) -> &Sight {
         &self.sight
@@ -920,12 +898,13 @@ impl Session {
     /// Bring the panels up to date with the game.
     fn refresh(&mut self) {
         self.see();
-        self.see_range();
         let game = &self.screen.game;
         let map = &game.map;
-        let range = self.seen_range.as_ref().map(|(_, _, range)| range).or(game.range());
-        let status = info::cursor_line_for(game, &self.sight, range);
-        let title = info::hex_title_for(map, self.shown, self.sight.sees(self.shown));
+        let cursor = game.map.cursor;
+        let remembered = game.ghost_at(self.seer(), cursor).filter(|_| !self.sight.sees(cursor));
+        let status = info::cursor_line_for(game, &self.sight, remembered);
+        let ghost = game.ghost_at(self.seer(), self.shown).filter(|_| !self.sight.sees(self.shown));
+        let title = info::hex_title_for(map, self.shown, self.sight.sees(self.shown), ghost);
         // The units of the selected hex in their boxes: each one's icon and
         // numbers, and which of them are selected.
         let ids = self.boxes();
@@ -950,7 +929,6 @@ impl Session {
                     "Go to: click the hex they go to, over as many turns as it takes (Esc: never mind).".to_string()
                 }
             },
-            _ if self.notice.is_some() => self.notice.clone().unwrap_or_default(),
             _ if matches!(self.picking, Some(Pick::Rally(_))) => {
                 "Click the hex the city sends its new units to (Esc: never mind).".to_string()
             }
@@ -1429,14 +1407,6 @@ impl Session {
         if self.between {
             self.start_turn();
         }
-        // In the fog: a hex the selection seems to reach, but something
-        // unseen is in the way of (going there tells as much).
-        let fog = self.seen_range.as_ref().map(|(_, _, range)| range);
-        if fog.is_some_and(|r| r.cost(hex).is_some()) && !self.screen.game.can_move_to(hex) {
-            self.notice = Some("Something in the fog is in the way.".to_string());
-            return;
-        }
-        self.notice = None;
         let before = self.screen.game.history().len();
         if let SelectOutcome::Fought(_) = self.screen.game.select_hex(hex) {
             // The battle, played out.
@@ -2087,10 +2057,14 @@ impl Scene for Session {
 
     /// Where the selected unit can go.
     fn marked(&self, hex: Hex) -> bool {
-        match &self.seen_range {
-            Some((_, _, range)) => range.cost(hex).is_some(),
-            None => self.screen.game.can_move_to(hex),
-        }
+        self.screen.game.can_move_to(hex)
+    }
+
+    /// The other sides' stack the person remembers on a hex in the fog: its
+    /// side and how many (a ghost of it, on the map).
+    fn ghost(&self, hex: Hex) -> Option<(Side, usize)> {
+        let seer = self.seer();
+        (!self.sight.sees(hex)).then(|| self.screen.game.ghost_at(seer, hex).map(|g| (g.side, g.count))).flatten()
     }
 
     /// The selected unit shows on its hex, over the others of its stack (in a

@@ -83,6 +83,13 @@ pub enum Event {
         at: Hex,
         name: String,
     },
+    /// With fog of war, `side`'s units met another side's on their way, where
+    /// they had not been seen: the move ended there, in a battle (the next
+    /// event).
+    Surprise {
+        side: Side,
+        at: Hex,
+    },
     /// Units on a standing order (`GoTo`) could not go on: the next step was
     /// into another side's units, or there is no way. They wait for orders.
     Stalled {

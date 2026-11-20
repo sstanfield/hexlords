@@ -5,22 +5,22 @@
 //!
 //! Not a port: the C++ had no panels.
 
-use crate::game::{CityState, Game, Sight, StackState, Task, describe_terrain};
+use crate::game::{CityState, Game, Ghost, Sight, StackState, Task, describe_terrain};
 use crate::orders::{Event, Fallen, Record};
 use crate::state::scenario::side_name;
-use crate::state::{City, Hex, Map, MoveCost, MoveRange, Side, Unit, UnitProd};
+use crate::state::{City, Hex, Map, MoveCost, Side, Unit, UnitProd};
 
 /// The line about the hex under the cursor: the turn, the hex's terrain and
 /// road, its city's name, how many units stand there, and, if the selected
 /// units can go there, what it costs (one unit) or that they can (a stack),
 /// and the odds of winning if going there is an attack.
 pub fn cursor_line(game: &Game) -> String {
-    cursor_line_for(game, &Sight::all(), game.range())
+    cursor_line_for(game, &Sight::all(), None)
 }
 
-/// [`cursor_line`] as a side sees it, the selection's reach as it knows it
-/// (`Game::range_seen`): of a hex in the fog, no units, and no odds.
-pub fn cursor_line_for(game: &Game, sight: &Sight, range: Option<&MoveRange>) -> String {
+/// [`cursor_line`] as a side sees it: of a hex in the fog, no units, and no
+/// odds; what was seen there last (`ghost`), if anything.
+pub fn cursor_line_for(game: &Game, sight: &Sight, ghost: Option<&Ghost>) -> String {
     let (map, hex) = (&game.map, game.map.cursor);
     let seen = sight.sees(hex);
     let mut parts = vec![format!("Turn {}", game.turn())];
@@ -30,14 +30,17 @@ pub fn cursor_line_for(game: &Game, sight: &Sight, range: Option<&MoveRange>) ->
             parts.push(city.name.clone());
         }
         match tile.units().len() {
-            _ if !seen => parts.push("not seen".to_string()),
+            _ if !seen => parts.push(match ghost {
+                Some(g) => format!("not seen: {} there in round {}", last_seen(g), g.round),
+                None => "not seen".to_string(),
+            }),
             0 => {}
             1 => parts.push("1 unit".to_string()),
             n => parts.push(format!("{n} units")),
         }
     }
     let selected = game.selected().and_then(|id| map.units().get(id));
-    if let (Some(unit), Some(cost)) = (selected, range.and_then(|r| r.cost(hex))) {
+    if let (Some(unit), Some(cost)) = (selected, game.range().and_then(|r| r.cost(hex))) {
         match game.battle_odds(game.selection(), hex).filter(|_| seen) {
             Some(odds) => parts.push(format!("attack: {odds}% likely to win")),
             None if game.selection().len() > 1 => {
@@ -91,6 +94,10 @@ pub fn record_lines(map: &Map, record: &Record, side: Side) -> Vec<String> {
         }
         Event::Emerged { side: whose, at, name, .. } if *whose == side => {
             vec![format!("From the ranks at {}, a leader rose: {name}.", place(map, *at))]
+        }
+        // Units met on the way that nobody had seen (fog of war).
+        Event::Surprise { side: whose, at } if *whose == side => {
+            vec![format!("At {}, your units ran into others they had not seen there.", place(map, *at))]
         }
         // A standing order that stopped short, at the start of the turn.
         Event::Stalled { side: whose, units, at, to } if *whose == side => {
@@ -236,12 +243,12 @@ fn who(side: Side) -> &'static str {
 
 /// The heading of the selected hex: where it is, what it is, who is there.
 pub fn hex_title(map: &Map, hex: Hex) -> String {
-    hex_title_for(map, hex, true)
+    hex_title_for(map, hex, true, None)
 }
 
 /// [`hex_title`] of a hex that is `seen` or not (fog of war: in the fog, who
-/// is there is not told).
-pub fn hex_title_for(map: &Map, hex: Hex, seen: bool) -> String {
+/// is there is not told; what was seen there last, `ghost`, is).
+pub fn hex_title_for(map: &Map, hex: Hex, seen: bool, ghost: Option<&Ghost>) -> String {
     let Some(tile) = map.tile(hex) else { return String::new() };
     let mut title = format!("Row {}, column {}: {}", hex.row, hex.col, describe_terrain(tile.kind, tile.road));
     if let Some(city) = map.city_at(hex) {
@@ -255,12 +262,23 @@ pub fn hex_title_for(map: &Map, hex: Hex, seen: bool) -> String {
         }
     }
     match tile.units().len() {
-        _ if !seen => title.push_str(", not seen"),
+        _ if !seen => match ghost {
+            Some(g) => title.push_str(&format!(", not seen: {} there in round {}", last_seen(g), g.round)),
+            None => title.push_str(", not seen"),
+        },
         0 => title.push_str(", no units"),
         1 => title.push_str(&format!(", 1 unit ({})", sides.join(", "))),
         n => title.push_str(&format!(", {n} units ({})", sides.join(", "))),
     }
     title
+}
+
+/// A stack remembered (fog of war) in words: "2 units (blue)", "1 unit
+/// (nobody's)".
+fn last_seen(ghost: &Ghost) -> String {
+    let units = if ghost.count == 1 { "1 unit".to_string() } else { format!("{} units", ghost.count) };
+    let whose = if ghost.side == Side::Grey { "nobody's".to_string() } else { side_name(ghost.side).to_string() };
+    format!("{units} ({whose})")
 }
 
 /// A unit in numbers, under its icon in the stack: its strength, and the

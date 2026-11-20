@@ -298,6 +298,7 @@ impl<S: Scene> App<S> {
                 front: scene.front_unit(),
                 viewer: scene.viewer(),
                 seen: &seen,
+                ghost: &|hex| scene.ghost(hex),
             };
             self.map_renderer.draw(ctx, &self.pipelines, &screen.game.map, &screen.view, &marks);
         }

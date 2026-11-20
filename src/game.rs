@@ -14,7 +14,7 @@ use crate::state::combat::{self, Fighter};
 use crate::state::scenario::{self, Scenario, side_name};
 use crate::state::{
     CityId, Direction, Hex, MAX_STACK, Map, MoveRange, NUM_SIDES, Passage, Rng, Side, TileType, Unit, UnitId,
-    compute_range, hostile, passage, reach_with, step_toward_with, way_over_land,
+    compute_range, hostile, passage, path_with, reach_with, step_toward_with, way_over_land,
 };
 
 /// The agent that passes its turns: the computer's, when nothing else is said.
@@ -128,6 +128,17 @@ impl Task {
             _ => 3,
         }
     }
+}
+
+/// What a side remembers of another side's stack it saw, once it is out of
+/// its sight (fog of war): where, whose, how many, and in which round it was
+/// seen there last. It stays until that hex is in sight again.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Ghost {
+    pub at: Hex,
+    pub side: Side,
+    pub count: usize,
+    pub round: u32,
 }
 
 /// What a unit is doing about a standing order: its `goto`, whether it has
@@ -268,6 +279,11 @@ pub struct Game {
     emerging: Option<(Side, Hex)>,
     /// The levels the last battle brought, to be told after it.
     promoted: Vec<Event>,
+    /// With fog of war, each side's (by `Side::index`): the hexes its units
+    /// saw on their way this turn (they stay seen until its turn ends), and
+    /// the other sides' stacks it saw last where they were (`Ghost`).
+    trail: Vec<Vec<bool>>,
+    memory: Vec<Vec<Ghost>>,
     /// The sides that are out, in the order they went.
     out: Vec<Side>,
     winner: Option<Side>,
@@ -301,6 +317,8 @@ impl Game {
             round: 1,
             rng,
             out: Vec::new(),
+            trail: vec![Vec::new(); NUM_SIDES + 1],
+            memory: vec![Vec::new(); NUM_SIDES + 1],
             winner: None,
             undo: None,
             undo_mark: 0,
@@ -449,6 +467,7 @@ impl Game {
             Ok(events) => {
                 self.remember(round, side, events);
                 self.undo_mark = mark;
+                self.note_sightings();
             }
             Err(_) => self.undo = last, // nothing changed: it can still be taken back
         }
@@ -640,11 +659,18 @@ impl Game {
         if lead.movement == 0 {
             return Vec::new();
         }
+        // This turn's step: the farthest along the way, as the side knows
+        // it, that the slowest can pay for and that has room for all of them;
+        // never into another side's units it sees (one it does not is met).
+        let sight = self.sight(side);
         let room = |hex: Hex| self.fits(hex, &ids);
-        let step = step_toward_with(&self.map, lead, to, &room).filter(|(hex, _)| !hostile(&self.map, side, *hex));
+        let step = self
+            .known_path(lead, to, u32::MAX, &sight)
+            .and_then(|way| way.into_iter().rev().find(|(hex, cost)| *cost <= lead.movement && room(*hex)))
+            .filter(|(hex, _)| !(sight.sees(*hex) && hostile(&self.map, side, *hex)));
         let coming: Vec<UnitId> = match step {
             Some((hex, _)) => {
-                units.iter().filter(|u| compute_range(&self.map, u).cost(hex).is_some()).map(|u| u.id()).collect()
+                units.iter().filter(|u| self.known_range(u, &sight).cost(hex).is_some()).map(|u| u.id()).collect()
             }
             None => Vec::new(),
         };
@@ -770,14 +796,48 @@ impl Game {
         let mut going = Vec::with_capacity(ids.len());
         let mut before = Vec::with_capacity(ids.len());
         let mut goals = Vec::with_capacity(ids.len());
+        // Where they can go is what the side knows of the map (fog of war).
+        let sight = self.sight(side);
+        let mut ways: Vec<Vec<Hex>> = Vec::new();
         for id in &ids {
             let unit = self.own_unit(side, *id)?;
-            let cost = compute_range(&self.map, unit).cost(to);
+            let cost = self.known_range(unit, &sight).cost(to);
             let cost = cost.ok_or(format!("{} cannot get there this turn", unit.name))?;
             going.push((*id, unit.pos(), cost));
             before.push((*id, unit.pos(), unit.movement));
             goals.push((*id, (unit.goto, unit.stalled, unit.moved)));
+            let way = self.known_path(unit, to, unit.movement, &sight).unwrap_or_default();
+            ways.push(std::iter::once(unit.pos()).chain(way.into_iter().map(|(h, _)| h)).collect());
         }
+        // Another side's units it did not see on the way: the move ends
+        // there, in a battle nobody looked for.
+        let mut events = Vec::new();
+        let met = ways.first().and_then(|way| {
+            way.iter().skip(1).copied().find(|h| *h != to && hostile(&self.map, side, *h) && !sight.sees(*h))
+        });
+        let to = match met {
+            Some(at) => {
+                for (i, (id, _, cost)) in going.iter_mut().enumerate() {
+                    let unit = self.map.units().get(*id);
+                    let there = unit.and_then(|u| self.known_range(u, &sight).cost(at));
+                    *cost = there.unwrap_or(*cost);
+                    if let Some(way) = ways.get_mut(i) {
+                        if let Some(stop) = way.iter().position(|h| *h == at) {
+                            way.truncate(stop + 1);
+                        }
+                    }
+                }
+                events.push(Event::Surprise { side, at });
+                at
+            }
+            None => to,
+        };
+        let revealing = |game: &Game| -> Vec<Hex> {
+            let now = game.sight(side);
+            let units = game.map.units().iter().filter(|u| u.side() != side).map(|u| u.pos());
+            let cities = game.map.cities().iter().filter(|c| c.side != side).map(|c| c.pos);
+            units.chain(cities).filter(|h| now.sees(*h) && !sight.sees(*h)).collect()
+        };
         let city_before = self.map.city_at(to).map(|c| (c.id, c.side, c.building, c.progress));
         let mut stacks: Vec<(Hex, Vec<UnitId>)> = Vec::new();
         for (_, from, _) in &before {
@@ -785,7 +845,10 @@ impl Game {
                 stacks.push((*from, self.map.units_at(*from).to_vec()));
             }
         }
-        let mut events = Vec::new();
+        // What they see on the way stays seen this turn.
+        for way in &ways {
+            self.see_along(side, way);
+        }
         if hostile(&self.map, side, to) {
             // An attack is a stack: as many as a hex holds, from wherever.
             if !self.fits(Hex::new(u16::MAX, u16::MAX), &ids) {
@@ -795,6 +858,7 @@ impl Game {
             events.push(battle);
             events.append(&mut self.promoted);
             if !won {
+                self.undo = None;
                 for (id, _, cost) in &going {
                     self.pay(*id, *cost);
                 }
@@ -815,6 +879,10 @@ impl Game {
                 arrived.push(id);
             }
             self.pay(id, cost);
+        }
+        // Those that watched them go out of their sight remember where.
+        if let Some(way) = ways.first() {
+            self.seen_leaving(side, way, arrived.len());
         }
         for id in &ids {
             if let Some(unit) = self.map.unit_mut(*id) {
@@ -846,9 +914,12 @@ impl Game {
             taken = city_before;
         }
         // A move can be taken back unless it was a battle, put a side out, or
-        // a temple's blessing came of it (chance had a say).
+        // a temple's blessing came of it (chance had a say); nor, with fog of
+        // war, if it showed what was not seen before (another side's units,
+        // who holds a city): what was seen cannot be unseen.
         let final_ = events.iter().any(|e| matches!(e, Event::Battle { .. } | Event::Out { .. } | Event::Won { .. }));
-        if !final_ && !blessed {
+        let showed = self.setup.fog && !revealing(self).is_empty();
+        if !final_ && !blessed && !showed {
             self.undo = Some(Undo::Moved { units: before, to, stacks, taken, goals });
         }
         Ok(events)
@@ -1102,6 +1173,11 @@ impl Game {
     /// and its cities' work.
     fn next_turn(&mut self) -> Vec<Event> {
         self.deselect();
+        // What its units saw on their way is seen no longer.
+        let ending = self.player();
+        if let Some(trail) = self.trail.get_mut(ending.index()) {
+            trail.clear();
+        }
         if self.order.is_empty() {
             self.round += 1;
             return Vec::new();
@@ -1204,7 +1280,128 @@ impl Game {
                 }
             }
         }
+        // And what its units saw on their way this turn.
+        if let Some(trail) = self.trail.get(side.index()).filter(|t| t.len() == seen.len()) {
+            for (s, t) in seen.iter_mut().zip(trail) {
+                *s |= *t;
+            }
+        }
         Sight { cols, seen: Some(seen) }
+    }
+
+    /// The other sides' stacks `side` remembers where it saw them last (fog
+    /// of war): those in its sight as they are now, the others as they were.
+    /// What shows of them in the fog is their ghost.
+    pub fn ghosts(&self, side: Side) -> &[Ghost] {
+        self.memory.get(side.index()).map_or(&[], Vec::as_slice)
+    }
+
+    /// The stack `side` remembers on `hex`, if it remembers one there.
+    pub fn ghost_at(&self, side: Side, hex: Hex) -> Option<&Ghost> {
+        self.ghosts(side).iter().find(|g| g.at == hex)
+    }
+
+    /// Where `unit` can go this turn as its side knows the map: with fog of
+    /// war, the other sides' units stop it only where its side sees them
+    /// (`sight`); in the fog only cities do. The rules go by what is known: a
+    /// unit seen nowhere is met on the way (`move_units`).
+    fn known_range(&self, unit: &Unit, sight: &Sight) -> MoveRange {
+        let Some(costs) = self.map.units().move_cost(unit.move_cost) else { return compute_range(&self.map, unit) };
+        let pass = |hex: Hex| self.known_passage(unit.side(), hex, sight);
+        reach_with(&self.map, unit.pos(), costs, unit.movement, &pass)
+    }
+
+    /// What `hex` is to a unit of `side` that sees as `sight` (`passage`, as
+    /// far as it knows).
+    fn known_passage(&self, side: Side, hex: Hex, sight: &Sight) -> Passage {
+        if sight.sees(hex) {
+            passage(&self.map, side, hex)
+        } else if self.map.city_at(hex).is_some_and(|c| c.side != side) {
+            Passage::Stop
+        } else {
+            Passage::Open
+        }
+    }
+
+    /// `unit`'s way to `to`, as its side knows the map, at most `limit`
+    /// points: each hex after its own, with the cost so far.
+    fn known_path(&self, unit: &Unit, to: Hex, limit: u32, sight: &Sight) -> Option<Vec<(Hex, u32)>> {
+        let costs = self.map.units().move_cost(unit.move_cost)?;
+        let pass = |hex: Hex| self.known_passage(unit.side(), hex, sight);
+        path_with(&self.map, (unit.pos(), to), costs, limit, &pass)
+    }
+
+    /// What `side` sees now goes into what it remembers: of the hexes it
+    /// sees, the other sides' stacks there now (or none); of those it does
+    /// not, what it saw last. Called after every order.
+    fn note_sightings(&mut self) {
+        if !self.setup.fog {
+            return;
+        }
+        let round = self.round;
+        let sides: Vec<Side> = self.setup.seats.iter().map(|s| s.side).collect();
+        for side in sides {
+            let sight = self.sight(side);
+            let mut stacks: Vec<Ghost> = Vec::new();
+            for unit in self.map.units().iter().filter(|u| u.side() != side && self.map.contains(u.pos())) {
+                if !sight.sees(unit.pos()) {
+                    continue;
+                }
+                match stacks.iter_mut().find(|g| g.at == unit.pos()) {
+                    Some(g) => g.count += 1,
+                    None => stacks.push(Ghost { at: unit.pos(), side: unit.side(), count: 1, round }),
+                }
+            }
+            let Some(memory) = self.memory.get_mut(side.index()) else { continue };
+            memory.retain(|g| !sight.sees(g.at));
+            memory.extend(stacks);
+        }
+    }
+
+    /// `side`'s units went along `way` (the hexes after where they stood):
+    /// with fog of war, what they saw on the way stays seen until its turn
+    /// ends.
+    fn see_along(&mut self, side: Side, way: &[Hex]) {
+        if !self.setup.fog || way.is_empty() {
+            return;
+        }
+        let (rows, cols) = (self.map.rows(), self.map.cols());
+        let size = usize::from(rows) * usize::from(cols);
+        let Some(trail) = self.trail.get_mut(side.index()) else { return };
+        if trail.len() != size {
+            *trail = vec![false; size];
+        }
+        let r = UNIT_SIGHT as i32;
+        for at in way {
+            for row in (i32::from(at.row) - r).max(0)..=(i32::from(at.row) + r).min(i32::from(rows) - 1) {
+                for col in (i32::from(at.col) - r).max(0)..=(i32::from(at.col) + r).min(i32::from(cols) - 1) {
+                    let hex = Hex::new(row as u16, col as u16);
+                    if at.distance(hex) <= UNIT_SIGHT {
+                        trail[row as usize * usize::from(cols) + col as usize] = true;
+                    }
+                }
+            }
+        }
+    }
+
+    /// The other sides that saw `side`'s stack of `count` go along `way` (its
+    /// hex first) and out of their sight remember it where it went into the
+    /// fog.
+    fn seen_leaving(&mut self, side: Side, way: &[Hex], count: usize) {
+        if !self.setup.fog || way.len() < 2 {
+            return;
+        }
+        let round = self.round;
+        let others: Vec<Side> = self.setup.seats.iter().map(|s| s.side).filter(|s| *s != side).collect();
+        for other in others {
+            let sight = self.sight(other);
+            let Some(last) = way.iter().rposition(|h| sight.sees(*h)) else { continue };
+            let Some(&into) = way.get(last + 1) else { continue };
+            if let Some(memory) = self.memory.get_mut(other.index()) {
+                memory.retain(|g| g.at != into);
+                memory.push(Ghost { at: into, side, count, round });
+            }
+        }
     }
 
     /// The game as `side` knows it: what the computer's players are given
@@ -1221,6 +1418,12 @@ impl Game {
     pub fn view_for(&self, side: Side) -> Game {
         let mut view = self.clone();
         (view.history, view.fights, view.fought, view.undo) = (Vec::new(), Vec::new(), None, None);
+        for (i, (memory, trail)) in view.memory.iter_mut().zip(view.trail.iter_mut()).enumerate() {
+            if i != side.index() {
+                memory.clear();
+                trail.clear();
+            }
+        }
         view.rng = Rng::new((u64::from(self.round) << 8) ^ (side.index() as u64) ^ 0x005e_ed0f_1e55);
         view.deselect();
         let sight = self.sight(side);
@@ -1287,34 +1490,6 @@ impl Game {
         self.range.as_ref()
     }
 
-    /// The selected units' reach as a side that sees `sight` knows it: other
-    /// sides' units stop them where they are seen, and nowhere else (in the
-    /// fog only cities do). What the map marks and the panels say, so that
-    /// the fog tells nothing; the rules go by what is there.
-    pub fn range_seen(&self, sight: &Sight) -> Option<MoveRange> {
-        let mut range: Option<MoveRange> = None;
-        for id in &self.selected {
-            let unit = self.map.units().get(*id)?;
-            let costs = self.map.units().move_cost(unit.move_cost)?;
-            let side = unit.side();
-            let pass = |hex: Hex| {
-                if sight.sees(hex) {
-                    passage(&self.map, side, hex)
-                } else if self.map.city_at(hex).is_some_and(|c| c.side != side) {
-                    Passage::Stop
-                } else {
-                    Passage::Open
-                }
-            };
-            let one = reach_with(&self.map, unit.pos(), costs, unit.movement, &pass);
-            range = Some(match range {
-                Some(all) => all.both(&one),
-                None => one,
-            });
-        }
-        range
-    }
-
     /// The next stack of `side` that can still go somewhere after the one on
     /// `from` (see [`Game::next_stack`]).
     pub fn next_stack_of(&self, side: Side, from: Option<Hex>, back: bool) -> Option<Hex> {
@@ -1377,9 +1552,10 @@ impl Game {
     fn select(&mut self, units: Vec<UnitId>) -> bool {
         let map = &self.map;
         let mut range: Option<MoveRange> = None;
+        let sight = units.first().and_then(|id| map.units().get(*id)).map_or(Sight::all(), |u| self.sight(u.side()));
         for id in &units {
             let Some(unit) = map.units().get(*id) else { return false };
-            let one = compute_range(map, unit);
+            let one = self.known_range(unit, &sight);
             range = Some(match range {
                 Some(all) => all.both(&one),
                 None => one,

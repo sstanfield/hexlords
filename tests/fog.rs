@@ -8,6 +8,8 @@ mod common;
 
 use common::{assets, click, pixel_of};
 use hexgame::game::{CITY_SIGHT, Game, UNIT_SIGHT};
+use hexgame::info;
+use hexgame::orders::{Event, Order};
 use hexgame::screen::Scene;
 use hexgame::session::Session;
 use hexgame::setup::{Controller, Setup};
@@ -112,34 +114,130 @@ fn with_nobody_at_the_screen_all_is_seen() {
     assert!(s.sees(BLUEMOOR));
 }
 
-#[test]
-fn in_the_fog_the_reach_marked_is_as_far_as_is_known() {
-    // A road through water: red's soldiers at one end, a blue soldier on it
-    // out of sight.
+/// A road through water: red's Redhold at its west end, Bluemoor at its
+/// east, red's soldiers in Redhold; blue's in the middle of it, out of
+/// sight, if `ambush`.
+fn road(ambush: bool) -> Game {
     let mut rows = vec!["w".repeat(30); 30];
-    rows[5] = format!("{}c{}", "g".repeat(5), "g".repeat(24));
+    rows[5] = format!("{}c{}c{}", "g".repeat(5), "g".repeat(18), "g".repeat(5));
     let terrain = format!("30\n30\n{}\n", rows.join("\n"));
     let units = "unit soldiers\nname Soldiers\nstrength 3\nmoves 20\nenter grass 2, city 1\n";
-    let cities = "city 5 5\nname Redhold\nside red\ngarrison soldiers\n";
+    let cities = "city 5 5\nname Redhold\nside red\ngarrison soldiers 2\ncity 5 24\nname Bluemoor\nside blue\n";
     let (mut map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
-    let kind = map.units().kind_named("soldiers").unwrap();
-    let blue = map.new_unit_of(Side::Blue, kind).unwrap();
-    map.place_unit(blue, Hex::new(5, 10)).unwrap();
+    if ambush {
+        let kind = map.units().kind_named("soldiers").unwrap();
+        let blue = map.new_unit_of(Side::Blue, kind).unwrap();
+        map.place_unit(blue, Hex::new(5, 10)).unwrap();
+    }
     let game = Game::from_scenario(Scenario { map, assets: None, warnings });
     let mut setup = Setup::solo(&game.map, Some(Side::Red), "passive");
     setup.fog = true;
-    let mut s = session(game.with_setup(setup));
+    game.with_setup(setup)
+}
+
+#[test]
+fn an_order_into_the_fog_goes_and_meets_what_it_meets() {
+    let mut s = session(road(true));
     look(&mut s, REDHOLD);
     let beyond = Hex::new(5, 12);
     assert!(!s.sees(Hex::new(5, 10)));
-    // The map marks the way on past the unseen soldier, as if nobody were
-    // there; the rules know better.
-    assert!(!s.screen.game.can_move_to(beyond));
-    assert!(Scene::marked(&s, beyond), "the reach does not stop at what is not seen");
-    // Going there finds out: something is in the way, and nothing moves.
+    // The reach marked goes on past the unseen soldier, as if nobody were
+    // there; and so does the order.
+    assert!(s.screen.game.can_move_to(beyond) && Scene::marked(&s, beyond));
     look(&mut s, beyond);
-    assert_eq!(s.unit_line(), "Something in the fog is in the way.");
-    assert_eq!(s.screen.game.map.units_at(REDHOLD).len(), 1);
+    // It met blue on the way: a battle there, unlooked for; nobody got to
+    // (5, 12).
+    let surprise = s
+        .screen
+        .game
+        .history()
+        .iter()
+        .any(|r| matches!(r.event, Event::Surprise { side: Side::Red, at } if at == Hex::new(5, 10)));
+    let battle =
+        s.screen.game.history().iter().any(|r| matches!(r.event, Event::Battle { at, .. } if at == Hex::new(5, 10)));
+    assert!(surprise && battle, "{:?}", s.screen.game.history());
+    assert!(s.screen.game.map.units_at(beyond).is_empty());
+    // The log says so.
+    let log = info::log(&s.screen.game, Side::Red, 0);
+    let lines: Vec<&String> = log.iter().flat_map(|(_, entries)| entries).flat_map(|e| &e.lines).collect();
+    assert!(lines.iter().any(|l| l.contains("ran into others they had not seen")), "{lines:?}");
+}
+
+#[test]
+fn what_a_unit_saw_on_its_way_stays_seen_till_the_turn_ends() {
+    let mut game = road(false);
+    let id = game.map.units_at(REDHOLD)[0];
+    assert!(!game.sight(Side::Red).sees(Hex::new(5, 12)));
+    game.apply(Order::Move { units: vec![id], to: Hex::new(5, 15) }).unwrap();
+    // Back home: what it saw on the way out is still seen.
+    game.map.unit_mut(id).unwrap().movement = 20;
+    game.apply(Order::Move { units: vec![id], to: REDHOLD }).unwrap();
+    let sight = game.sight(Side::Red);
+    assert!(sight.sees(Hex::new(5, 12)) && sight.sees(Hex::new(5, 17)), "the way out and two hexes beyond");
+    // Its turn over: no longer.
+    game.apply(Order::EndTurn).unwrap();
+    assert!(!game.sight(Side::Red).sees(Hex::new(5, 12)));
+}
+
+#[test]
+fn a_stack_seen_is_remembered_where_it_was_seen_last() {
+    let mut game = road(false);
+    let kind = game.map.units().kind_named("soldiers").unwrap();
+    let blue = game.map.new_unit_of(Side::Blue, kind).unwrap();
+    game.map.place_unit(blue, Hex::new(5, 7)).unwrap();
+    // Red sees it (two hexes from its city); something is done, and it is
+    // noted.
+    game.apply(Order::EndTurn).unwrap();
+    assert!(
+        game.sight(Side::Red).sees(Hex::new(5, 7)) && game.ghost_at(Side::Red, Hex::new(5, 7)).is_some(),
+        "noted as it is"
+    );
+    // Blue goes off east, into the fog: red remembers it where it went out
+    // of sight.
+    game.apply(Order::Move { units: vec![blue], to: Hex::new(5, 16) }).unwrap();
+    let ghost = *game.ghost_at(Side::Red, Hex::new(5, 9)).expect("where it went into the fog");
+    assert_eq!((ghost.side, ghost.count), (Side::Blue, 1));
+    assert!(!game.sight(Side::Red).sees(ghost.at));
+    game.apply(Order::EndTurn).unwrap();
+    // Red goes to look: the hex in sight, empty, it is forgotten.
+    let red = game.map.units_at(REDHOLD)[0];
+    game.apply(Order::Move { units: vec![red], to: Hex::new(5, 8) }).unwrap();
+    assert!(game.ghost_at(Side::Red, Hex::new(5, 9)).is_none());
+    // The view of each side has its own memory only.
+    let kind = game.map.units().kind_named("soldiers").unwrap();
+    let other = game.map.new_unit_of(Side::Blue, kind).unwrap();
+    game.map.place_unit(other, Hex::new(5, 9)).unwrap();
+    game.apply(Order::EndTurn).unwrap();
+    assert!(!game.ghosts(Side::Blue).is_empty() || !game.ghosts(Side::Red).is_empty());
+    assert!(game.view_for(Side::Blue).ghosts(Side::Red).is_empty());
+}
+
+#[test]
+fn what_was_seen_cannot_be_unseen_by_an_undo() {
+    // A move that shows nothing new can be taken back.
+    let mut game = road(false);
+    let id = game.map.units_at(REDHOLD)[0];
+    game.apply(Order::Move { units: vec![id], to: Hex::new(5, 8) }).unwrap();
+    assert!(game.can_undo());
+    game.apply(Order::Undo).unwrap();
+    // One that shows another side's unit cannot.
+    let kind = game.map.units().kind_named("soldiers").unwrap();
+    let blue = game.map.new_unit_of(Side::Blue, kind).unwrap();
+    game.map.place_unit(blue, Hex::new(5, 14)).unwrap();
+    game.apply(Order::Move { units: vec![id], to: Hex::new(5, 12) }).unwrap();
+    assert!(game.sight(Side::Red).sees(Hex::new(5, 14)));
+    assert!(!game.can_undo());
+}
+
+#[test]
+fn a_march_into_the_fog_meets_what_is_there() {
+    // Sent far east with a standing order, the soldiers walk into blue's
+    // unseen on the road: a battle, not a stop.
+    let mut game = road(true);
+    let id = game.map.units_at(REDHOLD)[0];
+    let events = game.apply(Order::GoTo { units: vec![id], to: Hex::new(5, 20) }).unwrap();
+    assert!(events.iter().any(|e| matches!(e, Event::Surprise { .. })), "{events:?}");
+    assert!(!events.iter().any(|e| matches!(e, Event::Stalled { .. })));
 }
 
 #[test]

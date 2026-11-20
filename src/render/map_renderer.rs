@@ -107,17 +107,22 @@ pub struct Marks<'a> {
     /// The hexes seen (fog of war): the others are dimmed, with no units on
     /// them and their cities nobody's to look at.
     pub seen: &'a dyn Fn(Hex) -> bool,
+    /// On a hex in the fog, another side's stack remembered there (where it
+    /// was seen last): its side and how many. Drawn as a ghost of a banner.
+    pub ghost: &'a dyn Fn(Hex) -> Option<(Side, usize)>,
 }
 
 impl Marks<'_> {
     /// Marks of a map seen whole, everyone's units shown: a tool's.
     pub fn plain(color: [f32; 4], marked: &dyn Fn(Hex) -> bool, front: Option<UnitId>) -> Marks<'_> {
-        Marks { color, marked, front, viewer: None, seen: &|_| true }
+        Marks { color, marked, front, viewer: None, seen: &|_| true, ghost: &|_| None }
     }
 }
 
 /// The dimming over a hex in the fog.
 pub const FOG: [f32; 4] = [0.02, 0.02, 0.06, 0.5];
+/// How much of a remembered stack shows in the fog (its ghost).
+pub const GHOST_ALPHA: f32 = 0.85;
 
 /// The image a terrain is drawn with, relative to the asset directory: every
 /// terrain has its own, made by `tools/assetgen` (`docs/tiles.md`). A city's
@@ -258,8 +263,10 @@ fn push_banner(
     center: [f32; 2],
     variant: HexVariant,
     color: [f32; 3],
+    alpha: f32,
 ) {
     let [r, g, b] = color;
+    let dark = [RING_COLOR[0], RING_COLOR[1], RING_COLOR[2], RING_COLOR[3] * alpha];
     let a = HEX_HEIGHT_ADJUST;
     // The cloth: from the pole to its cut tail; the pole.
     let cloth = |grow: f32| {
@@ -271,10 +278,10 @@ fn push_banner(
         let (x0, x1, y0, y1) = (-0.31 - grow, -0.24 + grow, (-0.5 - grow) / a, (0.55 + grow) / a);
         [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
     };
-    push_shape(list, view, center, variant, &pole(0.04), RING_COLOR);
-    push_shape(list, view, center, variant, &cloth(0.04), RING_COLOR);
-    push_shape(list, view, center, variant, &pole(0.0), [0.85, 0.80, 0.68, 1.0]);
-    push_shape(list, view, center, variant, &cloth(0.0), [r, g, b, 1.0]);
+    push_shape(list, view, center, variant, &pole(0.04), dark);
+    push_shape(list, view, center, variant, &cloth(0.04), dark);
+    push_shape(list, view, center, variant, &pole(0.0), [0.85, 0.80, 0.68, alpha]);
+    push_shape(list, view, center, variant, &cloth(0.0), [r, g, b, alpha]);
 }
 
 /// A stack's size: a pip for each unit, in its side's color, along the
@@ -286,11 +293,13 @@ fn push_size(
     variant: HexVariant,
     count: usize,
     side: Side,
+    alpha: f32,
 ) {
     let [r, g, b] = side_color(side);
+    let dark = [RING_COLOR[0], RING_COLOR[1], RING_COLOR[2], RING_COLOR[3] * alpha];
     for at in (0..count).map_while(|i| pip_at(i, count)) {
-        push_disc(list, view, center, variant, at, PIP_RADIUS + PIP_RING, RING_COLOR);
-        push_disc(list, view, center, variant, at, PIP_RADIUS, [r, g, b, 1.0]);
+        push_disc(list, view, center, variant, at, PIP_RADIUS + PIP_RING, dark);
+        push_disc(list, view, center, variant, at, PIP_RADIUS, [r, g, b, alpha]);
     }
 }
 
@@ -376,8 +385,8 @@ impl MapGeometry {
                 shown.and_then(|id| map.units().get(id)).filter(|u| marks.viewer.is_some_and(|v| v != u.side()));
             if let Some(unit) = theirs {
                 // Another side's stack: a banner, and how many there are.
-                push_banner(&mut self.signs, view, visible.center, variant, side_color(unit.side()));
-                push_size(&mut self.signs, view, visible.center, variant, tile.units().len(), unit.side());
+                push_banner(&mut self.signs, view, visible.center, variant, side_color(unit.side()), 1.0);
+                push_size(&mut self.signs, view, visible.center, variant, tile.units().len(), unit.side(), 1.0);
             }
             if let Some(unit) = shown.and_then(|id| map.units().get(id)).filter(|_| theirs.is_none()) {
                 let [r, g, b] = side_color(unit.side());
@@ -385,7 +394,7 @@ impl MapGeometry {
                 let (ring, width) = level_ring(unit.level);
                 push_disc(&mut self.discs, view, visible.center, variant, middle, DISC_RADIUS + width, ring);
                 push_disc(&mut self.discs, view, visible.center, variant, middle, DISC_RADIUS, [r, g, b, 1.0]);
-                push_size(&mut self.signs, view, visible.center, variant, tile.units().len(), unit.side());
+                push_size(&mut self.signs, view, visible.center, variant, tile.units().len(), unit.side(), 1.0);
                 let image = map.units().kind_of(unit).map_or(UNIT_IMAGE, |kind| kind.image.as_str());
                 let sign: [HexVertex; HEX_VERTICES] =
                     std::array::from_fn(|i| HexVertex { border: NO_BORDER, ..vertices[i] });
@@ -405,6 +414,14 @@ impl MapGeometry {
                 self.overlay.push(&flat, &HEX_INDICES);
             }
             if !seen {
+                // What was seen there last, under the fog: a ghost of its banner
+                // (in a city, of its garrison's pips).
+                if let Some((side, count)) = (marks.ghost)(hex) {
+                    if tile.kind != TileType::City {
+                        push_banner(&mut self.signs, view, visible.center, variant, side_color(side), GHOST_ALPHA);
+                    }
+                    push_size(&mut self.signs, view, visible.center, variant, count, side, GHOST_ALPHA);
+                }
                 let flat: [FlatVertex; HEX_VERTICES] =
                     std::array::from_fn(|i| FlatVertex { pos: corner(i), color: FOG });
                 self.overlay.push(&flat, &HEX_INDICES);
@@ -1043,6 +1060,29 @@ mod tests {
 
     fn at_all(g: &MapGeometry, image: &str) -> usize {
         hexes(g.units_with(image)).len()
+    }
+
+    #[test]
+    fn a_stack_remembered_in_the_fog_is_a_ghost_of_its_banner() {
+        let terrain = format!("20\n20\n{}\n", vec!["g".repeat(20); 20].join("\n"));
+        let (map, _) = crate::state::scenario::parse(&terrain, Some(KINDS), None).unwrap();
+        let mut view = MapView::new(20, 20, Hex::new(10, 10));
+        view.resize(819, 537);
+        let mut g = MapGeometry::new();
+        let (none, ghost) = (|_: Hex| false, |hex: Hex| (hex == Hex::new(10, 12)).then_some((Side::Blue, 3)));
+        let marks = Marks {
+            viewer: Some(Side::Red),
+            seen: &none,
+            ghost: &ghost,
+            ..Marks::plain(RANGE_OVERLAY, &|_| false, None)
+        };
+        g.build(&map, &view, &marks);
+        // A banner and three pips in blue, not quite solid, where it was seen.
+        let [r, gr, b] = side_color(Side::Blue);
+        let ghostly = [r, gr, b, GHOST_ALPHA];
+        let blue = g.signs().meshes().iter().flat_map(|m| &m.vertices).filter(|v| v.color == ghostly).count();
+        assert!(blue > 3 * (DISC_CORNERS + 1), "{blue}");
+        assert_eq!(g.units().count(), 0, "no unit's picture: nobody is seen there");
     }
 
     #[test]

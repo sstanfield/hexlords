@@ -124,7 +124,10 @@ output, and the turn goes on without that order.
 
 The game as the program's side knows it (`Game::view_for`; every agent is
 given the same). With fog of war, the other sides' units out of its sight
-are not in it, and a city in the fog is nobody's as far as it knows. Fog or
+are not in it, and a city in the fog is nobody's as far as it knows; what
+its side remembers of stacks seen before is in it (`Game::ghosts`), and its
+orders go as far as it knows the way (a stack it could not see, met on the
+way, is a battle there). Fog or
 not, it is not told what the other sides' cities build or can build, their
 gold, their units' standing orders or the moves they have left.
 

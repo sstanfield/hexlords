@@ -731,6 +731,12 @@ pub trait Scene {
         true
     }
 
+    /// What the one at the screen remembers on a hex in the fog: another
+    /// side's stack, and how many, where it was seen last.
+    fn ghost(&self, _hex: Hex) -> Option<(crate::state::Side, usize)> {
+        None
+    }
+
     /// A round in one step, for scripts (`turn`): the person's turn ends, the
     /// others play theirs, the person's next starts. False where there are
     /// no turns (a tool), or it is nobody's turn to end.

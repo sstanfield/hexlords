@@ -239,15 +239,25 @@ and the rules use integers, not floats.
    rest of the map is dimmed: its terrain and where its cities are show,
    but no units, and no city's holder (on the map, the minimap and the
    lists of cities). It is worked out anew whenever the map changes. With
-   nobody at the screen (the computer against itself) all is seen. The
-   reach the map marks for the selected units is as far as the person
-   knows: units unseen do not stop it (`Game::range_seen`); a move the
-   rules refuse because of one says "Something in the fog is in the way."
+   nobody at the screen (the computer against itself) all is seen.
+   The rules go by what the moving side knows (the owner's word, 2026-11-20:
+   "giving orders into fog should not be effected by units in the fog"):
+   the reach of a selection, an order, a march are worked out as if no unit
+   were where the side does not see (`Game::known_range`); units of another
+   side met on the way, unseen, stop the move there, in a battle
+   (`Event::Surprise`, and a line in the log). What a side's units see on
+   their way stays in its sight until its turn ends (its trail); and it
+   remembers the other sides' stacks it saw where it saw them last (where
+   one went out of its sight, if it saw it go), until the hex is in sight
+   again (`Game::ghosts`): the map shows a faint banner and the pips there,
+   the line under the map how many and in which round. A move that showed
+   what was not seen before (another side's units, a city's holder) cannot
+   be undone. Every side has its own trail and memory, and the computer's
+   players are shown theirs in their view (`Game::view_for`), no other's.
    While another side plays, the screen only looks: a click selects
    nothing, Next stack and the lists of cities are the person's own, and
-   their city's buttons give no orders. The
-   agents still read the whole game (they do not respect the fog yet).
-   Rounds need fog far more than turns do.
+   their city's buttons give no orders. Rounds need fog far more than turns
+   do.
 10. **Saved games.** The state and the orders, in text, like the maps.
 11. **Movement points.** A unit that does not use all its points keeps up
     to 2 of them for the next turn (decided: as now, from the C++).

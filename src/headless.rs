@@ -97,6 +97,7 @@ pub fn event_line(game: &Game, event: &Event) -> String {
             )
         }
         Event::Undone => "the last order is taken back".to_string(),
+        Event::Surprise { side, at } => format!("{} runs into units it did not see at {at}", side_name(*side)),
         Event::Stalled { units, at, to, .. } => format!("{} stop at {at} on their way to {to}", names(units)),
         Event::Deserted { side, name } => format!("{}'s {name} leave, unpaid", side_name(*side)),
         Event::Promoted { side, name, level, commander, .. } => {
