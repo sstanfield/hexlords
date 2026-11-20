@@ -27,7 +27,7 @@ use super::cities::UnitProd;
 use super::hex::Hex;
 use super::map::{MAX_STACK, Map, MapError};
 use super::terrain::{MoveCost, TileType};
-use super::units::{DEFAULT_UNIT_IMAGE, Side, UnitKind};
+use super::units::{DEFAULT_UNIT_IMAGE, Side, Travel, UnitKind};
 
 /// The files of a map directory.
 pub const TERRAIN_FILE: &str = "terrain.map";
@@ -168,6 +168,8 @@ pub fn parse_units(text: &str) -> Result<Vec<UnitKind>, ScenarioError> {
             price: 0,
             cost: MoveCost::default(),
             commander: 0,
+            travel: Travel::Land,
+            carries: 0,
         };
         let mut seen: Vec<&str> = Vec::new();
         for (line, key, value) in record.fields {
@@ -195,6 +197,16 @@ pub fn parse_units(text: &str) -> Result<Vec<UnitKind>, ScenarioError> {
                 "upkeep" => kind.upkeep = number(file, line, "upkeep", value, 0)?,
                 "price" => kind.price = number(file, line, "price", value, 0)?,
                 "commander" => kind.commander = number(file, line, "commander", value, 1)?,
+                "travels" => match Travel::named(value) {
+                    Some(travel) => kind.travel = travel,
+                    None => return error(file, line, format!("travels is land, sea or air, not \"{value}\"")),
+                },
+                "carries" => {
+                    kind.carries = number(file, line, "carries", value, 0)?;
+                    if kind.carries > MAX_STACK as u32 {
+                        return error(file, line, format!("a ship carries a stack at most: {MAX_STACK}"));
+                    }
+                }
                 "enter" => {
                     for part in value.split(',').map(str::trim).filter(|p| !p.is_empty()) {
                         let mut words = part.split_whitespace();
@@ -218,7 +230,8 @@ pub fn parse_units(text: &str) -> Result<Vec<UnitKind>, ScenarioError> {
                         file,
                         line,
                         format!(
-                            "\"{key}\" is not one of name, image, strength, moves, upkeep, price, enter, commander"
+                            "\"{key}\" is not one of name, image, strength, moves, upkeep, price, enter, commander, \
+                             travels, carries"
                         ),
                     );
                 }
@@ -229,6 +242,28 @@ pub fn parse_units(text: &str) -> Result<Vec<UnitKind>, ScenarioError> {
         }
         if kind.cost == MoveCost::default() {
             return error(file, record.line, format!("{id} has no \"enter\": it could go nowhere"));
+        }
+        // A ship: on water and into cities (and under bridges), carrying land
+        // units, led by none.
+        if seen.contains(&"carries") && kind.travel != Travel::Sea {
+            return error(file, record.line, format!("{id} carries units but is no ship: it needs \"travels sea\""));
+        }
+        if kind.travel == Travel::Sea {
+            let c = &kind.cost;
+            if c.water == 0 {
+                return error(file, record.line, format!("{id} travels by sea, and cannot enter water"));
+            }
+            let land = [c.grass, c.forest, c.swamp, c.desert, c.hill, c.mountain, c.road];
+            if land.iter().any(|p| *p > 0) {
+                return error(
+                    file,
+                    record.line,
+                    format!("{id} travels by sea: it enters water, cities and bridges only"),
+                );
+            }
+            if kind.commander > 0 {
+                return error(file, record.line, format!("{id} travels by sea, and a ship is no commander"));
+            }
         }
         kinds.push(kind);
     }
@@ -443,6 +478,20 @@ pub fn build(mut map: Map, kinds: Vec<UnitKind>, cities: &[CityEntry]) -> Result
             }
         }
     }
+    // A ship built away from the water would never leave its city.
+    for city in map.cities().iter() {
+        let by_water =
+            map.neighbours(city.pos).into_iter().any(|h| map.tile(h).is_some_and(|t| t.kind == TileType::Water));
+        let ships = city.units.iter().filter(|p| {
+            map.units()
+                .kind_named(&p.basename)
+                .and_then(|k| map.units().kind(k))
+                .is_some_and(|k| k.travel == Travel::Sea)
+        });
+        for prod in ships.filter(|_| !by_water) {
+            warnings.push(format!("{} builds {}, a ship, but is not by the water", city.name, prod.basename));
+        }
+    }
     Ok((map, warnings))
 }
 
@@ -601,6 +650,16 @@ city 12 14
     }
 
     #[test]
+    fn a_city_that_builds_ships_away_from_the_water_is_a_warning() {
+        let units = "unit boat\nmoves 8\ntravels sea\ncarries 2\nenter water 2, city 1\n";
+        let cities = "city 5 5\nname Inland\nproduce boat 3\n";
+        let (map, warnings) = parse(&terrain(), Some(units), Some(cities)).unwrap();
+        let boat = map.units().kind(map.units().kind_named("boat").unwrap()).unwrap();
+        assert_eq!((boat.travel, boat.carries), (Travel::Sea, 2));
+        assert!(warnings.contains(&"Inland builds boat, a ship, but is not by the water".to_string()), "{warnings:?}");
+    }
+
+    #[test]
     fn what_is_wrong_with_the_units_is_said_with_its_line() {
         for (text, why) in [
             ("moves 3\n", "units.txt line 1: expected \"unit ...\", found \"moves\""),
@@ -616,7 +675,26 @@ city 12 14
             ("unit a\nmoves 3\nmoves 4\n", "units.txt line 3: \"moves\" is given twice for a"),
             (
                 "unit a\nspeed 3\n",
-                "units.txt line 2: \"speed\" is not one of name, image, strength, moves, upkeep, price, enter, commander",
+                "units.txt line 2: \"speed\" is not one of name, image, strength, moves, upkeep, price, enter, \
+                 commander, travels, carries",
+            ),
+            ("unit a\nmoves 3\ntravels boat\n", "units.txt line 3: travels is land, sea or air, not \"boat\""),
+            (
+                "unit a\nmoves 3\nenter water 2\ncarries 2\n",
+                "units.txt line 1: a carries units but is no ship: it needs \"travels sea\"",
+            ),
+            ("unit a\nmoves 3\ntravels sea\ncarries 9\n", "units.txt line 4: a ship carries a stack at most: 8"),
+            (
+                "unit a\nmoves 3\ntravels sea\nenter city 1\n",
+                "units.txt line 1: a travels by sea, and cannot enter water",
+            ),
+            (
+                "unit a\nmoves 3\ntravels sea\nenter water 1, grass 2\n",
+                "units.txt line 1: a travels by sea: it enters water, cities and bridges only",
+            ),
+            (
+                "unit a\nmoves 3\ntravels sea\nenter water 1\ncommander 1\n",
+                "units.txt line 1: a travels by sea, and a ship is no commander",
             ),
             (
                 "unit a\nenter lava 2\n",

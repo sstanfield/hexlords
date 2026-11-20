@@ -13,8 +13,9 @@ use crate::state::Blessing;
 use crate::state::combat::{self, Fighter};
 use crate::state::scenario::{self, Scenario, side_name};
 use crate::state::{
-    City, CityId, Direction, Hex, MAX_STACK, Map, MoveRange, NUM_SIDES, Passage, Rng, Side, TileType, Unit, UnitId,
-    compute_range, hostile, passage, path_with, reach_with, step_toward_by, way_over_land,
+    City, CityId, Direction, Hex, MAX_STACK, Map, MoveCost, MoveCostId, MoveRange, NUM_SIDES, Passage, Rng, Side,
+    TileType, Travel, Unit, UnitId, compute_range, hostile, passage, path_with, reach_with, step_cost, step_toward_by,
+    way_over_land,
 };
 
 /// The agent that passes its turns: the computer's, when nothing else is said.
@@ -148,6 +149,22 @@ pub struct Ghost {
 /// What a unit is doing about a standing order: its `goto`, whether it has
 /// stalled, whether it has moved this turn.
 type MarchState = (Option<Hex>, bool, bool);
+
+/// Units that go together (`Game::group`): those that move, each at the
+/// prices of a table (its own, or a commander's with flyers, theirs), and
+/// those carried by the ships among them, who pay nothing.
+struct Group {
+    movers: Vec<(UnitId, MoveCostId)>,
+    carried: Vec<UnitId>,
+}
+
+impl Group {
+    /// The one that moves with the fewest points left: the way is its.
+    fn lead<'a>(&self, map: &'a Map) -> Option<(&'a Unit, MoveCostId)> {
+        let movers = self.movers.iter().filter_map(|(id, table)| map.units().get(*id).map(|u| (u, *table)));
+        movers.min_by_key(|(u, _)| u.movement)
+    }
+}
 
 /// How far a side sees, with fog of war: from its units, and from its cities.
 pub const UNIT_SIGHT: u32 = 2;
@@ -621,15 +638,13 @@ impl Game {
         match order {
             Order::Move { units, to } => self.move_units(side, &units, to),
             Order::Toward { units, to } => {
-                // The way of the slowest; whoever can get as far comes along.
-                let mut lead: Option<&Unit> = None;
+                // The way of the slowest; whoever can get as far comes along
+                // (all or none, of those that ships carry).
                 for id in &units {
-                    let unit = self.own_unit(side, *id)?;
-                    if lead.is_none_or(|l| unit.movement < l.movement) {
-                        lead = Some(unit);
-                    }
+                    self.own_unit(side, *id)?;
                 }
-                let lead = lead.ok_or("no units")?;
+                let group = self.group(&units)?;
+                let (lead, table) = group.lead(&self.map).ok_or("no units")?;
                 // As far as there is room for all of them, on the way the side
                 // knows.
                 let sight = self.sight(side);
@@ -637,13 +652,9 @@ impl Game {
                     return Err(UNSEEN.to_string());
                 }
                 let room = |hex: Hex| self.fits(hex, &units);
-                let (hex, _) = self.known_step_toward(lead, to, &room, &sight).ok_or("there is no way there")?;
-                let map = &self.map;
-                let coming: Vec<UnitId> = units
-                    .iter()
-                    .copied()
-                    .filter(|id| map.units().get(*id).is_some_and(|u| self.known_range(u, &sight).cost(hex).is_some()))
-                    .collect();
+                let (hex, _) =
+                    self.known_step_toward_by(lead, table, (to, &room), &sight).ok_or("there is no way there")?;
+                let coming = self.coming(&group, hex, &sight);
                 self.move_units(side, &coming, hex)
             }
             Order::Build { city, what } => {
@@ -679,9 +690,11 @@ impl Game {
                     return Err(UNSEEN.to_string());
                 }
                 let known = |hex: Hex| sight.knows(hex);
-                for id in &units {
+                // (Those a ship carries go where it goes.)
+                let group = self.group(&units)?;
+                for (id, table) in &group.movers {
                     let Some(unit) = self.map.units().get(*id) else { continue };
-                    let costs = self.map.units().move_cost(unit.move_cost);
+                    let costs = self.map.units().move_cost(*table);
                     if !costs.is_some_and(|c| way_over_land(&self.map, c, (unit.pos(), to), &known)) {
                         return Err(format!("{} cannot get there", unit.title()));
                     }
@@ -765,15 +778,18 @@ impl Game {
     /// order, and wait for their player). There, their order ends.
     fn march(&mut self, side: Side, ids: &[UnitId], to: Hex) -> Vec<Event> {
         let units: Vec<&Unit> = ids.iter().filter_map(|id| self.map.units().get(*id)).collect();
-        let Some(lead) = units.iter().copied().min_by_key(|u| u.movement) else { return Vec::new() };
-        let at = lead.pos();
+        let Some(first) = units.first() else { return Vec::new() };
         // (A stack: the units of one hex.)
+        let at = first.pos();
         let ids: Vec<UnitId> = units.iter().filter(|u| u.pos() == at).map(|u| u.id()).collect();
-        let units: Vec<&Unit> = units.into_iter().filter(|u| u.pos() == at).collect();
         if at == to {
             self.arrive(&ids);
             return Vec::new();
         }
+        let group = self.group(&ids);
+        let Some((lead, table)) = group.as_ref().ok().and_then(|g| g.lead(&self.map)) else {
+            return self.stall(side, ids, at, to);
+        };
         if lead.movement == 0 {
             return Vec::new();
         }
@@ -783,27 +799,18 @@ impl Game {
         let sight = self.sight(side);
         let room = |hex: Hex| self.fits(hex, &ids);
         let step = self
-            .known_path(lead, to, u32::MAX, &sight)
+            .known_path_by(lead, table, to, u32::MAX, &sight)
             .and_then(|way| way.into_iter().rev().find(|(hex, cost)| *cost <= lead.movement && room(*hex)))
             .filter(|(hex, _)| !(sight.sees(*hex) && hostile(&self.map, side, *hex)));
-        let coming: Vec<UnitId> = match step {
-            Some((hex, _)) => {
-                units.iter().filter(|u| self.known_range(u, &sight).cost(hex).is_some()).map(|u| u.id()).collect()
-            }
-            None => Vec::new(),
+        let coming: Vec<UnitId> = match (step, &group) {
+            (Some((hex, _)), Ok(group)) => self.coming(group, hex, &sight),
+            _ => Vec::new(),
         };
         let moved = match step {
             Some((hex, _)) if !coming.is_empty() => self.move_units(side, &coming, hex).ok().map(|e| (hex, e)),
             _ => None,
         };
-        let Some((hex, events)) = moved else {
-            for id in &ids {
-                if let Some(unit) = self.map.unit_mut(*id) {
-                    unit.stalled = true;
-                }
-            }
-            return vec![Event::Stalled { side, units: ids, at, to }];
-        };
+        let Some((hex, events)) = moved else { return self.stall(side, ids, at, to) };
         // On, or there.
         for id in &coming {
             if let Some(unit) = self.map.unit_mut(*id) {
@@ -811,6 +818,33 @@ impl Game {
             }
         }
         events
+    }
+
+    /// Units on a standing order cannot go on this turn: they wait for their
+    /// player, and keep the order.
+    fn stall(&mut self, side: Side, ids: Vec<UnitId>, at: Hex, to: Hex) -> Vec<Event> {
+        for id in &ids {
+            if let Some(unit) = self.map.unit_mut(*id) {
+                unit.stalled = true;
+            }
+        }
+        vec![Event::Stalled { side, units: ids, at, to }]
+    }
+
+    /// Who of `group` can get to `hex` this turn: those that move and can;
+    /// with ships, all of them if every one that moves can, else none.
+    fn coming(&self, group: &Group, hex: Hex, sight: &Sight) -> Vec<UnitId> {
+        let units = self.map.units();
+        let reach = |(id, table): &(UnitId, MoveCostId)| {
+            units.get(*id).is_some_and(|u| self.known_range_by(u, *table, sight).cost(hex).is_some())
+        };
+        if group.carried.is_empty() {
+            return group.movers.iter().filter(|m| reach(m)).map(|(id, _)| *id).collect();
+        }
+        if !group.movers.iter().all(reach) {
+            return Vec::new();
+        }
+        group.movers.iter().map(|(id, _)| *id).chain(group.carried.iter().copied()).collect()
     }
 
     /// Units on a standing order are where it sent them: it ends.
@@ -921,14 +955,36 @@ impl Game {
         }
         let mut ways: Vec<Vec<Hex>> = Vec::new();
         for id in &ids {
+            self.own_unit(side, *id)?;
+        }
+        // Each that moves pays what it costs it; those a ship carries, nothing.
+        let group = self.group(&ids)?;
+        for (id, table) in &group.movers {
             let unit = self.own_unit(side, *id)?;
-            let cost = self.known_range(unit, &sight).cost(to);
+            let cost = self.known_range_by(unit, *table, &sight).cost(to);
             let cost = cost.ok_or(format!("{} cannot get there this turn", unit.name))?;
             going.push((*id, unit.pos(), cost));
             before.push((*id, unit.pos(), unit.movement));
             goals.push((*id, (unit.goto, unit.stalled, unit.moved)));
-            let way = self.known_path(unit, to, unit.movement, &sight).unwrap_or_default();
+            let way = self.known_path_by(unit, *table, to, unit.movement, &sight).unwrap_or_default();
             ways.push(std::iter::once(unit.pos()).chain(way.into_iter().map(|(h, _)| h)).collect());
+        }
+        for id in &group.carried {
+            let unit = self.own_unit(side, *id)?;
+            going.push((*id, unit.pos(), 0));
+            before.push((*id, unit.pos(), unit.movement));
+            goals.push((*id, (unit.goto, unit.stalled, unit.moved)));
+        }
+        // Nobody is left in the water with no ship, and nobody goes onto the
+        // water with none to carry them.
+        let ids: Vec<UnitId> = going.iter().map(|(id, _, _)| *id).collect();
+        for (_, from, _) in &before {
+            if !self.afloat(*from, &self.there_after(side, *from, &ids, &[])) {
+                return Err("that would leave units in the water with no ship to carry them".to_string());
+            }
+        }
+        if !hostile(&self.map, side, to) && !self.afloat(to, &self.there_after(side, to, &[], &ids)) {
+            return Err("there is no room aboard for them there".to_string());
         }
         // Another side's units it did not see on the way: the move ends
         // there, in a battle nobody looked for.
@@ -938,9 +994,9 @@ impl Game {
         });
         let to = match met {
             Some(at) => {
-                for (i, (id, _, cost)) in going.iter_mut().enumerate() {
+                for (i, (id, _, cost)) in going.iter_mut().enumerate().take(group.movers.len()) {
                     let unit = self.map.units().get(*id);
-                    let there = unit.and_then(|u| self.known_range(u, &sight).cost(at));
+                    let there = unit.and_then(|u| self.known_range_by(u, group.movers[i].1, &sight).cost(at));
                     *cost = there.unwrap_or(*cost);
                     if let Some(way) = ways.get_mut(i) {
                         if let Some(stop) = way.iter().position(|h| *h == at) {
@@ -970,7 +1026,8 @@ impl Game {
         for way in &ways {
             self.see_along(side, way);
         }
-        if hostile(&self.map, side, to) {
+        let battled = hostile(&self.map, side, to);
+        if battled {
             // An attack is a stack: as many as a hex holds, from wherever.
             if !self.fits(Hex::new(u16::MAX, u16::MAX), &ids) {
                 return Err(format!("at most {MAX_STACK} units and a commander attack together"));
@@ -983,6 +1040,9 @@ impl Game {
                 for (id, _, cost) in &going {
                     self.pay(*id, *cost);
                 }
+                // Who rode the ships that sank goes down with them.
+                let origins: Vec<Hex> = before.iter().map(|(_, from, _)| *from).collect();
+                events.extend(self.drown(side, &origins));
                 if let Some((side, at)) = self.emerging.take() {
                     events.extend(self.emerge(side, at));
                 }
@@ -1000,6 +1060,11 @@ impl Game {
                 arrived.push(id);
             }
             self.pay(id, cost);
+        }
+        // After a battle at sea, who has no ship left to ride goes down.
+        if battled {
+            let hexes: Vec<Hex> = before.iter().map(|(_, from, _)| *from).chain([to]).collect();
+            events.extend(self.drown(side, &hexes));
         }
         // Those that watched them go out of their sight remember where.
         if let Some(way) = ways.first() {
@@ -1101,12 +1166,25 @@ impl Game {
         crate::state::command_bonus(self.map.units().kind_of(unit).map_or(0, |k| k.commander), unit.level)
     }
 
-    /// The two sides of a battle of `attackers` against whoever is on `at`.
+    /// True if `unit` fights in a battle on `at`: at sea, the ships and the
+    /// flyers (who rides aboard does not; a commander still leads); on land,
+    /// all but the ships (in a port they do not).
+    fn fights_at(&self, unit: &Unit, at: Hex) -> bool {
+        match self.map.travel(unit.id()) {
+            Travel::Sea => self.map.city_at(at).is_none(),
+            Travel::Air => true,
+            Travel::Land => !(self.map.open_water(at) && self.rides(unit.id())),
+        }
+    }
+
+    /// The two sides of a battle of `attackers` against whoever is on `at`:
+    /// those of them that fight there (`fights_at`).
     fn fighters(&self, attackers: &[UnitId], at: Hex) -> (Vec<Fighter>, Vec<Fighter>) {
         let defenders: Vec<UnitId> = self.map.units_at(at).to_vec();
         let side = |ids: &[UnitId], defending: bool| -> Vec<Fighter> {
             ids.iter()
                 .filter_map(|id| self.map.units().get(*id))
+                .filter(|unit| self.fights_at(unit, at))
                 .map(|unit| Fighter {
                     unit: unit.id(),
                     strength: self.battle_strength(unit, at, defending, ids),
@@ -1134,7 +1212,8 @@ impl Game {
     /// chance; the dead go. Returns whether the attackers won, and the event.
     fn battle(&mut self, side: Side, attackers: &[UnitId], at: Hex) -> (bool, Event) {
         let (a, d) = self.fighters(attackers, at);
-        let defender = d.first().map_or(Side::Grey, |f| f.unit.side);
+        let defender = self.map.units_at(at).first().map_or(Side::Grey, |id| id.side);
+        let attacking: Vec<UnitId> = a.iter().map(|f| f.unit).collect();
         // How likely the attackers were to win (asked with a chance of its
         // own: the game's is not touched).
         let odds = self.battle_odds(attackers, at).unwrap_or(100);
@@ -1148,15 +1227,20 @@ impl Game {
             rules: self.setup.combat,
             terrain: self.map.tile(at).map_or(TileType::Grass, |t| t.kind),
             walls: self.map.city_at(at).map_or(0, |c| c.walls),
-            attackers: self.combatants(attackers, at, false),
+            attackers: self.combatants(&attacking, at, false),
             defenders: self.combatants(&defending, at, true),
             trace: battle.trace.clone(),
             won: battle.attackers_won,
         });
-        let lost = |s: Side| battle.dead.iter().filter(|u| u.side == s).count();
+        // Won: who was there and did not fight (aboard the ships that sank,
+        // the ships in a port that fell) is lost with them.
+        let mut fallen = battle.dead.clone();
+        if battle.attackers_won {
+            fallen.extend(self.map.units_at(at).iter().filter(|id| !battle.dead.contains(id)));
+        }
+        let lost = |s: Side| fallen.iter().filter(|u| u.side == s).count();
         let units = self.map.units();
-        let dead = battle
-            .dead
+        let dead = fallen
             .iter()
             .filter_map(|id| units.get(*id))
             .map(|u| Fallen { side: u.side(), name: u.title(), person: u.given_name.is_some() })
@@ -1172,14 +1256,14 @@ impl Game {
             won: battle.attackers_won,
             dead,
         };
-        for unit in &battle.dead {
+        for unit in &fallen {
             self.map.kill_unit(*unit);
         }
         // Those who lived through it won it: experience, a point more if the
         // odds were against them; and, if no commander led them and it was a
         // hard fight, maybe a captain from their ranks.
         let (winners, winner_odds): (Vec<UnitId>, u32) = if battle.attackers_won {
-            (attackers.to_vec(), odds)
+            (attacking, odds)
         } else {
             (d.iter().map(|f| f.unit).collect(), 100 - odds.min(100))
         };
@@ -1438,11 +1522,195 @@ impl Game {
     /// side's): with fog of war, the other sides' units stop it only where its
     /// side sees them; in the fog only cities do; with total fog, land the
     /// side has never seen is shut to it. The rules go by what is known: a
-    /// unit seen nowhere is met on the way (`move_units`).
+    /// unit seen nowhere is met on the way (`move_units`). A ship goes into
+    /// its side's cities only; a unit that goes on land steps aboard a ship of
+    /// its side with room for it (`Game::ground`).
     pub fn known_range(&self, unit: &Unit, sight: &Sight) -> MoveRange {
-        let Some(costs) = self.map.units().move_cost(unit.move_cost) else { return compute_range(&self.map, unit) };
-        let pass = |hex: Hex| self.known_passage(unit.side(), hex, sight);
-        reach_with(&self.map, unit.pos(), costs, unit.movement, &pass)
+        self.known_range_by(unit, unit.move_cost, sight)
+    }
+
+    /// [`Game::known_range`] at the prices of the table `table` (a commander
+    /// that flies with flyers goes at theirs: `Game::group`).
+    fn known_range_by(&self, unit: &Unit, table: MoveCostId, sight: &Sight) -> MoveRange {
+        let Some(costs) = self.map.units().move_cost(table) else { return compute_range(&self.map, unit) };
+        let (pass, steps) = self.ground(unit, costs, sight);
+        reach_with(&self.map, unit.pos(), &steps, unit.movement, &pass)
+    }
+
+    /// What each hex is to `unit` going at the prices `costs`, as its side
+    /// knows the map (`sight`), and what a step costs it: a ship goes into its
+    /// side's cities only (its ports); a unit that goes on land and cannot
+    /// swim steps aboard a ship of its side that has room for it, on open
+    /// water, for what a step into a city costs it, and its move ends there.
+    fn ground<'a>(
+        &'a self,
+        unit: &'a Unit,
+        costs: &'a MoveCost,
+        sight: &'a Sight,
+    ) -> (impl Fn(Hex) -> Passage + 'a, impl Fn(Hex, Hex) -> Option<u16> + 'a) {
+        let side = unit.side();
+        let travel = self.map.travel(unit.id());
+        let boards = travel == Travel::Land && costs.water == 0;
+        let leads = self.map.is_commander(unit.id());
+        let aboard = move |hex: Hex| {
+            boards && self.map.open_water(hex) && sight.knows(hex) && self.room_aboard(side, hex, leads)
+        };
+        let pass = move |hex: Hex| {
+            if aboard(hex) {
+                return Passage::Stop;
+            }
+            let port = self.map.city_at(hex).is_none_or(|c| c.side == side);
+            if travel == Travel::Sea && !port { Passage::Blocked } else { self.known_passage(side, hex, sight) }
+        };
+        let steps = move |from: Hex, to: Hex| {
+            if aboard(to) { Some(costs.city.max(1)) } else { step_cost(&self.map, costs, from, to) }
+        };
+        (pass, steps)
+    }
+
+    /// True if a ship of `side` on `hex` has room for one more who rides
+    /// (`Game::rides`); for a commander, if a ship is there and no commander.
+    fn room_aboard(&self, side: Side, hex: Hex, leads: bool) -> bool {
+        let own: Vec<UnitId> = self.map.units_at(hex).iter().copied().filter(|id| id.side == side).collect();
+        if !own.iter().any(|id| self.map.travel(*id) == Travel::Sea) {
+            return false;
+        }
+        if leads {
+            return !own.iter().any(|id| self.map.is_commander(*id));
+        }
+        let capacity: u32 = own.iter().map(|id| self.map.carries(*id)).sum();
+        let riders = own.iter().filter(|id| self.rides(**id) && !self.map.is_commander(**id)).count();
+        (riders as u32) < capacity
+    }
+
+    /// True if a unit is on open water only aboard a ship (a commander: or
+    /// with flyers): it goes on land, and cannot swim.
+    fn rides(&self, id: UnitId) -> bool {
+        let units = self.map.units();
+        let swims = units.get(id).and_then(|u| units.move_cost(u.move_cost)).is_some_and(|c| c.water > 0);
+        self.map.travel(id) == Travel::Land && !swims
+    }
+
+    /// True if `units`, a side's, can be on `hex` together: on open water,
+    /// those who ride fit in its ships, and a commander who rides has a ship
+    /// or flyers with it.
+    fn afloat(&self, hex: Hex, units: &[UnitId]) -> bool {
+        if !self.map.open_water(hex) {
+            return true;
+        }
+        let (mut capacity, mut keels, mut riders, mut leaders) = (0, 0, 0, 0);
+        for id in units {
+            match self.map.travel(*id) {
+                Travel::Sea => (keels, capacity) = (keels + 1, capacity + self.map.carries(*id)),
+                Travel::Air => keels += 1,
+                Travel::Land if self.rides(*id) && self.map.is_commander(*id) => leaders += 1,
+                Travel::Land if self.rides(*id) => riders += 1,
+                Travel::Land => {}
+            }
+        }
+        riders <= capacity && (leaders == 0 || keels > 0)
+    }
+
+    /// `side`'s units on `hex` once `leaving` have gone and `arriving` come.
+    fn there_after(&self, side: Side, hex: Hex, leaving: &[UnitId], arriving: &[UnitId]) -> Vec<UnitId> {
+        let here = self.map.units_at(hex).iter().copied().filter(|id| id.side == side && !leaving.contains(id));
+        here.chain(arriving.iter().copied().filter(|id| !self.map.units_at(hex).contains(id))).collect()
+    }
+
+    /// After a battle, `side`'s units on each of `hexes` that cannot stay
+    /// there go down with their ships: those who ride beyond what the ships
+    /// left carry (the last aboard first), and a commander who rides with no
+    /// ship or flyer left.
+    fn drown(&mut self, side: Side, hexes: &[Hex]) -> Vec<Event> {
+        let mut events = Vec::new();
+        let mut done: Vec<Hex> = Vec::new();
+        for hex in hexes.iter().copied() {
+            if done.contains(&hex) {
+                continue;
+            }
+            done.push(hex);
+            let own = self.there_after(side, hex, &[], &[]);
+            if self.afloat(hex, &own) {
+                continue;
+            }
+            let capacity: u32 = own.iter().map(|id| self.map.carries(*id)).sum();
+            let keels = own.iter().any(|id| self.map.travel(*id) != Travel::Land);
+            let riding: Vec<UnitId> = own.iter().copied().filter(|id| self.rides(*id)).collect();
+            let (leaders, riders): (Vec<UnitId>, Vec<UnitId>) =
+                riding.into_iter().partition(|id| self.map.is_commander(*id));
+            let mut gone: Vec<UnitId> = riders.into_iter().skip(capacity as usize).collect();
+            if !keels {
+                gone.extend(leaders);
+            }
+            let units = self.map.units();
+            let dead: Vec<Fallen> = gone
+                .iter()
+                .filter_map(|id| units.get(*id))
+                .map(|u| Fallen { side: u.side(), name: u.title(), person: u.given_name.is_some() })
+                .collect();
+            for id in gone {
+                self.map.kill_unit(id);
+            }
+            if !dead.is_empty() {
+                events.push(Event::Drowned { side, at: hex, dead });
+            }
+        }
+        events
+    }
+
+    /// How `ids`, a side's, go together: with ships among them, the ships
+    /// carry those who ride (on a hex where one of the ships is, as many as
+    /// the ships carry; a commander besides) and the flyers fly; flyers and a
+    /// commander with no one else: the commander flies with them, at the
+    /// prices of the first of them; else each goes its own way. Why not, if
+    /// they cannot go together.
+    fn group(&self, ids: &[UnitId]) -> Result<Group, String> {
+        let units = self.map.units();
+        let list: Vec<&Unit> = ids.iter().filter_map(|id| units.get(*id)).collect();
+        let by = |travel: Travel| list.iter().copied().filter(move |u| self.map.travel(u.id()) == travel);
+        let (ships, flyers, others): (Vec<&Unit>, Vec<&Unit>, Vec<&Unit>) =
+            (by(Travel::Sea).collect(), by(Travel::Air).collect(), by(Travel::Land).collect());
+        let own = |u: &&Unit| (u.id(), u.move_cost);
+        if !ships.is_empty() {
+            let riders = others.iter().filter(|u| !self.map.is_commander(u.id())).count() as u32;
+            let capacity: u32 = ships.iter().map(|u| self.map.carries(u.id())).sum();
+            if riders > capacity {
+                return Err(format!("the ships carry {capacity}, not {riders}"));
+            }
+            if let Some(u) = others.iter().find(|u| !ships.iter().any(|s| s.pos() == u.pos())) {
+                return Err(format!("{} is not aboard: a ship takes those on its own hex", u.title()));
+            }
+            let movers = ships.iter().chain(&flyers).map(own).collect();
+            return Ok(Group { movers, carried: others.iter().map(|u| u.id()).collect() });
+        }
+        let leaders_only = !others.is_empty() && others.iter().all(|u| self.map.is_commander(u.id()));
+        if let (Some(wing), true) = (flyers.first(), leaders_only) {
+            let movers = flyers.iter().map(own).chain(others.iter().map(|u| (u.id(), wing.move_cost))).collect();
+            return Ok(Group { movers, carried: Vec::new() });
+        }
+        Ok(Group { movers: list.iter().map(own).collect(), carried: Vec::new() })
+    }
+
+    /// Where `ids` can go together this turn, as their side knows the map:
+    /// where every one of them that moves can get (those carried go with
+    /// their ships). `None` if they cannot go together.
+    fn group_range(&self, ids: &[UnitId], sight: &Sight) -> Option<MoveRange> {
+        let group = self.group(ids).ok()?;
+        let mut range: Option<MoveRange> = None;
+        for (id, table) in &group.movers {
+            let one = self.known_range_by(self.map.units().get(*id)?, *table, sight);
+            range = Some(match range {
+                Some(all) => all.both(&one),
+                None => one,
+            });
+        }
+        range
+    }
+
+    /// Why the selected units cannot go anywhere together, if they cannot
+    /// (too many for the ships, one not aboard).
+    pub fn selection_problem(&self) -> Option<String> {
+        (!self.selected.is_empty()).then(|| self.group(&self.selected).err()).flatten()
     }
 
     /// What `hex` is to a unit of `side` that sees as `sight` (`passage`, as
@@ -1459,12 +1727,20 @@ impl Game {
         }
     }
 
-    /// `unit`'s way to `to`, as its side knows the map, at most `limit`
-    /// points: each hex after its own, with the cost so far.
-    fn known_path(&self, unit: &Unit, to: Hex, limit: u32, sight: &Sight) -> Option<Vec<(Hex, u32)>> {
-        let costs = self.map.units().move_cost(unit.move_cost)?;
-        let pass = |hex: Hex| self.known_passage(unit.side(), hex, sight);
-        path_with(&self.map, (unit.pos(), to), costs, limit, &pass)
+    /// `unit`'s way to `to` at the prices of `table`, as its side knows the
+    /// map, at most `limit` points: each hex after its own, with the cost so
+    /// far.
+    fn known_path_by(
+        &self,
+        unit: &Unit,
+        table: MoveCostId,
+        to: Hex,
+        limit: u32,
+        sight: &Sight,
+    ) -> Option<Vec<(Hex, u32)>> {
+        let costs = self.map.units().move_cost(table)?;
+        let (pass, steps) = self.ground(unit, costs, sight);
+        path_with(&self.map, (unit.pos(), to), &steps, limit, &pass)
     }
 
     /// The edge of the land `unit`'s side knows (`Sight::frontier`) that it
@@ -1493,7 +1769,20 @@ impl Game {
         room: &dyn Fn(Hex) -> bool,
         sight: &Sight,
     ) -> Option<(Hex, u32)> {
-        step_toward_by(&self.map, (unit, target), room, &|hex| self.known_passage(unit.side(), hex, sight))
+        self.known_step_toward_by(unit, unit.move_cost, (target, room), sight)
+    }
+
+    /// [`Game::known_step_toward`] at the prices of `table`.
+    fn known_step_toward_by(
+        &self,
+        unit: &Unit,
+        table: MoveCostId,
+        (target, room): (Hex, &dyn Fn(Hex) -> bool),
+        sight: &Sight,
+    ) -> Option<(Hex, u32)> {
+        let costs = self.map.units().move_cost(table)?;
+        let (pass, steps) = self.ground(unit, costs, sight);
+        step_toward_by(&self.map, (unit, target), room, (&pass, &steps))
     }
 
     /// What each side sees now goes into what it remembers: of the hexes it
@@ -1760,17 +2049,12 @@ impl Game {
     /// Select these units (they are there), with where all of them can go.
     fn select(&mut self, units: Vec<UnitId>) -> bool {
         let map = &self.map;
-        let mut range: Option<MoveRange> = None;
-        let sight = units.first().and_then(|id| map.units().get(*id)).map_or(Sight::all(), |u| self.sight(u.side()));
-        for id in &units {
-            let Some(unit) = map.units().get(*id) else { return false };
-            let one = self.known_range(unit, &sight);
-            range = Some(match range {
-                Some(all) => all.both(&one),
-                None => one,
-            });
+        if units.iter().any(|id| map.units().get(*id).is_none()) {
+            return false;
         }
-        self.range = range;
+        let sight = units.first().and_then(|id| map.units().get(*id)).map_or(Sight::all(), |u| self.sight(u.side()));
+        // (Units that cannot go together can go nowhere: `selection_problem`.)
+        self.range = self.group_range(&units, &sight);
         self.range_revision = self.map.revision();
         self.selected = units;
         true
@@ -1850,7 +2134,8 @@ impl Game {
             .collect();
         let able: Vec<UnitId> =
             own.iter().copied().filter(|id| units.get(*id).is_some_and(|u| u.movement > 0)).collect();
-        let stack = if able.is_empty() { own } else { able };
+        // (At sea, all of them: the ships carry who has no points left.)
+        let stack = if able.is_empty() || self.map.open_water(hex) { own } else { able };
         match stack.first().copied() {
             Some(first) if self.select(stack) => SelectOutcome::Selected(first),
             _ => SelectOutcome::Nothing,

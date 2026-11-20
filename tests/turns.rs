@@ -230,7 +230,9 @@ fn the_game_as_text_and_orders_from_text() {
     assert_eq!(lines[6..8], ["20", "20"]);
     assert!(lines.contains(&"end terrain") && lines.last() == Some(&"end"));
     assert!(
-        lines.contains(&"kind riders strength 4 moves 12 upkeep 0 price 5 commander 0 enter grass 2 city 1"),
+        lines.contains(
+            &"kind riders strength 4 moves 12 upkeep 0 price 5 commander 0 travels land carries 0 enter grass 2 city 1"
+        ),
         "{text}"
     );
     assert!(lines.contains(&"city 5 5 red walls 0 income 10 builds none progress 0 name Redhold"), "{text}");

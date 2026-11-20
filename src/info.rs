@@ -8,7 +8,7 @@
 use crate::game::{CityState, Game, Ghost, Sight, StackState, Task, describe_terrain};
 use crate::orders::{Event, Fallen, Record};
 use crate::state::scenario::side_name;
-use crate::state::{City, Hex, Map, MoveCost, Side, Unit, UnitProd};
+use crate::state::{City, Hex, Map, MoveCost, Side, Travel, Unit, UnitProd};
 
 /// The line about the hex under the cursor: the turn, the hex's terrain and
 /// road, its city's name, how many units stand there, and, if the selected
@@ -101,6 +101,10 @@ pub fn record_lines(map: &Map, record: &Record, side: Side) -> Vec<String> {
         // Units met on the way that nobody had seen (fog of war).
         Event::Surprise { side: whose, at } if *whose == side => {
             vec![format!("At {}, your units ran into others they had not seen there.", place(map, *at))]
+        }
+        Event::Drowned { side: whose, at, dead } if *whose == side => {
+            let dead: Vec<&Fallen> = dead.iter().collect();
+            vec![format!("At {}, {} went down with your ships.", place(map, *at), counted(&dead))]
         }
         // A standing order that stopped short, at the start of the turn.
         Event::Stalled { side: whose, units, at, to } if *whose == side => {
@@ -356,6 +360,11 @@ pub fn unit_line(map: &Map, unit: &Unit) -> String {
         if command > 0 {
             line.push_str(&format!(", commands (+{command})"));
         }
+        match kind.travel {
+            Travel::Sea => line.push_str(&format!(", carries {}", kind.carries)),
+            Travel::Air => line.push_str(", flies"),
+            Travel::Land => {}
+        }
     }
     line
 }
@@ -389,15 +398,18 @@ pub fn unit_details(map: &Map, unit: &Unit) -> Vec<String> {
         unit.upkeep
     );
     let mut leads = None;
+    let mut travel = None;
     if let Some(kind) = map.units().kind_of(unit) {
         numbers.push_str(&format!("   Price {}", kind.price));
         let command = crate::state::command_bonus(kind.commander, unit.level);
         if command > 0 {
             leads = Some(format!("Commands: +{command} to its stack; fights last"));
         }
+        travel = travel_line(kind);
     }
     lines.push(numbers);
     lines.extend(leads);
+    lines.extend(travel);
     lines.extend(growth_line(unit));
     match map.units().move_cost(unit.move_cost) {
         Some(cost) => lines.extend(enters(cost, 5)),
@@ -451,9 +463,21 @@ pub fn production_details(map: &Map, prod: &UnitProd, trains: u8) -> Vec<String>
         if kind.commander > 0 {
             lines.push(format!("Commands: +{} to its stack; fights last", kind.commander));
         }
+        lines.extend(travel_line(kind));
         lines.extend(enters(&kind.cost, 4));
     }
     lines
+}
+
+/// What a ship or a flyer does that others do not, in a line: "A ship:
+/// carries 6 and a commander", "Flies: a commander with it flies too".
+pub fn travel_line(kind: &crate::state::UnitKind) -> Option<String> {
+    match kind.travel {
+        Travel::Land => None,
+        Travel::Sea if kind.carries == 1 => Some("A ship: carries 1 and a commander".to_string()),
+        Travel::Sea => Some(format!("A ship: carries {} and a commander", kind.carries)),
+        Travel::Air => Some("Flies: a commander with it flies too".to_string()),
+    }
 }
 
 /// What a city is building and how far it has got: "Building Riders, 1 of 3

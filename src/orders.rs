@@ -90,6 +90,13 @@ pub enum Event {
         side: Side,
         at: Hex,
     },
+    /// Units of `side` that rode ships that sank (or were left with none
+    /// after a battle at sea) went down at `at`.
+    Drowned {
+        side: Side,
+        at: Hex,
+        dead: Vec<Fallen>,
+    },
     /// Units on a standing order (`GoTo`) could not go on: the next step was
     /// into another side's units, or there is no way. They wait for orders.
     Stalled {

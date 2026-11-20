@@ -1,6 +1,7 @@
 //! The units' pictures: a plain sign for each kind (a sword, a shield, a bow,
-//! a horseshoe, and a banner for a commander), light with a dark outline, on
-//! nothing. The game draws it on a
+//! a horseshoe, a banner for a commander; a longship and a cog for the ships,
+//! a feather and a pair of wings for the flyers), light with a dark outline,
+//! on nothing. The game draws it on a
 //! disc of the unit's side's color, so the sign itself has no color of a side.
 //!
 //! A sign is a shape given by its distance: below zero inside. Points are in
@@ -20,6 +21,10 @@ pub enum Icon {
     Bow,
     Horseshoe,
     Banner,
+    Longship,
+    Cog,
+    Feather,
+    Wings,
 }
 
 /// The sign's body and its outline, which is also the color of the nothing
@@ -30,7 +35,17 @@ pub const OUTLINE: Rgb = [0.13, 0.11, 0.10];
 const LINE: f32 = 0.035;
 
 impl Icon {
-    pub const ALL: [Icon; 5] = [Icon::Sword, Icon::Shield, Icon::Bow, Icon::Horseshoe, Icon::Banner];
+    pub const ALL: [Icon; 9] = [
+        Icon::Sword,
+        Icon::Shield,
+        Icon::Bow,
+        Icon::Horseshoe,
+        Icon::Banner,
+        Icon::Longship,
+        Icon::Cog,
+        Icon::Feather,
+        Icon::Wings,
+    ];
 
     /// The file's name without `.png`, which is also what the example map
     /// calls the unit that carries the sign.
@@ -41,6 +56,10 @@ impl Icon {
             Icon::Bow => "archers",
             Icon::Horseshoe => "riders",
             Icon::Banner => "captain",
+            Icon::Longship => "warship",
+            Icon::Cog => "transport",
+            Icon::Feather => "hawkriders",
+            Icon::Wings => "wyverns",
         }
     }
 
@@ -52,6 +71,10 @@ impl Icon {
             Icon::Bow => bow(x, y),
             Icon::Horseshoe => horseshoe(x, y),
             Icon::Banner => banner(x, y),
+            Icon::Longship => longship(x, y),
+            Icon::Cog => cog(x, y),
+            Icon::Feather => feather(x, y),
+            Icon::Wings => wings(x, y),
         }
     }
 
@@ -67,6 +90,15 @@ impl Icon {
             }),
             // The banner's round device.
             Icon::Banner => length(x - 0.06, y + 0.15) < 0.055,
+            // The shields along the longship's side.
+            Icon::Longship => (-1..=1).any(|i| length(x - 0.17 * i as f32, y - 0.15) < 0.04),
+            // A seam across the cog's sail.
+            Icon::Cog => (y + 0.13).abs() < 0.02 && cog(x, y) < -0.04,
+            // The feather's shaft.
+            Icon::Feather => {
+                let (u, v) = rotate(x, y, -PI / 4.0);
+                u.abs() < 0.016 && v.abs() < 0.3
+            }
             _ => false,
         }
     }
@@ -157,6 +189,57 @@ fn banner(x: f32, y: f32) -> f32 {
     staff.min(knob).min(cloth.max(notch))
 }
 
+/// The signed distance to a triangle (its corners clockwise on the screen,
+/// where y grows downward), near enough for a sign: the farthest of its
+/// sides' lines.
+fn triangle(x: f32, y: f32, corners: [(f32, f32); 3]) -> f32 {
+    (0..3)
+        .map(|i| {
+            let ((ax, ay), (bx, by)) = (corners[i], corners[(i + 1) % 3]);
+            let (dx, dy) = (bx - ax, by - ay);
+            // The outward normal of a clockwise side (y down): (dy, -dx).
+            ((x - ax) * dy - (y - ay) * dx) / length(dx, dy)
+        })
+        .fold(f32::MIN, f32::max)
+}
+
+/// A longship: a long low hull, shields along its side, a mast with a
+/// three-cornered sail.
+fn longship(x: f32, y: f32) -> f32 {
+    // The hull: from 0.08 to 0.26 down, narrowing toward the keel.
+    let hull = ((y - 0.17).abs() - 0.09).max(x.abs() - (0.40 - (y - 0.08) * 0.8));
+    let mast = rectangle(x + 0.04, y + 0.12, 0.025, 0.22);
+    let sail = triangle(x, y, [(0.0, -0.32), (0.30, 0.02), (0.0, 0.02)]);
+    hull.min(mast).min(sail)
+}
+
+/// A cog: a deep round hull, a mast, a square sail.
+fn cog(x: f32, y: f32) -> f32 {
+    let hull = ((length(x / 0.38, (y - 0.04) / 0.28) - 1.0) * 0.28).max(0.04 - y);
+    let mast = rectangle(x, y + 0.16, 0.025, 0.22);
+    let sail = rectangle(x, y + 0.16, 0.22, 0.15);
+    hull.min(mast).min(sail)
+}
+
+/// A feather, leaning to the right, its quill at the bottom.
+fn feather(x: f32, y: f32) -> f32 {
+    let (u, v) = rotate(x, y, -PI / 4.0);
+    // A lens: where two circles cross.
+    let vane = (length(u - 0.38, v + 0.04) - 0.5).max(length(u + 0.38, v + 0.04) - 0.5);
+    let quill = segment(u, v, 0.0, 0.2, 0.0, 0.42) - 0.022;
+    vane.min(quill)
+}
+
+/// A pair of wings, spread up and out from a small body.
+fn wings(x: f32, y: f32) -> f32 {
+    let wing = |x: f32| {
+        let (u, v) = rotate(x - 0.2, y + 0.06, -0.85);
+        (length(u - 0.28, v) - 0.4).max(length(u + 0.28, v) - 0.4)
+    };
+    let body = length(x / 0.7, y - 0.08) - 0.1;
+    wing(x).min(wing(-x)).min(body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,9 +294,23 @@ mod tests {
         assert!(Icon::Banner.distance(0.1, 0.2) > LINE, "under the cloth");
         assert!(Icon::Banner.distance(0.27, -0.15) > 0.0 && Icon::Banner.distance(0.27, -0.28) < 0.0, "the tails");
         assert_eq!(Icon::Banner.ink(0.06, -0.15), Some((OUTLINE, 1.0)));
-        // Five signs, five names.
+        // The longship: its hull, its sail right of the mast, shields on its side.
+        assert!(Icon::Longship.distance(-0.3, 0.12) < 0.0 && Icon::Longship.distance(0.1, -0.1) < 0.0);
+        assert!(Icon::Longship.distance(-0.2, -0.2) > LINE, "nothing left of the mast, up high");
+        assert_eq!(Icon::Longship.ink(0.0, 0.15), Some((OUTLINE, 1.0)));
+        // The cog: a round hull under a square sail.
+        assert!(Icon::Cog.distance(0.0, 0.25) < 0.0 && Icon::Cog.distance(0.18, -0.25) < 0.0);
+        assert!(Icon::Cog.distance(0.35, 0.28) > 0.0, "the hull is round below");
+        // The feather leans to the right; the wings are a pair, apart above.
+        assert!(Icon::Feather.distance(0.12, -0.12) < 0.0 && Icon::Feather.distance(-0.12, -0.12) > LINE);
+        assert!(Icon::Wings.distance(0.3, -0.2) < 0.0 && Icon::Wings.distance(-0.3, -0.2) < 0.0);
+        assert!(Icon::Wings.distance(0.0, -0.3) > LINE);
+        // Nine signs, nine names.
         let mut names: Vec<&str> = Icon::ALL.iter().map(|i| i.name()).collect();
         names.dedup();
-        assert_eq!(names, ["militia", "wardens", "archers", "riders", "captain"]);
+        assert_eq!(
+            names,
+            ["militia", "wardens", "archers", "riders", "captain", "warship", "transport", "hawkriders", "wyverns"]
+        );
     }
 }

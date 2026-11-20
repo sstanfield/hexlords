@@ -52,6 +52,34 @@ pub struct MoveCostId(pub u32);
 /// The picture of a unit whose kind names none, relative to an asset directory.
 pub const DEFAULT_UNIT_IMAGE: &str = "units/default_unit.png";
 
+/// How a kind of unit goes about the map: on land (by its prices for each
+/// terrain), by sea (a ship: over water, into its side's cities, carrying
+/// land units), or through the air (a flyer: wherever its prices let it, and
+/// a commander with it).
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
+pub enum Travel {
+    #[default]
+    Land,
+    Sea,
+    Air,
+}
+
+impl Travel {
+    /// Its word in `units.txt` (`travels`).
+    pub fn word(self) -> &'static str {
+        match self {
+            Travel::Land => "land",
+            Travel::Sea => "sea",
+            Travel::Air => "air",
+        }
+    }
+
+    /// The travel a word names.
+    pub fn named(word: &str) -> Option<Travel> {
+        [Travel::Land, Travel::Sea, Travel::Air].into_iter().find(|t| t.word() == word)
+    }
+}
+
 /// Names a kind of unit in [`Units`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct UnitKindId(pub u32);
@@ -77,6 +105,11 @@ pub struct UnitKind {
     /// A commander: how much stronger it makes the others of its stack in a
     /// battle (0: it is not one). A stack has one, in a place of its own.
     pub commander: u32,
+    /// How it goes: on land, by sea, through the air.
+    pub travel: Travel,
+    /// A ship: how many land units it carries (its stack's commander goes
+    /// besides). 0 for the others.
+    pub carries: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -527,6 +560,8 @@ mod tests {
             price: 9,
             cost: cav_costs(),
             commander: 0,
+            travel: Travel::Land,
+            carries: 0,
         };
         let kind = units.add_kind(lancers.clone()).unwrap();
         assert_eq!(units.add_kind(lancers.clone()), None, "an id is used once");

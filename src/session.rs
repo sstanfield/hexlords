@@ -938,6 +938,9 @@ impl Session {
                 info::unit_line(map, unit),
                 info::place(map, unit.goto.unwrap_or_default())
             ),
+            Some(_) if game.selection_problem().is_some() => {
+                format!("They cannot go together: {}.", game.selection_problem().unwrap_or_default())
+            }
             Some(_) if game.selection().len() > 1 => format!(
                 "{} units selected: they move together (click one to leave it behind, or to take it along).",
                 game.selection().len()

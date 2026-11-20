@@ -12,7 +12,7 @@ use std::path::Path;
 use super::cities::{Cities, City, CityId, UnitProd};
 use super::hex::{Hex, HexSide};
 use super::terrain::{MoveCost, TileType};
-use super::units::{MoveCostId, Side, Unit, UnitId, UnitKind, UnitKindId, Units};
+use super::units::{MoveCostId, Side, Travel, Unit, UnitId, UnitKind, UnitKindId, Units};
 
 /// The most units that can stand on one tile.
 pub const MAX_STACK: usize = 8;
@@ -371,6 +371,27 @@ impl Map {
     /// True if a unit is a commander (its kind leads a stack).
     pub fn is_commander(&self, id: UnitId) -> bool {
         self.units.get(id).and_then(|u| self.units.kind_of(u)).is_some_and(|k| k.commander > 0)
+    }
+
+    /// How a unit goes about the map (its kind's; a unit of no kind goes on
+    /// land).
+    pub fn travel(&self, id: UnitId) -> Travel {
+        self.units.get(id).and_then(|u| self.units.kind_of(u)).map_or(Travel::Land, |k| k.travel)
+    }
+
+    /// How many land units a ship carries (0: any other unit).
+    pub fn carries(&self, id: UnitId) -> u32 {
+        self.units
+            .get(id)
+            .and_then(|u| self.units.kind_of(u))
+            .filter(|k| k.travel == Travel::Sea)
+            .map_or(0, |k| k.carries)
+    }
+
+    /// True if `hex` is open water: water with no bridge, where a unit that
+    /// goes on land stands only aboard a ship.
+    pub fn open_water(&self, hex: Hex) -> bool {
+        self.tile(hex).is_some_and(|t| t.kind == TileType::Water && !t.road)
     }
 
     /// True if `id` has room on `hex`: a hex holds [`MAX_STACK`] units that

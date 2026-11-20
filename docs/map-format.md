@@ -128,6 +128,8 @@ unit riders
 | `price` | What it costs a city to build one, unless the city's `produce` line says otherwise | 0 |
 | `enter` | What a step costs it: `<what> <points>`, with commas between; may be given on several lines | an error: at least one |
 | `commander` | The kind is a commander: every other unit of its stack fights this much stronger, and it fights last. A hex holds one commander besides its 8 units. At least 1 | not a commander |
+| `travels` | How it goes: `land`, `sea` (a ship) or `air` (a flyer); below | `land` |
+| `carries` | A ship: how many land units it takes aboard, 0 to 8 (a commander goes besides). Only with `travels sea` | 0 |
 
 What `enter` can name: `grass`, `forest`, `swamp`, `desert`, `hill`,
 `mountain`, `water`, `city`, and `road` and `bridge`, the price of a step along
@@ -136,6 +138,30 @@ unit without `water` does not swim, one without `bridge` cannot cross a
 bridge, one without `road` walks on a road as on the ground under it. Temples
 and ruins cost what grass costs. A road is never dearer than the ground under
 it.
+
+**Ships and flyers.** A ship (`travels sea`) goes over water and into its own
+side's cities, its ports, and nowhere else: its `enter` names `water`, and
+may name `city` and `bridge`, nothing on land; a ship is no commander. It
+carries land units (`carries`), who step aboard from the shore and land on
+their own points; a ship takes a place in its stack like any unit, so a
+full stack at sea is the ships and those aboard together (`docs/gameplay.md`,
+"Ships and flyers"). A city that builds a ship should be by the water: the
+reader warns of one that is not. A flyer (`travels air`) goes wherever its
+`enter` lets it, as anyone does; give it `water` and `mountain` to fly over
+them. Marked so, a commander that goes with flyers and no one else flies
+with them, at the flyers' prices.
+
+```
+unit transport
+  name     Transport
+  image    units/transport.png
+  strength 1
+  moves    12
+  price    10
+  travels  sea
+  carries  6
+  enter    water 2, city 2
+```
 
 The game has no kinds of unit of its own: a map brings them. (A map with none,
 or a single terrain file, has no units, and nobody to play it.)

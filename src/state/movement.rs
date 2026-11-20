@@ -65,7 +65,8 @@ pub fn compute_range(map: &Map, unit: &Unit) -> MoveRange {
     match map.units().move_cost(unit.move_cost) {
         Some(costs) => {
             let side = unit.side();
-            reach_with(map, unit.pos(), costs, unit.movement, &|hex| passage(map, side, hex))
+            let steps = |from: Hex, to: Hex| step_cost(map, costs, from, to);
+            reach_with(map, unit.pos(), &steps, unit.movement, &|hex| passage(map, side, hex))
         }
         None => MoveRange {
             origin: unit.pos(),
@@ -139,18 +140,25 @@ pub fn step_toward(map: &Map, unit: &Unit, target: Hex) -> Option<(Hex, u32)> {
 /// that goes along with `unit`, say). Another side's units always have
 /// room: going in is an attack.
 pub fn step_toward_with(map: &Map, unit: &Unit, target: Hex, room: &dyn Fn(Hex) -> bool) -> Option<(Hex, u32)> {
-    step_toward_by(map, (unit, target), room, &|hex| passage(map, unit.side(), hex))
+    let costs = map.units().move_cost(unit.move_cost)?;
+    let steps = |from: Hex, to: Hex| step_cost(map, costs, from, to);
+    step_toward_by(map, (unit, target), room, (&|hex| passage(map, unit.side(), hex), &steps))
 }
 
-/// [`step_toward_with`], where `open` says what each hex is to the unit (as
-/// its side knows the map, say: `Game::known_step_toward`).
+/// What a step from a hex to its neighbour costs a unit, or `None` if it
+/// cannot be made: [`step_cost`] on the terrain, or as the rules see it
+/// (onto a ship, over land never seen: `Game::known_range`).
+pub type Steps<'a> = &'a dyn Fn(Hex, Hex) -> Option<u16>;
+
+/// [`step_toward_with`], where `open` says what each hex is to the unit and
+/// `steps` what each step costs it (as its side knows the map, say:
+/// `Game::known_step_toward`).
 pub fn step_toward_by(
     map: &Map,
     (unit, target): (&Unit, Hex),
     room: &dyn Fn(Hex) -> bool,
-    open: &dyn Fn(Hex) -> Passage,
+    (open, steps): (&dyn Fn(Hex) -> Passage, Steps),
 ) -> Option<(Hex, u32)> {
-    let costs = map.units().move_cost(unit.move_cost)?;
     let side = unit.side();
     let cols = usize::from(map.cols());
     let index = |h: Hex| usize::from(h.row) * cols + usize::from(h.col);
@@ -175,7 +183,7 @@ pub fn step_toward_by(
             if open(next) == Passage::Blocked {
                 continue;
             }
-            let Some(step) = step_cost(map, costs, hex, next) else { continue };
+            let Some(step) = steps(hex, next) else { continue };
             let total = spent + u32::from(step);
             if best[index(next)].is_none_or(|old| total < old) {
                 best[index(next)] = Some(total);
@@ -225,7 +233,7 @@ pub fn step_cost(map: &Map, costs: &MoveCost, from: Hex, to: Hex) -> Option<u16>
 /// The cheapest cost from `origin` to every hex that costs at most `limit` to
 /// reach, at the prices in `costs` (see [`step_cost`]), whoever is on the way.
 pub fn reach(map: &Map, origin: Hex, costs: &MoveCost, limit: u32) -> MoveRange {
-    reach_with(map, origin, costs, limit, &|_| Passage::Open)
+    reach_with(map, origin, &|from, to| step_cost(map, costs, from, to), limit, &|_| Passage::Open)
 }
 
 /// The cheapest way from `origin` to `to` for a unit that pays `costs`, with
@@ -235,7 +243,7 @@ pub fn reach(map: &Map, origin: Hex, costs: &MoveCost, limit: u32) -> MoveRange 
 pub fn path_with(
     map: &Map,
     (origin, to): (Hex, Hex),
-    costs: &MoveCost,
+    steps: Steps,
     limit: u32,
     passage: &dyn Fn(Hex) -> Passage,
 ) -> Option<Vec<(Hex, u32)>> {
@@ -260,7 +268,7 @@ pub fn path_with(
             if passage(next) == Passage::Blocked {
                 continue;
             }
-            let Some(step) = step_cost(map, costs, hex, next) else { continue };
+            let Some(step) = steps(hex, next) else { continue };
             let total = spent + u32::from(step);
             if total <= limit && best[index(next)].is_none_or(|old| total < old) {
                 best[index(next)] = Some(total);
@@ -282,7 +290,7 @@ pub fn path_with(
 }
 
 /// The same, with what each hex is to the one who moves (see [`passage`]).
-pub fn reach_with(map: &Map, origin: Hex, costs: &MoveCost, limit: u32, passage: &dyn Fn(Hex) -> Passage) -> MoveRange {
+pub fn reach_with(map: &Map, origin: Hex, steps: Steps, limit: u32, passage: &dyn Fn(Hex) -> Passage) -> MoveRange {
     let cols = usize::from(map.cols());
     let index = |h: Hex| usize::from(h.row) * cols + usize::from(h.col);
     let mut best: Vec<Option<u32>> = vec![None; usize::from(map.rows()) * cols];
@@ -304,7 +312,7 @@ pub fn reach_with(map: &Map, origin: Hex, costs: &MoveCost, limit: u32, passage:
             if passage(next) == Passage::Blocked {
                 continue;
             }
-            let Some(step) = step_cost(map, costs, hex, next) else { continue };
+            let Some(step) = steps(hex, next) else { continue };
             let total = spent + u32::from(step);
             if total <= limit && best[index(next)].is_none_or(|old| total < old) {
                 best[index(next)] = Some(total);

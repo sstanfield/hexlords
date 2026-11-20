@@ -273,6 +273,28 @@ and the rules use integers, not floats.
 10. **Saved games.** The state and the orders, in text, like the maps.
 11. **Movement points.** A unit that does not use all its points keeps up
     to 2 of them for the next turn (decided: as now, from the C++).
+12. **Ships and flyers** (built; the owner's word, 2026-11-20). A kind of
+    unit travels by land, by sea or through the air (`travels` in
+    `units.txt`). A **ship** goes over water and into its own side's cities
+    (its ports), and carries land units: as many as its kind says, no more
+    than a stack, and a commander besides, who takes no place aboard. A ship
+    takes a place in its stack like any unit. A land unit steps aboard a ship
+    of its side that has room, from the shore or a port, for what a step into
+    a city costs it, and its move ends there; the ship takes those aboard
+    where it goes and they pay nothing; they land on their own points
+    (`Game::group` says who goes with whom). A stack at sea is selected
+    whole. No move leaves anyone in the water without a ship (or a commander
+    without a ship or flyers), and none takes more aboard than the ships
+    carry. At sea the ships and the flyers fight; who rides does not, and
+    goes down with the ships that sink (beyond what the ships left carry,
+    the last aboard first: `Event::Drowned`); a commander still leads. In a
+    port ships do not fight, and are lost if it falls. A **flyer** goes
+    wherever its prices let it (the continent's cross water and mountains
+    at a flat price); a commander that goes with flyers and no one else
+    flies with them, at the first flyer's prices, and may stand over water
+    with them. The computer builds no ships yet (carrying an army by sea is
+    planning of its own, to come), and values a flyer's moves above a
+    walker's.
 
 ## Turns
 

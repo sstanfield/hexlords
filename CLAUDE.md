@@ -13,7 +13,8 @@ drawn by a program (`tools/assetgen`, `docs/tiles.md`). Units move turn by
 turn, one side after the other (a new game screen sets the game up: who
 plays each side, a person or the computer, hotseat for several people), and
 cities build what their holder sets; an empty city is taken by moving in;
-stacks move together, and moving into another side's units is a battle
+stacks move together (ships carry land units, flyers fly, a captain with
+flyers flies: `Game::group`), and moving into another side's units is a battle
 (`state::combat`: how much chance and which system are set with the game;
 commanders lead stacks); each side has a treasury, its cities' taxes come
 in and its units' upkeep goes out each turn, and what a city builds is paid

@@ -84,7 +84,12 @@ pub fn check_path(path: &Path, assets: Option<&Path>) -> Result<Report, String> 
     let whole = scenario::load(path).map_err(|e| e.to_string())?;
     let map = &whole.map;
     for kind in map.units().kinds() {
-        let leads = if kind.commander > 0 { format!(", commander {}", kind.commander) } else { String::new() };
+        let mut leads = if kind.commander > 0 { format!(", commander {}", kind.commander) } else { String::new() };
+        match kind.travel {
+            hexgame::state::Travel::Sea => leads.push_str(&format!(", travels sea, carries {}", kind.carries)),
+            hexgame::state::Travel::Air => leads.push_str(", travels air"),
+            hexgame::state::Travel::Land => {}
+        }
         report.units.push(format!(
             "{} \"{}\": strength {}, moves {}, upkeep {}, price {}{leads}, {}",
             kind.id, kind.name, kind.strength, kind.moves, kind.upkeep, kind.price, kind.image

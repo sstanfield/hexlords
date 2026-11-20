@@ -30,7 +30,7 @@ use crate::agents::Agent;
 use crate::game::{Game, Sight};
 use crate::orders::Order;
 use crate::state::combat::System;
-use crate::state::{CityId, Hex, MAX_STACK, Side, TileType, Unit, UnitId, UnitProd, compute_range, hostile};
+use crate::state::{CityId, Hex, MAX_STACK, Side, TileType, Travel, Unit, UnitId, UnitProd, compute_range, hostile};
 
 /// What makes one style of play another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -197,13 +197,21 @@ pub fn daring(style: &Style, game: &Game) -> (u32, u32, u32) {
 }
 
 /// What a city's work is worth to `style`: the unit's worth in battle, a
-/// little more for its speed, for the turns and the gold it takes.
+/// little more for its speed (and for a flyer, which no ground slows or
+/// stops), for the turns and the gold it takes.
 fn production_score(prod: &UnitProd, game: &Game, style: &Style) -> f64 {
-    let speed = 1.0 + f64::from(style.speed) / 100.0 * f64::from(prod.movement) / 10.0;
+    let units = game.map.units();
+    let flies = units.kind_named(&prod.basename).and_then(|k| units.kind(k)).is_some_and(|k| k.travel == Travel::Air);
+    let moves = f64::from(prod.movement) * if flies { FLIGHT } else { 1.0 };
+    let speed = 1.0 + f64::from(style.speed) / 100.0 * moves / 10.0;
     let price = f64::from(prod.cost) + 8.0 * f64::from(prod.upkeep);
     let turns = f64::from(prod.time.max(1));
     worth(prod.strength, game) * speed / (turns * 6.0 + price * f64::from(style.thrift) / 100.0)
 }
+
+/// How much farther than its movement points say a flyer goes, to the
+/// planner: rough country, rivers and the sea do not slow it.
+const FLIGHT: f64 = 2.5;
 
 /// Of these units, as many as attack together (a hex's worth: the strongest
 /// [`MAX_STACK`] and a commander), the strongest first.
@@ -634,6 +642,10 @@ impl Planner {
         let units = map.units();
         let leads =
             |p: &UnitProd| units.kind_named(&p.basename).and_then(|k| units.kind(k)).is_some_and(|k| k.commander > 0);
+        // (It does not carry armies by sea yet: it builds no ships.)
+        let ship = |p: &UnitProd| {
+            units.kind_named(&p.basename).and_then(|k| units.kind(k)).is_some_and(|k| k.travel == Travel::Sea)
+        };
         // A commander, where it can be built and kept, if it has none (two,
         // for the careful, once it holds four cities).
         let leaders = units.of_side(side).filter(|u| map.is_commander(u.id())).count();
@@ -660,7 +672,7 @@ impl Planner {
             city.units
                 .iter()
                 .enumerate()
-                .filter(|(_, p)| !leads(p) && affordable(p))
+                .filter(|(_, p)| !leads(p) && !ship(p) && affordable(p))
                 .max_by(|(_, a), (_, b)| {
                     production_score(a, game, &self.style).total_cmp(&production_score(b, game, &self.style))
                 })

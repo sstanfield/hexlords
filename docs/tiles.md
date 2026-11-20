@@ -123,10 +123,13 @@ to it.
 ## Units
 
 A unit is drawn as a disc in its side's color, half a hex wide, with the
-picture of its kind on it (`image` in the map's `units.txt`). The game's four
+picture of its kind on it (`image` in the map's `units.txt`). The game's
 signs are a sword (`militia.png`), a shield (`wardens.png`), a bow
-(`archers.png`) and a horseshoe (`riders.png`): light, with a dark outline, on
-nothing, and without a color of a side, since the disc has that.
+(`archers.png`), a horseshoe (`riders.png`), a banner (`captain.png`), a
+longship with shields along its side (`warship.png`), a round-bellied cog
+(`transport.png`), a feather (`hawkriders.png`) and a pair of wings
+(`wyverns.png`): light, with a dark outline, on nothing, and without a color
+of a side, since the disc has that.
 
 A unit's picture is the hex's square like a tile, **with the sign inside the
 disc**: within 0.45 of the middle, where the hex is 1 from its middle to its

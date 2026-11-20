@@ -779,7 +779,15 @@ fn the_format_pages_units_and_cities_are_read_as_it_says() {
         match block.lines().map(str::trim).find(|l| !l.is_empty() && !l.starts_with('#')) {
             Some(first) if first.starts_with("unit ") => {
                 let kinds = parse_units(block).unwrap_or_else(|e| panic!("{e}"));
-                assert_eq!((kinds[0].id.as_str(), kinds[0].moves, kinds[0].cost.bridge), ("riders", 18, 1));
+                match kinds[0].id.as_str() {
+                    "transport" => {
+                        assert_eq!((kinds[0].travel, kinds[0].carries), (hexgame::state::Travel::Sea, 6));
+                    }
+                    _ => {
+                        let riders = (kinds[0].id.as_str(), kinds[0].moves, kinds[0].cost.bridge);
+                        assert_eq!(riders, ("riders", 18, 1));
+                    }
+                }
                 units += 1;
             }
             Some(first) if first.starts_with("city ") => {
@@ -793,15 +801,17 @@ fn the_format_pages_units_and_cities_are_read_as_it_says() {
             _ => {}
         }
     }
-    assert_eq!((units, cities), (1, 1), "the page has an example of each");
+    assert_eq!((units, cities), (2, 1), "the page has an example of each, and of a ship");
 }
 
 #[test]
 fn the_example_continent_is_a_whole_map() {
     let report = mapeditor::check::check_path(&assets().join("maps/continent"), Some(&assets())).unwrap();
     assert_eq!((report.rows, report.cols), (46, 72));
-    assert_eq!((report.units.len(), report.cities.len()), (5, 9));
+    assert_eq!((report.units.len(), report.cities.len()), (9, 9));
     assert!(report.units.iter().any(|u| u.contains("commander 1")), "a captain: {:?}", report.units);
+    assert!(report.units.iter().any(|u| u.contains("travels sea, carries 6")), "a transport: {:?}", report.units);
+    assert!(report.units.iter().any(|u| u.contains("travels air")), "a flyer: {:?}", report.units);
     assert!(report.roads > 50 && report.bridges >= 1 && report.passes >= 1, "{report}");
     // Every city is on the road: a road or another city beside it.
     let (game, _) = hexgame::game::Game::load(&assets().join("maps/continent")).unwrap();

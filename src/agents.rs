@@ -229,13 +229,19 @@ impl Agent for Simple {
             }
         }
         // An idle city builds what gives the most strength for its turns, of
-        // what the side can keep.
+        // what the side can keep (no ships: it does not carry armies by sea).
+        let ship = |p: &crate::state::UnitProd| {
+            units
+                .kind_named(&p.basename)
+                .and_then(|k| units.kind(k))
+                .is_some_and(|k| k.travel == crate::state::Travel::Sea)
+        };
         let choice = own().filter(|c| c.building.is_none()).find_map(|city| {
             let best = city
                 .units
                 .iter()
                 .enumerate()
-                .filter(|(_, p)| i64::from(p.upkeep) <= spare)
+                .filter(|(_, p)| i64::from(p.upkeep) <= spare && !ship(p))
                 .max_by_key(|(_, p)| (p.strength * 100 / p.time.max(1), std::cmp::Reverse(p.cost)));
             best.map(|(i, _)| (city.id, i))
         });
@@ -436,13 +442,15 @@ pub fn describe(game: &Game, side: Side) -> String {
         let prices: Vec<String> =
             kind.cost.prices().iter().filter(|(_, p)| *p > 0).map(|(w, p)| format!("{w} {p}")).collect();
         out.push_str(&format!(
-            "kind {} strength {} moves {} upkeep {} price {} commander {} enter {}\n",
+            "kind {} strength {} moves {} upkeep {} price {} commander {} travels {} carries {} enter {}\n",
             kind.id,
             kind.strength,
             kind.moves,
             kind.upkeep,
             kind.price,
             kind.commander,
+            kind.travel.word(),
+            kind.carries,
             prices.join(" ")
         ));
     }

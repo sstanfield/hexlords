@@ -18,7 +18,8 @@ direction. So far:
   who stands in them, and pictures of its own if it wants them;
 - the game plays such a map (`--map`, or the new game screen): sides take
   turns, people (hotseat) and the computer; stacks move along the roads and
-  fight, led by captains who rise in level; cities are taken, pay taxes and
+  fight, led by captains who rise in level; ships carry armies over the
+  water, and flyers go over anything; cities are taken, pay taxes and
   build what their holder sets and can pay for; stacks can be sent far over
   turns, cities can send what they build, and a list says what is left to
   do; the other sides show only as banners, and fog of war is a choice (in

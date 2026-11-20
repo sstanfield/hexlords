@@ -12,7 +12,7 @@ use crate::help::HelpSection;
 use crate::info;
 use crate::setup::{Fog, TurnOrder};
 use crate::state::combat::{HITS, MAX_CHANCE, System, WALL_QUARTERS};
-use crate::state::{Blessing, LEVEL_EXPERIENCE, MAX_STACK};
+use crate::state::{Blessing, LEVEL_EXPERIENCE, MAX_STACK, Travel};
 
 /// How long a line of a topic's words is, at most, in characters.
 const WIDTH: usize = 64;
@@ -216,6 +216,35 @@ fn movement(game: &Game) -> Vec<HelpSection> {
             ),
         ],
     )];
+    let travels = |t: Travel| game.map.units().kinds().iter().any(|k| k.travel == t);
+    if travels(Travel::Sea) || travels(Travel::Air) {
+        out.push(section(
+            "Ships and flyers",
+            &[
+                (
+                    "Ships",
+                    "A ship goes over water and into its own side's cities. A land unit steps aboard a ship of \
+                     its side that has room (it carries as many as its kind says, and a commander besides): \
+                     that ends its move. The ship takes them where it goes, for nothing, and they land on \
+                     their own points. Select the ship and those aboard together to sail: nobody is left in \
+                     the water without a ship."
+                        .to_string(),
+                ),
+                (
+                    "At sea",
+                    "Ships and flyers fight there; who rides does not, and goes down with the ships that \
+                     sink. In a port, ships do not fight: they are lost if it falls."
+                        .to_string(),
+                ),
+                (
+                    "Flyers",
+                    "A flyer goes over whatever its prices let it, water and mountains too. A commander that \
+                     goes with flyers and no one else flies with them."
+                        .to_string(),
+                ),
+            ],
+        ));
+    }
     if !kinds.is_empty() {
         out.push(section("What each kind of unit pays, on this map", &kinds));
     }

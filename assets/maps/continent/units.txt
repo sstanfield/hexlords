@@ -57,3 +57,52 @@ unit captain
   commander 1
   enter     grass 2, forest 3, hill 4, swamp 5, desert 3
   enter     city 1, road 1, bridge 1
+
+# Ships: over water, and into their own side's cities (ports). "carries" is
+# how many land units one takes aboard; a stack's commander goes besides.
+# Who rides a ship that sinks goes down with it.
+unit warship
+  name     Warship
+  image    units/warship.png
+  strength 6
+  moves    16
+  upkeep   3
+  price    14
+  travels  sea
+  carries  1
+  enter    water 2, city 2
+
+unit transport
+  name     Transport
+  image    units/transport.png
+  strength 1
+  moves    12
+  upkeep   2
+  price    10
+  travels  sea
+  carries  6
+  enter    water 2, city 2
+
+# Flyers: over any ground, mountains and water too. A commander with flyers
+# and no one else flies with them.
+unit hawkriders
+  name     Hawk Riders
+  image    units/hawkriders.png
+  strength 3
+  moves    16
+  upkeep   3
+  price    12
+  travels  air
+  enter    grass 2, forest 2, hill 2, swamp 2, desert 2, mountain 2, water 2
+  enter    city 1
+
+unit wyverns
+  name     Wyverns
+  image    units/wyverns.png
+  strength 5
+  moves    12
+  upkeep   4
+  price    18
+  travels  air
+  enter    grass 2, forest 2, hill 2, swamp 2, desert 2, mountain 2, water 2
+  enter    city 1
