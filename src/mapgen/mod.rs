@@ -69,6 +69,9 @@ pub struct Gen {
     pub river: Grid<bool>,
     /// The water ships sail to the sea on (the sea, and rivers into it).
     pub navigable: Grid<bool>,
+    /// Hexes the last pass over the mix leaves as they are (the ways cut
+    /// into walled-off land: `cleanup::join_land`).
+    pub keep: Grid<bool>,
     /// The cities (`cities`), and how fair their sharing out came to be.
     pub cities: Vec<cities::City>,
     pub fairness: Vec<cities::Fair>,
@@ -87,6 +90,7 @@ impl Gen {
             fresh: Grid::new(rows, cols, false),
             river: Grid::new(rows, cols, false),
             navigable: Grid::new(rows, cols, false),
+            keep: Grid::new(rows, cols, false),
             cities: Vec::new(),
             fairness: Vec::new(),
         }
@@ -170,6 +174,7 @@ fn make(config: &Config, plan: &Plan, (kinds, units): (&[crate::state::UnitKind]
     land::rebalance_sea(&mut g, water);
     biomes::biomes(&mut g, config);
     cleanup::cleanup(&mut g, config);
+    cleanup::join_land(&mut g);
     cities::cities(&mut g, config, &plan, kinds)?;
     // The mix again, round the room made for the cities.
     cleanup::quotas(&mut g, config);

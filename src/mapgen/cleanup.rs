@@ -7,7 +7,7 @@ use crate::state::{Hex, TileType};
 
 use super::Gen;
 use super::config::Config;
-use super::grid::top;
+use super::grid::{cheapest_path, pieces, top};
 use super::rng::Rng;
 
 /// Lone forest hexes kept, for every thousand forest hexes (scattered trees).
@@ -63,6 +63,81 @@ fn ring(g: &mut Gen, cfg: &Config) {
     }
 }
 
+/// The least land walled off on foot that is given a way in (smaller bits
+/// of shore behind a range are left).
+pub const JOIN_MIN: usize = 12;
+/// The most water (not a river) a piece of land is joined across.
+pub const JOIN_WATER: usize = 2;
+
+/// Land a walker cannot reach from the main land, walled off by mountains
+/// and the sea or a lake (a river is bridged later, so it is no wall), is
+/// wasted: no city goes where no army can. Each piece of it gets a way in,
+/// biggest first: the range cut where the ridge is lowest (a saddle), the
+/// hexes cut hills; or, where only water walls it, across no more than
+/// `JOIN_WATER` hexes of it, made grass (a neck of land). Land farther out is
+/// an island. The islands raised for cities at sea are left to ships.
+pub fn join_land(g: &mut Gen) {
+    let (rows, cols) = (g.rows(), g.cols());
+    for _ in 0..64 {
+        let t = g.terrain.clone();
+        let walk = |h: Hex| !matches!(*t.get(h), TileType::Water | TileType::Mountain);
+        let (piece, _) = pieces(rows, cols, |h| walk(h) || *g.river.get(h));
+        let mut land: Vec<Vec<Hex>> = Vec::new();
+        for h in t.hexes().filter(|h| walk(*h) && !*g.island.get(*h)) {
+            if let Some(p) = *piece.get(h) {
+                if land.len() <= p {
+                    land.resize(p + 1, Vec::new());
+                }
+                land[p].push(h);
+            }
+        }
+        let Some(main) = (0..land.len()).max_by_key(|p| (land[*p].len(), std::cmp::Reverse(*p))) else { return };
+        let mut cut_off: Vec<usize> = (0..land.len()).filter(|p| *p != main && land[*p].len() >= JOIN_MIN).collect();
+        cut_off.sort_by_key(|p| (std::cmp::Reverse(land[*p].len()), *p));
+        let mut joined = false;
+        let sea = |h: Hex| *t.get(h) == TileType::Water && !*g.river.get(h);
+        for p in cut_off {
+            let way = |water: Option<u32>| {
+                cheapest_path(
+                    rows,
+                    cols,
+                    &land[p],
+                    |h| match *t.get(h) {
+                        TileType::Mountain => Some(10 + (g.ridge.get(h) * 20.0) as u32),
+                        TileType::Water if *g.river.get(h) => Some(6),
+                        TileType::Water => water,
+                        _ => Some(0),
+                    },
+                    |h| walk(h) && *piece.get(h) == Some(main),
+                )
+            };
+            let way =
+                way(None).or_else(|| way(Some(40)).filter(|w| w.iter().filter(|h| sea(**h)).count() <= JOIN_WATER));
+            if let Some(way) = way {
+                for h in way {
+                    if *t.get(h) == TileType::Mountain {
+                        g.terrain.set(h, TileType::Hill);
+                    } else if sea(h) {
+                        g.terrain.set(h, TileType::Grass);
+                        g.fresh.set(h, false);
+                    } else {
+                        continue;
+                    }
+                    g.keep.set(h, true);
+                    for n in t.neighbours(h).filter(|n| walk(*n)) {
+                        g.keep.set(n, true);
+                    }
+                }
+                joined = true;
+                break;
+            }
+        }
+        if !joined {
+            return;
+        }
+    }
+}
+
 pub fn cleanup(g: &mut Gen, cfg: &Config) {
     ring(g, cfg);
     let mut rng = Rng::stream(cfg.seed, "cleanup");
@@ -112,8 +187,12 @@ fn score(g: &Gen, t: TileType, h: Hex) -> f64 {
 /// hexes round it are left as they are.
 pub fn quotas(g: &mut Gen, cfg: &Config) {
     let snap0 = g.terrain.clone();
-    let free =
-        |h: Hex| *snap0.get(h) != TileType::City && !snap0.neighbours(h).any(|n| *snap0.get(n) == TileType::City);
+    let keep = g.keep.clone();
+    let free = |h: Hex| {
+        *snap0.get(h) != TileType::City
+            && !snap0.neighbours(h).any(|n| *snap0.get(n) == TileType::City)
+            && !*keep.get(h)
+    };
     let land = g.terrain.cells().iter().filter(|t| **t != TileType::Water).count();
     for (i, t) in [(2, TileType::Hill), (3, TileType::Forest), (4, TileType::Swamp), (5, TileType::Desert)] {
         let want = (cfg.mix[i] / 100.0 * land as f64).round() as usize;

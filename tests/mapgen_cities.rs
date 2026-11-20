@@ -1,12 +1,17 @@
 //! The generator's cities (`docs/mapgen.md`, milestone G4): as many as
 //! asked, a capital a side; apart and off the edge; shared out fairly; named
-//! each its own; cities at sea with a ship to leave by, in the air with a
-//! flyer; and what it writes the game reads, garrisons and all.
+//! each its own; no land wasted (none walled off from the armies, none far
+//! from a city); no capital hemmed in by the others; cities at sea with a
+//! ship to leave by, in the air with a flyer; and what it writes the game
+//! reads, garrisons and all.
 
+use hexgame::mapgen::cities::hemmed;
+use hexgame::mapgen::cleanup::{JOIN_MIN, JOIN_WATER};
 use hexgame::mapgen::config::Config;
 use hexgame::mapgen::generate;
+use hexgame::mapgen::grid::{cheapest_path, pieces, steps_from};
 use hexgame::mapgen::reach::{MoveClass, ReachClass, movement_class};
-use hexgame::state::{Side, TileType};
+use hexgame::state::{Hex, Side, TileType};
 
 const UNITS: &str = include_str!("../assets/mapgen/units.txt");
 
@@ -60,6 +65,75 @@ fn the_cities_are_as_many_as_asked_apart_and_fairly_shared() {
         assert_eq!(names.len(), g.cities.len(), "seed {seed}");
         // With no checkbox on, every city is meant to be reached on foot.
         assert!(g.cities.iter().all(|c| c.reach == ReachClass::Foot), "seed {seed}");
+    }
+}
+
+/// The owner's eye on the first maps with cities: land behind a range that
+/// no army could reach, and land far from any city, "wasted a lot of real
+/// estate".
+#[test]
+fn no_land_is_walled_off_or_left_empty() {
+    for seed in 1..=20 {
+        let cfg = config(seed, "medium");
+        let made = generate(&cfg, UNITS, "units.txt").unwrap();
+        let g = &made.state;
+        let t = &g.terrain;
+        let walk = |h: Hex| !matches!(*t.get(h), TileType::Water | TileType::Mountain);
+        // The land a walker gets about (a river is bridged by the roads).
+        let (piece, _) = pieces(g.rows(), g.cols(), |h| walk(h) || *g.river.get(h));
+        let mut land: Vec<Vec<Hex>> = Vec::new();
+        for h in t.hexes().filter(|h| walk(*h)) {
+            if let Some(p) = *piece.get(h) {
+                if land.len() <= p {
+                    land.resize(p + 1, Vec::new());
+                }
+                land[p].push(h);
+            }
+        }
+        let main = (0..land.len()).max_by_key(|p| land[*p].len()).unwrap();
+        // Any other piece of size is an island: across more than a narrow
+        // strait, never behind mountains alone.
+        for (p, hexes) in land.iter().enumerate().filter(|(p, h)| *p != main && h.len() >= JOIN_MIN) {
+            let way = cheapest_path(
+                g.rows(),
+                g.cols(),
+                hexes,
+                |h| match *t.get(h) {
+                    TileType::Water if *g.river.get(h) => Some(1),
+                    TileType::Water => Some(1000),
+                    _ => Some(1),
+                },
+                |h| walk(h) && *piece.get(h) == Some(main),
+            )
+            .unwrap();
+            let water = way.iter().filter(|h| *t.get(**h) == TileType::Water && !*g.river.get(**h)).count();
+            assert!(water > JOIN_WATER, "seed {seed}: {} hexes at {} cut off by {water} water", hexes.len(), hexes[0]);
+            let _ = p;
+        }
+        // And the main land is near its cities: nineteen hexes in twenty
+        // within half again the spacing aimed at, the farthest within three
+        // times it (the edge, where no city stands, included).
+        let near = steps_from(g.rows(), g.cols(), g.cities.iter().map(|c| c.hex), |_| true);
+        let mut far: Vec<u32> = land[main].iter().filter_map(|h| *near.get(*h)).collect();
+        far.sort_unstable();
+        let target = cfg.gap_target(&made.plan);
+        let (p95, worst) = (far[far.len() * 95 / 100], far[far.len() - 1]);
+        assert!(f64::from(p95) <= 1.5 * target, "seed {seed}: 5% of the land is {p95} or more from a city");
+        assert!(f64::from(worst) <= 3.0 * target, "seed {seed}: land {worst} from a city");
+    }
+}
+
+/// Every capital has a side of the map to itself: seen from it, the others
+/// lie within a half turn (the owner did not like a capital in the middle
+/// of the others, nor the capitals bunched together).
+#[test]
+fn no_capital_is_hemmed_in() {
+    for size in ["medium", "huge"] {
+        for seed in 1..=20 {
+            let made = generate(&config(seed, size), UNITS, "units.txt").unwrap();
+            let capitals: Vec<Hex> = made.state.cities.iter().filter(|c| c.side != Side::Grey).map(|c| c.hex).collect();
+            assert_eq!(hemmed(&capitals), 0.0, "{size} seed {seed}: {capitals:?}");
+        }
     }
 }
 

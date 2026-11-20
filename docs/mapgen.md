@@ -157,20 +157,42 @@ with an error that says so.
    it, two passes of a majority filter (a hex with
    five or six neighbours of one other terrain becomes it; water and
    mountains stay; some lone trees too), then each terrain back on its
-   quota.
+   quota. Last, **land walled off on foot** (by mountains and the sea or a
+   lake; a river is bridged later) gets a way in, biggest piece first: the
+   range cut where its ridge is lowest, the hexes made hills (a saddle), or,
+   where only water walls it, a neck of grass across at most two hexes of
+   it. Land farther out than that is an island; pieces under 12 hexes are
+   left. No city goes where no army can, and the owner, looking at the
+   first maps with cities, found such land "wasted real estate". The final
+   pass over the mix leaves these ways alone.
 
 6. **Cities** (`cities.rs`). Travel is the reference unit's on foot (grass
    2, forest 4, hill and swamp 5, desert 3), a river crossed as if bridged.
    - **Capitals**: of the grass well in from the edges, off the water, open
      around and with land enough within 3 turns, a spread sample; from a
-     few starts, the farthest points by travel, then swaps that make the
-     set better: as far apart as can be, with each one's share of the land
-     and its way to its nearest enemy within what fairness allows.
-   - **Neutral cities**: a Poisson disc from the capitals (grass liked best,
-     the water's edge more while the cities by it are fewer than
-     `coastal_cities`), then more in the emptiest places or fewer where
-     crowded, to the count; three passes moving each a hex toward the middle
-     of its cell.
+     few starts (the farthest points by travel), moves that make the set
+     better: each capital to the best place in its own land, then swaps.
+     Better is each capital in the middle of its own land (the least
+     travel from the land to its capital, on the whole), within what
+     fairness allows for the land and the way to the nearest enemy (beyond
+     it weighs most), and **none hemmed in**: seen from each capital, the
+     others lie within a half turn, so each has a side of the map to itself.
+     (The plan had them as far apart as can be; that pushed them into
+     corners with unequal land, and the fairness put right after it bunched
+     them in the middle. The owner did not like a capital in the middle of
+     the others, nor the four bunched together.)
+   - **Neutral cities**: a Poisson disc from the capitals over all the land
+     (grass liked best, the water's edge more while the cities by it are
+     fewer than `coastal_cities`), thinned where they crowd most, one at a
+     time, to the count (or more in the emptiest places if it made too
+     few); then evened out (while it brings the land nearer its cities on
+     the whole, the most crowded city moves to the emptiest place); three
+     passes moving each a hex toward the middle of its cell. After the
+     fairness pass, the holes it leaves are filled the same way, as far as
+     fairness allows. Nineteen hexes of land in twenty are within 9 or 10 of
+     a city on a medium map (the target map's cities leave far more land
+     empty; the owner wants none wasted). The cities are farther apart
+     than the target map's, so: a median of about 10 to the nearest, not 8.
    - **At sea and in the air** (the checkboxes): cities on the islands
      raised for them, the first of each by the water; and neutral cities
      three turns from every capital, in or by a range, ringed by mountains
@@ -226,7 +248,9 @@ from its source to water, one hex beside the next, all of it water at the
 end; a good part of the water is narrow. Tiny maps come within twice the
 tolerance, on the whole. Over 20 medium seeds the cities are as many as
 asked, a capital a side, apart and off the edge, named each its own, and
-shared out fairly at `normal` (a few take a second or third map).
+shared out fairly at `normal` (a few take a second or third map); no land
+of size is walled off from the main land but islands, 95% of it lies
+within half again the aimed spacing of a city, and no capital is hemmed in.
 
 The tests make many maps; they are built a little optimized (`[profile.test]
 opt-level = 1` in `Cargo.toml`), or they would take minutes.

@@ -63,8 +63,13 @@ const CAPITAL_TRIES: u32 = 6;
 /// How many places a capital may be at are weighed, and how many swaps the
 /// search for the best of them makes.
 const SAMPLES: usize = 140;
-const SWAPS: usize = 800;
+const SWAPS: usize = 400;
 const STARTS: usize = 4;
+/// The most rounds of moving each capital within its own land.
+const SWEEPS: usize = 12;
+/// What a degree of a capital's widest view short of a half turn costs a
+/// set of capitals (`hemmed`), against the travel from the land to them.
+const HEMMED: f64 = 4.0;
 
 fn walkable(t: TileType) -> bool {
     !matches!(t, TileType::Water | TileType::Mountain)
@@ -138,6 +143,8 @@ pub fn cities(g: &mut Gen, cfg: &Config, plan: &Plan, kinds: &[UnitKind]) -> Res
         places.neutrals = place_neutrals(g, cfg, plan, &places, foot, &mut rng);
         relax(g, cfg, plan, &mut places);
         let fair = make_fair(g, cfg, plan, &mut places, ports);
+        // The holes the fairness pass leaves, filled as far as fairness allows.
+        let fair = fill_holes(g, cfg, plan, &mut places, (ports, fair));
         let misses = fair.iter().filter(|f| !f.ok()).count();
         let whole = places.all().len() == total;
         let score = misses + if whole { 0 } else { 10 };
@@ -219,6 +226,19 @@ fn pick_capitals(g: &Gen, cfg: &Config, plan: &Plan, rng: &mut Rng) -> Option<Ve
         let c = grids[a][t.index(kept[b])];
         if c == u32::MAX { f64::from(kept[a].distance(kept[b]) * 4 + 20) } else { f64::from(c) }
     };
+    // The owner of a hex (an index) among a set: the capital that gets there
+    // first, if any does.
+    let owner = |set: &[usize], idx: usize| -> Option<(usize, u32)> {
+        set.iter()
+            .enumerate()
+            .map(|(k, s)| (k, grids[*s][idx]))
+            .filter(|(_, c)| *c != u32::MAX)
+            .min_by_key(|(k, c)| (*c, *k))
+    };
+    // A set's worth: each capital in the middle of its own land (the least
+    // travel from the land to its capital, on the whole); within what
+    // fairness allows (land, the way to the nearest enemy), beyond it
+    // weighing most; and none hemmed in by the others.
     let score = |set: &[usize]| -> f64 {
         let mut nearest = vec![f64::MAX; set.len()];
         for (i, a) in set.iter().enumerate() {
@@ -231,17 +251,20 @@ fn pick_capitals(g: &Gen, cfg: &Config, plan: &Plan, rng: &mut Rng) -> Option<Ve
         let closest = nearest.iter().copied().fold(f64::MAX, f64::min);
         let farthest = nearest.iter().copied().fold(0.0, f64::max);
         let mut cells = vec![0usize; set.len()];
+        let (mut total, mut counted) = (0u64, 0u64);
         for idx in &land {
-            let owner = set.iter().enumerate().min_by_key(|(_, s)| grids[**s][*idx]).map(|(k, _)| k);
-            if let Some(k) = owner.filter(|k| grids[set[*k]][*idx] != u32::MAX) {
+            if let Some((k, c)) = owner(set, *idx) {
                 cells[k] += 1;
+                total += u64::from(c);
+                counted += 1;
             }
         }
+        let mean = total as f64 / counted.max(1) as f64;
         let (most, least) = (*cells.iter().max().unwrap_or(&1), (*cells.iter().min().unwrap_or(&1)).max(1));
         let (land, enemy) = (most as f64 / least as f64, farthest / closest.max(1.0));
-        // Beyond what fairness allows weighs most; then nearness to it.
         let over = |r: f64, limit: f64| 400.0 * (r - limit * 0.95).max(0.0) + 20.0 * (r - 1.0);
-        closest - over(land, land_limit) - over(enemy, enemy_limit)
+        let hexes: Vec<Hex> = set.iter().map(|i| kept[*i]).collect();
+        -mean - over(land, land_limit) - over(enemy, enemy_limit) - HEMMED * hemmed(&hexes)
     };
     // From a few starts: farthest points from a first by chance, then swaps
     // that make it better; the best of them.
@@ -256,6 +279,26 @@ fn pick_capitals(g: &Gen, cfg: &Config, plan: &Plan, rng: &mut Rng) -> Option<Ve
             set.push(next);
         }
         let mut now = score(&set);
+        // Each capital to the best place in its own land, while that helps.
+        for _ in 0..SWEEPS {
+            let mut moved = false;
+            for i in 0..sides {
+                let mine: Vec<usize> = (0..kept.len())
+                    .filter(|c| !set.contains(c) && owner(&set, t.index(kept[*c])).is_some_and(|(k, _)| k == i))
+                    .collect();
+                for c in mine {
+                    let mut other = set.clone();
+                    other[i] = c;
+                    let s = score(&other);
+                    if s > now {
+                        (set, now, moved) = (other, s, true);
+                    }
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
         for _ in 0..SWAPS / STARTS {
             let (i, c) = (rng.below(sides as u64) as usize, rng.below(kept.len() as u64) as usize);
             if set.contains(&c) {
@@ -273,6 +316,36 @@ fn pick_capitals(g: &Gen, cfg: &Config, plan: &Plan, rng: &mut Rng) -> Option<Ve
         }
     }
     best.map(|(_, set)| set.into_iter().map(|i| kept[i]).collect())
+}
+
+/// How hemmed in capitals are: for each, the widest angle with no other
+/// capital in it, as seen from it; the degrees by which it falls short of a
+/// half turn, summed. (A capital with enemies all round has no side of the
+/// map to itself.)
+pub fn hemmed(capitals: &[Hex]) -> f64 {
+    let mut short = 0.0;
+    for (i, a) in capitals.iter().enumerate() {
+        let (x, y) = center(*a);
+        let mut angles: Vec<f64> = capitals
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| *j != i)
+            .map(|(_, b)| {
+                let (u, v) = center(*b);
+                (v - y).atan2(u - x).to_degrees()
+            })
+            .collect();
+        if angles.len() < 2 {
+            continue;
+        }
+        angles.sort_by(f64::total_cmp);
+        let mut widest = 360.0 - (angles[angles.len() - 1] - angles[0]);
+        for w in angles.windows(2) {
+            widest = f64::max(widest, w[1] - w[0]);
+        }
+        short += (180.0 - widest).max(0.0);
+    }
+    short
 }
 
 /// Where a neutral city may stand: on the land a capital can get to, not a
@@ -300,9 +373,10 @@ fn liking(g: &Gen, h: Hex, coast_wanted: bool) -> f64 {
     base + if by_water && coast_wanted { 0.5 } else { 0.0 }
 }
 
-/// The neutral cities: a Poisson disc from the capitals (as far apart as
-/// halfway between the least gap and the gap aimed at), then as many more
-/// in the emptiest places, or fewer where they crowd, as asked.
+/// The neutral cities: a Poisson disc from the capitals over all the land
+/// (as far apart as halfway between the least gap and the gap aimed at),
+/// thinned where they crowd most, one at a time, to as many as asked (or
+/// more in the emptiest places, if it made too few); then evened out.
 fn place_neutrals(g: &Gen, cfg: &Config, plan: &Plan, places: &Places, count: usize, rng: &mut Rng) -> Vec<Hex> {
     let (rows, cols) = (g.rows(), g.cols());
     let (reached, _) = travel(g, &places.capitals);
@@ -312,7 +386,7 @@ fn place_neutrals(g: &Gen, cfg: &Config, plan: &Plan, places: &Places, count: us
     let mut neutrals: Vec<Hex> = Vec::new();
     let mut active: Vec<Hex> = places.capitals.clone();
     let mut coastal = 0usize;
-    while !active.is_empty() && neutrals.len() < count * 2 {
+    while !active.is_empty() && neutrals.len() < count * 20 {
         let a = rng.below(active.len() as u64) as usize;
         let from = active[a];
         let mut found = false;
@@ -356,17 +430,97 @@ fn place_neutrals(g: &Gen, cfg: &Config, plan: &Plan, places: &Places, count: us
             _ => break,
         }
     }
+    // Thinned: the city nearest another goes, one at a time (its nearest
+    // kept up to date only for those it was nearest to).
+    let others = |i: usize, neutrals: &[Hex]| {
+        let h = neutrals[i];
+        let fixed = places.capitals.iter().chain(&places.sea).map(|c| c.distance(h));
+        let free = neutrals.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, c)| c.distance(h));
+        fixed.chain(free).min().unwrap_or(u32::MAX)
+    };
+    let mut nearest: Vec<u32> = (0..neutrals.len()).map(|i| others(i, &neutrals)).collect();
     while neutrals.len() > count {
-        let crowded = (0..neutrals.len())
-            .min_by_key(|i| {
-                let d = cities.iter().filter(|c| **c != neutrals[*i]).map(|c| c.distance(neutrals[*i])).min();
-                (d.unwrap_or(u32::MAX), *i)
-            })
-            .unwrap_or(0);
-        let h = neutrals.remove(crowded);
-        cities.retain(|c| *c != h);
+        let Some(i) = (0..neutrals.len()).min_by_key(|i| (nearest[*i], *i)) else { break };
+        let gone = neutrals.remove(i);
+        nearest.remove(i);
+        for j in 0..neutrals.len() {
+            if neutrals[j].distance(gone) == nearest[j] {
+                nearest[j] = others(j, &neutrals);
+            }
+        }
     }
-    neutrals
+    let mut places = Places { capitals: places.capitals.clone(), neutrals, sea: places.sea.clone() };
+    even_out(g, cfg, plan, &mut places, &|_: &Places| true);
+    places.neutrals
+}
+
+/// No land left empty: while it brings the land nearer its cities on the
+/// whole (the squares of the distances, so the farthest land counts most),
+/// and `allowed` says yes, the most crowded city moves to the emptiest place
+/// (or, if that is not allowed, the next most crowded).
+fn even_out(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places, allowed: &dyn Fn(&Places) -> bool) {
+    let (rows, cols) = (g.rows(), g.cols());
+    let (reached, _) = travel(g, &places.capitals);
+    let gap = cfg.min_gap(plan);
+    let land: Vec<Hex> =
+        g.terrain.hexes().filter(|h| reached.get(*h).is_some() && walkable(*g.terrain.get(*h))).collect();
+    let emptiness = |all: &[Hex]| {
+        let empty = steps_from(rows, cols, all.iter().copied(), |_| true);
+        let sum: u64 = land.iter().filter_map(|h| empty.get(*h).map(|d| u64::from(d * d))).sum();
+        (sum, empty)
+    };
+    for _ in 0..places.neutrals.len() {
+        let (now, empty) = emptiness(&places.all());
+        let Some((d, to)) = g
+            .terrain
+            .hexes()
+            .filter(|h| site(g, cfg, &reached, *h))
+            .filter_map(|h| empty.get(h).map(|d| (d, h)))
+            .max_by(|a, b| a.0.cmp(&b.0).then(g.terrain.index(b.1).cmp(&g.terrain.index(a.1))))
+        else {
+            break;
+        };
+        if d < gap {
+            break;
+        }
+        // The cities from the most crowded on, the first that may move there.
+        let all = places.all();
+        let mut order: Vec<(u32, usize)> = (0..places.neutrals.len())
+            .map(|i| {
+                let h = places.neutrals[i];
+                (all.iter().filter(|c| **c != h).map(|c| c.distance(h)).min().unwrap_or(u32::MAX), i)
+            })
+            .collect();
+        order.sort_unstable();
+        let mut moved = false;
+        for (_, i) in order.into_iter().take(6) {
+            let mut next = Places {
+                capitals: places.capitals.clone(),
+                neutrals: places.neutrals.clone(),
+                sea: places.sea.clone(),
+            };
+            next.neutrals[i] = to;
+            if emptiness(&next.all()).0 < now && allowed(&next) {
+                *places = next;
+                moved = true;
+                break;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+}
+
+/// After the fairness pass: `even_out`, each move kept only if the sharing
+/// out stays as fair (no measure that was within its limit goes beyond it).
+fn fill_holes(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places, (ports, fair): (bool, Vec<Fair>)) -> Vec<Fair> {
+    let grids: Vec<Grid<Option<u32>>> = places.capitals.iter().map(|c| travel(g, &[*c]).0).collect();
+    let misses = |f: &[Fair]| f.iter().filter(|f| !f.ok()).count();
+    let before = misses(&fair);
+    let allowed = |p: &Places| misses(&fairness(g, cfg, p, (ports, &grids))) <= before;
+    even_out(g, cfg, plan, places, &allowed);
+    fairness(g, cfg, places, (ports, &grids))
 }
 
 /// A few passes of moving each neutral city a hex toward the middle of its
@@ -643,9 +797,11 @@ fn make_fair(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places, ports: boo
         }
         let cost = |i: usize, h: Hex| grids[i].get(h).unwrap_or(u32::MAX);
         let owner = |h: Hex| (0..sides).min_by_key(|i| (cost(*i, h), *i)).unwrap_or(0);
-        let empty = steps_from(rows, cols, places.all(), |_| true);
-        // The emptiest place for a city that `fits`.
-        let emptiest = |fits: &dyn Fn(Hex) -> bool| {
+        // The emptiest place for a city that `fits`, the city that moves
+        // there (`give`) gone from where it was.
+        let emptiest = |give: Option<usize>, fits: &dyn Fn(Hex) -> bool| {
+            let from = give.map(|i| places.neutrals[i]);
+            let empty = steps_from(rows, cols, places.all().into_iter().filter(|c| Some(*c) != from), |_| true);
             g.terrain
                 .hexes()
                 .filter(|h| site(g, cfg, &reached, *h) && fits(*h))
@@ -667,7 +823,7 @@ fn make_fair(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places, ports: boo
                 let second = (0..sides).filter(|s| *s != rich).map(|s| cost(s, h)).min().unwrap_or(u32::MAX);
                 (second.saturating_sub(cost(rich, h)), *i)
             });
-            (narrow, emptiest(&|h| owner(h) == poor))
+            (narrow, emptiest(narrow, &|h| owner(h) == poor))
         } else if failing("neutral cities within 3 turns") {
             let mut count = vec![0usize; sides];
             for c in &places.neutrals {
@@ -682,7 +838,9 @@ fn make_fair(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places, ports: boo
                 .max_by_key(|i| (cost(rich, places.neutrals[*i]), std::cmp::Reverse(*i)));
             (
                 farthest_near,
-                emptiest(&|h| cost(poor, h) <= 3 * TURN && (0..sides).all(|s| s == poor || cost(s, h) > 3 * TURN)),
+                emptiest(farthest_near, &|h| {
+                    cost(poor, h) <= 3 * TURN && (0..sides).all(|s| s == poor || cost(s, h) > 3 * TURN)
+                }),
             )
         } else if failing("ports") || failing("cells short") {
             let mut count = vec![0usize; sides];
@@ -696,7 +854,7 @@ fn make_fair(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places, ports: boo
             let inland = (0..places.neutrals.len())
                 .filter(|i| owner(places.neutrals[*i]) == poor && !is_port(g, places.neutrals[*i]))
                 .max_by_key(|i| (cost(poor, places.neutrals[*i]), std::cmp::Reverse(*i)));
-            (inland, emptiest(&|h| owner(h) == poor && is_port(g, h)))
+            (inland, emptiest(inland, &|h| owner(h) == poor && is_port(g, h)))
         } else {
             (None, None)
         };
