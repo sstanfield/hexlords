@@ -77,13 +77,26 @@ fn the_screen_offers_the_maps_and_sets_the_game_up() {
 fn start_hands_the_window_to_the_game_set_up_as_chosen() {
     let mut shell = shell();
     push(&mut shell, &seat_id(Side::Blue, true));
+    // A computer's seat says its style; a click on it again takes the next.
+    let says = |shell: &Shell, name: &str| {
+        let ui = &shell.screen().ui;
+        ui.find(ui.root(), TbId::new(name)).and_then(|id| ui.text(id)).map(str::to_string)
+    };
+    assert_eq!(says(&shell, &seat_id(Side::Green, false)).as_deref(), Some("Computer: steady"));
+    push(&mut shell, &seat_id(Side::Green, false));
+    assert_eq!(says(&shell, &seat_id(Side::Green, false)).as_deref(), Some("Computer: bold"));
+    push(&mut shell, &seat_id(Side::Yellow, false));
+    push(&mut shell, &seat_id(Side::Yellow, false));
+    push(&mut shell, &seat_id(Side::Yellow, false));
+    assert_eq!(says(&shell, &seat_id(Side::Yellow, false)).as_deref(), Some("Computer: simple"));
     push(&mut shell, START_ID);
     let session = shell.session().expect("the game");
     let game = &session.screen.game;
     assert_eq!((game.map.rows(), game.map.cols()), (46, 72));
     assert_eq!(game.controller(Side::Red), Some(&Controller::Person));
     assert_eq!(game.controller(Side::Blue), Some(&Controller::Person));
-    assert_eq!(game.controller(Side::Green), Some(&Controller::Computer("simple".to_string())));
+    assert_eq!(game.controller(Side::Green), Some(&Controller::Computer("bold".to_string())));
+    assert_eq!(game.controller(Side::Yellow), Some(&Controller::Computer("simple".to_string())));
     // Red plays first, and the button says so.
     assert_eq!(game.player(), Side::Red);
     assert_eq!(session.screen.ui.text(widget(session, END_TURN_ID)), Some("End red's turn"));

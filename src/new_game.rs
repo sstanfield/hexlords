@@ -42,7 +42,10 @@ pub const GOLD_MORE_ID: &str = "gold_more";
 const GOLD_STEP: u32 = 10;
 const MAX_GOLD: u32 = 1000;
 /// The agent the computer plays with, unless told otherwise.
-pub const COMPUTER: &str = "simple";
+pub const COMPUTER: &str = "steady";
+/// The computer's players a seat can have, in the order a click on its
+/// Computer button goes through them (`agents`, `planner`).
+pub const COMPUTERS: [&str; 4] = ["steady", "bold", "careful", "simple"];
 
 /// The button of the `i`th map.
 pub fn map_id(i: usize) -> String {
@@ -309,7 +312,11 @@ impl NewGame {
             let label = if fixed_order { format!("{}. {name}", i + 1) } else { name.to_string() };
             names.push(build::text(ui, row, &label));
             let person = build::button(ui, row, &seat_id(seat.side, true), "Person");
-            let computer = build::button(ui, row, &seat_id(seat.side, false), "Computer");
+            let label = match &seat.controller {
+                Controller::Computer(agent) => format!("Computer: {agent}"),
+                Controller::Person => format!("Computer: {COMPUTER}"),
+            };
+            let computer = build::button(ui, row, &seat_id(seat.side, false), &label);
             let group = format!("seat_{name}");
             press(ui, person, &group, seat.controller == Controller::Person);
             press(ui, computer, &group, seat.controller != Controller::Person);
@@ -373,16 +380,24 @@ impl NewGame {
             } else {
                 let sides: Vec<Side> = self.setup.seats.iter().map(|s| s.side).collect();
                 for side in sides {
-                    let controller = if id == TbId::new(&seat_id(side, true)) {
+                    let Some(seat) = self.setup.seats.iter_mut().find(|s| s.side == side) else { continue };
+                    seat.controller = if id == TbId::new(&seat_id(side, true)) {
                         Controller::Person
                     } else if id == TbId::new(&seat_id(side, false)) {
-                        Controller::Computer(COMPUTER.to_string())
+                        // A computer already: its next style.
+                        match &seat.controller {
+                            Controller::Computer(agent) => {
+                                let at = COMPUTERS.iter().position(|a| a == agent).map_or(0, |i| i + 1);
+                                Controller::Computer(COMPUTERS[at % COMPUTERS.len()].to_string())
+                            }
+                            Controller::Person => Controller::Computer(COMPUTER.to_string()),
+                        }
                     } else {
                         continue;
                     };
-                    if let Some(seat) = self.setup.seats.iter_mut().find(|s| s.side == side) {
-                        seat.controller = controller;
-                    }
+                    // The button says which.
+                    self.rebuild();
+                    break;
                 }
             }
         }

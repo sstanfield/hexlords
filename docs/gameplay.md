@@ -387,7 +387,13 @@ thing to happen. Ideas to try, as the rules grow:
 - The AI makes orders like a player (an agent, `docs/agents.md`). The first
   one, `simple`, builds what gives the most strength for its time, keeps
   two units in each city, and attacks the nearest cities that are not its
-  own when the odds are good, gathering its units first. Agents play without a window, against each other,
+  own when the odds are good, gathering its units first. The planner
+  (built, the owner's word 2026-11-20: "a better AI player, possibly
+  several flavors"), in three styles, `steady` (the default), `bold` and
+  `careful`, reads the rules in effect: what a unit is worth under the
+  chance and the system, what threatens its cities, the odds of each
+  attack; tournaments chose its numbers. With fog of war every agent is
+  shown only what its side sees (`Game::view_for`), as a person would be. Agents play without a window, against each other,
   to try the rules and balance the numbers (decided): keep that working for
   every rule that is added.
 

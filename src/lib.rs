@@ -43,6 +43,7 @@ pub mod minimap_view;
 pub mod new_game;
 pub mod orders;
 pub mod paths;
+pub mod planner;
 pub mod platform;
 pub mod render;
 pub mod screen;

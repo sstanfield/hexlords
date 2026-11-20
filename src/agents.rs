@@ -28,7 +28,7 @@ pub trait Agent {
 
 /// The agents there are, by name (and `cmd:<program> [<argument> ...]`, a
 /// program that plays: `docs/agents.md`).
-pub const NAMES: [&str; 2] = ["passive", "simple"];
+pub const NAMES: [&str; 5] = ["passive", "simple", "steady", "bold", "careful"];
 
 /// At most this many orders in a turn: an agent that never ends its turn has
 /// it ended for it.
@@ -44,6 +44,9 @@ pub fn by_name(name: &str) -> Result<Box<dyn Agent>, String> {
     match name {
         "passive" => Ok(Box::new(Passive)),
         "simple" => Ok(Box::new(Simple::default())),
+        name if crate::planner::style(name).is_some() => {
+            Ok(Box::new(crate::planner::Planner::new(crate::planner::style(name).unwrap_or(crate::planner::STEADY))))
+        }
         _ => Err(format!("\"{name}\" is not an agent ({}, cmd:<program>)", NAMES.join(", "))),
     }
 }
@@ -81,7 +84,10 @@ pub struct TurnReport {
 }
 
 /// A whole turn of the side whose turn it is, played by `agent`: its orders,
-/// then the end of its turn.
+/// then the end of its turn. With fog of war the agent is shown the game as
+/// its side knows it (`Game::view_for`), worked out anew for each order; the
+/// orders are carried out in the game itself, where something it could not
+/// see may be in the way.
 pub fn play_turn(game: &mut Game, agent: &mut dyn Agent) -> TurnReport {
     let side = game.player();
     let mut report = TurnReport::default();
@@ -89,7 +95,8 @@ pub fn play_turn(game: &mut Game, agent: &mut dyn Agent) -> TurnReport {
         if game.winner().is_some() || game.player() != side {
             return report;
         }
-        let order = agent.next_order(game, side);
+        let view = game.view_for(side);
+        let order = agent.next_order(view.as_ref().unwrap_or(game), side);
         if order == Order::EndTurn {
             break;
         }

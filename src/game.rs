@@ -228,6 +228,7 @@ pub struct Fight {
     pub won: bool,
 }
 
+#[derive(Clone)]
 pub struct Game {
     pub map: Map,
     /// The units selected to move together (a stack, or some of one).
@@ -1204,6 +1205,44 @@ impl Game {
             }
         }
         Sight { cols, seen: Some(seen) }
+    }
+
+    /// The game as `side` knows it, with fog of war: what it does not see is
+    /// not in it (the other sides' units out of its sight; who holds a city
+    /// in the fog: nobody, as far as it knows), nor what it is not told (what
+    /// the other sides' cities build and where they send it, the other
+    /// sides' gold, the history). What the computer's players are given, so
+    /// that they know what a person in their place would. `None` without fog
+    /// of war: then the whole game is seen.
+    pub fn view_for(&self, side: Side) -> Option<Game> {
+        if !self.setup.fog || side == Side::Grey {
+            return None;
+        }
+        let sight = self.sight(side);
+        let mut view = self.clone();
+        (view.history, view.fights, view.fought, view.undo) = (Vec::new(), Vec::new(), None, None);
+        view.deselect();
+        let hidden: Vec<UnitId> =
+            view.map.units().iter().filter(|u| u.side() != side && !sight.sees(u.pos())).map(|u| u.id()).collect();
+        for id in hidden {
+            view.map.kill_unit(id);
+        }
+        let theirs: Vec<(CityId, bool)> =
+            view.map.cities().iter().filter(|c| c.side != side).map(|c| (c.id, sight.sees(c.pos))).collect();
+        for (id, seen) in theirs {
+            if let Some(city) = view.map.city_mut(id) {
+                (city.building, city.progress, city.rally) = (None, 0, None);
+                if !seen {
+                    city.side = Side::Grey;
+                }
+            }
+        }
+        for (i, gold) in view.treasury.iter_mut().enumerate() {
+            if i != side.index() {
+                *gold = 0;
+            }
+        }
+        Some(view)
     }
 
     /// The gold in a side's treasury.

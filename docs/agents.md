@@ -49,9 +49,53 @@ done
 |---|---|
 | `passive` | Ends every turn at once |
 | `simple` | Builds a commander where it can when its side has none; takes a stack with units not yet blessed to a temple it can reach this turn; sets each idle city to build what gives the most strength for its turns, of what its taxes can keep (after its units' upkeep and that of what its cities are already building), and stops the dearest work when they cannot; keeps two units in each of its cities; attacks a city that is not its own, or another side's stack near its free units, with the strongest stack's worth of the free units that can reach it this turn, when the odds are at least 60 in 100 (or 15, when more than a stack can reach it: the first wave); else sends each stack's free units together toward the nearest such city, where they wait for the others |
+| `steady` | The computer's player unless another is chosen (`src/planner.rs`, below): armies around a commander, cities defended as they are threatened, attacks at fair odds |
+| `bold` | The planner, fast and many: grabs the empty and weak cities first, attacks at lower odds |
+| `careful` | The planner, slow and sure: answers threats with more defenders, big armies, high odds |
 | `cmd:<program> [<argument> ...]` | A program that plays (below) |
 
 A new agent is a type that implements `Agent` and a name in `agents::by_name`.
+The new game screen gives each computer's seat a style: a click on its
+Computer button again takes the next (`new_game::COMPUTERS`).
+
+### The planner
+
+`steady`, `bold` and `careful` are one agent, `planner::Planner`, in three
+styles (`planner::Style`: how many it keeps home, the odds it attacks at,
+how much of a threat it answers, how big an army it gathers, what its
+cities' work weighs). Each turn, order by order, it:
+
+1. keeps its treasury in hand: what its cities build is what it can keep
+   and pay for, and what is worth most under the rules of this game
+   (`planner::worth`: in lines a unit's worth goes as its strength to the
+   power the chance gives, so with little chance it builds strong units and
+   with much it builds many; in strength against strength, strengths add
+   up); and it keeps a commander;
+2. defends: a city that the other sides' units could reach next turn (with
+   a whole turn's moves, roads and all) keeps defenders for the threat,
+   weighed by worth too, and free units near it come in; its capital keeps
+   one more;
+3. strikes where the game's own odds (`Game::battle_odds`, with the rules
+   in them) are good enough for its style, waves at walls when more than a
+   stack can follow, and takes on stacks in the field near its cities and
+   units;
+4. gathers the rest around its commander, sends small stacks to the army
+   or keeps them home until there is a force, stops at temples on the way,
+   and sends each army toward the city most worth the trouble (its taxes
+   against the way there and what defends it).
+
+With much chance in battle it waits for better odds and keeps fewer at home
+(walls and strength do little for defenders then); a long game makes it
+bolder, so two that wait for each other do not wait for ever.
+
+How the styles were chosen: tournaments without a window on the continent,
+every arrangement of two styles on the four seats, over seeds, under each
+set of rules (chance 1, 5, 7, 9; lines and strength against strength; fog of
+war). Against `simple` the three styles win from about half the games (with
+chance 9, where luck decides most) to nearly all of them (little chance, or
+fog), and they finish off a passive side, an all-out rusher and a turtle.
+Among themselves no style beats another by much, and each has rules it
+does best under.
 
 ## A program that plays: the text protocol
 
@@ -64,8 +108,10 @@ output, and the turn goes on without that order.
 
 ### What it reads
 
-All of the game, the other sides' units and cities too, fog of war or not:
-the agents do not keep to what their side sees yet.
+With fog of war, the game as the program's side knows it (`Game::view_for`):
+the other sides' units out of its sight are not in it, a city in the fog
+is nobody's as far as it knows, and the other sides' production and gold
+are not told. Without fog, all of the game. (Every agent is given the same.)
 
 ```
 turn 3 red

@@ -252,3 +252,36 @@ fn esc_closes_the_window_on_top_first() {
     press(&mut s, SpecialKey::Esc);
     assert!(!log_open(&s));
 }
+
+#[test]
+fn new_game_asks_while_the_game_goes_on_and_not_once_it_is_over() {
+    let mut s = session(|_| {});
+    choose(&mut s, MENU_GAME_ID, hexgame::session::NEW_GAME_ASK_ID);
+    assert!(s.asks_new_game() && !s.wants_new_game(), "it asks first");
+    push_widget(&mut s, hexgame::session::KEEP_PLAYING_ID);
+    assert!(!s.asks_new_game() && !s.wants_new_game());
+    // Ctrl+N (Cmd+N) too; Esc says no.
+    let mods = if cfg!(target_os = "macos") { Modifiers::SUPER } else { Modifiers::CTRL };
+    s.screen.ui.key(Some('n'), SpecialKey::None, mods, true);
+    s.screen.ui.key(Some('n'), SpecialKey::None, mods, false);
+    s.pump();
+    assert!(s.asks_new_game());
+    press(&mut s, SpecialKey::Esc);
+    assert!(!s.asks_new_game() && !s.wants_new_game());
+    choose(&mut s, MENU_GAME_ID, hexgame::session::NEW_GAME_ASK_ID);
+    push_widget(&mut s, hexgame::session::NEW_GAME_ID);
+    assert!(s.wants_new_game(), "leaving it");
+
+    // Over: straight to a new game. Red takes blue's only city.
+    let mut s = session(|_| {});
+    let game = &mut s.screen.game;
+    let red = game.map.units_at(REDHOLD)[0];
+    let blue = game.map.units_at(BLUEMOOR)[0];
+    game.map.kill_unit(blue);
+    game.map.move_unit(red, Hex::new(15, 14)).unwrap();
+    game.apply(hexgame::orders::Order::Move { units: vec![red], to: BLUEMOOR }).unwrap();
+    assert_eq!(s.screen.game.winner(), Some(Side::Red));
+    s.frame(16);
+    choose(&mut s, MENU_GAME_ID, hexgame::session::NEW_GAME_ASK_ID);
+    assert!(s.wants_new_game() && !s.asks_new_game());
+}

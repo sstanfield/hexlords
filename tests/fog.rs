@@ -141,3 +141,31 @@ fn in_the_fog_the_reach_marked_is_as_far_as_is_known() {
     assert_eq!(s.unit_line(), "Something in the fog is in the way.");
     assert_eq!(s.screen.game.map.units_at(REDHOLD).len(), 1);
 }
+
+#[test]
+fn the_computer_knows_what_a_person_in_its_place_would() {
+    let mut game = game(true, Controller::Person);
+    let bluemoor = game.map.city_at(BLUEMOOR).unwrap().id;
+    game.apply(hexgame::orders::Order::EndTurn).unwrap();
+    assert_eq!(game.player(), Side::Blue);
+    game.apply(hexgame::orders::Order::Build { city: bluemoor, what: Some(0) }).unwrap();
+    game.apply(hexgame::orders::Order::EndTurn).unwrap();
+    // Red's view: its own all there; blue's soldiers in their city out of
+    // sight, and so is who holds it; what blue builds, blue's gold: not told.
+    let view = game.view_for(Side::Red).expect("fog of war");
+    assert_eq!(view.map.units().of_side(Side::Red).count(), game.map.units().of_side(Side::Red).count());
+    assert_eq!(view.map.units().of_side(Side::Blue).count(), 0);
+    let city = view.map.city_at(BLUEMOOR).unwrap();
+    assert_eq!((city.side, city.building), (Side::Grey, None));
+    assert_eq!(view.gold(Side::Blue), 0);
+    assert_eq!(view.gold(Side::Red), game.gold(Side::Red));
+    assert!(view.history().is_empty());
+    // A blue unit in sight is in it.
+    let kind = game.map.units().kind_named("soldiers").unwrap();
+    let near = game.map.new_unit_of(Side::Blue, kind).unwrap();
+    game.map.place_unit(near, Hex::new(15, 16)).unwrap();
+    let view = game.view_for(Side::Red).unwrap();
+    assert_eq!(view.map.units().of_side(Side::Blue).map(|u| u.id()).collect::<Vec<_>>(), [near]);
+    // Without fog, no view: the whole game is seen.
+    assert!(self::game(false, Controller::Person).view_for(Side::Red).is_none());
+}

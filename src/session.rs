@@ -118,6 +118,12 @@ pub const BEGIN_TURN_ID: &str = "begin_turn";
 /// The window that says who won, and its buttons.
 pub const GAME_OVER_ID: &str = "game_over";
 pub const NEW_GAME_ID: &str = "new_game";
+/// The Game menu's New game: straight to the new game screen once the game
+/// is over, and else a window that asks first (its buttons: `NEW_GAME_ID`,
+/// and this one).
+pub const NEW_GAME_ASK_ID: &str = "new_game_ask";
+pub const KEEP_PLAYING_ID: &str = "keep_playing";
+pub const ASK_NEW_GAME_ID: &str = "ask_new_game";
 /// The window of a few lines (a battle's report, the news), and its button.
 pub const GAME_OVER_CLOSE_ID: &str = "game_over_close";
 /// Where the windows go on the map: the list in its left part, a city in its
@@ -219,6 +225,7 @@ impl Slot {
 fn help_section() -> Vec<HelpSection> {
     let end_turn = format!("{}+T,  or  End turn", command_key());
     let undo = format!("{}+Z,  or  Undo", command_key());
+    let new_game = format!("{}+N", command_key());
     vec![
         HelpSection::new(
             "The game",
@@ -236,6 +243,7 @@ fn help_section() -> Vec<HelpSection> {
                 ("Esc", "Close the menu or the window on top; with none open, drop the selection"),
                 (&undo, "Take back the last move or city order (not a battle)"),
                 (&end_turn, "End the turn: your log shows what the others do; then Start turn"),
+                (&new_game, "A new game (once this one is over at once; before, it asks)"),
             ],
         ),
         HelpSection::new(
@@ -358,8 +366,11 @@ pub struct Session {
     last_person: Option<Side>,
     /// The window that says who won, once it is open.
     game_over: Option<WindowParts>,
-    /// A new game was asked for (the game over window's button).
+    /// A new game was asked for (the game over window's button, the menu).
     wants_new_game: bool,
+    /// The window that asks whether to leave the game for a new one, while
+    /// it is open.
+    ask_new: Option<WindowParts>,
     /// A battle being watched, while its window is open.
     battle: Option<BattleWindow>,
 }
@@ -454,6 +465,7 @@ impl Session {
             last_person: None,
             game_over: None,
             wants_new_game: false,
+            ask_new: None,
             battle: None,
             screen,
         };
@@ -642,6 +654,36 @@ impl Session {
         build::button(ui, buttons, GAME_OVER_CLOSE_ID, "Look at the map");
         build::place(ui, parts, area, (0.5, 0.4));
         self.game_over = Some(parts);
+    }
+
+    /// New game (the Game menu, Ctrl+N): once the game is over, straight to
+    /// the new game screen; while it goes on, a window asks first (the game
+    /// is not saved: it would be lost).
+    pub fn ask_new_game(&mut self) {
+        if self.screen.game.winner().is_some() {
+            self.wants_new_game = true;
+            return;
+        }
+        if self.ask_new.as_ref().is_some_and(|ask| build::is_open(&self.screen.ui, ask.window)) {
+            return;
+        }
+        let (root, area) = (self.screen.root_window(), self.window_area());
+        let ui = &mut self.screen.ui;
+        let parts = build::window(ui, root, ASK_NEW_GAME_ID, "New game");
+        build::heading(ui, parts.content, "Leave this game for a new one?");
+        build::text(ui, parts.content, "It is not over, and it is not saved: it will be lost.");
+        let space = ui.dimension_converter().dp_to_px(SPACING_DP * 2);
+        build::gap(ui, parts.content, space);
+        let buttons = build::row(ui, parts.content, space);
+        build::button(ui, buttons, NEW_GAME_ID, "Leave it: new game");
+        build::button(ui, buttons, KEEP_PLAYING_ID, "Keep playing");
+        build::place(ui, parts, area, (0.5, 0.4));
+        self.ask_new = Some(parts);
+    }
+
+    /// True while the window that asks about a new game is open.
+    pub fn asks_new_game(&self) -> bool {
+        self.ask_new.as_ref().is_some_and(|ask| build::is_open(&self.screen.ui, ask.window))
     }
 
     /// Size everything from the window's size: the map is 80% of the width and
@@ -1216,6 +1258,12 @@ impl Session {
         if self.menus.close(ui) {
             return true;
         }
+        if let Some(ask) = self.ask_new.take() {
+            if build::is_open(ui, ask.window) {
+                build::close(ui, ask.window);
+                return true;
+            }
+        }
         let open = |w: WidgetId| build::is_open(ui, w).then_some(w);
         let windows = [
             self.battle.as_ref().and_then(|w| open(w.window())),
@@ -1746,6 +1794,7 @@ impl Session {
                 .item(END_TURN_ID, if self.between { "Start turn" } else { "End turn" }, &command('T'), turn)
                 .item(UNDO_ID, "Undo", &command('Z'), turn && game.can_undo())
                 .separator()
+                .item(NEW_GAME_ASK_ID, "New game...", &command('N'), true)
                 .item(QUIT_ID, "Quit", &command('Q'), true)
         } else if id == TbId::new(MENU_UNITS_ID) {
             Menu::new(MENU_UNITS_ID)
@@ -1953,6 +2002,17 @@ impl Session {
                     }
                 }
                 RootCommand::Click(id) if id == TbId::new(NEW_GAME_ID) => self.wants_new_game = true,
+                RootCommand::Click(id) if id == TbId::new(NEW_GAME_ASK_ID) => self.ask_new_game(),
+                RootCommand::Key(ch, mods)
+                    if ch.eq_ignore_ascii_case(&'n') && mods.intersects(Modifiers::CTRL | Modifiers::SUPER) =>
+                {
+                    self.ask_new_game();
+                }
+                RootCommand::Click(id) if id == TbId::new(KEEP_PLAYING_ID) => {
+                    if let Some(ask) = self.ask_new.take() {
+                        build::close(&mut self.screen.ui, ask.window);
+                    }
+                }
                 RootCommand::Click(id) if id == TbId::new(battle_window::BATTLE_CLOSE_ID) => {
                     if let Some(battle) = self.battle.take() {
                         battle.close(&mut self.screen.ui);

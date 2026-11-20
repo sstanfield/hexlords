@@ -89,6 +89,7 @@ as it shows from outside.
 | M, A | A list of your cities, or of all of them, with a minimap that rings the one you choose; open it in full, or go to it |
 | F1, or `?` | The help: every key and what the mouse does (Esc closes it). The Help menu also has the rules of the game in play: battles (the system and chance it was set up with), movement (what each of the map's kinds of unit pays), cities and gold, units and captains, orders and turns, what you see |
 | Ctrl+Cmd+F, or F11 | Fullscreen on and off (macOS keeps F11 for itself) |
+| Ctrl+N (or Cmd+N), or Game > New game... | Back to the new game screen: at once if the game is over, else after asking (the game is not saved) |
 | Ctrl+Q (or Cmd+Q) | Quit |
 
 A unit is a disc in its side's color with the sign of its kind. A city shows
@@ -174,8 +175,10 @@ Without `--map` the window opens on the new game screen.
 - `--map <file.map or map directory>`: play this map at once (the format is
   in `docs/map-format.md`): one person plays the side of the first city with
   a garrison, where the view starts, and the computer the others.
-- `--players red=person,blue=simple`: who plays which side: `person`, or an
-  agent of the computer's (`passive`, `simple`, `cmd:<program>`).
+- `--players red=person,blue=bold`: who plays which side: `person`, or an
+  agent of the computer's: `steady` (the default), `bold`, `careful` (the
+  planner's styles), `simple`, `passive`, `cmd:<program>`
+  ([docs/agents.md](docs/agents.md)).
 - `--order fixed|drawn`: the sides play in the same order each round, or one
   drawn anew; `--seed <n>`: the seed of the game's chance.
 - `--chance <0-10>`: how much chance there is in a battle: 0 none (the
