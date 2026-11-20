@@ -1,15 +1,16 @@
 //! Mountains and hills (`docs/mapgen.md`, stage 2): a ridge score on the
 //! land, from ridged noise drawn out along a few directions that blend from
 //! region to region (ranges run long and bend; `massifs`: plain noise, round
-//! lumps); its best hexes are the mountains, as many as the mix asks, never
-//! on the coast; around them a ring of hills as much as `hill_ring` asks, and
-//! the rest of the hills in free patches.
+//! lumps); its best hexes are the mountains, never on the coast, thick
+//! masses thinned to their spines (no mountain deeper in a range than
+//! `DEPTH`), as many as the mix asks; around them a ring of hills as much as
+//! `hill_ring` asks, and the rest of the hills in free patches.
 
-use crate::state::{Hex, TileType};
+use crate::state::{Hex, HexSide, TileType};
 
 use super::Gen;
 use super::config::{Config, RangeStyle};
-use super::grid::{Grid, cheapest_path, pieces, top};
+use super::grid::{Grid, cheapest_path, pieces, steps_from, top};
 use super::noise::{center, fbm, ridged};
 use super::rng::Rng;
 
@@ -36,6 +37,132 @@ const HOLLOW: usize = 6;
 
 /// The patches of mountain smaller than this become hills.
 const MIN_RANGE: usize = 4;
+
+/// How deep in a range a mountain may lie: no farther than this from a hex
+/// that is not mountain, so a range is at most about twice it thick. The
+/// owner found thick masses of mountain odd to look at and wasted land.
+pub const DEPTH: u32 = 3;
+
+/// The hexes of the map within `r` of `c`.
+fn within(t: &Grid<TileType>, c: Hex, r: u32) -> impl Iterator<Item = Hex> + use<> {
+    let (rows, cols) = (t.rows(), t.cols());
+    let ri = r as i32;
+    (-ri..=ri).flat_map(move |dr| {
+        (-ri..=ri).filter_map(move |dc| {
+            Hex::on_map(i32::from(c.row) + dr, i32::from(c.col) + dc, rows, cols).filter(|h| h.distance(c) <= r)
+        })
+    })
+}
+
+/// True if a mountain at `h` can go without breaking its range or walling
+/// anything in: its mountain neighbours are one run round it, of two to five
+/// (one is the tip of a range, which keeps its length). Past the map's edge
+/// counts as mountain: a hex left there would be walled in by the edge.
+fn peelable(t: &Grid<TileType>, h: Hex) -> bool {
+    let around: Vec<bool> = HexSide::ALL
+        .iter()
+        .map(|s| {
+            let (r, c) = h.toward(*s);
+            Hex::on_map(r, c, t.rows(), t.cols()).is_none_or(|n| *t.get(n) == TileType::Mountain)
+        })
+        .collect();
+    let count = around.iter().filter(|m| **m).count();
+    let runs = (0..6).filter(|i| around[*i] && !around[(i + 1) % 6]).count();
+    runs == 1 && (2..=5).contains(&count)
+}
+
+/// True if `h` may become mountain and leave every mountain within `DEPTH`
+/// of a hex that is not (the map's edge does not count as one), and wall
+/// nothing in (the hexes round it that are not mountain are one run).
+fn thin_enough(t: &Grid<TileType>, h: Hex) -> bool {
+    let mountain = |x: Hex| x == h || *t.get(x) == TileType::Mountain;
+    let open: Vec<bool> = HexSide::ALL
+        .iter()
+        .map(|s| {
+            let (r, c) = h.toward(*s);
+            Hex::on_map(r, c, t.rows(), t.cols()).is_some_and(|n| !mountain(n))
+        })
+        .collect();
+    let runs = (0..6).filter(|i| open[*i] && !open[(i + 1) % 6]).count();
+    runs == 1 && within(t, h, DEPTH).filter(|x| mountain(*x)).all(|x| within(t, x, DEPTH).any(|y| !mountain(y)))
+}
+
+/// The mountains brought to `want`, a hex at a time: over, the weakest at a
+/// range's edge become hills (each only if `peelable`); under, the best
+/// hexes beside a range, inland, that keep it thin and wall nothing in (on
+/// the whole map: `stats::pockets`) become mountain.
+fn settle(g: &mut Gen, score: &Grid<f64>, want: usize) {
+    let (rows, cols) = (g.rows(), g.cols());
+    let walled =
+        |t: &Grid<TileType>| -> usize { super::stats::pockets(rows, cols, &|h| *t.get(h)).iter().map(Vec::len).sum() };
+    for _ in 0..want.max(16) {
+        let t = g.terrain.clone();
+        let have = t.cells().iter().filter(|k| **k == TileType::Mountain).count();
+        match have.cmp(&want) {
+            std::cmp::Ordering::Equal => return,
+            std::cmp::Ordering::Greater => {
+                let weakest = t
+                    .hexes()
+                    .filter(|h| *t.get(*h) == TileType::Mountain && peelable(&t, *h))
+                    .min_by(|a, b| score.get(*a).total_cmp(score.get(*b)).then(t.index(*a).cmp(&t.index(*b))));
+                let Some(h) = weakest else { return };
+                g.terrain.set(h, TileType::Hill);
+            }
+            std::cmp::Ordering::Less => {
+                let mut best: Vec<Hex> = t
+                    .hexes()
+                    .filter(|h| !matches!(*t.get(*h), TileType::Mountain | TileType::Water))
+                    .filter(|h| t.neighbours(*h).any(|n| *t.get(n) == TileType::Mountain))
+                    .filter(|h| !t.neighbours(*h).any(|n| *t.get(n) == TileType::Water))
+                    .filter(|h| thin_enough(&t, *h))
+                    .collect();
+                best.sort_by(|a, b| score.get(*b).total_cmp(score.get(*a)).then(t.index(*a).cmp(&t.index(*b))));
+                let before = walled(&t);
+                let mut added = false;
+                for h in best {
+                    g.terrain.set(h, TileType::Mountain);
+                    if walled(&g.terrain) <= before {
+                        added = true;
+                        break;
+                    }
+                    g.terrain.set(h, *t.get(h));
+                }
+                if !added {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+/// Thick masses of mountain thinned to their spines: while any mountain is
+/// deeper than `DEPTH`, the mountains at the edge near it go, the weakest
+/// first, from both sides (each only if `peelable`), back to what they were.
+fn thin(g: &mut Gen, before: &Grid<TileType>, score: &Grid<f64>) {
+    let (rows, cols) = (g.rows(), g.cols());
+    for _ in 0..32 {
+        let now = g.terrain.clone();
+        let mountain = |h: Hex| *now.get(h) == TileType::Mountain;
+        let depth = steps_from(rows, cols, now.hexes().filter(|h| !mountain(*h)), |_| true);
+        let deep = |h: Hex| mountain(h) && depth.get(h).is_none_or(|d| d > DEPTH);
+        let mut edge: Vec<(f64, Hex)> = now
+            .hexes()
+            .filter(|h| mountain(*h) && *depth.get(*h) == Some(1) && within(&now, *h, DEPTH).any(deep))
+            .map(|h| (*score.get(h), h))
+            .collect();
+        edge.sort_by(|a, b| a.0.total_cmp(&b.0).then(now.index(a.1).cmp(&now.index(b.1))));
+        let mut peeled = false;
+        for (_, h) in edge {
+            if peelable(&g.terrain, h) {
+                g.terrain.set(h, *before.get(h));
+                peeled = true;
+            }
+        }
+        if !peeled {
+            return;
+        }
+    }
+}
 
 /// Noise pushed away from its middle (an average of octaves keeps near it),
 /// so its ridges stand out.
@@ -98,20 +225,39 @@ pub fn relief(g: &mut Gen, cfg: &Config, land_hexes: usize) {
     let land: Vec<Hex> = t.hexes().filter(|h| !water(*h)).collect();
     let quota = |share: f64| (share / 100.0 * land_hexes as f64).round() as usize;
     let (mountains, hills) = (quota(cfg.mix[1]), quota(cfg.mix[2]));
-    // The mountains: the best scores, away from the sea.
-    let inland: Vec<(usize, f64)> =
+    // The mountains: the best scores, away from the sea, thinned; as many
+    // laid before thinning as leave the mix's share after it.
+    let mut inland: Vec<(usize, f64)> =
         land.iter().filter(|h| !t.neighbours(**h).any(water)).map(|h| (t.index(*h), *score.get(*h))).collect();
-    for i in top(&inland, mountains) {
-        g.terrain.cells_mut()[i] = TileType::Mountain;
-    }
-    // Lone bits of mountain are hills.
-    let now = g.terrain.clone();
-    let (piece, sizes) = pieces(g.rows(), g.cols(), |h| *now.get(h) == TileType::Mountain);
-    for h in now.hexes() {
-        if piece.get(h).is_some_and(|p| sizes[p] < MIN_RANGE) {
-            g.terrain.set(h, TileType::Hill);
+    inland.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+    let lay = |g: &mut Gen, n: usize| {
+        g.terrain = t.clone();
+        for (i, _) in inland.iter().take(n) {
+            g.terrain.cells_mut()[*i] = TileType::Mountain;
         }
+        thin(g, &t, &score);
+        // Lone bits of mountain are hills.
+        let now = g.terrain.clone();
+        let (piece, sizes) = pieces(g.rows(), g.cols(), |h| *now.get(h) == TileType::Mountain);
+        for h in now.hexes() {
+            if piece.get(h).is_some_and(|p| sizes[p] < MIN_RANGE) {
+                g.terrain.set(h, TileType::Hill);
+            }
+        }
+        g.terrain.cells().iter().filter(|k| **k == TileType::Mountain).count()
+    };
+    let (mut n, mut best) = ((mountains * 3 / 2).min(inland.len()), (usize::MAX, 0));
+    for _ in 0..8 {
+        let got = lay(g, n);
+        if got.abs_diff(mountains) < best.0 {
+            best = (got.abs_diff(mountains), n);
+        }
+        if got.abs_diff(mountains) * 400 <= land_hexes.max(1) {
+            break;
+        }
+        n = ((n as f64 * mountains as f64 / got.max(1) as f64).round() as usize).clamp(mountains, inland.len());
     }
+    lay(g, best.1);
     let placed = g.terrain.cells().iter().filter(|t| **t == TileType::Hill).count();
     let free_seed = Rng::stream(cfg.seed, "hills").next_u64();
     let f = 1.0 / (FREE_HILLS * cfg.feature_scale.max(0.05));
@@ -121,6 +267,7 @@ pub fn relief(g: &mut Gen, cfg: &Config, land_hexes: usize) {
     });
     ring(g, (&score, &free), cfg.hill_ring, hills.saturating_sub(placed));
     open_pockets(g, &score);
+    settle(g, &score, mountains);
     g.ridge = score;
 }
 

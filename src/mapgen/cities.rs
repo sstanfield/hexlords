@@ -35,6 +35,9 @@ pub struct City {
     /// how many).
     pub produce: Vec<(String, u32)>,
     pub garrison: Vec<(String, u32)>,
+    /// The level its units start at (1 regular, 2 veteran, 3 elite): higher
+    /// the harder it is to come at (`approach`).
+    pub trains: u8,
 }
 
 /// A measure of how fair the sharing out is, and the most it may be.
@@ -134,9 +137,10 @@ pub fn cities(g: &mut Gen, cfg: &Config, plan: &Plan, kinds: &[UnitKind]) -> Res
     let ports = cfg.ports && has(MoveClass::Naval);
     g.navigable = navigable(g);
     let mut best: Option<(usize, Places, Vec<Fair>)> = None;
+    let places = capital_places(g, cfg, plan, &mut Rng::stream(cfg.seed, "capital places"));
     for attempt in 0..CAPITAL_TRIES {
         let mut rng = Rng::stream(cfg.seed, &format!("cities {attempt}"));
-        let Some(capitals) = pick_capitals(g, cfg, plan, &mut rng) else { continue };
+        let Some(capitals) = places.as_ref().and_then(|p| pick_capitals(g, cfg, p, &mut rng)) else { continue };
         let mut places = Places { capitals, neutrals: Vec::new(), sea: Vec::new() };
         places.sea = sea_places(g, cfg, plan, &places.capitals, sea_count, &mut rng);
         let foot = total.saturating_sub(sides + places.sea.len());
@@ -164,16 +168,22 @@ pub fn cities(g: &mut Gen, cfg: &Config, plan: &Plan, kinds: &[UnitKind]) -> Res
     Ok(())
 }
 
-/// The capitals: of the places a capital may be (grass on the main land,
-/// well in from the edges, off the water, open around, with land enough
-/// within 3 turns), those as far apart by travel as can be, with as fair a
-/// share of the land and as like a way to their nearest enemy: farthest
-/// points first, then swaps that make it better.
-fn pick_capitals(g: &Gen, cfg: &Config, plan: &Plan, rng: &mut Rng) -> Option<Vec<Hex>> {
+/// The places a capital may be, and what the search for the best set of
+/// them needs: their travel costs, and the land the shares are counted on.
+/// Made once for a map's tries of capitals.
+struct CapitalPlaces {
+    kept: Vec<Hex>,
+    grids: Vec<Vec<u32>>,
+    land: Vec<usize>,
+}
+
+/// The capitals' places: grass on the main land, well in from the edges,
+/// off the water, open around, with land enough within 3 turns; a spread
+/// sample of them.
+fn capital_places(g: &Gen, cfg: &Config, plan: &Plan, rng: &mut Rng) -> Option<CapitalPlaces> {
     let (rows, cols) = (g.rows(), g.cols());
     let t = &g.terrain;
     let sides = usize::from(cfg.sides);
-    let [_, _, land_limit, enemy_limit, _, _] = limits(cfg.fairness).unwrap_or([0.0, 0.0, 1.3, 1.3, 0.0, 0.0]);
     let to_water = steps_from(rows, cols, t.hexes().filter(|h| *t.get(*h) == TileType::Water), |_| true);
     // The main land: travel's pieces (a river crossed), the big ones.
     let (piece, sizes) =
@@ -219,9 +229,22 @@ fn pick_capitals(g: &Gen, cfg: &Config, plan: &Plan, rng: &mut Rng) -> Option<Ve
     if kept.len() < sides {
         return None;
     }
-    // The land the shares are counted on: every third land hex, for speed.
-    let land: Vec<usize> =
-        t.hexes().filter(|h| walkable(*t.get(*h)) && big(*h)).map(|h| t.index(h)).step_by(3).collect();
+    // The land the shares are counted on: a land hex in so many, for speed
+    // (some two thousand of them).
+    let all: Vec<usize> = t.hexes().filter(|h| walkable(*t.get(*h)) && big(*h)).map(|h| t.index(h)).collect();
+    let land: Vec<usize> = all.iter().copied().step_by((all.len() / 2000).max(3)).collect();
+    Some(CapitalPlaces { kept, grids, land })
+}
+
+/// The capitals: of the places a capital may be (`capital_places`), the
+/// best set (`score`, below): farthest points first, then each capital to
+/// the best place in its own land, then swaps that make it better.
+fn pick_capitals(g: &Gen, cfg: &Config, places: &CapitalPlaces, rng: &mut Rng) -> Option<Vec<Hex>> {
+    let t = &g.terrain;
+    let sides = usize::from(cfg.sides);
+    let [_, _, land_limit, enemy_limit, _, _] = limits(cfg.fairness).unwrap_or([0.0, 0.0, 1.3, 1.3, 0.0, 0.0]);
+    let CapitalPlaces { kept, grids, land } = places;
+    let land = land.as_slice();
     let between = |a: usize, b: usize| -> f64 {
         let c = grids[a][t.index(kept[b])];
         if c == u32::MAX { f64::from(kept[a].distance(kept[b]) * 4 + 20) } else { f64::from(c) }
@@ -252,7 +275,7 @@ fn pick_capitals(g: &Gen, cfg: &Config, plan: &Plan, rng: &mut Rng) -> Option<Ve
         let farthest = nearest.iter().copied().fold(0.0, f64::max);
         let mut cells = vec![0usize; set.len()];
         let (mut total, mut counted) = (0u64, 0u64);
-        for idx in &land {
+        for idx in land {
             if let Some((k, c)) = owner(set, *idx) {
                 cells[k] += 1;
                 total += u64::from(c);
@@ -647,6 +670,50 @@ fn air_places(g: &mut Gen, places: &Places, count: usize) -> Vec<Hex> {
     out
 }
 
+/// How hard a city is to come at on foot: the travel into it, on the whole,
+/// from the land `APPROACH` hexes round it, over the travel across open
+/// grass (1 is a city in the open; hills, forest, a river to cross or a
+/// range to go round make it more). Land no walker reaches it from counts
+/// as `FAR` turns; land across the sea or a lake does not count (an army
+/// does not come from there).
+pub fn approach(g: &Gen, city: Hex) -> f64 {
+    // (A way that goes farther from it than this costs more than `FAR`.)
+    let reach = APPROACH + FAR * TURN / 4;
+    let s = [(city, 0)];
+    let near = |to: Hex| to.distance(city) <= reach;
+    let (cost, _) = cheapest_from(g.rows(), g.cols(), &s, |_, to| price(g, to).filter(|_| near(to)));
+    let (wet, _) = cheapest_from(g.rows(), g.cols(), &s, |_, to| {
+        let step = if *g.terrain.get(to) == TileType::Water { Some(2) } else { price(g, to) };
+        step.filter(|_| near(to))
+    });
+    let across_water = |h: Hex| match (*cost.get(h), *wet.get(h)) {
+        (Some(c), Some(w)) => c > 2 * w + TURN,
+        (None, Some(_)) => true,
+        _ => false,
+    };
+    let ring: Vec<Hex> = g
+        .terrain
+        .hexes()
+        .filter(|h| h.distance(city) == APPROACH && walkable(*g.terrain.get(*h)) && !across_water(*h))
+        .collect();
+    if ring.is_empty() {
+        return f64::from(FAR * TURN) / f64::from(APPROACH * 2);
+    }
+    let total: u32 = ring.iter().map(|h| cost.get(*h).unwrap_or(FAR * TURN).min(FAR * TURN)).sum();
+    f64::from(total) / ring.len() as f64 / f64::from(APPROACH * 2)
+}
+
+/// How far round a city its approach is measured, and what land no walker
+/// reaches it from counts as, in turns.
+const APPROACH: u32 = 4;
+const FAR: u32 = 6;
+
+/// The approach of a city hard to come at (about one in seven), and of one
+/// remote (one in twenty or so; and every city at sea or in the air). The
+/// owner: a city in a hard place should be worth the taking.
+pub const HARD: f64 = 1.9;
+pub const REMOTE: f64 = 2.8;
+
 /// How fair the sharing out is: of the neutral cities in each capital's
 /// cell (the land it gets to before any other), within 3 turns of each,
 /// the land in each cell, the way to each one's nearest enemy, the ports in
@@ -736,6 +803,11 @@ fn fairness(g: &Gen, cfg: &Config, places: &Places, (ports, grids): (bool, &[Gri
         let short = (0..sides).filter(|i| can[*i] && port[*i] < cfg.ports_per_side as usize).count();
         out.push(Fair { name: "cells short of their ports".to_string(), value: short as f64, limit: 0.0 });
     }
+    out.push(Fair {
+        name: "capitals hemmed in (degrees short of a half turn)".to_string(),
+        value: hemmed(&places.capitals),
+        limit: 0.0,
+    });
     if !places.sea.is_empty() {
         let mut at_sea = vec![0usize; sides];
         for c in &places.sea {
@@ -1000,7 +1072,49 @@ fn records(g: &Gen, cfg: &Config, (places, air): (&Places, &[Hex]), kinds: &[Uni
             income: if capital { 20 } else { 4 + 2 * walls },
             produce,
             garrison,
+            trains: 1,
         });
     }
     out
+}
+
+/// How hard to come at a neutral city is: 0 in the open, 1 hard (`HARD`),
+/// 2 remote (`REMOTE`, and every city at sea or in the air).
+pub fn tier(g: &Gen, city: &City) -> u8 {
+    match city.reach {
+        _ if city.side != Side::Grey => 0,
+        ReachClass::Sea | ReachClass::Air => 2,
+        ReachClass::Foot => match approach(g, city.hex) {
+            a if a >= REMOTE => 2,
+            a if a >= HARD => 1,
+            _ => 0,
+        },
+    }
+}
+
+/// A neutral city hard to come at is worth the taking, on the map as it
+/// ends: its units start veterans (remote: elites), it pays 4 more a turn
+/// (remote: 8), it builds the template's strongest unit on foot, and
+/// likelier a flyer (one in four; remote, one in two).
+pub fn worth(g: &mut Gen, cfg: &Config, kinds: &[UnitKind]) {
+    let mut rng = Rng::stream(cfg.seed, "city worth");
+    let foot = |k: &&UnitKind| movement_class(k) == MoveClass::Foot && k.commander == 0;
+    let strongest = kinds.iter().filter(foot).max_by_key(|k| (k.strength, std::cmp::Reverse(k.price)));
+    let flyer = kinds.iter().filter(|k| movement_class(k) == MoveClass::Flyer).min_by_key(|k| (k.price, k.id.clone()));
+    let turns = |k: &UnitKind| k.price.div_ceil(4).clamp(1, 4);
+    let tiers: Vec<u8> = g.cities.iter().map(|c| tier(g, c)).collect();
+    for (c, tier) in g.cities.iter_mut().zip(tiers) {
+        if tier == 0 {
+            continue;
+        }
+        c.trains = 1 + tier;
+        c.income += 4 * u32::from(tier);
+        let odds = if tier == 2 { 2 } else { 4 };
+        let more = [strongest, flyer.filter(|_| rng.below(odds) == 0)];
+        for k in more.into_iter().flatten() {
+            if !c.produce.iter().any(|(id, _)| *id == k.id) {
+                c.produce.push((k.id.clone(), turns(k)));
+            }
+        }
+    }
 }

@@ -5,7 +5,7 @@
 //! ship to leave by, in the air with a flyer; and what it writes the game
 //! reads, garrisons and all.
 
-use hexgame::mapgen::cities::hemmed;
+use hexgame::mapgen::cities::{hemmed, tier};
 use hexgame::mapgen::cleanup::{JOIN_MIN, JOIN_WATER};
 use hexgame::mapgen::config::Config;
 use hexgame::mapgen::generate;
@@ -144,8 +144,8 @@ fn what_it_writes_the_game_reads_with_its_cities() {
     assert_eq!(map.cities().len(), made.state.cities.len());
     for (city, made) in map.cities().iter().zip(&made.state.cities) {
         assert_eq!(
-            (city.pos, city.name.as_str(), city.side, city.walls),
-            (made.hex, made.name.as_str(), made.side, made.walls)
+            (city.pos, city.name.as_str(), city.side, city.walls, city.trains),
+            (made.hex, made.name.as_str(), made.side, made.walls, made.trains)
         );
         assert!(!city.units.is_empty(), "{} builds something", city.name);
         assert!(!map.units_at(city.pos).is_empty(), "{} has a garrison", city.name);
@@ -159,6 +159,51 @@ fn what_it_writes_the_game_reads_with_its_cities() {
     let again = generate(&Config::default().with_text(&made.config_text()).unwrap(), UNITS, "units.txt").unwrap();
     assert_eq!(again.cities_text(), made.cities_text());
     assert_eq!(again.attempts, 1, "the seed that made it makes it at the first try");
+}
+
+/// The owner: "if a city winds up in a hard to reach place (and this is
+/// good to have some of those) it should probably have good production or
+/// something ... to make taking it more valuable".
+#[test]
+fn a_city_hard_to_come_at_is_worth_more() {
+    let kinds = hexgame::state::scenario::parse_units(UNITS).unwrap();
+    let strongest = kinds
+        .iter()
+        .filter(|k| movement_class(k) == MoveClass::Foot && k.commander == 0)
+        .max_by_key(|k| (k.strength, std::cmp::Reverse(k.price)))
+        .unwrap();
+    let (mut hard, mut remote) = (0, 0);
+    for seed in 1..=8 {
+        let mut cfg = config(seed, "medium");
+        if seed > 5 {
+            cfg.set("sea_cities", "on").unwrap();
+            cfg.set("fly_cities", "on").unwrap();
+        }
+        let made = generate(&cfg, UNITS, "units.txt").unwrap();
+        let g = &made.state;
+        for c in g.cities.iter().filter(|c| c.side == Side::Grey) {
+            let tier = tier(g, c);
+            if c.reach != ReachClass::Foot {
+                assert_eq!(tier, 2, "seed {seed}: {} at sea or in the air is remote", c.name);
+            }
+            assert_eq!(c.trains, 1 + tier, "seed {seed}: {}", c.name);
+            assert_eq!(c.income, 4 + 2 * c.walls + 4 * u32::from(tier), "seed {seed}: {}", c.name);
+            if tier > 0 {
+                assert!(
+                    c.produce.iter().any(|(id, _)| *id == strongest.id),
+                    "seed {seed}: {} builds the strongest",
+                    c.name
+                );
+            }
+            hard += usize::from(tier == 1);
+            remote += usize::from(tier == 2);
+        }
+        // The capitals train regulars.
+        assert!(g.cities.iter().filter(|c| c.side != Side::Grey).all(|c| c.trains == 1));
+    }
+    // Some of each, not many.
+    assert!(hard >= 8 && remote >= 4, "{hard} hard, {remote} remote");
+    assert!(hard + remote <= 8 * 28 / 4, "{hard} hard, {remote} remote");
 }
 
 #[test]

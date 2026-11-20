@@ -194,7 +194,7 @@ impl Default for Config {
             sea_edges: vec![Edge::West, Edge::North],
             lakes: Amount::Rate(1.0 / 1500.0),
             min_island: 30,
-            mix: [49.5, 17.0, 15.5, 14.0, 3.0, 0.0],
+            mix: [53.5, 13.0, 15.5, 14.0, 3.0, 0.0],
             feature_scale: 1.0,
             roughness: 0.5,
             range_style: RangeStyle::Ridges,

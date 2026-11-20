@@ -102,6 +102,30 @@ fn tiny_maps_come_near_it() {
     the_terrain_lies_as_asked("tiny", 20, 2.0);
 }
 
+/// The owner, on the first maps with cities: "really thick mountain
+/// patches ... look a little odd and are also wasteful". No mountain lies
+/// more than `DEPTH` hexes into its range, but for the odd hollow filled.
+#[test]
+fn mountain_ranges_are_thin() {
+    use hexgame::mapgen::grid::steps_from;
+    use hexgame::mapgen::relief::DEPTH;
+    for seed in 1..=20 {
+        let g = generate(&config(seed, "medium"), UNITS, "units.txt").unwrap().state;
+        let t = &g.terrain;
+        let depth = steps_from(g.rows(), g.cols(), t.hexes().filter(|h| *t.get(*h) != TileType::Mountain), |_| true);
+        let depths: Vec<u32> =
+            t.hexes().filter(|h| *t.get(*h) == TileType::Mountain).filter_map(|h| *depth.get(h)).collect();
+        let deeper = depths.iter().filter(|d| **d > DEPTH).count();
+        assert!(
+            deeper * 100 <= depths.len(),
+            "seed {seed}: {deeper} of {} mountains deeper than {DEPTH}",
+            depths.len()
+        );
+        let deepest = depths.iter().copied().max().unwrap_or(0);
+        assert!(deepest <= DEPTH + 2, "seed {seed}: a mountain {deepest} deep");
+    }
+}
+
 #[test]
 fn rivers_run_to_water_round_the_mountains_and_stay_rivers() {
     for seed in 1..=10 {

@@ -90,7 +90,7 @@ archipelago; cities only ships reach; the units template needs a ship).
 | `lakes`, `rivers` | 1/1500, 1/2500 | per hex (`1/1500`) or a count |
 | `river_width` | `2..3` | a river's width, from its source to its mouth |
 | `min_island` | 30 | land pieces smaller become water |
-| `mix` | `grass 49.5 mountain 17 hill 15.5 forest 14 swamp 3 desert 0` | shares of the land, percent; grass also holds the cities and sites |
+| `mix` | `grass 53.5 mountain 13 hill 15.5 forest 14 swamp 3 desert 0` | shares of the land, percent; grass also holds the cities and sites (the target map has 17 mountain; our thinner ranges spread about as far with 13) |
 | `feature_scale` | 1 | how big the blobs and ranges are |
 | `roughness` | 0.5 | 0 smooth to 1 ragged |
 | `range_style` | `ridges` | long ranges, or `massifs`, round lumps |
@@ -128,7 +128,17 @@ with an error that says so.
 2. **Mountains and hills** (`relief.rs`): a ridge score from ridged noise
    drawn out along two directions, each holding sway in broad regions, bent
    by a slow warp, and gathered by a mask into mountain country and plains.
-   Its best inland hexes are the mountains; a ring of hills is laid along
+   Its best inland hexes are the mountains, **thinned**: while a mountain
+   lies deeper than 3 hexes into its range, the mountains at the range's
+   edge near it go back to what they were, the weakest first and from both
+   sides, each only if that breaks no range and walls nothing in; so a
+   thick mass becomes a range along its spine, as long as it was. As many
+   are laid before thinning as leave the mix's share after it, and the
+   count is settled a hex at a time at the end. (The owner, on the first
+   maps with cities: thick masses of mountain looked odd and wasted land.
+   The target map's 17% of mountain is in thinner ranges than our ridge
+   score gives; with ours thinned, 13% spreads about as far as 17 did
+   thick, so `classic` has 13.) A ring of hills is laid along
    them by the same score (so what is left out is left out in stretches)
    until `hill_ring` of their edges border hills, thickened outward, and the
    rest of the hills grow as free patches of a noise of their own. Land
@@ -218,6 +228,16 @@ with an error that says so.
      template's ship; a city in the air a flyer first, now and then a strong
      one too), and its garrison (a capital its commander and three of what
      it builds, a neutral half its walls of the cheapest).
+   - **Worth**, on the map as it ends: a neutral city hard to come at is
+     worth the taking (the owner's wish). Its approach is the travel into
+     it from the land 4 hexes round, over the same across open grass (land
+     across the sea or a lake left out; land no walker reaches it from
+     counted as 6 turns). At 1.9 or more (hills, forest, a river, a range
+     to go round; about one city in ten) it is hard: its units start
+     veterans, it pays 4 more a turn, it builds the template's strongest
+     unit on foot, and one in four builds a flyer too. At 2.8 or more, and
+     every city at sea or in the air, it is remote: elites, 8 more, a flyer
+     one in two.
 
 Fairness, by level (`fairness`); travel by the cheapest way, a river
 crossed:

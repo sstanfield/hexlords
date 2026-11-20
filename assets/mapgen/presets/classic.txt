@@ -2,7 +2,9 @@
 # wide rivers that split the land, a city about every 8 hexes, roads that
 # link the cities, bridges and passes where they cross rivers and ranges;
 # the sea coming in from the west and the north. The numbers are the target
-# map's (docs/mapgen.md).
+# map's (docs/mapgen.md), but for the mountains: their ranges are thinner
+# (no mountain more than 3 hexes into one), so as many hexes would spread
+# them farther; 13 spreads them about as far as the thick ranges of 17 did.
 sides            4
 cities_per_side  10
 aspect           square
@@ -11,7 +13,7 @@ layout           coast
 sea_edges        west,north
 lakes            1/1500
 min_island       30
-mix              grass 49.5 mountain 17 hill 15.5 forest 14 swamp 3 desert 0
+mix              grass 53.5 mountain 13 hill 15.5 forest 14 swamp 3 desert 0
 feature_scale    1
 roughness        0.5
 range_style      ridges

@@ -178,6 +178,7 @@ fn make(config: &Config, plan: &Plan, (kinds, units): (&[crate::state::UnitKind]
     cities::cities(&mut g, config, &plan, kinds)?;
     // The mix again, round the room made for the cities.
     cleanup::quotas(&mut g, config);
+    cities::worth(&mut g, config, kinds);
     Ok(Generated { config: config.clone(), plan, state: g, units: units.to_string(), attempts: 1 })
 }
 
@@ -206,6 +207,11 @@ impl Generated {
                 out.push_str(&format!("  side     {}\n", crate::state::scenario::side_name(c.side)));
             }
             out.push_str(&format!("  walls    {}\n  income   {}\n", c.walls, c.income));
+            match c.trains {
+                2 => out.push_str("  trains   veteran\n"),
+                3 => out.push_str("  trains   elite\n"),
+                _ => {}
+            }
             for (id, turns) in &c.produce {
                 out.push_str(&format!("  produce  {id} {turns}\n"));
             }
