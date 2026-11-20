@@ -15,9 +15,10 @@ numbers are used.
 **Where it stands.** Built: the ruler (stats, reach, check), the skeleton
 (knobs, presets, sizes, files, pictures), the terrain (land and water,
 mountains and hills, rivers and lakes, forest, swamp, desert, grass,
-cleanup) and the cities (capitals, neutrals, sea and air cities, fairness,
-names, walls, what they build and who stands in them). To come, in order:
-temples and ruins; roads, bridges and passes; the rest of scoring. **Until
+cleanup), the cities (capitals, neutrals, sea and air cities, fairness,
+names, walls, what they build and who stands in them) and the temples and
+ruins. To come, in order: roads, bridges and passes; the rest of scoring.
+**Until
 the roads bring bridges, a river is a wall to every walker**: the game
 plays a generated map, but armies on either side of a river never meet.
 
@@ -105,14 +106,17 @@ archipelago; cities only ships reach; the units template needs a ship).
 | `ports`, `ports_per_side` | `auto`, 1 | cities by water that reaches the sea build the template's ship |
 | `fairness` | `normal` | `off`, `loose`, `normal`, `strict` (below) |
 | `attempts` | 30 | maps made before the fairest is given |
+| `temples`, `ruins` | 0.26 and 0.24 a city | a count, or a rate of the cities; a rate, with fairness on, is rounded to as many for each side (one at least) |
+| `site_city_gap` | 3 | no site nearer a city |
+| `site_gap` | 5 | no site nearer another |
 
 Of size, cities and density, two given say the third (`size` and `cities`:
 the density; `size` alone: the cities at the density; neither: the size for
 the cities). It warns of a density outside 100 to 300, or fewer than 3
 cities a side. The knobs of the stages to come (cities, sites, roads,
 fairness, ships and flyers, retries) are read and written already, and do
-nothing yet: `temples`, `ruins`, `site_city_gap`, `site_gap`, `roads`,
-`road_loops`, `bridges`, `max_bridge`, `passes`, `symmetry`, `accept`. A
+nothing yet: `roads`, `road_loops`, `bridges`, `max_bridge`, `passes`,
+`symmetry`, `accept`. A
 checkbox on with a units template that has no such unit stops the generator
 with an error that says so.
 
@@ -250,6 +254,26 @@ crossed:
 | The way to the nearest enemy capital, longest over shortest | 1.5 | 1.3 | 1.15 |
 | Ports in each cell (that has water a ship reaches the sea on), most less fewest; and none short of `ports_per_side` | 3 | 2 | 1 |
 | Cities at sea nearest one capital | 2 | 1 | 1 |
+| Capitals hemmed in (degrees short of a half turn) | 0 | 0 | 0 |
+| Temples in each cell, most less fewest | 2 | 1 | 0 |
+| Ruins in each cell, most less fewest | 2 | 1 | 0 |
+| The way from each capital to its nearest temple, longest less shortest, in turns | 3 | 2 | 1 |
+
+7. **Temples and ruins** (`sites.rs`). A temple blesses the units that
+   stop on it, so the sites are shared out evenly, each kind on its own
+   (the owner: "make sure they are distributed fairly (both) since temples
+   are a definite boon"). Each capital's cell gets as many of each (what
+   does not share out evenly goes to cells by lot); a site stands well
+   inside its cell (most of a turn nearer its own capital than any
+   other's, so the last touches to the terrain do not move it to another),
+   on land a walker gets to from the capitals, off the map's edge, not on
+   an island nor in an air city's ring, `site_city_gap` from every city
+   and `site_gap` from every other site. Each side's first temple stands 2
+   to 3.5 turns from its capital (as the continent map has a temple near
+   each side's first city); the rest go where the cities and sites are
+   farthest off, out to twice `site_gap`, a little more often in wilder
+   country (forest, hills, the water's edge) than on the open grass, and
+   by chance. Their fairness is judged on the map as it ends.
 
 Every stage uses only `+ - * /`, `floor` and `sqrt` where results pick
 terrain (no `sin`, `exp` or `powf`, whose last bits differ between
@@ -271,6 +295,11 @@ asked, a capital a side, apart and off the edge, named each its own, and
 shared out fairly at `normal` (a few take a second or third map); no land
 of size is walled off from the main land but islands, 95% of it lies
 within half again the aimed spacing of a city, and no capital is hemmed in.
+Over 20 medium seeds the sites are as many as asked, apart, and reached;
+over 10 medium and 10 huge, every side has as many temples and as many
+ruins, and its nearest temple within 2 turns of the others'. Round the
+sites on a medium map: grass 30%, forest 25%, hill 24%, water 17% (the
+target map: 35, 22, 15, 13, and swamp 10).
 
 The tests make many maps; they are built a little optimized (`[profile.test]
 opt-level = 1` in `Cargo.toml`), or they would take minutes.

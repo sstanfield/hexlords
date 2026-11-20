@@ -181,13 +181,16 @@ pub fn preview(map: &Map, s: f64, marks: &[CityMark]) -> Image {
             img.line(a, mid, (s / 2.5).max(1.0), colour);
         }
     }
-    // Sites, then cities over everything.
+    // Sites (ringed, to stand out from the land), then cities over
+    // everything.
     for hex in all.hexes() {
-        match kind(hex) {
-            TileType::Temple => img.dot(layout.center(hex), s * 0.45, TEMPLE),
-            TileType::Ruin => img.dot(layout.center(hex), s * 0.45, RUIN),
-            _ => {}
-        }
+        let colour = match kind(hex) {
+            TileType::Temple => TEMPLE,
+            TileType::Ruin => RUIN,
+            _ => continue,
+        };
+        img.dot(layout.center(hex), s * 0.95, RING);
+        img.dot(layout.center(hex), s * 0.7, colour);
     }
     for (i, city) in map.cities().iter().enumerate() {
         let at = layout.center(city.pos);

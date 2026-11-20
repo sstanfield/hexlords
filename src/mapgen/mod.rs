@@ -40,6 +40,7 @@ pub mod relief;
 pub mod rivers;
 pub mod rng;
 pub mod score;
+pub mod sites;
 pub mod stats;
 
 use crate::state::scenario::{self, parse_units};
@@ -176,8 +177,10 @@ fn make(config: &Config, plan: &Plan, (kinds, units): (&[crate::state::UnitKind]
     cleanup::cleanup(&mut g, config);
     cleanup::join_land(&mut g);
     cities::cities(&mut g, config, &plan, kinds)?;
+    sites::sites(&mut g, config, &plan);
     // The mix again, round the room made for the cities.
     cleanup::quotas(&mut g, config);
+    sites::judge(&mut g, config);
     cities::worth(&mut g, config, kinds);
     Ok(Generated { config: config.clone(), plan, state: g, units: units.to_string(), attempts: 1 })
 }
