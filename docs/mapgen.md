@@ -16,11 +16,10 @@ numbers are used.
 (knobs, presets, sizes, files, pictures), the terrain (land and water,
 mountains and hills, rivers and lakes, forest, swamp, desert, grass,
 cleanup), the cities (capitals, neutrals, sea and air cities, fairness,
-names, walls, what they build and who stands in them) and the temples and
-ruins. To come, in order: roads, bridges and passes; the rest of scoring.
-**Until
-the roads bring bridges, a river is a wall to every walker**: the game
-plays a generated map, but armies on either side of a river never meet.
+names, walls, what they build and who stands in them), the temples and
+ruins, and the roads (bridges, passes, every city and site meant to be
+reached on foot made so). To come: the rest of scoring, retries by score,
+symmetry.
 
 ## Commands
 
@@ -109,14 +108,17 @@ archipelago; cities only ships reach; the units template needs a ship).
 | `temples`, `ruins` | 0.26 and 0.24 a city | a count, or a rate of the cities; a rate, with fairness on, is rounded to as many for each side (one at least) |
 | `site_city_gap` | 3 | no site nearer a city |
 | `site_gap` | 5 | no site nearer another |
+| `roads` | `linked` | `none`; `sparse` (about three cities in five on a road, in small networks); `linked` (every city on foot on one network); `dense` (linked, and more loops) |
+| `road_loops` | 0.15 | the share of the links left out of the tree that are laid too (`linked`; `dense` two and a half times as many) |
+| `bridges`, `max_bridge` | on, 5 | roads cross rivers on bridges, at most so long |
+| `passes` | 0.1 a city | the most ranges roads cross over passes |
 
 Of size, cities and density, two given say the third (`size` and `cities`:
 the density; `size` alone: the cities at the density; neither: the size for
 the cities). It warns of a density outside 100 to 300, or fewer than 3
 cities a side. The knobs of the stages to come (cities, sites, roads,
 fairness, ships and flyers, retries) are read and written already, and do
-nothing yet: `roads`, `road_loops`, `bridges`, `max_bridge`, `passes`,
-`symmetry`, `accept`. A
+nothing yet: `symmetry`, `accept`. A
 checkbox on with a units template that has no such unit stops the generator
 with an error that says so.
 
@@ -275,6 +277,47 @@ crossed:
    country (forest, hills, the water's edge) than on the open grass, and
    by chance. Their fairness is judged on the map as it ends.
 
+8. **Roads, bridges, passes** (`roads.rs`).
+   - **Links**: each city on foot to its 3 nearest by travel (a capital to
+     4) and its 2 nearest as the crow flies (a city across a range is far
+     by travel, near by a pass). Each link's road is found by a search that
+     costs grass 1, desert 1.5, forest 2, hill 3, swamp 4 a hex (a road
+     already laid 0.5, so roads merge), a bridge 6 a hex over a river only
+     (never the sea or a lake, never longer than `max_bridge`), a pass 5 a
+     hex, and 4 more a hex beside another road or a city (but the hex it
+     comes from and the city it goes to: in the game every two road hexes
+     that touch are joined, so a new road joins an old one or keeps a hex
+     from it, and two roads do not leave a city by neighbouring sides); it
+     never sets foot on a sea city's island or in an air city's ring; of
+     ways that cost the same it takes the one nearest the straight line
+     between its ends. A link through a third city is left out (the
+     two links through it do).
+   - **Network**: the cheapest tree joining the cities, round the ranges
+     where it can be; then `linked`, the cheapest `road_loops` share of the
+     other links; `dense`, more; `sparse`, the tree thinned, its longest
+     links first, until about three cities in five are on a road. Then
+     passes, where a road over one saves a turn's march at least, the most
+     saving first, no more ranges crossed than `passes` allows (held to
+     while drawing, too).
+   - **Passes**: a road may cross a range up to 5 hexes wide; all but its
+     middle one or two mountains become hills, a saddle, so a pass is 1 or
+     2 hexes long. (The plan priced a pass at 15 grass hexes; on our
+     thinner ranges, with gaps cut in them, no road ever took one, so a
+     pass costs 5 and is laid only where it saves.)
+   - **Tidy**: a road hex on land whose road neighbours stay joined
+     without it goes (a corner cut, two roads side by side made one), and
+     so does a stub; never the land end of a bridge or a pass. At a city's
+     gate, two roads by neighbouring sides (a triangle, drawn so because
+     touching road hexes join) become one, or one moves a side round,
+     where the roads beyond allow: about one city in fifty keeps one,
+     where water or mountains crowd a city with three roads.
+   - **Reach repair**: whatever is meant to be reached on foot and is not
+     (a city, a temple, a ruin), as the game walks (onto a bridge or a pass
+     only along the road), gets a road to one of the nearest cities reached,
+     round the ranges if it can be; with no road for it (or `roads none`,
+     or `bridges off`), a ford: the fewest river hexes between it and land
+     reached, made grass.
+
 Every stage uses only `+ - * /`, `floor` and `sqrt` where results pick
 terrain (no `sin`, `exp` or `powf`, whose last bits differ between
 platforms), breaks ties by the hex's index, and draws its chance from its own
@@ -299,7 +342,12 @@ Over 20 medium seeds the sites are as many as asked, apart, and reached;
 over 10 medium and 10 huge, every side has as many temples and as many
 ruins, and its nearest temple within 2 turns of the others'. Round the
 sites on a medium map: grass 30%, forest 25%, hill 24%, water 17% (the
-target map: 35, 22, 15, 13, and swamp 10).
+target map: 35, 22, 15, 13, and swamp 10). Over 20 medium seeds `linked`
+puts every city on one network, every bridge and pass runs from land road
+to land road (`mapgen check`, strict), no bridge is longer than
+`max_bridge`, no pass than 2, the passes are no more than `passes`, and
+every city, temple and ruin is reached on foot; `sparse` puts 55 to 70% of
+the cities on a road over 10; with `roads none`, fords alone reach them.
 
 The tests make many maps; they are built a little optimized (`[profile.test]
 opt-level = 1` in `Cargo.toml`), or they would take minutes.

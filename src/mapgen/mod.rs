@@ -39,6 +39,7 @@ pub mod reach;
 pub mod relief;
 pub mod rivers;
 pub mod rng;
+pub mod roads;
 pub mod score;
 pub mod sites;
 pub mod stats;
@@ -178,6 +179,7 @@ fn make(config: &Config, plan: &Plan, (kinds, units): (&[crate::state::UnitKind]
     cleanup::join_land(&mut g);
     cities::cities(&mut g, config, &plan, kinds)?;
     sites::sites(&mut g, config, &plan);
+    roads::roads(&mut g, config, &plan);
     // The mix again, round the room made for the cities.
     cleanup::quotas(&mut g, config);
     sites::judge(&mut g, config);
