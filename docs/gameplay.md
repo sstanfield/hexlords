@@ -507,14 +507,43 @@ thing to happen. Ideas to try, as the rules grow:
   has a button for each, with the unit's icon, name, strength and moves,
   and all about the one under the pointer (turns, price, upkeep, what each
   terrain costs it).
-- **Mistakes cost little** (built): a click that is not a move drops the
-  selection, Esc drops it too, a drag moves the map rather than a unit, and
-  the last order can be taken back (`Order::Undo`), unless chance had a say
-  in it (a battle) or it put a side out.
+- **Mistakes cost little** (built): Esc drops the selection, a drag moves
+  the map rather than a unit, a click beyond the selection's reach (a Go
+  to) can be taken back until the stack has gone more than a leg, and the
+  last order can be taken back (`Order::Undo`), unless chance had a say in
+  it (a battle) or it put a side out.
 - **Sub-orders** (decided: wanted, can wait): what a stack does when
   something happens in the turn (an enemy comes in sight, it is attacked,
   a city it passes is empty): attack, stop, go round, carry on; with a
   default for each, so that most stacks never need one.
+- **A production queue** (planned, the owner's word 2026-11-21): a city
+  builds a list, each item with how many and where they go (`Sends`: keep,
+  defend, a route, a rally point with or without a blessing on the way):
+  "3 Light Infantry, defending; Hawk Riders to rally point 0 by a temple;
+  Cavalry to rally point 1". The last item can repeat the list (or its
+  last few items), forever or so many times, or stop. A city whose queue
+  ran out is a task that needs orders, unless its player said it is to
+  build nothing (late in a game, a city left alone on purpose).
+- **Patrols** (planned, the owner's word 2026-11-21): a stack goes round
+  waypoints (on land the side has seen), turn after turn: round again if
+  the last joins the first, else back the way it came. It says whether it
+  attacks, and at what odds at least, so that a scout in the fog keeps out
+  of fights and a strong stack takes on what it can beat. It keeps excess
+  troops useful, and eyes open in the fog.
+- **Marauders** (planned, the owner's word 2026-11-21): a stack handed to
+  the computer (a planner's ways, or an agent of its own for one stack)
+  until its player takes it back: it roams, hunts other sides' units and
+  takes their cities. After each battle it is a task that needs orders
+  (still marauding if ignored), so that its player sees whether it is too
+  hurt to go on.
+- **Provinces** (an idea to explore, not planned): a group of cities, and
+  what they build, handed to the computer under the player's general
+  orders: how much of their taxes they keep, whether they send some of
+  their units (cavalry for the front, say) to the player. Quiet parts of a
+  large empire would run themselves. Questions before it is planned: what
+  a province is told (hold, grow, defend), what it may spend, whether its
+  units obey the player's rally points, and how the player sees what it
+  did (its own lines in the log).
 
 ## Multiplayer and the AI
 
