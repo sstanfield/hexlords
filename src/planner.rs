@@ -749,7 +749,9 @@ impl Planner {
                 soldiers
                     .iter()
                     .filter(|u| u.power() + DISBAND_GAP <= p.strength && !alone(u) && !at_sea(u))
-                    .filter(|u| units.kind_of(u).is_some_and(|k| k.travel != Travel::Sea))
+                    // (Not a ship, nor a siege engine: weak, but not junk; it
+                    // once sent home each it had just built for the walls.)
+                    .filter(|u| units.kind_of(u).is_some_and(|k| k.travel != Travel::Sea && k.siege == 0))
                     .min_by_key(|u| (u.power(), std::cmp::Reverse(u.upkeep), u.id().index))
             });
             if let Some(unit) = junk {

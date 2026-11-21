@@ -264,12 +264,18 @@ with an error that says so.
      order black, white, red, green, blue, orange, yellow, purple), walls
      (a capital the highest of `walls`; a neutral drawn from it, one more by
      the water or in the hills; 1 at least), taxes (a capital 40, a neutral 8 and four times
-     its walls), what it builds (from the template by role: a capital its
-     two cheapest, its fastest, its strongest and its commander; a city in the hills its
-     two strongest; the others the cheapest and one more; a port the
-     template's ship; a city in the air a flyer first, now and then a strong
-     one too), and its garrison (a capital its commander and three of what
-     it builds; a neutral one unit, the weakest it builds).
+     its walls), what it builds (from the template by role, among its kinds
+     on foot that are neither siege engines nor at home in the woods or the
+     high country, unless it has no others: a capital its two cheapest, its
+     fastest, its strongest, the template's siege engine and its commander;
+     a city in the hills its two strongest; the others the cheapest and one
+     more; besides, a city with two forests or swamps around it the kind at
+     home there, and one with two hills or mountains around it the kind at
+     home in those; a port the template's ship; a city in the air a flyer
+     first, now and then a strong one too), in how many turns (a turn for
+     each 6 of its price, 1 to 4; a commander 4: `build_turns`), and its
+     garrison (a capital its commander and three of what it builds; a
+     neutral one unit, the weakest on foot it builds, no siege engine).
    - **Worth**, on the map as it ends: a neutral city hard to come at is
      worth the taking (the owner's wish). Its approach is the travel into
      it from the land 4 hexes round, over the same across open grass (land

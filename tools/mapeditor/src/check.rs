@@ -218,6 +218,30 @@ mod tests {
     }
 
     #[test]
+    fn a_kinds_bonus_and_siege_are_reported() {
+        let dir = std::env::temp_dir().join(format!("mapeditor-check-knack-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("terrain.map"), grid(20, "gggggggggggggggggggg")).unwrap();
+        std::fs::write(
+            dir.join("units.txt"),
+            "unit rangers\nname Rangers\nmoves 9\nbonus forest 2, city 1\nenter grass 2\n\
+             unit ram\nname Ram\nmoves 6\nsiege 1\nenter grass 2\n",
+        )
+        .unwrap();
+        let report = check_path(&dir, None).unwrap();
+        assert_eq!(
+            report.units,
+            [
+                "rangers \"Rangers\": strength 1, moves 9, upkeep 0, price 0, +2 on forest, +1 on city, units/default_unit.png"
+                    .to_string(),
+                "ram \"Ram\": strength 1, moves 6, upkeep 0, price 0, siege 1, units/default_unit.png".to_string()
+            ]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_map_directory_is_checked_as_a_whole() {
         let dir = std::env::temp_dir().join(format!("mapeditor-check-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

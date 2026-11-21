@@ -291,3 +291,57 @@ fn every_generated_city_starts_with_walls() {
         made.state.cities.iter().map(|c| c.walls).collect::<Vec<_>>()
     );
 }
+
+/// What generated cities build, by role: a capital the template's siege
+/// engine; a city among forests or hills the kind at home there; every
+/// other kind on foot somewhere (a kind at home on grass, say, is ordinary
+/// work); in a turn for each 6 of its price.
+#[test]
+fn generated_cities_build_every_role() {
+    use hexgame::mapgen::cities::build_turns;
+    let kinds = hexgame::state::scenario::parse_units(UNITS).unwrap();
+    let kind = |id: &str| kinds.iter().find(|k| k.id == id).unwrap();
+    assert_eq!(
+        ["militia", "lightinfantry", "heavyinfantry", "cavalry", "wyverns", "captain"].map(|id| build_turns(kind(id))),
+        [1, 1, 2, 3, 3, 4]
+    );
+    let made = generate(&config(4, "medium"), UNITS, "units.txt").unwrap();
+    let builds = |c: &hexgame::mapgen::cities::City, id: &str| c.produce.iter().any(|(p, _)| p == id);
+    for c in made.state.cities.iter().filter(|c| c.side != Side::Grey) {
+        assert!(builds(c, "siegeengine"), "{} builds {:?}", c.name, c.produce);
+    }
+    for c in &made.state.cities {
+        for (id, turns) in &c.produce {
+            assert_eq!(*turns, build_turns(kind(id)), "{} {id}", c.name);
+        }
+    }
+    let anywhere = |id: &str| made.state.cities.iter().any(|c| builds(c, id));
+    assert!(anywhere("rangers") && anywhere("highlanders"), "the specialists, where the ground suits them");
+    // A template's kind at home on grass, and one with only specialists.
+    let grass = format!(
+        "{UNITS}\nunit plainsmen\nname Plainsmen\nstrength 3\nmoves 10\nprice 5\nbonus grass 1\nenter grass 2, city 1, road 1, bridge 1\n"
+    );
+    let made = generate(&config(5, "medium"), &grass, "units.txt").unwrap();
+    assert!(made.state.cities.iter().any(|c| builds(c, "plainsmen")), "never built");
+    let only = "unit woodsmen\nname Woodsmen\nstrength 3\nmoves 10\nprice 6\nbonus forest 2\n\
+                enter grass 2, forest 2, hill 4, swamp 5, desert 3, city 1, road 1, bridge 1\n\
+                unit captain\nname Captain\nstrength 3\nmoves 12\nprice 20\ncommander 1\n\
+                enter grass 2, forest 3, hill 4, swamp 5, desert 3, city 1, road 1, bridge 1\n";
+    let made = generate(&config(6, "small"), only, "units.txt").unwrap();
+    for c in &made.state.cities {
+        assert!(builds(c, "woodsmen"), "{} builds {:?}", c.name, c.produce);
+        assert!(!c.garrison.is_empty(), "{} has no garrison", c.name);
+    }
+}
+
+/// Mountains are walls for anything that walks, in the template as in the
+/// map format: the generator's reach and its cities only flyers reach
+/// count on it.
+#[test]
+fn nothing_in_the_template_walks_over_mountains() {
+    for kind in hexgame::state::scenario::parse_units(UNITS).unwrap() {
+        if movement_class(&kind) == MoveClass::Foot {
+            assert_eq!(kind.cost.mountain, 0, "{} enters mountains", kind.id);
+        }
+    }
+}

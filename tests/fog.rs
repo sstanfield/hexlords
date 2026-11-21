@@ -299,7 +299,8 @@ fn a_city_is_remembered_as_it_was_seen_last() {
     assert!(!sight.sees(BLUEMOOR));
     assert_eq!(sight.holder(city), Side::Blue, "as it was seen");
     let known = info::Known::of(city, Side::Red, &sight);
-    assert_eq!(known, info::Known::Fog(Some((Side::Blue, 1))));
+    let walls = game.map.cities().get(bluemoor).unwrap().walls;
+    assert_eq!(known, info::Known::Fog(Some((Side::Blue, 1)), Some(walls)), "and its walls, as seen");
     assert_eq!(info::city_lines_for(&game.map, city, 10, known)[1..3], ["Not seen since round 1", "Held by blue then"]);
     assert_eq!(game.view_for(Side::Red).map.city_at(BLUEMOOR).map(|c| c.side), Some(Side::Blue));
     // Red's own city taken out of its sight: it is told who took it.

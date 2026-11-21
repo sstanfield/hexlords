@@ -34,7 +34,9 @@ fn game(red: &str, blue: &str, gold: u32) -> Game {
                  unit knights\nname Knights\nstrength 6\nmoves 12\nupkeep 7\nprice 14\nenter grass 2, city 1\n\
                  unit boat\nname Boat\nstrength 1\nmoves 12\nupkeep 1\ntravels sea\ncarries 2\nenter water 2, city 2\n\
                  unit captain\nname Captain\nstrength 2\nmoves 12\ncommander 1\nenter grass 2, city 1\n\
-                 unit hawk\nname Hawk\nstrength 1\nmoves 12\ntravels air\nenter grass 2, water 2, city 1\n";
+                 unit hawk\nname Hawk\nstrength 1\nmoves 12\ntravels air\nenter grass 2, water 2, city 1\n\
+                 unit ram\nname Ram\nstrength 1\nmoves 6\nupkeep 1\nsiege 1\nenter grass 2, city 1\n\
+                 unit ranger\nname Ranger\nstrength 2\nmoves 12\nbonus forest 2, city 1\nenter grass 2, forest 2, city 1\n";
     let cities = format!(
         "city 5 5\nname Redhold\nside red\nwalls 2\nincome 20\nproduce levy 1\nproduce knights 2\n{red}\
          city 15 5\nname Southwick\nside red\n\
@@ -461,4 +463,123 @@ fn no_walls_are_raised_once_the_game_is_over() {
     assert_eq!(game.winner(), Some(Side::Red));
     let redhold = game.map.city_at(REDHOLD).unwrap().id;
     assert!(game.walls_price(Side::Red, redhold).unwrap_err().contains("over"));
+}
+
+/// Late, a siege engine is no junk: the planner keeps the one it has (it
+/// once sent home each it built, and built another, again and again).
+#[test]
+fn the_planner_keeps_its_siege_engine() {
+    let mut game = game("garrison levy 8\n", "", 200);
+    for row in [2, 3] {
+        for _ in 0..8 {
+            new_unit(&mut game, Side::Red, "levy", Hex::new(row, 2));
+        }
+    }
+    let ram = new_unit(&mut game, Side::Red, "ram", Hex::new(4, 2));
+    let mut planner = hexgame::planner::Planner::new(hexgame::planner::STEADY);
+    for _ in 0..6 {
+        let order = hexgame::agents::Agent::next_order(&mut planner, &game.view_for(Side::Red), Side::Red);
+        if let Order::Disband { units } = &order {
+            assert!(!units.contains(&ram), "it sent its siege engine home");
+        }
+        if game.apply(order).is_err() {
+            break;
+        }
+    }
+    assert!(game.map.units().get(ram).is_some());
+}
+
+/// The protocol writes a kind's bonus and siege, and reads back the walls,
+/// disband and bless orders.
+#[test]
+fn the_protocol_says_a_kinds_bonus_and_reads_the_new_orders() {
+    let game = game("garrison levy\n", "", 50);
+    let text = hexgame::agents::describe(&game, Side::Red);
+    assert!(text.lines().any(|l| l.starts_with("kind ram ") && l.contains(" siege 1 bonus none ")), "{text}");
+    assert!(text.lines().any(|l| l.starts_with("kind ranger ") && l.contains(" bonus forest:2,city:1 ")), "{text}");
+    let levy = at(&game, REDHOLD)[0];
+    let name = hexgame::agents::unit_name(levy);
+    let redhold = game.map.city_at(REDHOLD).unwrap().id;
+    let parse = |line: &str| hexgame::agents::parse_order(&game, line);
+    assert_eq!(parse("walls 5 5"), Ok(Some(Order::Walls { city: redhold })));
+    assert_eq!(parse(&format!("disband {name}")), Ok(Some(Order::Disband { units: vec![levy] })));
+    assert_eq!(parse(&format!("bless {name}")), Ok(Some(Order::Bless { units: vec![levy] })));
+}
+
+/// With fog of war, a city out of sight keeps the walls its side saw last.
+#[test]
+fn a_city_in_the_fog_has_the_walls_seen_last() {
+    let game = game("garrison levy\n", "", 50);
+    let mut setup = game.setup().clone();
+    setup.fog = hexgame::setup::Fog::On;
+    let mut game = game.with_setup(setup);
+    // Red sees Bluemoor (walls 3) from a scout beside it; then the scout goes.
+    let scout = new_unit(&mut game, Side::Red, "levy", Hex::new(5, 7));
+    game.apply(Order::Move { units: vec![scout], to: Hex::new(5, 8) }).unwrap();
+    assert!(game.sight(Side::Red).sees(BLUEMOOR));
+    // (What its units saw on their way stays seen until its turn ends.)
+    game.map.kill_unit(scout);
+    game.end_turn();
+    assert!(!game.sight(Side::Red).sees(BLUEMOOR));
+    let bluemoor = game.map.city_at(BLUEMOOR).unwrap().id;
+    game.map.city_mut(bluemoor).unwrap().walls = 5;
+    assert_eq!(game.view_for(Side::Red).map.city_at(BLUEMOOR).unwrap().walls, 3);
+    assert_eq!(game.sight(Side::Red).walls_seen(BLUEMOOR), Some(3));
+}
+
+/// With fog of war, a side lays siege only to one it outnumbers counting
+/// the units it saw and sees no more (it once counted only those in sight,
+/// and waved at walls against an army it had seen go by).
+#[test]
+fn a_siege_counts_the_units_seen_before() {
+    let game = game("garrison levy 8\n", "garrison levy\n", 50);
+    let mut setup = game.setup().clone();
+    setup.fog = hexgame::setup::Fog::On;
+    let mut game = game.with_setup(setup);
+    // Red holds three cities to blue's one.
+    let farwater = game.map.city_at(Hex::new(15, 15)).unwrap().id;
+    game.map.city_mut(farwater).unwrap().side = Side::Red;
+    // A scout sees blue's four knights by Bluemoor, then is gone.
+    for _ in 0..4 {
+        new_unit(&mut game, Side::Blue, "knights", Hex::new(5, 12));
+    }
+    let scout = new_unit(&mut game, Side::Red, "levy", Hex::new(6, 10));
+    game.apply(Order::Move { units: vec![scout], to: Hex::new(5, 10) }).unwrap();
+    game.map.kill_unit(scout);
+    game.end_turn();
+    let view = game.view_for(Side::Red);
+    assert!(view.map.units().of_side(Side::Blue).next().is_none(), "none in sight");
+    let sure = Some(hexgame::state::combat::Forecast { odds: 100, kills: 1.0, losses: 0.0 });
+    // Nine red units against five blue it knows of: no siege (9 < 3 x 5).
+    assert!(!hexgame::agents::siege(&view, Side::Red, BLUEMOOR, sure));
+}
+
+/// The generator's walls are 0 to 6, as high as walls go in the game.
+#[test]
+fn the_generators_walls_go_no_higher_than_the_games() {
+    let mut cfg = hexgame::mapgen::config::Config::default();
+    assert!(cfg.set("walls", "3:50 6:50").is_ok());
+    assert!(cfg.set("walls", "3:50 7:50").unwrap_err().contains("above 6"));
+}
+
+/// The Help menu's topics say the rules of this round: the walls' price,
+/// a kind's own ground and siege engines, Defend and Disband, and what an
+/// undo takes back.
+#[test]
+fn the_help_topics_tell_the_new_rules() {
+    let game = game("", "", 50);
+    let text = |id: &str| -> String {
+        let (_, sections) = hexgame::guide::topic(&game, id).unwrap();
+        // (Wrapped: a row with no name goes on from the one before.)
+        let rows = sections.iter().flat_map(|s| s.rows.iter());
+        rows.map(|(a, b)| if a.is_empty() { format!(" {b}") } else { format!("\n{a}: {b}") }).collect::<String>()
+    };
+    let battles = text("help_battles");
+    assert!(battles.contains("Their own ground") && battles.contains("Ranger: fights +2 in forests"), "{battles}");
+    assert!(battles.contains("Ram: breaks 1 of the walls it attacks"), "{battles}");
+    let cities = text("help_cities");
+    assert!(cities.contains("25 gold for each level") && cities.contains("loses a level"), "{cities}");
+    let orders = text("help_orders");
+    assert!(orders.contains("Defend: F:") && orders.contains("Disband: X:"), "{orders}");
+    assert!(orders.contains("a city's work or its walls"), "{orders}");
 }

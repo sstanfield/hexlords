@@ -578,3 +578,41 @@ fn f_marks_defenders_and_stands_them_down() {
     assert!(!s.screen.game.map.units().get(first).unwrap().defending);
     assert_eq!(s.screen.game.selected(), Some(first));
 }
+
+/// Selecting a hex leaves out its defenders and those put aside, unless
+/// they are all it has: right after F on part of a stack, the stack was
+/// selected whole again, and the next click sent the defenders off.
+#[test]
+fn a_hex_selected_leaves_out_its_defenders() {
+    let mut game = game("garrison soldiers 4\n");
+    let all = at(&game, REDHOLD);
+    game.apply(Order::Defend { units: all[..2].to_vec(), on: true }).unwrap();
+    game.select_hex(REDHOLD);
+    assert_eq!(game.selection(), &all[2..], "the two that do not defend");
+    // With F in the session: the rest are selected next, not the defenders.
+    let mut s = session(self::game("garrison soldiers 4\n"));
+    click_hex(&mut s, REDHOLD);
+    let all = at(&s.screen.game, REDHOLD);
+    s.screen.game.select_unit(all[0]);
+    type_char(&mut s, 'f');
+    assert!(!s.screen.game.selection().contains(&all[0]), "{:?}", s.screen.game.selection());
+    // All of them defending: a click takes them all, to be sent somewhere.
+    let mut game = self::game("garrison soldiers 2\n");
+    let all = at(&game, REDHOLD);
+    game.apply(Order::Defend { units: all.clone(), on: true }).unwrap();
+    game.select_hex(REDHOLD);
+    assert_eq!(game.selection(), &all[..]);
+}
+
+/// A move put aside (Done) and then taken back: the units are as they were
+/// before the move, not put aside.
+#[test]
+fn undo_after_done_gives_the_units_back_unput_aside() {
+    let mut game = game("garrison soldiers\n");
+    let a = at(&game, REDHOLD);
+    game.apply(Order::Move { units: a.clone(), to: Hex::new(6, 5) }).unwrap();
+    game.apply(Order::Done { units: a.clone() }).unwrap();
+    game.apply(Order::Undo).unwrap();
+    let unit = game.map.units().get(a[0]).unwrap();
+    assert_eq!((unit.pos(), unit.done), (REDHOLD, false));
+}

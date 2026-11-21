@@ -245,7 +245,7 @@ fn help_section() -> Vec<HelpSection> {
                     "Take it into the selection, or leave it out (the leader's box is the left one)",
                 ),
                 ("Esc", "Close the menu or the window on top; with none open, drop the selection"),
-                (&undo, "Take back the last move or city order (not a battle)"),
+                (&undo, "Take back the last move, a city's work or its walls (not a battle)"),
                 (&end_turn, "End the turn: your log shows what the others do; then Start turn"),
                 (&new_game, "A new game (once this one is over at once; before, it asks)"),
             ],
@@ -496,6 +496,12 @@ impl Session {
     fn persons_turn(&self) -> bool {
         let game = &self.screen.game;
         game.controller(game.player()) == Some(&Controller::Person)
+    }
+
+    /// True if the person at the screen can give orders now: their turn, no
+    /// cover over it, and the game not over.
+    fn can_act(&self) -> bool {
+        self.persons_turn() && !self.covered() && self.screen.game.winner().is_none()
     }
 
     /// The person whose turn it is has done (End turn): the next side's
@@ -1104,7 +1110,7 @@ impl Session {
         self.screen.ui.set_disabled(self.undo, !undo);
         // Go to and Done are about the person's selected units.
         let game = &self.screen.game;
-        let own = self.persons_turn()
+        let own = self.can_act()
             && game.selected().and_then(|id| game.map.units().get(id)).is_some_and(|u| u.side() == game.player());
         for button in [self.go_to, self.done] {
             if self.screen.ui.node(button).is_some_and(|n| n.is_disabled() == own) {
@@ -1503,7 +1509,7 @@ impl Session {
     /// B, or Seek a blessing: the selected stack (or, with none, the stack
     /// on the hex shown) asks.
     pub fn seek_blessing(&mut self) {
-        if self.covered() || !self.persons_turn() {
+        if !self.can_act() {
             return;
         }
         let game = &self.screen.game;
@@ -1517,8 +1523,16 @@ impl Session {
         let Some(ask) = self.temple.take() else { return };
         let (at, units) = (ask.at, ask.units.clone());
         ask.close(&mut self.screen.ui);
-        let Ok(events) = self.screen.game.apply(Order::Bless { units: units.clone() }) else { return };
         let (root, area) = (self.screen.root_window(), self.window_area());
+        let events = match self.screen.game.apply(Order::Bless { units: units.clone() }) {
+            Ok(events) => events,
+            Err(why) => {
+                // (The stack went from the temple, or some of it did.)
+                self.temple = Some(TempleWindow::refused(&mut self.screen.ui, (root, area), at, &why));
+                self.screen.settle();
+                return;
+            }
+        };
         let icons = self.unit_icons(&units);
         let window = TempleWindow::tell(
             &mut self.screen.ui,
@@ -1534,7 +1548,7 @@ impl Session {
     /// X, or Disband: ask whether the selected units (the person's) go home
     /// for good.
     pub fn ask_disband(&mut self) {
-        if self.covered() || !self.persons_turn() || self.screen.game.winner().is_some() {
+        if !self.can_act() {
             return;
         }
         let game = &self.screen.game;
@@ -1719,10 +1733,10 @@ impl Session {
     }
 
     /// Who gives the orders at this screen now: the side whose turn it is, if
-    /// a person plays it here; else nobody (`Side::Grey`: the buttons that
-    /// give orders are greyed).
+    /// a person plays it here and the game goes on; else nobody
+    /// (`Side::Grey`: the buttons that give orders are greyed).
     fn actor(&self) -> Side {
-        if self.persons_turn() && !self.covered() { self.screen.game.player() } else { Side::Grey }
+        if self.can_act() { self.screen.game.player() } else { Side::Grey }
     }
 
     /// Whom the map and the panels show what they know: the person at the
@@ -1786,7 +1800,7 @@ impl Session {
     pub fn start_go_to(&mut self) {
         let game = &self.screen.game;
         let own = game.selected().and_then(|id| game.map.units().get(id)).is_some_and(|u| u.side() == game.player());
-        if own && self.persons_turn() && !self.covered() {
+        if own && self.can_act() {
             (self.picking, self.refused) = (Some(Pick::GoTo), None);
         }
     }
@@ -1796,7 +1810,7 @@ impl Session {
     /// all defend already, they stand down. Then on to the next stack, as
     /// with Done.
     pub fn defend_stack(&mut self) {
-        if self.covered() || !self.persons_turn() {
+        if !self.can_act() {
             return;
         }
         let game = &self.screen.game;
@@ -1817,7 +1831,7 @@ impl Session {
     /// this turn (Next stack and the tasks pass them by), and the next
     /// stack that waits is selected.
     pub fn done_with_stack(&mut self) {
-        if self.covered() || !self.persons_turn() {
+        if !self.can_act() {
             return;
         }
         let units = self.screen.game.selection().to_vec();

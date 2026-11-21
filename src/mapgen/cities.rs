@@ -1191,11 +1191,16 @@ pub fn build_turns(k: &UnitKind) -> u32 {
 fn records(g: &Gen, cfg: &Config, (places, air): (&Places, &[Hex]), kinds: &[UnitKind], rng: &mut Rng) -> Vec<City> {
     let syllables = Syllables::parse(NAMES);
     let class = |k: &UnitKind| movement_class(k);
-    // On foot, of all work: no siege engine, nor one at home somewhere
-    // (those are built where they belong).
-    let special = |k: &UnitKind| k.siege > 0 || !k.bonus.iter().all(|(g, _)| g == "city");
-    let mut foot: Vec<&UnitKind> =
-        kinds.iter().filter(|k| class(k) == MoveClass::Foot && k.commander == 0 && !special(k)).collect();
+    // On foot, of all work: no siege engine, nor one at home in the woods or
+    // the high country (those are built where they belong, below); unless
+    // the template has nothing else on foot.
+    const PLACED: [&str; 4] = ["forest", "swamp", "hill", "mountain"];
+    let special = |k: &UnitKind| k.siege > 0 || k.bonus.iter().any(|(g, _)| PLACED.contains(&g.as_str()));
+    let walkers = |k: &&UnitKind| class(k) == MoveClass::Foot && k.commander == 0;
+    let mut foot: Vec<&UnitKind> = kinds.iter().filter(walkers).filter(|k| !special(k)).collect();
+    if foot.is_empty() {
+        foot = kinds.iter().filter(walkers).collect();
+    }
     foot.sort_by_key(|k| (k.price, k.strength, k.id.clone()));
     let at_home = |grounds: &[&str]| -> Vec<&UnitKind> {
         kinds
@@ -1389,8 +1394,8 @@ pub fn tier(g: &Gen, city: &City) -> u8 {
 }
 
 /// A neutral city hard to come at is worth the taking, on the map as it
-/// ends: its units start veterans (remote: elites), it pays 4 more a turn
-/// (remote: 8), it builds the template's strongest unit on foot, and
+/// ends: its units start veterans (remote: elites), it pays 8 more a turn
+/// (remote: 16), it builds the template's strongest unit on foot, and
 /// likelier a flyer (one in four; remote, one in two).
 pub fn worth(g: &mut Gen, cfg: &Config, kinds: &[UnitKind]) {
     let mut rng = Rng::stream(cfg.seed, "city worth");

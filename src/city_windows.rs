@@ -285,8 +285,8 @@ impl CityView {
         let mine = city.side == player && city.side != Side::Grey;
         let known = self.known;
         let note = match (known, mine, city.side) {
-            (info::Known::Fog(None), _, _) => "Not seen: who holds it, who is in it.".to_string(),
-            (info::Known::Fog(Some((side, round))), _, _) => format!(
+            (info::Known::Fog(None, _), _, _) => "Not seen: who holds it, who is in it.".to_string(),
+            (info::Known::Fog(Some((side, round)), _), _, _) => format!(
                 "Not seen since round {round}, when it was {}: who is in it.",
                 if side == Side::Grey { "nobody's".to_string() } else { format!("{}'s", side_name(side)) }
             ),
@@ -298,8 +298,9 @@ impl CityView {
         };
         let all = known == info::Known::All;
         let summary = match known {
-            info::Known::Fog(_) => {
-                format!("Not seen, walls {}, at row {}, column {}", city.walls, city.pos.row, city.pos.col)
+            info::Known::Fog(_, seen) => {
+                let walls = seen.unwrap_or(city.walls);
+                format!("Not seen, walls {walls}, at row {}, column {}", city.pos.row, city.pos.col)
             }
             _ if self.compact => format!("Walls {}, taxes {}", city.walls, city.income),
             _ => info::city_summary(city),
@@ -312,7 +313,7 @@ impl CityView {
                 1 => "Garrison: 1 unit".to_string(),
                 n => format!("Garrison: {n} units"),
             },
-            info::Known::Fog(_) => String::new(),
+            info::Known::Fog(..) => String::new(),
         };
         let progress = match (all, self.compact) {
             (false, _) => String::new(),

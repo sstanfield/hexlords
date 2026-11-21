@@ -155,9 +155,33 @@ pub struct Ghost {
     pub round: u32,
 }
 
-/// What a unit is doing about a standing order: its `goto`, whether it has
-/// stalled, whether it has moved this turn, whether it defends.
-type MarchState = (Option<Hex>, bool, bool, bool);
+/// What a unit is doing about a standing order, for an undo: its `goto`,
+/// whether it has stalled, has moved this turn, defends, was put aside.
+#[derive(Copy, Clone, Debug)]
+struct MarchState {
+    goto: Option<Hex>,
+    stalled: bool,
+    moved: bool,
+    defending: bool,
+    done: bool,
+}
+
+impl MarchState {
+    fn of(unit: &Unit) -> MarchState {
+        MarchState {
+            goto: unit.goto,
+            stalled: unit.stalled,
+            moved: unit.moved,
+            defending: unit.defending,
+            done: unit.done,
+        }
+    }
+
+    fn restore(self, unit: &mut Unit) {
+        (unit.goto, unit.stalled, unit.moved, unit.defending, unit.done) =
+            (self.goto, self.stalled, self.moved, self.defending, self.done);
+    }
+}
 
 /// Units that go together (`Game::group`): those that move, each at the
 /// prices of a table (its own, or a commander's with flyers, theirs), and
@@ -192,8 +216,9 @@ pub struct Sight {
     /// Row-major; `None`: everything (no total fog).
     known: Option<Vec<bool>>,
     ghosts: Vec<Ghost>,
-    /// Where each city it has seen is, who held it then, and the round.
-    held: Vec<(Hex, Side, u32)>,
+    /// Where each city it has seen is, who held it then, the round, and its
+    /// walls then.
+    held: Vec<(Hex, Side, u32, u32)>,
 }
 
 /// Sight of everything, to lend (`Sight::ALL`).
@@ -262,7 +287,13 @@ impl Sight {
     /// Who held the city on `hex` when the side saw it last, and in which
     /// round.
     pub fn held(&self, hex: Hex) -> Option<(Side, u32)> {
-        self.held.iter().find(|(at, _, _)| *at == hex).map(|(_, side, round)| (*side, *round))
+        self.held.iter().find(|(at, ..)| *at == hex).map(|(_, side, round, _)| (*side, *round))
+    }
+
+    /// The walls of the city on `hex` when the side saw it last (they fall
+    /// when it is taken, and rise when its holder raises them).
+    pub fn walls_seen(&self, hex: Hex) -> Option<u32> {
+        self.held.iter().find(|(at, ..)| *at == hex).map(|(.., walls)| *walls)
     }
 
     /// The other sides' stacks it remembers where it saw them last: those in
@@ -433,7 +464,7 @@ pub struct Game {
     /// With fog of war, each side's: who held each city it has seen, when it
     /// saw it last (`Sight::held`); with total fog, the hexes it has ever
     /// seen.
-    held: Vec<Vec<(Hex, Side, u32)>>,
+    held: Vec<Vec<(Hex, Side, u32, u32)>>,
     explored: Vec<Vec<bool>>,
     /// The cities whose walls were raised this turn (once a turn each).
     raised: Vec<CityId>,
@@ -733,7 +764,7 @@ impl Game {
                 }
                 let before: Vec<(UnitId, MarchState)> = units
                     .iter()
-                    .map(|id| self.own_unit(side, *id).map(|u| (*id, (u.goto, u.stalled, u.moved, u.defending))))
+                    .map(|id| self.own_unit(side, *id).map(|u| (*id, MarchState::of(u))))
                     .collect::<Result<_, _>>()?;
                 if units.is_empty() {
                     return Err("no units".to_string());
@@ -973,9 +1004,9 @@ impl Game {
                 for (hex, order) in &stacks {
                     self.map.set_stack_order(*hex, order);
                 }
-                for (id, (goto, stalled, moved, defending)) in goals {
+                for (id, march) in goals {
                     if let Some(unit) = self.map.unit_mut(id) {
-                        (unit.goto, unit.stalled, unit.moved, unit.defending) = (goto, stalled, moved, defending);
+                        march.restore(unit);
                     }
                 }
                 // They are where they were, and selected again, to go
@@ -1050,7 +1081,7 @@ impl Game {
             let cost = cost.ok_or(format!("{} cannot get there this turn", unit.name))?;
             going.push((*id, unit.pos(), cost));
             before.push((*id, unit.pos(), unit.movement));
-            goals.push((*id, (unit.goto, unit.stalled, unit.moved, unit.defending)));
+            goals.push((*id, MarchState::of(unit)));
             let way = self.known_path_by(unit, *table, to, unit.movement, &sight).unwrap_or_default();
             ways.push(std::iter::once(unit.pos()).chain(way.into_iter().map(|(h, _)| h)).collect());
         }
@@ -1058,7 +1089,7 @@ impl Game {
             let unit = self.own_unit(side, *id)?;
             going.push((*id, unit.pos(), 0));
             before.push((*id, unit.pos(), unit.movement));
-            goals.push((*id, (unit.goto, unit.stalled, unit.moved, unit.defending)));
+            goals.push((*id, MarchState::of(unit)));
         }
         // Nobody is left in the water with no ship, and nobody goes onto the
         // water with none to carry them.
@@ -2028,20 +2059,20 @@ impl Game {
                 }
             }
             // A side is told when it loses a city: it knows who took it.
-            let holders: Vec<(Hex, Side)> = self
+            let holders: Vec<(Hex, Side, u32)> = self
                 .map
                 .cities()
                 .iter()
                 .filter(|c| sight.sees(c.pos) || c.side == side || sight.held(c.pos).is_some_and(|(s, _)| s == side))
-                .map(|c| (c.pos, c.side))
+                .map(|c| (c.pos, c.side, c.walls))
                 .collect();
             if let Some(memory) = self.memory.get_mut(side.index()) {
                 memory.retain(|g| !sight.sees(g.at));
                 memory.extend(stacks);
             }
             if let Some(held) = self.held.get_mut(side.index()) {
-                held.retain(|(at, _, _)| !holders.iter().any(|(h, _)| h == at));
-                held.extend(holders.into_iter().map(|(at, holder)| (at, holder, round)));
+                held.retain(|(at, ..)| !holders.iter().any(|(h, ..)| h == at));
+                held.extend(holders.into_iter().map(|(at, holder, walls)| (at, holder, round, walls)));
             }
             if let (Some(known), Some(explored)) = (sight.known, self.explored.get_mut(side.index())) {
                 *explored = known;
@@ -2140,18 +2171,23 @@ impl Game {
                 unit.movement = unit.base_move_points;
             }
         }
-        let cities: Vec<(CityId, Side, bool)> = view
+        let cities: Vec<(CityId, Side, bool, Option<u32>)> = view
             .map
             .cities()
             .iter()
             .filter(|c| c.side != side)
-            .map(|c| (c.id, sight.holder(c), sight.knows(c.pos)))
+            .map(|c| {
+                let walls = if sight.sees(c.pos) { None } else { sight.walls_seen(c.pos) };
+                (c.id, sight.holder(c), sight.knows(c.pos), walls)
+            })
             .collect();
-        for (id, holder, known) in cities {
+        for (id, holder, known, walls) in cities {
             if let Some(city) = view.map.city_mut(id) {
                 (city.building, city.progress, city.rally) = (None, 0, None);
                 city.units.clear();
                 city.side = holder;
+                // In the fog: its walls as they were when it was seen.
+                city.walls = walls.unwrap_or(city.walls);
                 if !known {
                     (city.side, city.walls, city.income) = (Side::Grey, 0, 0);
                     city.name.clear();
@@ -2354,8 +2390,21 @@ impl Game {
             .collect();
         let able: Vec<UnitId> =
             own.iter().copied().filter(|id| units.get(*id).is_some_and(|u| u.movement > 0)).collect();
+        // Not those that defend or were put aside, unless they are all it
+        // has (the stack's boxes take them in one by one): a stack put aside
+        // in part was selected whole again, and sent off, defenders and all.
+        let waiting: Vec<UnitId> =
+            able.iter().copied().filter(|id| units.get(*id).is_some_and(|u| !u.defending && !u.done)).collect();
         // (At sea, all of them: the ships carry who has no points left.)
-        let stack = if able.is_empty() || self.map.open_water(hex) { own } else { able };
+        let stack = if self.map.open_water(hex) {
+            own
+        } else if !waiting.is_empty() {
+            waiting
+        } else if !able.is_empty() {
+            able
+        } else {
+            own
+        };
         match stack.first().copied() {
             Some(first) if self.select(stack) => SelectOutcome::Selected(first),
             _ => SelectOutcome::Nothing,

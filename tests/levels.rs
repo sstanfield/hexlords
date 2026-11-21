@@ -378,3 +378,38 @@ fn a_stack_on_a_temple_is_asked_and_told_what_each_was_given() {
     type_char(&mut s, 'b');
     assert!(s.temple().is_none());
 }
+
+/// The stack the temple asked about left it (in part, or undone): Seek
+/// says why the game would not bless it, instead of nothing.
+#[test]
+fn a_temple_says_why_it_would_not_bless() {
+    let game = game("garrison soldiers 2\n", "", |_| {});
+    let red = at(&game, REDHOLD);
+    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
+    click_hex(&mut s, REDHOLD);
+    click_hex(&mut s, TEMPLE);
+    assert!(s.temple().is_some_and(|t| t.asks()));
+    s.screen.game.map.move_unit(red[1], Hex::new(8, 5)).unwrap();
+    push(&mut s, TEMPLE_BLESS_ID);
+    let told = s.temple().expect("it says why");
+    assert!(!told.asks());
+    assert!(told.lines[0].starts_with("Not done: "), "{:?}", told.lines);
+}
+
+/// Once the game is over, the keys that give orders give none: B, G, F, X.
+#[test]
+fn no_orders_once_the_game_is_over() {
+    let game = game("garrison soldiers 3\n", "", |s| s.combat.chance = 0);
+    let red = at(&game, REDHOLD);
+    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
+    let farwater = s.screen.game.map.city_at(Hex::new(15, 15)).unwrap().id;
+    s.screen.game.map.city_mut(farwater).unwrap().side = Side::Red;
+    s.screen.game.apply(Order::Move { units: red.clone(), to: BLUEMOOR }).unwrap();
+    assert_eq!(s.screen.game.winner(), Some(Side::Red));
+    s.screen.game.select_unit(red[0]);
+    for key in ['g', 'f', 'x', 'b'] {
+        type_char(&mut s, key);
+    }
+    assert!(s.picking().is_none() && s.disband().is_none() && s.temple().is_none());
+    assert!(!s.screen.game.map.units().get(red[0]).unwrap().defending);
+}

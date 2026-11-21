@@ -677,7 +677,9 @@ pub fn task_line(game: &Game, task: &Task) -> String {
 pub enum Known {
     All,
     Outside,
-    Fog(Option<(Side, u32)>),
+    /// In the fog: who held it and when it was seen last, and its walls
+    /// then.
+    Fog(Option<(Side, u32)>, Option<u32>),
 }
 
 impl Known {
@@ -689,7 +691,7 @@ impl Known {
         } else if sight.sees(city.pos) {
             Known::Outside
         } else {
-            Known::Fog(sight.held(city.pos))
+            Known::Fog(sight.held(city.pos), sight.walls_seen(city.pos))
         }
     }
 }
@@ -708,8 +710,8 @@ pub fn city_lines_for(map: &Map, city: &City, room: usize, known: Known) -> Vec<
             };
             vec![city.name.clone(), holder(city.side), format!("Walls {}, taxes {}", city.walls, city.income), garrison]
         }
-        Known::Fog(held) => {
-            let walls = format!("Walls {}, taxes {}", city.walls, city.income);
+        Known::Fog(held, seen) => {
+            let walls = format!("Walls {}, taxes {}", seen.unwrap_or(city.walls), city.income);
             match held {
                 Some((side, round)) => {
                     vec![

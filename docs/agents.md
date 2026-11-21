@@ -73,9 +73,10 @@ cities' work weighs). Each turn, order by order, it:
 1. keeps its treasury in hand: what its cities build is what it can keep
    and pay for, and what is worth most under the rules of this game; late
    (with two stacks' worth of soldiers, more than it fields at once) the
-   strongest it can keep, and it disbands its weakest, up to four a turn,
-   to make room for one three points the stronger (the owner: late in the
-   game, quality stacks, not junk)
+   strongest it can keep, and it disbands its weakest (never a siege
+   engine), up to four a turn, to make room for one three points the
+   stronger (the owner: late in the game, quality stacks, not junk); and,
+   late, it builds a siege engine when it has none
    (`planner::worth`: in lines a unit's worth goes as its strength to the
    power the chance gives, so with little chance it builds strong units and
    with much it builds many; in strength against strength, strengths add
@@ -85,7 +86,8 @@ cities' work weighs). Each turn, order by order, it:
    weighed by worth too, and free units near it come in; its capital keeps
    one more;
 3. strikes where the game's own odds (`Game::battle_forecast`, with the
-   rules in them) are good enough for its style, waves at walls when more
+   rules in them) are good enough for its style (against walls, a siege
+   engine leads its stack), waves at walls when more
    than a stack can follow, lays siege to the cities of a side it
    outnumbers three times in units and cities (waves at 5 in 100 or better,
    or likely to kill a defender: a last city held by a full stack behind
@@ -145,7 +147,8 @@ output, and the turn goes on without that order.
 The game as the program's side knows it (`Game::view_for`; every agent is
 given the same). With fog of war, the other sides' units out of its sight
 are not in it, and a city in the fog is held by who held it when the side
-saw it last (nobody, if it never did); what its side remembers of stacks
+saw it last (nobody, if it never did), behind the walls it had then; what
+its side remembers of stacks
 seen before is in the view (`Sight::ghosts`), and its orders go as far as
 it knows the way (a stack it could not see, met on the way, is a battle
 there). With total fog, land the side has never seen is `?` in the terrain
@@ -154,26 +157,28 @@ not, it is not told what the other sides' cities build or can build, their
 gold, their units' standing orders or the moves they have left.
 
 ```
-turn 3 red
+turn 1 red
 order red green blue yellow
 battles lines chance 5
 fog off
-gold 34 income 40 upkeep 32
+gold 50 income 40 upkeep 18
 terrain
 46
 72
 wwwwwwww...                      (the map file's rows: docs/map-format.md; `?`: never seen)
 end terrain
-kind lightcavalry strength 3 moves 20 upkeep 4 price 8 commander 0 travels land carries 0 siege 0 bonus none enter grass 2 forest 5 city 1 road 1 bridge 1
-kind captain strength 3 moves 14 upkeep 10 price 20 commander 1 travels land carries 0 siege 0 bonus none enter grass 2 forest 3 city 1 road 1 bridge 1
+kind archers strength 3 moves 10 upkeep 3 price 6 commander 0 travels land carries 0 siege 0 bonus city:1 enter grass 2 forest 2 swamp 5 desert 3 hill 3 city 1 road 1 bridge 1
+kind lightcavalry strength 3 moves 20 upkeep 4 price 8 commander 0 travels land carries 0 siege 0 bonus none enter grass 2 forest 5 desert 3 hill 5 city 1 road 1 bridge 1
+kind captain strength 3 moves 14 upkeep 10 price 20 commander 1 travels land carries 0 siege 0 bonus none enter grass 2 forest 3 swamp 5 desert 3 hill 4 city 1 road 1 bridge 1
 kind transport strength 1 moves 12 upkeep 5 price 10 commander 0 travels sea carries 6 siege 0 bonus none enter water 2 city 2
-city 13 7 red walls 2 income 20 builds 2 progress 1 name Brindlewick
-can 13 7 0 militia 1 4
-can 13 7 1 archers 2 6
-can 13 7 2 lightcavalry 3 8
-city 19 42 green walls 2 income 20 builds none progress 0 name Eskerfall
+city 13 7 red walls 2 income 40 builds none progress 0 name Brindlewick
+can 13 7 0 militia 1 3
+can 13 7 1 lightinfantry 1 6
+can 13 7 2 archers 1 6
+can 13 7 3 lightcavalry 2 8
+city 19 42 green walls 2 income 40 builds none progress 0 name Eskerfall
 unit red.0.0 red 13 7 militia strength 2 moves 10/10 level 1
-unit green.3.0 green 19 42 archers strength 3 moves 12/12 level 2
+unit green.1.0 green 19 42 archers strength 3 moves 10/10 level 1
 end
 ```
 

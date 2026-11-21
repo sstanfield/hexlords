@@ -432,7 +432,15 @@ impl Config {
                     .split_whitespace()
                     .map(|w| {
                         let (level, share) = w.split_once(':').ok_or(format!("walls: \"{w}\" is not level:share"))?;
-                        Ok((whole(k, level)?, number(k, share)?))
+                        let level = whole(k, level)?;
+                        // (As high as walls go in the game: `state::WALLS_CAP`.)
+                        if level > crate::state::WALLS_CAP {
+                            return Err(format!(
+                                "walls: {level} is above {}, as high as walls go",
+                                crate::state::WALLS_CAP
+                            ));
+                        }
+                        Ok((level, number(k, share)?))
                     })
                     .collect::<Result<_, String>>()?;
             }

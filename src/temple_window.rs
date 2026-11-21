@@ -118,6 +118,20 @@ impl TempleWindow {
         TempleWindow { parts, at, units: Vec::new(), lines }
     }
 
+    /// Say why the game would not bless the stack (it went from the temple,
+    /// or some of it did).
+    pub fn refused(ui: &mut Ui, (root, area): (WidgetId, Rect), at: Hex, why: &str) -> TempleWindow {
+        let parts = build::window(ui, root, TEMPLE_WINDOW_ID, "A temple");
+        build::heading(ui, parts.content, "The temple's blessing");
+        let line = build::text(ui, parts.content, &format!("Not done: {why}."));
+        ui.set_skin(line, turbo_ferret::TbId::new("Warning"));
+        let space = ui.dimension_converter().dp_to_px(SPACING_DP);
+        build::gap(ui, parts.content, space * 2);
+        build::primary_button(ui, parts.content, TEMPLE_CLOSE_ID, "Close");
+        build::place(ui, parts, area, (0.5, 0.08));
+        TempleWindow { parts, at, units: Vec::new(), lines: vec![format!("Not done: {why}.")] }
+    }
+
     pub fn window(&self) -> WidgetId {
         self.parts.window
     }

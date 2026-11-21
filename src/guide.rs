@@ -12,7 +12,7 @@ use crate::help::HelpSection;
 use crate::info;
 use crate::setup::{Fog, TurnOrder};
 use crate::state::combat::{HITS, MAX_CHANCE, System, walls_bonus};
-use crate::state::{Blessing, LEVEL_EXPERIENCE, MAX_STACK, Travel};
+use crate::state::{Blessing, LEVEL_EXPERIENCE, MAX_STACK, Travel, WALL_PRICE, WALLS_CAP};
 
 /// How long a line of a topic's words is, at most, in characters.
 const WIDTH: usize = 64;
@@ -102,11 +102,28 @@ fn battles(game: &Game) -> Vec<HelpSection> {
         ),
     };
     let walls = format!(
-        "{} behind walls 1 or 2, {} behind 3 to 5, {} behind 6 (walls 0: nothing)",
+        "{} point behind walls 1 or 2, {} behind 3 to 5, {} behind 6 (walls 0: nothing)",
         walls_bonus(1),
         walls_bonus(3),
         walls_bonus(6)
     );
+    // What this game's kinds fight the better for: their ground, a siege.
+    let knacks: Vec<String> = game
+        .map
+        .units()
+        .kinds()
+        .iter()
+        .filter_map(|k| info::knack_line(k).map(|line| format!("{}: {}", k.name, line.to_lowercase())))
+        .collect();
+    let knacks = if knacks.is_empty() {
+        "No kind of unit in this game fights better on some ground, nor breaks walls.".to_string()
+    } else {
+        format!(
+            "Some kinds fight better on some ground, attacking or defending, and a siege engine makes the \
+             walls of a city its stack attacks count less: {}.",
+            knacks.join("; ")
+        )
+    };
     vec![
         section("In this game", &[("How", system), ("Chance", chance)]),
         section(
@@ -125,8 +142,14 @@ fn battles(game: &Game) -> Vec<HelpSection> {
                         .to_string(),
                 ),
                 ("The ground", "A defender is a point stronger on hills and in forests, two on mountains.".to_string()),
-                ("Walls", format!("A defender in a city is stronger: {walls}.")),
-                ("Attacking", "Attackers get neither the ground nor walls.".to_string()),
+                ("Walls", format!("A defender in a city is stronger by its walls: {walls}.")),
+                ("Their own ground", knacks),
+                (
+                    "Attacking",
+                    "Attackers get neither the ground's bonus nor walls; their kind's own bonus on the \
+                     ground they attack, they do."
+                        .to_string(),
+                ),
             ],
         ),
         section(
@@ -281,7 +304,14 @@ fn cities(game: &Game) -> Vec<HelpSection> {
                                its window or the sidebar."
                         .to_string(),
                 ),
-                ("Walls", "Walls make those who defend the city stronger (see Battles).".to_string()),
+                (
+                    "Walls",
+                    format!(
+                        "Walls make those who defend the city stronger (see Battles). Its holder raises them \
+                         a level a turn, up to {WALLS_CAP}, from the city's window: {WALL_PRICE} gold for each \
+                         level they rise to. A city that is taken loses a level."
+                    ),
+                ),
                 ("Training", "Some cities train their units: they come out veterans.".to_string()),
                 (
                     "The end",
@@ -401,7 +431,8 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                 (
                     "Moving",
                     "Click your stack, then where it goes (or click its units under the map to take some \
-                            of them). Undo takes the last order back, unless chance had a say in it."
+                            of them). Undo takes back the last move, a city's work or its walls, unless chance \
+                            had a say in it."
                         .to_string(),
                 ),
                 (
@@ -412,6 +443,18 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                         .to_string(),
                 ),
                 ("Done", "Puts the selected units aside for this turn: Next stack passes them by.".to_string()),
+                (
+                    "Defend",
+                    "F: the selected units defend where they stand, turn after turn; Next stack and the \
+                     tasks pass them by until you send them somewhere, or press F again."
+                        .to_string(),
+                ),
+                (
+                    "Disband",
+                    "X: sends the selected units home for good, and their upkeep with them; it asks first, \
+                     and cannot be taken back."
+                        .to_string(),
+                ),
                 (
                     "Tasks",
                     "What you have left to do this turn: stacks with no orders and cities that build \

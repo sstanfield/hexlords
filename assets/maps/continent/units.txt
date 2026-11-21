@@ -74,8 +74,8 @@ unit rangers
   enter    grass 2, forest 2, hill 3, swamp 3, desert 3
   enter    city 1, road 1, bridge 1
 
-# At home in the high country: the only ones on foot who cross mountains
-# (slowly), and stronger in the hills and the mountains.
+# At home in the high country: quick in the hills, and stronger there and
+# in a pass (mountains are walls for anything that walks, these too).
 unit highlanders
   name     Highlanders
   image    units/highlanders.png
@@ -84,7 +84,7 @@ unit highlanders
   upkeep   4
   price    8
   bonus    hill 1, mountain 2
-  enter    grass 2, forest 3, hill 2, mountain 5, swamp 5, desert 3
+  enter    grass 2, forest 3, hill 2, swamp 5, desert 3
   enter    city 1, road 1, bridge 1
 
 # Weak and slow, but the walls of a city its stack attacks count 1 less.

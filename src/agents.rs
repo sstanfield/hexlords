@@ -408,8 +408,6 @@ impl Agent for Program {
     }
 }
 
-/// A unit's name in the text: its side, its slot and the slot's generation,
-/// `red.3.0`.
 /// The blessing a stack sent to a temple seeks on getting there (an agent's
 /// `pilgrims`, emptied as it goes): those on a temple that has not blessed
 /// them all.
@@ -451,9 +449,16 @@ pub fn siege(game: &Game, side: Side, target: Hex, forecast: Option<crate::state
     };
     let units = |s: Side| map.units().of_side(s).count();
     let cities = |s: Side| map.cities().iter().filter(|c| c.side == s).count();
-    units(side) >= 3 * units(holder).max(1) && cities(side) >= 3 * cities(holder).max(1)
+    // (With fog of war its view holds only the holder's units it sees: and
+    // those it saw, and sees no more, count too.)
+    let sight = game.sight(side);
+    let unseen: usize = sight.ghosts().iter().filter(|g| g.side == holder && !sight.sees(g.at)).map(|g| g.count).sum();
+    let theirs = units(holder) + unseen;
+    units(side) >= 3 * theirs.max(1) && cities(side) >= 3 * cities(holder).max(1)
 }
 
+/// A unit's name in the text: its side, its slot and the slot's generation,
+/// `red.3.0`.
 pub fn unit_name(id: UnitId) -> String {
     format!("{}.{}.{}", side_name(id.side), id.index, id.generation)
 }
@@ -556,9 +561,11 @@ pub fn describe(game: &Game, side: Side) -> String {
 
 /// An order in a line of text (`docs/agents.md`): `move <units> <row> <col>`,
 /// `toward <units> <row> <col>` (units: names with commas between),
-/// `goto <units> <row> <col>`, `done <units>`, `build <row> <col> <index or
-/// none>`, `rally <row> <col> <row> <col>` (or `none`), `undo`, `end`.
-/// `None` for an empty line or a comment (`#`).
+/// `goto <units> <row> <col>`, `done <units>`, `defend <units>`,
+/// `undefend <units>`, `bless <units>`, `disband <units>`,
+/// `build <row> <col> <index or none>`, `rally <row> <col> <row> <col>` (or
+/// `none`), `walls <row> <col>`, `undo`, `end`. `None` for an empty line or
+/// a comment (`#`).
 pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
     let words: Vec<&str> = line.split_whitespace().collect();
     let hex = |row: &str, col: &str| -> Result<Hex, String> {
