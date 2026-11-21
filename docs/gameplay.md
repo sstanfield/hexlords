@@ -536,14 +536,15 @@ thing to happen. Ideas to try, as the rules grow:
   takes their cities. After each battle it is a task that needs orders
   (still marauding if ignored), so that its player sees whether it is too
   hurt to go on.
-- **Provinces** (an idea to explore, not planned): a group of cities, and
-  what they build, handed to the computer under the player's general
-  orders: how much of their taxes they keep, whether they send some of
-  their units (cavalry for the front, say) to the player. Quiet parts of a
-  large empire would run themselves. Questions before it is planned: what
-  a province is told (hold, grow, defend), what it may spend, whether its
-  units obey the player's rally points, and how the player sees what it
-  did (its own lines in the log).
+- **Provinces** (shelved, the owner's word 2026-11-21): a group of cities
+  handed to the computer under the player's general orders (a share of
+  their taxes, units sent to the front). Shelved: multiplayer is meant to
+  be people against people, and a province run by the computer blurs
+  that; and production queues, rally points, patrols and marauders get
+  most of the way there without it. If it comes back it needs more to it
+  (an empire forced to break off provinces past a size, provinces that
+  rebel or go over to an opponent), and it would be a choice made with
+  the game, since it changes the game.
 
 ## Multiplayer and the AI
 
