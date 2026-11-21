@@ -436,10 +436,12 @@ impl CityWindow {
         };
         let space = dp(ui, SPACING_DP);
         build::gap(ui, parts.content, space);
-        let walls = build::button(ui, parts.content, CITY_WALLS_ID, "");
+        // Close, and beside it (its holder's) the walls: a row, no taller
+        // than the button (a city with nine kinds to build fits 768 high).
+        let row = build::row(ui, parts.content, space * 2);
+        build::button(ui, row, CITY_CLOSE_ID, "Close");
+        let walls = build::button(ui, row, CITY_WALLS_ID, "");
         ui.set_visibility(walls, Visibility::Gone);
-        build::gap(ui, parts.content, space);
-        build::button(ui, parts.content, CITY_CLOSE_ID, "Close");
         let mut window = CityWindow { parts, view, walls, walls_state: (String::new(), false, false) };
         window.view.fill(ui, map, player);
         build::place(ui, parts, area, align);

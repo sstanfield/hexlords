@@ -154,9 +154,9 @@ const SCOUT_STEPS: u32 = 3;
 const LATE_SOLDIERS: usize = 2 * MAX_STACK;
 const DISBAND_GAP: u32 = 3;
 const MAX_DISBANDS: usize = 4;
-/// A threatened city it cannot hold with those in it raises its walls, up to
-/// this, where a level makes its defenders stronger (`walls_bonus`), if its
-/// treasury has twice the price.
+/// A threatened city it cannot hold with those in it raises its walls a
+/// level at a time, up to this (where they make its defenders 2 stronger,
+/// `walls_bonus`), if its treasury has twice the price.
 const WALLS_GOAL: u32 = 3;
 
 /// How much a unit is worth in battle under the rules in effect, against
@@ -404,10 +404,7 @@ impl Planner {
         // A threatened city, held by too few, behind low walls: it raises
         // them, if the treasury is well off (walls are dear).
         for (id, danger) in &threats {
-            let stronger = |c: &&crate::state::City| walls_bonus(c.walls + 1) > walls_bonus(c.walls);
-            let Some(city) = map.cities().get(*id).filter(|c| c.walls < WALLS_GOAL).filter(stronger) else {
-                continue;
-            };
+            let Some(city) = map.cities().get(*id).filter(|c| c.walls < WALLS_GOAL) else { continue };
             let held: f64 = map
                 .units_at(city.pos)
                 .iter()
@@ -699,12 +696,8 @@ impl Planner {
         // each kind its cities are building: what it can keep more.
         let planned: u32 = own().filter_map(|c| c.production()).map(|p| p.upkeep).sum();
         let spare = i64::from(game.income(side)) - i64::from(game.upkeep(side)) - i64::from(planned);
-        if spare < 0 {
-            let dearest = own().filter(|c| c.production().is_some()).max_by_key(|c| c.production().map(|p| p.upkeep));
-            if let Some(city) = dearest {
-                return Some(Order::Build { city: city.id, what: None });
-            }
-        }
+        // (When it cannot keep what its cities build: late, it sends its
+        // weakest home first, below; else it stops the dearest work.)
         let units = map.units();
         let leads =
             |p: &UnitProd| units.kind_named(&p.basename).and_then(|k| units.kind(k)).is_some_and(|k| k.commander > 0);
@@ -762,6 +755,12 @@ impl Planner {
             if let Some(unit) = junk {
                 self.disbanded += 1;
                 return Some(Order::Disband { units: vec![unit.id()] });
+            }
+        }
+        if spare < 0 {
+            let dearest = own().filter(|c| c.production().is_some()).max_by_key(|c| c.production().map(|p| p.upkeep));
+            if let Some(city) = dearest {
+                return Some(Order::Build { city: city.id, what: None });
             }
         }
         // An idle city builds what is worth most, of what it can keep and pay

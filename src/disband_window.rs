@@ -14,6 +14,8 @@ pub const DISBAND_WINDOW_ID: &str = "disband_window";
 pub const DISBAND_YES_ID: &str = "disband_yes";
 pub const DISBAND_NO_ID: &str = "disband_no";
 const SPACING_DP: i32 = 8;
+/// The skin of a line that says what went wrong (`assets/skin/hexgame.tb.txt`).
+const WARNING_SKIN: &str = "Warning";
 /// A unit's icon beside its line, in dp.
 const ICON_DP: i32 = 26;
 
@@ -27,12 +29,12 @@ pub struct DisbandWindow {
 
 impl DisbandWindow {
     /// Ask whether `units` go home for good (`icons`: theirs, in their
-    /// order).
+    /// order); `refused`: why the game would not, the last time it was asked.
     pub fn ask(
         ui: &mut Ui,
         (root, area): (WidgetId, Rect),
         map: &Map,
-        units: &[UnitId],
+        (units, refused): (&[UnitId], Option<&str>),
         icons: &[ImageHandle],
     ) -> DisbandWindow {
         let all = map.units();
@@ -45,8 +47,12 @@ impl DisbandWindow {
         let parts = build::window(ui, root, DISBAND_WINDOW_ID, "Disband");
         let one = units.len() == 1;
         build::heading(ui, parts.content, if one { "Disband this unit?" } else { "Disband these units?" });
-        let gone = if one { "It goes home for good" } else { "They go home for good" };
-        build::text(ui, parts.content, &format!("{gone}, and {upkeep} gold a turn of upkeep with them."));
+        let gone = if one { "It goes home for good, and its" } else { "They go home for good, and their" };
+        build::text(ui, parts.content, &format!("{gone} {upkeep} gold a turn of upkeep with them."));
+        if let Some(why) = refused {
+            let line = build::text(ui, parts.content, &format!("Not done: {why}."));
+            ui.set_skin(line, turbo_ferret::TbId::new(WARNING_SKIN));
+        }
         let space = ui.dimension_converter().dp_to_px(SPACING_DP);
         build::gap(ui, parts.content, space);
         let size = ui.dimension_converter().dp_to_px(ICON_DP);
@@ -56,7 +62,7 @@ impl DisbandWindow {
         build::gap(ui, parts.content, space * 2);
         let buttons = build::row(ui, parts.content, space * 2);
         build::primary_button(ui, buttons, DISBAND_YES_ID, "Disband");
-        build::button(ui, buttons, DISBAND_NO_ID, "Keep them");
+        build::button(ui, buttons, DISBAND_NO_ID, if one { "Keep it" } else { "Keep them" });
         build::place(ui, parts, area, (0.5, 0.08));
         DisbandWindow { parts, units: units.to_vec(), lines }
     }

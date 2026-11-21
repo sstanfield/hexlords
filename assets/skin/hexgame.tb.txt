@@ -28,9 +28,20 @@ elements
 		type StretchBox
 		cut 8
 		expand 0
-	# (Turbo Badger's sheen over its title bar: none over ours.)
+	# (Turbo Badger's sheen over its title bar: ours again over ours. An
+	# element's opacity does not reach its children.)
 	TBWindow.mover.overlay
-		opacity 0
+		bitmap hg_title.png
+		type StretchBox
+		cut 8
+		expand 0
+	# The close button: a light cross, bronze when pressed.
+	TBWindow.close
+		bitmap hg_close.png
+		type Image
+	TBWindow.close.pressed
+		bitmap hg_close_pressed.png
+		type Image
 	# A button: a raised plate; pressed (or the chosen one of a group), sunk
 	# inside a bronze line.
 	TBButton
@@ -159,6 +170,9 @@ elements
 		padding 6
 	MenuKeys
 		text-color #a8b0b8
+	# A line that says what went wrong (an order refused).
+	Warning
+		text-color #ff8a7a
 	# The treasury in the menu bar: what comes in green, what goes out red.
 	GoldIn
 		text-color #7fd67f

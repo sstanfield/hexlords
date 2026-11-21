@@ -32,7 +32,9 @@ fn game(red: &str, blue: &str, gold: u32) -> Game {
     let units = "unit soldiers\nname Soldiers\nstrength 3\nmoves 12\nupkeep 3\nprice 6\nenter grass 2, city 1\n\
                  unit levy\nname Levy\nstrength 1\nmoves 12\nupkeep 1\nprice 2\nenter grass 2, city 1\n\
                  unit knights\nname Knights\nstrength 6\nmoves 12\nupkeep 7\nprice 14\nenter grass 2, city 1\n\
-                 unit boat\nname Boat\nstrength 1\nmoves 12\nupkeep 1\ntravels sea\ncarries 2\nenter water 2, city 2\n";
+                 unit boat\nname Boat\nstrength 1\nmoves 12\nupkeep 1\ntravels sea\ncarries 2\nenter water 2, city 2\n\
+                 unit captain\nname Captain\nstrength 2\nmoves 12\ncommander 1\nenter grass 2, city 1\n\
+                 unit hawk\nname Hawk\nstrength 1\nmoves 12\ntravels air\nenter grass 2, water 2, city 1\n";
     let cities = format!(
         "city 5 5\nname Redhold\nside red\nwalls 2\nincome 20\nproduce levy 1\nproduce knights 2\n{red}\
          city 15 5\nname Southwick\nside red\n\
@@ -247,4 +249,216 @@ fn the_planner_disbands_its_weakest_to_make_room_for_the_strong() {
 fn walls_make_defenders_stronger_by_steps() {
     use hexgame::state::combat::walls_bonus;
     assert_eq!([0, 1, 2, 3, 4, 5, 6].map(walls_bonus), [0, 1, 1, 2, 2, 2, 3]);
+}
+
+fn new_unit(game: &mut Game, side: Side, kind: &str, at: Hex) -> UnitId {
+    let kind = game.map.units().kind_named(kind).unwrap();
+    let id = game.map.new_unit_of(side, kind).unwrap();
+    game.map.place_unit(id, at).unwrap();
+    id
+}
+
+/// A commander at sea rides with a ship or a flyer: disbanding the last of
+/// them would leave him on the water (the rule a move keeps).
+#[test]
+fn a_commander_at_sea_keeps_his_ship_or_his_flyer() {
+    let mut game = game("", "", 50);
+    let sea = Hex::new(10, 5);
+    let boat = new_unit(&mut game, Side::Red, "boat", sea);
+    let captain = new_unit(&mut game, Side::Red, "captain", sea);
+    assert!(game.apply(Order::Disband { units: vec![boat] }).is_err(), "the captain would be left on the water");
+    let far = Hex::new(10, 12);
+    let hawk = new_unit(&mut game, Side::Red, "hawk", far);
+    let flying = new_unit(&mut game, Side::Red, "captain", far);
+    assert!(game.apply(Order::Disband { units: vec![hawk] }).is_err(), "nor a captain who flies");
+    // With him, they go.
+    game.apply(Order::Disband { units: vec![boat, captain] }).unwrap();
+    game.apply(Order::Disband { units: vec![hawk, flying] }).unwrap();
+}
+
+/// The battle kept to be watched again shows a commander's lead over the
+/// units that fight, though he does not (aboard a ship at sea).
+#[test]
+fn a_battle_watched_again_shows_who_led_without_fighting() {
+    let mut game = game("", "", 50);
+    let (sea, there) = (Hex::new(10, 5), Hex::new(10, 6));
+    let boat = new_unit(&mut game, Side::Red, "boat", sea);
+    let captain = new_unit(&mut game, Side::Red, "captain", sea);
+    new_unit(&mut game, Side::Blue, "boat", there);
+    game.apply(Order::Move { units: vec![boat, captain], to: there }).unwrap();
+    let record = game.history().iter().rposition(|r| matches!(r.event, Event::Battle { .. })).unwrap();
+    let fight = game.fight(record).unwrap();
+    let ours = fight.attackers.iter().find(|c| c.unit == boat).expect("the boat fought");
+    assert_eq!((ours.led, ours.quarters), (1, 8), "1 and its captain's 1");
+    assert_eq!(fight.siege, 0);
+}
+
+/// The log tells its side of the walls it raised and the units it sent
+/// home.
+#[test]
+fn the_log_tells_of_walls_raised_and_units_disbanded() {
+    let mut game = game("garrison levy\n", "", 100);
+    let redhold = game.map.city_at(REDHOLD).unwrap().id;
+    game.apply(Order::Walls { city: redhold }).unwrap();
+    let levy = at(&game, REDHOLD)[0];
+    game.apply(Order::Disband { units: vec![levy] }).unwrap();
+    let lines: Vec<String> = hexgame::info::log(&game, Side::Red, 0)
+        .into_iter()
+        .flat_map(|(_, entries)| entries.into_iter().flat_map(|e| e.lines))
+        .collect();
+    assert!(lines.contains(&"You raised the walls of Redhold to 3, for 75 gold.".to_string()), "{lines:?}");
+    assert!(lines.contains(&"You sent home Levy.".to_string()), "{lines:?}");
+}
+
+/// A city taken (empty) and the move taken back: its holder's rally point
+/// is as it was, with its walls.
+#[test]
+fn an_undone_capture_gives_back_the_rally_point() {
+    let mut game = game("garrison levy\n", "", 50);
+    let bluemoor = game.map.city_at(BLUEMOOR).unwrap().id;
+    let rally = Hex::new(7, 9);
+    game.map.city_mut(bluemoor).unwrap().rally = Some(rally);
+    let levy = at(&game, REDHOLD)[0];
+    game.apply(Order::Toward { units: vec![levy], to: BLUEMOOR }).unwrap();
+    while game.map.city_at(BLUEMOOR).unwrap().side != Side::Red {
+        game.end_turn();
+        game.end_turn();
+        game.apply(Order::Toward { units: vec![levy], to: BLUEMOOR }).unwrap();
+    }
+    assert_eq!(game.map.city_at(BLUEMOOR).unwrap().rally, None);
+    game.apply(Order::Undo).unwrap();
+    let city = game.map.city_at(BLUEMOOR).unwrap();
+    assert_eq!((city.side, city.rally, city.walls), (Side::Blue, Some(rally), 3));
+}
+
+/// A threatened city behind walls 1 that its defenders cannot hold: the
+/// planner raises its walls (to 2, on the way to 3), if it has twice the
+/// price. (It once looked a level ahead only, and 1 to 2 adds no bonus.)
+#[test]
+fn the_planner_raises_low_walls_a_level_at_a_time() {
+    let mut game = game("garrison levy\n", "", 500);
+    let redhold = game.map.city_at(REDHOLD).unwrap().id;
+    game.map.city_mut(redhold).unwrap().walls = 1;
+    for _ in 0..6 {
+        new_unit(&mut game, Side::Blue, "knights", Hex::new(5, 7));
+    }
+    let mut planner = hexgame::planner::Planner::new(hexgame::planner::STEADY);
+    let report = hexgame::agents::play_turn(&mut game, &mut planner);
+    let raised =
+        report.events.iter().any(|e| matches!(e, Event::WallsRaised { city, walls: 2, .. } if *city == redhold));
+    assert!(raised, "{:?}", report.events);
+    assert_eq!(game.map.city_at(REDHOLD).unwrap().walls, 2);
+}
+
+/// Late, when its taxes cannot keep what its cities build, the planner
+/// sends its weakest home first (it once stopped the work at once).
+#[test]
+fn the_planner_late_sends_its_weakest_home_before_stopping_work() {
+    let mut game = game("garrison levy 8\n", "", 200);
+    for row in [2, 3] {
+        for _ in 0..8 {
+            new_unit(&mut game, Side::Red, "levy", Hex::new(row, 2));
+        }
+    }
+    let redhold = game.map.city_at(REDHOLD).unwrap().id;
+    let knights = game.map.city_at(REDHOLD).unwrap().units.iter().position(|p| p.basename == "knights").unwrap();
+    game.apply(Order::Build { city: redhold, what: Some(knights) }).unwrap();
+    assert!(game.income(Side::Red) < game.upkeep(Side::Red) + 7, "it cannot keep the knights");
+    let mut planner = hexgame::planner::Planner::new(hexgame::planner::STEADY);
+    let order = hexgame::agents::Agent::next_order(&mut planner, &game.view_for(Side::Red), Side::Red);
+    assert!(matches!(order, Order::Disband { .. }), "{order:?}");
+}
+
+/// The whole of a widget, in the root's pixels.
+fn area_of(s: &Session, id: turbo_ferret::WidgetId) -> turbo_ferret::Rect {
+    turbo_ferret::Rect::from_origin_size(s.screen.ui.to_root(id, Point::ZERO), s.screen.ui.rect(id).size())
+}
+
+/// A city with nine kinds to build, its walls' button and all, fits a
+/// window of 1024 x 768 (its Close button was cut off).
+#[test]
+fn a_city_window_with_nine_kinds_fits_the_screen() {
+    let mut units = String::new();
+    let mut produce = String::new();
+    for i in 0..9 {
+        units.push_str(&format!("unit kind{i}\nname Kind {i}\nstrength 2\nmoves 10\nprice 4\nenter grass 2, city 1\n"));
+        produce.push_str(&format!("produce kind{i} 1\n"));
+    }
+    let mut rows = vec!["g".repeat(20); 20];
+    rows[5] = "gggggcgggcgggggggggg".to_string();
+    let terrain = format!("20\n20\n{}\n", rows.join("\n"));
+    let cities = format!("city 5 5\nname Redhold\nside red\nwalls 2\n{produce}city 5 9\nname Bluemoor\nside blue\n");
+    let (map, warnings) = scenario::parse(&terrain, Some(&units), Some(&cities)).unwrap();
+    let game = Game::from_scenario(Scenario { map, assets: None, warnings });
+    let mut setup = Setup::solo(&game.map, Some(Side::Red), "passive");
+    setup.gold = 500;
+    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(setup)).unwrap();
+    click_hex(&mut s, REDHOLD);
+    type_char(&mut s, 'o');
+    s.frame(0);
+    let window = s.city_window().expect("its window").window();
+    let r = area_of(&s, window);
+    assert!(r.y >= 0 && r.bottom() <= 768, "{r:?}");
+    let close = area_of(&s, widget(&s, hexgame::city_windows::CITY_CLOSE_ID));
+    assert!(close.bottom() <= r.bottom() && close.h > 0, "{close:?} in {r:?}");
+}
+
+/// The disband window asks about this turn's units: a turn passing closes
+/// it; one refused says why and asks again; a Go to pick for the units it
+/// sent home is over; once the game is over, X asks nothing.
+#[test]
+fn the_disband_window_lives_in_its_turn_and_says_why_not() {
+    let game = game("garrison soldiers 2\n", "", 50);
+    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
+    click_hex(&mut s, REDHOLD);
+    type_char(&mut s, 'x');
+    assert!(s.disband().is_some());
+    s.end_turn();
+    s.frame(0);
+    assert!(s.disband().is_none(), "the turn passed");
+    // A ship at sea, with its cargo left out: refused, and said.
+    let sea = Hex::new(10, 5);
+    let boat = new_unit(&mut s.screen.game, Side::Red, "boat", sea);
+    let red = at(&s.screen.game, REDHOLD);
+    for id in &red {
+        s.screen.game.map.move_unit(*id, sea).unwrap();
+    }
+    s.screen.game.select_unit(boat);
+    type_char(&mut s, 'x');
+    push(&mut s, DISBAND_YES_ID);
+    let asks = s.disband().expect("it asks again");
+    assert!(s.screen.game.map.units().get(boat).is_some());
+    let says = |s: &Session| {
+        let mut out = Vec::new();
+        let mut stack = vec![widget(s, hexgame::disband_window::DISBAND_WINDOW_ID)];
+        while let Some(id) = stack.pop() {
+            out.extend(s.screen.ui.text(id).map(str::to_string));
+            stack.extend(s.screen.ui.children(id).iter().copied());
+        }
+        out
+    };
+    assert!(says(&s).iter().any(|t| t.starts_with("Not done: those aboard would drown")), "{:?}", says(&s));
+    assert_eq!(asks.units, [boat]);
+    push(&mut s, DISBAND_NO_ID);
+    // Go to, then X and Disband: the pick is over.
+    let soldier = new_unit(&mut s.screen.game, Side::Red, "soldiers", REDHOLD);
+    s.screen.game.select_unit(soldier);
+    type_char(&mut s, 'g');
+    assert_eq!(s.picking(), Some(hexgame::session::Pick::GoTo));
+    type_char(&mut s, 'x');
+    push(&mut s, DISBAND_YES_ID);
+    assert!(s.screen.game.map.units().get(soldier).is_none() && s.picking().is_none());
+}
+
+/// Once the game is over, the walls are raised no more.
+#[test]
+fn no_walls_are_raised_once_the_game_is_over() {
+    let mut game = game("garrison soldiers 3\n", "", 100);
+    let farwater = game.map.city_at(Hex::new(15, 15)).unwrap().id;
+    game.map.city_mut(farwater).unwrap().side = Side::Red;
+    let red = at(&game, REDHOLD);
+    game.apply(Order::Move { units: red, to: BLUEMOOR }).unwrap();
+    assert_eq!(game.winner(), Some(Side::Red));
+    let redhold = game.map.city_at(REDHOLD).unwrap().id;
+    assert!(game.walls_price(Side::Red, redhold).unwrap_err().contains("over"));
 }

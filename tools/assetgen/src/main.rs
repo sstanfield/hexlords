@@ -138,6 +138,10 @@ fn run(args: &Args) -> Result<(), String> {
         let picture = overlay::render(side, icons::OUTLINE, &|x, y| icon.ink(x, y));
         write_png(&dir.join(format!("{}.png", icon.name())), side, side, &picture)?;
     }
+    for (name, icon) in icons::OLD_NAMES {
+        let picture = overlay::render(side, icons::OUTLINE, &|x, y| icon.ink(x, y));
+        write_png(&dir.join(format!("{name}.png")), side, side, &picture)?;
+    }
     println!("wrote {} units' signs of {side} x {side} pixels to {}", Icon::ALL.len(), dir.display());
 
     let dir = args.out.join("skin");
@@ -148,9 +152,15 @@ fn run(args: &Args) -> Result<(), String> {
             write_png(&dir.join(assetgen::skin::file_name(plate, scale)), n, n, &picture)?;
         }
     }
+    for (i, name) in assetgen::skin::CLOSE_NAMES.iter().enumerate() {
+        for scale in assetgen::skin::SCALES {
+            let (n, picture) = assetgen::skin::close_picture(i == 1, scale);
+            write_png(&dir.join(assetgen::skin::scaled_name(name, scale)), n, n, &picture)?;
+        }
+    }
     println!(
         "wrote {} windows' and buttons' pictures, at 4 sizes each, to {}",
-        assetgen::skin::PLATES.len(),
+        assetgen::skin::PLATES.len() + assetgen::skin::CLOSE_NAMES.len(),
         dir.display()
     );
 

@@ -53,6 +53,11 @@ pub const ZOOM_OUT_ID: &str = "zoom_out";
 /// The space between the help's columns, and between its sections, in dp.
 const HELP_COLUMN_DP: i32 = 16;
 const HELP_SECTION_DP: i32 = 8;
+/// What a window takes besides its content's room: its title bar, its
+/// padding and a button row under the content, in dp; and a scroll bar's
+/// width.
+const HELP_CHROME_DP: i32 = 120;
+const HELP_SCROLL_BAR_DP: i32 = 18;
 /// How far, in dp, the pointer goes with the button held on the main map
 /// before it is a drag that moves the map rather than a click (in a scene
 /// that wants that, [`MapScreen::set_drag_pans`]).
@@ -253,7 +258,14 @@ impl MapScreen {
         let dp = |ui: &Ui, dp: i32| ui.dimension_converter().dp_to_px(dp);
         let ui = &mut self.ui;
         let parts = build::window(ui, self.root_window, HELP_ID, title);
-        let content = parts.content;
+        // The sections scroll when they do not fit under the menu bar; the
+        // Close button stays under them.
+        let scroll = ui.add(
+            parts.content,
+            turbo_ferret::widgets::ScrollContainer::new(turbo_ferret::widgets::ScrollMode::YAuto)
+                .with_adapt_content_size(true),
+        );
+        let content = build::column(ui, scroll, 0);
         let mut keys = Vec::new();
         for (i, section) in sections.iter().enumerate() {
             if i > 0 {
@@ -269,16 +281,21 @@ impl MapScreen {
             }
         }
         let px = dp(ui, HELP_SECTION_DP);
-        build::gap(ui, content, px);
-        build::button(ui, content, HELP_CLOSE_ID, "Close");
+        build::gap(ui, parts.content, px);
+        build::button(ui, parts.content, HELP_CLOSE_ID, "Close");
         // The keys' column is as wide as its widest.
         let width = keys.iter().map(|key| ui.preferred_size_free(*key).pref.w).max().unwrap_or(0);
         for key in keys {
             build::set_width(ui, key, width);
         }
-        // In the middle of what is under the menu bar, if the scene has one.
+        // In the middle of what is under the menu bar, if the scene has one;
+        // as tall as the sections, or as fits there.
         let size = ui.rect(self.root_window).size();
         let under = Rect::new(0, self.clear_top, size.w, (size.h - self.clear_top).max(0));
+        let pref = ui.preferred_size_free(content).pref;
+        let room = (under.h - dp(ui, HELP_CHROME_DP)).max(dp(ui, 120));
+        let bar = if pref.h > room { dp(ui, HELP_SCROLL_BAR_DP) } else { 0 };
+        ui.set_layout_params(scroll, Some(turbo_ferret::LayoutParams::fixed(pref.w + bar, pref.h.min(room))));
         build::place(ui, parts, under, (0.5, 0.5));
         self.help = Some(parts.window);
         self.help_title = title.to_string();

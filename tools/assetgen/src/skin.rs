@@ -10,7 +10,7 @@
 //! `name@192.png` ...), so it is sharp on any screen. The skin cuts each
 //! into nine (`cut`): the corners stay, the edges and the middle stretch.
 
-use crate::shapes::{Rgb, mix};
+use crate::shapes::{Rgb, mix, segment};
 
 /// A rounded plate: its size at 96 dpi (it is square; the skin stretches
 /// it), the room around it for its shadow, its corners' radius, its
@@ -111,12 +111,69 @@ pub const PLATES: [Plate; 6] = [
     },
 ];
 
+/// A window's close button: a light cross on nothing (the title bar under
+/// it), outlined dark so it shows on any title; pressed, in bronze. Its
+/// size at 96 dpi, and its names.
+pub const CLOSE_SIZE: u32 = 20;
+pub const CLOSE_NAMES: [&str; 2] = ["hg_close", "hg_close_pressed"];
+
+/// The close cross's color and opacity at a point, in its pixels at 96 dpi.
+pub fn close_ink(x: f32, y: f32, pressed: bool) -> (Rgb, f32) {
+    let s = CLOSE_SIZE as f32;
+    let (a, b) = (s * 0.3, s * 0.7);
+    let d = segment(x, y, a, a, b, b).min(segment(x, y, b, a, a, b));
+    let (body, line) = (1.4, 2.6);
+    if d <= body {
+        (if pressed { BRONZE_LIGHT } else { hex(0xdc_d6_c8) }, 1.0)
+    } else if d <= line {
+        (hex(0x10_11_13), 0.9)
+    } else {
+        ([0.0; 3], 0.0)
+    }
+}
+
+/// The close cross's picture at `scale` (`pressed`: the bronze one).
+pub fn close_picture(pressed: bool, scale: u32) -> (usize, Vec<u8>) {
+    let n = (CLOSE_SIZE * scale) as usize;
+    let mut out = vec![0u8; n * n * 4];
+    let samples = 4;
+    for py in 0..n {
+        for px in 0..n {
+            let (mut sum, mut alpha) = ([0f32; 3], 0f32);
+            for sy in 0..samples {
+                for sx in 0..samples {
+                    let x = (px as f32 + (sx as f32 + 0.5) / samples as f32) / scale as f32;
+                    let y = (py as f32 + (sy as f32 + 0.5) / samples as f32) / scale as f32;
+                    let (color, a) = close_ink(x, y, pressed);
+                    for (total, part) in sum.iter_mut().zip(color) {
+                        *total += part * a;
+                    }
+                    alpha += a;
+                }
+            }
+            let count = (samples * samples) as f32;
+            let o = (py * n + px) * 4;
+            let color = if alpha > 0.0 { sum.map(|t| t / alpha) } else { [0.0; 3] };
+            for (byte, part) in out[o..o + 3].iter_mut().zip(color) {
+                *byte = (part.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+            }
+            out[o + 3] = ((alpha / count).clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+        }
+    }
+    (n, out)
+}
+
+/// A name at a scale ("hg_close@192.png").
+pub fn scaled_name(name: &str, scale: u32) -> String {
+    if scale == 1 { format!("{name}.png") } else { format!("{name}@{}.png", 96 * scale) }
+}
+
 /// The sizes the skin has pictures for, as a scale of 96 dpi; and the name
 /// of a plate's picture at a scale ("hg_window.png", "hg_window@192.png").
 pub const SCALES: [u32; 4] = [1, 2, 3, 4];
 
 pub fn file_name(plate: &Plate, scale: u32) -> String {
-    if scale == 1 { format!("{}.png", plate.name) } else { format!("{}@{}.png", plate.name, 96 * scale) }
+    scaled_name(plate.name, scale)
 }
 
 /// How far a point is from the edge of a rounded rectangle of `half` (its
@@ -224,6 +281,17 @@ mod tests {
         }
         assert_eq!(file_name(&b, 1), "hg_button.png");
         assert_eq!(file_name(&b, 3), "hg_button@288.png");
+    }
+
+    #[test]
+    fn the_close_cross_is_light_with_a_dark_line_and_bronze_when_pressed() {
+        let c = CLOSE_SIZE as f32 / 2.0;
+        let (light, a) = close_ink(c, c, false);
+        assert_eq!(a, 1.0);
+        assert!(light.iter().all(|v| *v > 0.75), "{light:?}");
+        assert_eq!(close_ink(c, c, true).0, BRONZE_LIGHT);
+        assert_eq!(close_ink(1.0, 1.0, false).1, 0.0, "nothing in the corner");
+        assert_eq!(close_ink(c, c - 2.0, false).0, hex(0x10_11_13), "the dark line beside the cross");
     }
 
     #[test]

@@ -200,6 +200,12 @@ fn the_games_units_signs_are_what_the_generator_makes() {
         same_as_file(&format!("units/{}.png", icon.name()), 128, &picture);
         expected.push(format!("{}.png", icon.name()));
     }
+    // And the names older maps use, drawn as the sign that took their place.
+    for (name, icon) in icons::OLD_NAMES {
+        let picture = overlay::render(128, icons::OUTLINE, &|x, y| icon.ink(x, y));
+        same_as_file(&format!("units/{name}.png"), 128, &picture);
+        expected.push(format!("{name}.png"));
+    }
     expected.sort();
     assert_eq!(files_in("units"), expected);
 }
@@ -280,6 +286,15 @@ fn the_games_skin_pictures_are_what_the_generator_makes() {
             expected.push(name);
         }
         assert!(skin.contains(&format!("bitmap {}.png", plate.name)), "the skin does not use {}", plate.name);
+    }
+    for (i, name) in assetgen::skin::CLOSE_NAMES.iter().enumerate() {
+        for scale in assetgen::skin::SCALES {
+            let (n, picture) = assetgen::skin::close_picture(i == 1, scale);
+            let file = assetgen::skin::scaled_name(name, scale);
+            same_as_file(&format!("skin/{file}"), n, &picture);
+            expected.push(file);
+        }
+        assert!(skin.contains(&format!("bitmap {name}.png")), "the skin does not use {name}");
     }
     expected.sort();
     let ours: Vec<String> = files_in("skin").into_iter().filter(|f| f.starts_with("hg_")).collect();

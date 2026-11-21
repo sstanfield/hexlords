@@ -146,3 +146,15 @@ fn the_window_shows_every_line_and_fits_a_small_screen() {
     let r = help_window(&small).unwrap();
     assert!(r.x >= 0 && r.y >= 0 && r.right() <= 500 && r.bottom() <= 300, "{r:?}");
 }
+
+/// On a HiDPI screen (twice the pixels) the help stays under the menu bar
+/// too: its sections scroll when they do not fit (they once covered the
+/// menus there).
+#[test]
+fn the_help_fits_under_the_menu_bar_on_a_hidpi_screen() {
+    let mut s = common::session_at(2048, 1536, 192);
+    assert!(f1(&mut s));
+    let r = help_window(&s).expect("the help window");
+    let bar = s.screen.area(widget(&s, "menu_bar")).bottom();
+    assert!(r.y >= bar && r.bottom() <= 1536, "{r:?} under {bar}");
+}

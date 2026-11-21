@@ -132,7 +132,8 @@ catapult (`siegeengine.png`), a horseshoe (`lightcavalry.png`), a stirrup
 longship with shields along its side (`warship.png`), a round-bellied cog
 (`transport.png`), a feather (`hawkriders.png`) and a pair of wings
 (`wyverns.png`): light, with a dark outline, on nothing, and without a color
-of a side, since the disc has that.
+of a side, since the disc has that. `riders.png`, which maps made before
+the riders were split still name, is the horseshoe too.
 
 A unit's picture is the hex's square like a tile, **with the sign inside the
 disc**: within 0.45 of the middle, where the hex is 1 from its middle to its

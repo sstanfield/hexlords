@@ -192,10 +192,8 @@ fn set_visibility(screen: &mut MapScreen, widget: WidgetId, visibility: Visibili
     }
 }
 
-/// The picture a unit is drawn with in a slot: its kind's image and its side.
-/// A unit's icon: its kind's picture, its side, its level (the ring).
-/// A unit's icon, by its picture, its side, its level and whether it
-/// defends (a badge).
+/// A unit's icon, by its kind's picture, its side, its level (the ring) and
+/// whether it defends (a badge).
 type IconKey = (String, Side, u8, bool);
 
 /// A unit's place in the stack: a button with the unit's icon and its numbers.
@@ -257,7 +255,10 @@ fn help_section() -> Vec<HelpSection> {
             &[
                 ("N,  or  Next", "Select the next stack that can still move (Shift+N: the one before)"),
                 ("G,  or  Go to", "Then click a hex: the selected units go there, over as many turns as it takes"),
-                ("D,  F,  B,  X", "Aside this turn; F: defend, staying put; B: a temple's blessing; X: disband them"),
+                (
+                    "D,  or  Done;  F,  B,  X",
+                    "Aside this turn; F: defend, or stand down; B: a temple's blessing; X: disband",
+                ),
             ],
         ),
         HelpSection::new(
@@ -595,8 +596,17 @@ impl Session {
     /// who played last (hotseat), the map is covered until they say they are
     /// there.
     fn turn_passed(&mut self) {
-        // Nothing picked, nothing said, carries over to another turn.
+        // Nothing picked, nothing said, carries over to another turn; nor a
+        // question about units (they may be gone, or another side's turn).
         (self.picking, self.refused) = (None, None);
+        if let Some(window) = self.disband.take() {
+            window.close(&mut self.screen.ui);
+        }
+        if self.temple.as_ref().is_some_and(|t| t.asks()) {
+            if let Some(window) = self.temple.take() {
+                window.close(&mut self.screen.ui);
+            }
+        }
         let game = &self.screen.game;
         let side = game.player();
         let person = game.controller(side) == Some(&Controller::Person);
@@ -1524,7 +1534,7 @@ impl Session {
     /// X, or Disband: ask whether the selected units (the person's) go home
     /// for good.
     pub fn ask_disband(&mut self) {
-        if self.covered() || !self.persons_turn() {
+        if self.covered() || !self.persons_turn() || self.screen.game.winner().is_some() {
             return;
         }
         let game = &self.screen.game;
@@ -1546,7 +1556,7 @@ impl Session {
             &mut self.screen.ui,
             (root, area),
             &self.screen.game.map,
-            &units,
+            (&units, None),
             &icons,
         );
         self.disband = Some(window);
@@ -1554,11 +1564,34 @@ impl Session {
     }
 
     /// The units the window asked about go home for good.
+    /// (Those of them still there and the player's; a pick for them, Go to,
+    /// is over. If the game refuses, the window says why, and asks again.)
     fn disband_units(&mut self) {
         let Some(ask) = self.disband.take() else { return };
-        let units = ask.units.clone();
+        let asked = ask.units.clone();
         ask.close(&mut self.screen.ui);
-        let _ = self.screen.game.apply(Order::Disband { units });
+        self.picking = None;
+        let game = &self.screen.game;
+        let units: Vec<UnitId> = asked
+            .iter()
+            .copied()
+            .filter(|id| game.map.units().get(*id).is_some_and(|u| u.side() == game.player()))
+            .collect();
+        if units.is_empty() {
+            return;
+        }
+        if let Err(why) = self.screen.game.apply(Order::Disband { units: units.clone() }) {
+            let (root, area) = (self.screen.root_window(), self.window_area());
+            let icons = self.unit_icons(&units);
+            let window = crate::disband_window::DisbandWindow::ask(
+                &mut self.screen.ui,
+                (root, area),
+                &self.screen.game.map,
+                (&units, Some(&why)),
+                &icons,
+            );
+            self.disband = Some(window);
+        }
         self.screen.settle();
     }
 
@@ -1758,9 +1791,6 @@ impl Session {
         }
     }
 
-    /// Done (D, or the Done button): the selected units are put aside for
-    /// this turn (Next stack and the tasks pass them by), and the next
-    /// stack that waits is selected.
     /// F, or Defend: the selected units defend where they stand, until they
     /// are sent somewhere (Next stack and the tasks pass them by); if they
     /// all defend already, they stand down. Then on to the next stack, as
@@ -1783,6 +1813,9 @@ impl Session {
         self.after_aside();
     }
 
+    /// Done (D, or the Done button): the selected units are put aside for
+    /// this turn (Next stack and the tasks pass them by), and the next
+    /// stack that waits is selected.
     pub fn done_with_stack(&mut self) {
         if self.covered() || !self.persons_turn() {
             return;

@@ -34,6 +34,11 @@ pub enum Icon {
     Wings,
 }
 
+/// Names of signs that maps written before still use, and the sign drawn
+/// under each: the riders were split into light cavalry and cavalry
+/// (2026-11-20), and a map made earlier names `units/riders.png`.
+pub const OLD_NAMES: [(&str, Icon); 1] = [("riders", Icon::Horseshoe)];
+
 /// The sign's body and its outline, which is also the color of the nothing
 /// around it.
 pub const BODY: Rgb = [0.96, 0.94, 0.86];

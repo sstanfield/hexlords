@@ -7,8 +7,8 @@
 //!   agent: `passive`, `simple`, `cmd:<program>`);
 //! - `--order fixed|drawn`: the sides play in the same order each round, or
 //!   one drawn anew; `--seed <n>`: the seed of the game's chance (without
-//!   it, one from the clock in a window, each game its own; 1 headless, so
-//!   a run can be made again);
+//!   it, one from the clock in a window, each game its own; 1 headless, or
+//!   with a script or a screenshot, so a run can be made again);
 //! - `--chance <0-10>`: how much chance there is in a battle (5); `--battles
 //!   lines|strength`: how a battle goes (lines); `--gold <n>`: the gold each
 //!   side starts with (50); `--fog`: fog of war; `--total-fog`: fog of war,
@@ -164,7 +164,9 @@ fn main() {
                 }
             }
             setup.order = order.unwrap_or(setup.order);
-            setup.seed = game_seed(seed, headless, setup.seed);
+            // (A script or a screenshot is to show the same game each time.)
+            let again = headless || script.is_some() || window.screenshot.is_some();
+            setup.seed = game_seed(seed, again, setup.seed);
             setup.combat.chance = chance.unwrap_or(setup.combat.chance);
             setup.combat.system = battles.unwrap_or(setup.combat.system);
             setup.gold = gold.unwrap_or(setup.gold);
@@ -209,10 +211,11 @@ fn main() {
 
 /// The seed of a game from the command line: `--seed`'s; without it, one
 /// from the clock in a window (each game its own chance), and the setup's
-/// own (`default`) headless, so a run can be made again.
-fn game_seed(given: Option<u64>, headless: bool, default: u64) -> u64 {
+/// own (`default`) when the run is to be made again (`again`: headless, a
+/// script, a screenshot).
+fn game_seed(given: Option<u64>, again: bool, default: u64) -> u64 {
     given.unwrap_or_else(|| {
-        if headless {
+        if again {
             return default;
         }
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
@@ -233,7 +236,8 @@ mod tests {
         // In a window, without --seed, one from the clock: the same seed each
         // time gave the same battles and blessings in every game.
         assert_ne!(game_seed(None, false, 1), 1);
-        // Headless, the setup's, so a run can be made again; --seed wins.
+        // Headless, scripted or a screenshot, the setup's, so a run can be
+        // made again; --seed wins.
         assert_eq!(game_seed(None, true, 1), 1);
         assert_eq!((game_seed(Some(9), false, 1), game_seed(Some(9), true, 1)), (9, 9));
     }

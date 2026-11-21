@@ -92,7 +92,8 @@ cities' work weighs). Each turn, order by order, it:
    high walls fell to nobody before, and a wave that kills nobody only
    raises the defenders' levels), and takes on stacks in the field near its
    cities and units; a threatened city it holds with too few, behind walls
-   under 4, raises them when its treasury has twice the price;
+   under 3, raises them a level a turn when its treasury has twice the
+   price;
 4. gathers the rest around its commander (where it stood at the turn's
    start), sends small stacks to the army or keeps them home until there is
    a force, stops at temples on the way that have not blessed some of the

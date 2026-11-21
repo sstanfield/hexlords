@@ -122,6 +122,13 @@ pub fn record_lines(map: &Map, record: &Record, side: Side) -> Vec<String> {
         Event::Deserted { side: whose, name } if *whose == side => {
             vec![format!("Unpaid, your {name} left you: the treasury could not pay their upkeep.")]
         }
+        Event::WallsRaised { city, side: whose, walls, price } if *whose == side => {
+            let name = map.cities().get(*city).map_or("a city".to_string(), |c| c.name.clone());
+            vec![format!("You raised the walls of {name} to {walls}, for {price} gold.")]
+        }
+        Event::Disbanded { side: whose, names } if *whose == side => {
+            vec![format!("You sent home {}.", names.join(", "))]
+        }
         Event::Out { side: out } if *out == side => vec!["You are out of the game.".to_string()],
         Event::Out { side: out } => vec![format!("{} is out of the game.", sentence(side_name(*out)))],
         Event::Won { side: winner } if *winner == side => vec!["You have won the game.".to_string()],
@@ -479,15 +486,29 @@ pub fn production_details(map: &Map, prod: &UnitProd, trains: u8) -> Vec<String>
     lines
 }
 
-/// What a kind fights the better for, in a line: "Fights +1 in forest;
-/// breaks 1 of the walls it attacks". `None` for one with nothing.
+/// What a kind fights the better for, in a line: "Fights +2 in forests, +1
+/// in swamps; breaks 1 of the walls it attacks". `None` for one with
+/// nothing.
 pub fn knack_line(kind: &crate::state::UnitKind) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     if !kind.bonus.is_empty() {
         let grounds: Vec<String> = kind
             .bonus
             .iter()
-            .map(|(g, n)| if g == "city" { format!("+{n} in a city") } else { format!("+{n} on {g}") })
+            .map(|(g, n)| {
+                let place = match g.as_str() {
+                    "city" => "in a city",
+                    "grass" => "on grass",
+                    "water" => "on water",
+                    "forest" => "in forests",
+                    "swamp" => "in swamps",
+                    "desert" => "in deserts",
+                    "hill" => "in the hills",
+                    "mountain" => "in the mountains",
+                    other => other,
+                };
+                format!("+{n} {place}")
+            })
             .collect();
         parts.push(format!("Fights {}", grounds.join(", ")));
     }

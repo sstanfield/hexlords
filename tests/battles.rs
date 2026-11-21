@@ -454,12 +454,14 @@ fn a_side_that_lost_its_commander_builds_another() {
 fn a_kind_at_home_fights_the_stronger_and_siege_engines_break_walls() {
     let mut rows = vec!["g".repeat(20); 20];
     rows[5] = "gggggcggfcgggggggggg".to_string();
+    rows[15] = "gggggggggggggggcgggg".to_string();
     let terrain = format!("20\n20\n{}\n", rows.join("\n"));
     let units = "unit rangers\nname Rangers\nstrength 3\nmoves 12\nbonus forest 1, city 2\nenter grass 2, forest 2, city 1\n\
                  unit ram\nname Ram\nstrength 1\nmoves 12\nsiege 2\nenter grass 2, city 1\n\
                  unit levy\nname Levy\nstrength 1\nmoves 12\nenter grass 2, forest 2, city 1\n";
     let cities = "city 5 5\nname Redhold\nside red\ngarrison rangers\ngarrison ram\n\
-                  city 5 9\nname Bluemoor\nside blue\nwalls 6\ngarrison levy\n";
+                  city 5 9\nname Bluemoor\nside blue\nwalls 6\ngarrison levy\n\
+                  city 15 15\nname Farwater\nside blue\n";
     let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
     let mut game = Game::from_scenario(Scenario { map, assets: None, warnings });
     let red = at(&game, REDHOLD);
@@ -496,4 +498,18 @@ fn a_kind_at_home_fights_the_stronger_and_siege_engines_break_walls() {
     let record = game.history().iter().rposition(|r| matches!(r.event, Event::Battle { .. })).unwrap();
     let fight = game.fight(record).unwrap();
     assert_eq!((fight.siege, fight.defenders[0].walls, fight.attackers[0].home), (2, 4, 2));
+    // In the open there are no walls to break: the battle says none broke.
+    let levy = game.map.units().kind_named("levy").unwrap();
+    let foe = game.map.new_unit_of(Side::Blue, levy).unwrap();
+    game.map.place_unit(foe, Hex::new(6, 9)).unwrap();
+    let mut red_unit = |kind: &str| {
+        let k = game.map.units().kind_named(kind).unwrap();
+        let id = game.map.new_unit_of(Side::Red, k).unwrap();
+        game.map.place_unit(id, Hex::new(6, 8)).unwrap();
+        id
+    };
+    let stack = vec![red_unit("rangers"), red_unit("ram")];
+    game.apply(Order::Move { units: stack, to: Hex::new(6, 9) }).unwrap();
+    let record = game.history().iter().rposition(|r| matches!(r.event, Event::Battle { .. })).unwrap();
+    assert_eq!(game.fight(record).unwrap().siege, 0);
 }

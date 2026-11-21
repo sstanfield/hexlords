@@ -67,7 +67,7 @@ enum Undo {
         units: Vec<(UnitId, Hex, u32)>,
         to: Hex,
         stacks: Vec<(Hex, Vec<UnitId>)>,
-        taken: Option<(CityId, Side, Option<usize>, u32, u32)>,
+        taken: Option<CityBefore>,
         /// Where each was going, given back: its standing order, whether it
         /// had stalled, whether it had moved this turn.
         goals: Vec<(UnitId, MarchState)>,
@@ -77,6 +77,10 @@ enum Undo {
     /// A city's walls were raised a level, for `price`.
     Walls { city: CityId, price: u32 },
 }
+
+/// A city as it was before a move took it, for an undo: its id, holder,
+/// work and how far it had got, walls and rally point.
+type CityBefore = (CityId, Side, Option<usize>, u32, u32, Option<Hex>);
 
 /// Something a side has left to do, or to look at, this turn (`Game::tasks`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -955,9 +959,9 @@ impl Game {
                         return Err("the units are not where the order left them".to_string());
                     }
                 }
-                if let Some((city, holder, building, progress, walls)) = taken {
+                if let Some((city, holder, building, progress, walls, rally)) = taken {
                     if let Some(c) = self.map.city_mut(city) {
-                        (c.side, c.building, c.progress, c.walls) = (holder, building, progress, walls);
+                        (c.side, c.building, c.progress, c.walls, c.rally) = (holder, building, progress, walls, rally);
                     }
                 }
                 for (id, from, movement) in &units {
@@ -1096,7 +1100,7 @@ impl Game {
             let cities = game.map.cities().iter().filter(|c| c.side != side).map(|c| c.pos);
             units.chain(cities).filter(|h| now.sees(*h) && !sight.sees(*h)).collect()
         };
-        let city_before = self.map.city_at(to).map(|c| (c.id, c.side, c.building, c.progress, c.walls));
+        let city_before = self.map.city_at(to).map(|c| (c.id, c.side, c.building, c.progress, c.walls, c.rally));
         let mut stacks: Vec<(Hex, Vec<UnitId>)> = Vec::new();
         for (_, from, _) in &before {
             if !stacks.iter().any(|(hex, _)| hex == from) {
@@ -1225,6 +1229,9 @@ impl Game {
     /// cannot (`Order::Walls`): it is not its city, they are as high as walls
     /// go, it raised them this turn, or it has not the gold.
     pub fn walls_price(&self, side: Side, city: CityId) -> Result<u32, String> {
+        if let Some(winner) = self.winner {
+            return Err(format!("the game is over: {} won", side_name(winner)));
+        }
         let c = self.map.cities().get(city).ok_or("there is no such city")?;
         if c.side != side {
             return Err(format!("only {} raises its walls", side_name(c.side)));
@@ -1256,22 +1263,11 @@ impl Game {
                 hexes.push(at);
             }
         }
+        // Whoever stays where they were must still be afloat (the rule a
+        // move keeps: riders within the ships' room, a commander who rides
+        // with a ship or a flyer).
         for at in &hexes {
-            let water = self.map.tile(*at).is_some_and(|t| t.kind == TileType::Water);
-            if !water || self.map.city_at(*at).is_some() {
-                continue;
-            }
-            let units = self.map.units();
-            let staying = self.map.units_at(*at).iter().filter(|id| !ids.contains(id)).filter_map(|id| units.get(*id));
-            let (mut room, mut aboard) = (0usize, 0usize);
-            for unit in staying {
-                match units.kind_of(unit).map(|k| (k.travel, k.carries)) {
-                    Some((Travel::Sea, carries)) => room += carries as usize,
-                    Some((Travel::Land, _)) if !self.map.is_commander(unit.id()) => aboard += 1,
-                    _ => {}
-                }
-            }
-            if aboard > room {
+            if !self.afloat(*at, &self.there_after(side, *at, ids, &[])) {
                 return Err("those aboard would drown: the ship cannot go without them".to_string());
             }
         }
@@ -1421,16 +1417,21 @@ impl Game {
         let battle = combat::fight(&a, &d, &self.setup.combat, &mut self.rng);
         // As it was, to be watched again.
         let defending: Vec<UnitId> = d.iter().map(|f| f.unit).collect();
+        // (A commander leads its whole stack, fighting or not, as in the
+        // battle; the siege broke what walls there were, no more.)
+        let (all_attackers, all_defenders) = (attackers.to_vec(), self.map.units_at(at).to_vec());
+        let siege = self.siege_of(attackers);
+        let walls = self.map.city_at(at).map(|c| c.walls);
         self.fought = Some(Fight {
             at,
             attacker: side,
             defender,
             rules: self.setup.combat,
             terrain: self.map.tile(at).map_or(TileType::Grass, |t| t.kind),
-            walls: self.map.city_at(at).map_or(0, |c| c.walls),
-            siege: self.siege_of(&attacking),
-            attackers: self.combatants(&attacking, at, false, 0),
-            defenders: self.combatants(&defending, at, true, self.siege_of(&attacking)),
+            walls: walls.unwrap_or(0),
+            siege: walls.map_or(0, |w| siege.min(combat::walls_bonus(w))),
+            attackers: self.combatants((&attacking, &all_attackers), at, false, 0),
+            defenders: self.combatants((&defending, &all_defenders), at, true, siege),
             trace: battle.trace.clone(),
             won: battle.attackers_won,
         });
@@ -1507,13 +1508,14 @@ impl Game {
     }
 
     /// The units of `ids` in a battle on `at`, as the battle sees them (the
-    /// order of `fighters`).
-    fn combatants(&self, ids: &[UnitId], at: Hex, defending: bool, siege: u32) -> Vec<Combatant> {
+    /// order of `fighters`): led by a commander of their whole `stack`, who
+    /// leads though it may not fight (aboard a ship at sea).
+    fn combatants(&self, (ids, stack): (&[UnitId], &[UnitId]), at: Hex, defending: bool, siege: u32) -> Vec<Combatant> {
         let units = self.map.units();
         ids.iter()
             .filter_map(|id| units.get(*id))
             .map(|unit| {
-                let parts = self.strength_parts(unit, at, defending, ids, siege);
+                let parts = self.strength_parts(unit, at, defending, stack, siege);
                 Combatant {
                     unit: unit.id(),
                     side: unit.side(),
