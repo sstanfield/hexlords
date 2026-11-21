@@ -117,12 +117,15 @@ pub struct Marks<'a> {
     /// The hexes outlined (`STOP_BORDER`; the cursor's border wins): in the
     /// game, the stops of the route being picked, or of the selected unit's.
     pub outlined: &'a [Hex],
+    /// The flags on the map, each with its number (0 to 9): in the game, the
+    /// viewer's rally points (`push_flag`).
+    pub flags: &'a [(Hex, u8)],
 }
 
 impl Marks<'_> {
     /// Marks of a map seen whole, everyone's units shown: a tool's.
     pub fn plain(color: [f32; 4], marked: &dyn Fn(Hex) -> bool, front: Option<UnitId>) -> Marks<'_> {
-        Marks { color, marked, front, viewer: None, sight: &SEE_ALL, outlined: &[] }
+        Marks { color, marked, front, viewer: None, sight: &SEE_ALL, outlined: &[], flags: &[] }
     }
 }
 
@@ -295,6 +298,59 @@ fn push_banner(
     push_shape(list, view, center, variant, &cloth(0.0), [r, g, b, alpha]);
 }
 
+/// The colors of a flag (a rally point): its cloth, and its number.
+pub const FLAG_CLOTH: [f32; 4] = [0.98, 0.86, 0.36, 1.0];
+pub const FLAG_NUMBER: [f32; 4] = [0.12, 0.09, 0.05, 1.0];
+
+/// Which of a digit's seven bars are lit: top, top right, bottom right,
+/// bottom, bottom left, top left, middle.
+const DIGIT_BARS: [[bool; 7]; 10] = [
+    [true, true, true, true, true, true, false],
+    [false, true, true, false, false, false, false],
+    [true, true, false, true, true, false, true],
+    [true, true, true, true, false, false, true],
+    [false, true, true, false, false, true, true],
+    [true, false, true, true, false, true, true],
+    [true, false, true, true, true, true, true],
+    [true, true, true, false, false, false, false],
+    [true, true, true, true, true, true, true],
+    [true, true, true, true, false, true, true],
+];
+
+/// A rally point's flag, in the top left of its hex: a pole, and a cloth
+/// with its number on it in bars, outlined dark.
+fn push_flag(list: &mut MeshList<FlatVertex>, view: &MapView, center: [f32; 2], variant: HexVariant, n: u8) {
+    let a = HEX_HEIGHT_ADJUST;
+    let rect = |x0: f32, x1: f32, y0: f32, y1: f32| [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+    let (grow, gy) = (0.04, 0.04 / a);
+    // The pole, and the cloth from its top.
+    let (pole, cloth) = ((-0.56, -0.49, -0.10, 0.92), (-0.49, 0.16, 0.30, 0.92));
+    for (x0, x1, y0, y1) in [pole, cloth] {
+        push_shape(list, view, center, variant, &rect(x0 - grow, x1 + grow, y0 - gy, y1 + gy), RING_COLOR);
+    }
+    push_shape(list, view, center, variant, &rect(pole.0, pole.1, pole.2, pole.3), [0.85, 0.80, 0.68, 1.0]);
+    push_shape(list, view, center, variant, &rect(cloth.0, cloth.1, cloth.2, cloth.3), FLAG_CLOTH);
+    // The number, in seven bars.
+    let (x0, x1, y0, y1) = (-0.30, -0.02, 0.38, 0.84);
+    let (tx, ty) = (0.07, 0.07 / a);
+    let ym = (y0 + y1) / 2.0;
+    let bars = [
+        rect(x0, x1, y1 - ty, y1),
+        rect(x1 - tx, x1, ym, y1),
+        rect(x1 - tx, x1, y0, ym),
+        rect(x0, x1, y0, y0 + ty),
+        rect(x0, x0 + tx, y0, ym),
+        rect(x0, x0 + tx, ym, y1),
+        rect(x0, x1, ym - ty / 2.0, ym + ty / 2.0),
+    ];
+    let lit = DIGIT_BARS[usize::from(n % 10)];
+    for (bar, on) in bars.iter().zip(lit) {
+        if on {
+            push_shape(list, view, center, variant, bar, FLAG_NUMBER);
+        }
+    }
+}
+
 /// A stack's size: a pip for each unit, in its side's color, along the
 /// bottom of its hex as a city's garrison is (`pip_at`).
 fn push_size(
@@ -430,6 +486,11 @@ impl MapGeometry {
                     }
                 };
                 self.units[layer].1.push(&sign, &HEX_INDICES);
+            }
+
+            // The rally points' flags, over the units.
+            for (_, n) in marks.flags.iter().filter(|(at, _)| *at == hex) {
+                push_flag(&mut self.signs, view, visible.center, variant, *n);
             }
 
             if (marks.marked)(hex) {

@@ -21,6 +21,23 @@ pub struct UnitProd {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct CityId(pub u32);
 
+/// Where a city sends the units it builds (`City::sends`, `Order::Rally`).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum Sends {
+    /// They stay in it, and wait for orders.
+    #[default]
+    Stay,
+    /// They stay in it and defend it (`Order::Defend`): nobody need see to
+    /// them (a garrison).
+    Defend,
+    /// They go along a route, a turn at a time (`Order::GoTo`): the stops in
+    /// order, the last where they end. Never empty.
+    Route(Vec<Hex>),
+    /// They go to one of the side's rally points (`Game::rally_points`), by
+    /// way of a temple near the way first if `bless`.
+    Point { n: u8, bless: bool },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct City {
     pub id: CityId,
@@ -36,10 +53,9 @@ pub struct City {
     /// The level the units it builds start at: 1, or more where it trains
     /// them (a veteran, 2; elite, 3).
     pub trains: u8,
-    /// Where the units it builds go, a turn at a time (their route: the
-    /// stops in order, the last where they end), if its holder said
-    /// (`Order::Rally`). Empty: they stay in it.
-    pub rally: Vec<Hex>,
+    /// Where the units it builds go (`Order::Rally`): they stay in it (at
+    /// first), or defend it, or go somewhere.
+    pub sends: Sends,
     /// What it is building: an index into `units`, or nothing. Set it with
     /// `Map::set_production`.
     pub building: Option<usize>,
@@ -92,7 +108,7 @@ impl Cities {
             walls,
             income: DEFAULT_INCOME,
             trains: 1,
-            rally: Vec::new(),
+            sends: Sends::Stay,
             building: None,
             progress: 0,
         };

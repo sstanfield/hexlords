@@ -50,6 +50,7 @@ pub mod orders;
 pub mod paths;
 pub mod planner;
 pub mod platform;
+pub mod rally_window;
 pub mod render;
 pub mod screen;
 pub mod script;

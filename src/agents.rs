@@ -14,10 +14,10 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 use crate::game::Game;
-use crate::orders::{Event, Order};
+use crate::orders::{Event, Order, RALLY_POINTS, RallyPoint};
 use crate::setup::Controller;
 use crate::state::scenario::{side_name, side_named};
-use crate::state::{Hex, MAX_STACK, Side, UnitId};
+use crate::state::{Hex, MAX_STACK, Sends, Side, UnitId};
 
 /// What a side's agent is asked for.
 pub trait Agent {
@@ -575,9 +575,10 @@ pub fn describe(game: &Game, side: Side) -> String {
 /// `goto <units> <row> <col> [<row> <col> ...]` (stops in order, the last
 /// where they end), `done <units>`, `defend <units>`, `undefend <units>`,
 /// `bless <units>`, `disband <units>`, `build <row> <col> <index or none>`,
-/// `rally <row> <col> <row> <col> [<row> <col> ...]` (or `none`),
-/// `walls <row> <col>`, `undo`, `end`. `None` for an empty line or a comment
-/// (`#`).
+/// `rally <row> <col> <row> <col> [<row> <col> ...]` (or `none`, `defend`,
+/// `point <n> [bless]`), `point <n> <row> <col> [defend]` (or `point <n>
+/// none`), `walls <row> <col>`, `undo`, `end`. `None` for an empty line or a
+/// comment (`#`).
 pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
     let words: Vec<&str> = line.split_whitespace().collect();
     let hex = |row: &str, col: &str| -> Result<Hex, String> {
@@ -587,6 +588,13 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
     };
     let units = |names: &str| -> Result<Vec<UnitId>, String> {
         names.split(',').map(|name| parse_unit(name).ok_or(format!("\"{name}\" is not a unit's name"))).collect()
+    };
+    // A rally point's number, 0 to 9.
+    let point = |n: &str| -> Result<u8, String> {
+        n.parse::<u8>()
+            .ok()
+            .filter(|n| usize::from(*n) < RALLY_POINTS)
+            .ok_or(format!("\"{n}\" is not a rally point (0 to 9)"))
     };
     // Stops: rows and columns in pairs, the last where they end.
     let route = |words: &[&str]| -> Result<(Hex, Vec<Hex>), String> {
@@ -624,19 +632,30 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
         ["walls", row, col] => {
             Order::Walls { city: game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id }
         }
-        ["rally", row, col, "none"] => Order::Rally {
-            city: game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id,
-            to: None,
-            via: Vec::new(),
-        },
-        ["rally", row, col, ref stops @ ..] if !stops.is_empty() => {
+        ["rally", row, col, ref to @ ..] if !to.is_empty() => {
             let city = game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id;
-            let (to, via) = route(stops)?;
-            Order::Rally { city, to: Some(to), via }
+            let to = match to {
+                ["none"] => Sends::Stay,
+                ["defend"] => Sends::Defend,
+                ["point", n] => Sends::Point { n: point(n)?, bless: false },
+                ["point", n, "bless"] => Sends::Point { n: point(n)?, bless: true },
+                stops => {
+                    let (to, via) = route(stops)?;
+                    Sends::Route(via.into_iter().chain([to]).collect())
+                }
+            };
+            Order::Rally { city, to }
+        }
+        ["point", n, "none"] => Order::RallyPoint { n: point(n)?, point: None },
+        ["point", n, row, col] => {
+            Order::RallyPoint { n: point(n)?, point: Some(RallyPoint { at: hex(row, col)?, defend: false }) }
+        }
+        ["point", n, row, col, "defend"] => {
+            Order::RallyPoint { n: point(n)?, point: Some(RallyPoint { at: hex(row, col)?, defend: true }) }
         }
         _ => {
             return Err(
-                "not an order (move, toward, goto, done, defend, undefend, bless, disband, build, rally, walls, undo, end)".to_string()
+                "not an order (move, toward, goto, done, defend, undefend, bless, disband, build, rally, point, walls, undo, end)".to_string()
             );
         }
     }))

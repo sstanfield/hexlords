@@ -301,6 +301,7 @@ impl<S: Scene> App<S> {
                 viewer: scene.viewer(),
                 sight,
                 outlined: scene.outlined(),
+                flags: scene.flags(),
             };
             self.map_renderer.draw(ctx, &self.pipelines, &screen.game.map, &screen.view, &marks);
         }

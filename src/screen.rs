@@ -743,6 +743,12 @@ pub trait Scene {
         &[]
     }
 
+    /// The flags on the main map, each with its number: in the game, the
+    /// rally points of the person at the screen.
+    fn flags(&self) -> &[(Hex, u8)] {
+        &[]
+    }
+
     /// The tint of the marked hexes: red, green, blue and how much of it.
     fn mark_color(&self) -> [f32; 4] {
         RANGE_OVERLAY

@@ -132,6 +132,10 @@ impl Scene for Shell {
         self.scene().outlined()
     }
 
+    fn flags(&self) -> &[(Hex, u8)] {
+        self.scene().flags()
+    }
+
     fn confirm_quit(&mut self) -> bool {
         self.scene_mut().confirm_quit()
     }

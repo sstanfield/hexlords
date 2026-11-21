@@ -13,7 +13,7 @@ use hexgame::orders::{Event, Order};
 use hexgame::session::{DONE_ID, GO_TO_ID, MENU_VIEW_ID, Pick, Session, TASKS_ID};
 use hexgame::setup::Setup;
 use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, TileType, UnitId};
+use hexgame::state::{Hex, Sends, Side, TileType, UnitId};
 use hexgame::tasks_window::row_id;
 use turbo_ferret::{Point, Size, SpecialKey};
 
@@ -158,8 +158,8 @@ fn a_city_sends_what_it_builds_where_its_holder_says() {
     let mut game = game("");
     let city = game.map.city_at(REDHOLD).unwrap().id;
     game.apply(Order::Build { city, what: Some(0) }).unwrap();
-    game.apply(Order::Rally { city, to: Some(FAR), via: Vec::new() }).unwrap();
-    assert_eq!(game.map.cities().get(city).unwrap().rally, [FAR]);
+    game.apply(Order::Rally { city, to: Sends::Route(vec![FAR]) }).unwrap();
+    assert_eq!(game.map.cities().get(city).unwrap().sends, Sends::Route(vec![FAR]));
     // Built at the start of red's turn, and on its way at once.
     let events = round(&mut game);
     let built = events.iter().find_map(|e| if let Event::Built { unit, .. } = e { Some(*unit) } else { None });
@@ -168,18 +168,15 @@ fn a_city_sends_what_it_builds_where_its_holder_says() {
     assert_eq!(pos(&game, built).distance(REDHOLD), 6);
     // Only its holder says where.
     let bluemoor = game.map.city_at(BLUEMOOR).unwrap().id;
-    assert!(game.apply(Order::Rally { city: bluemoor, to: Some(FAR), via: Vec::new() }).is_err());
+    assert!(game.apply(Order::Rally { city: bluemoor, to: Sends::Route(vec![FAR]) }).is_err());
     // Nowhere: what it builds stays in it.
-    game.apply(Order::Rally { city, to: None, via: Vec::new() }).unwrap();
-    assert_eq!(game.map.cities().get(city).unwrap().rally, []);
+    game.apply(Order::Rally { city, to: Sends::Stay }).unwrap();
+    assert_eq!(game.map.cities().get(city).unwrap().sends, Sends::Stay);
     assert_eq!(
         hexgame::agents::parse_order(&game, "rally 5 5 5 20"),
-        Ok(Some(Order::Rally { city, to: Some(FAR), via: Vec::new() }))
+        Ok(Some(Order::Rally { city, to: Sends::Route(vec![FAR]) }))
     );
-    assert_eq!(
-        hexgame::agents::parse_order(&game, "rally 5 5 none"),
-        Ok(Some(Order::Rally { city, to: None, via: Vec::new() }))
-    );
+    assert_eq!(hexgame::agents::parse_order(&game, "rally 5 5 none"), Ok(Some(Order::Rally { city, to: Sends::Stay })));
 }
 
 #[test]
@@ -429,10 +426,10 @@ fn a_city_window_sends_new_units_to_a_picked_hex() {
     assert!(matches!(s.picking(), Some(Pick::Rally(_))));
     click_hex(&mut s, Hex::new(10, 10));
     let city = s.screen.game.map.city_at(REDHOLD).unwrap();
-    assert_eq!(city.rally, [Hex::new(10, 10)]);
+    assert_eq!(city.sends, Sends::Route(vec![Hex::new(10, 10)]));
     assert!(says(&s).contains(&"New units go to row 10, column 10.".to_string()), "{:?}", says(&s));
     push(&mut s, CITY_NO_RALLY_ID);
-    assert_eq!(s.screen.game.map.city_at(REDHOLD).unwrap().rally, []);
+    assert_eq!(s.screen.game.map.city_at(REDHOLD).unwrap().sends, Sends::Stay);
 }
 
 // What the review found.
@@ -474,9 +471,9 @@ fn a_rally_point_is_somewhere_the_city_s_units_can_get_and_is_lost_with_the_city
     let mut game = game("");
     let city = game.map.city_at(REDHOLD).unwrap().id;
     game.map.tile_mut(Hex::new(20, 20)).unwrap().kind = hexgame::state::TileType::Water;
-    let refused = game.apply(Order::Rally { city, to: Some(Hex::new(20, 20)), via: Vec::new() }).unwrap_err();
+    let refused = game.apply(Order::Rally { city, to: Sends::Route(vec![Hex::new(20, 20)]) }).unwrap_err();
     assert_eq!(refused, "nothing Redhold builds can get there");
-    game.apply(Order::Rally { city, to: Some(FAR), via: Vec::new() }).unwrap();
+    game.apply(Order::Rally { city, to: Sends::Route(vec![FAR]) }).unwrap();
     // Blue takes it: where red sent its units is not blue's.
     let kind = game.map.units().kind_named("riders").unwrap();
     let blue = game.map.new_unit_of(Side::Blue, kind).unwrap();
@@ -484,7 +481,7 @@ fn a_rally_point_is_somewhere_the_city_s_units_can_get_and_is_lost_with_the_city
     game.apply(Order::EndTurn).unwrap();
     game.apply(Order::Move { units: vec![blue], to: REDHOLD }).unwrap();
     let redhold = game.map.cities().get(city).unwrap();
-    assert_eq!((redhold.side, redhold.rally.is_empty()), (Side::Blue, true));
+    assert_eq!((redhold.side, redhold.sends == Sends::Stay), (Side::Blue, true));
 }
 
 #[test]

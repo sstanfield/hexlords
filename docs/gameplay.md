@@ -387,17 +387,41 @@ thing to happen. Ideas to try, as the rules grow:
   on to the next at once, with what movement it has left; at a stop on a
   temple, those of it the temple has not blessed seek its blessing and the
   stack stops there for the turn (one it has blessed them all passes on).
-  More than one leg in a turn, or a blessing, cannot be undone. A city's
-  rally point is a route too (`Order::Rally { to, via }`, Shift+click after
-  Send new units to, `Game::check_rally`): what it builds goes by way of
-  the stops.
-- **Rally points** (built): a city's window has "Send new units to..."
-  (then a hex) and "Keep them here" (`Order::Rally`): what it builds is
-  sent there with a standing order the moment it is done. The hex has to
-  be one that something the city builds can get to over the land; a city
-  taken forgets its old holder's rally point. What a turn's start brings
-  (the marches, the units built, what they take) is that turn's in the
-  history.
+  More than one leg in a turn, or a blessing, cannot be undone. Where a
+  city sends its new units can be a route too (`Sends::Route`, Shift+click
+  after Send to, `Game::check_rally`): what it builds goes by way of the
+  stops.
+- **Where a city's new units go** (built; `City::sends`, `Order::Rally`):
+  they stay in it and wait for orders (Keep here, at first); they stay
+  and defend it (Defend here, the owner's word 2026-11-21: a garrison
+  nobody need see to); they go somewhere along a route (Send to..., then
+  a hex); or they go to one of the side's rally points (its button, or
+  Send to... and a click on its flag), by way of a temple near the way
+  first if the city says so (the box "A temple's blessing on the way"):
+  the temple, of those the side knows that have not blessed the unit,
+  that adds the least to its way, if that is no more than a turn's march
+  (`Game::temple_on_the_way`; one far off the way is passed by, so the
+  player ticks the box where a temple is handy). A unit is sent the
+  moment it is done. A route's hexes have to be ones that something the
+  city builds can get to over the land; a city taken forgets where its
+  old holder sent its units. What a turn's start brings (the marches, the
+  units built, what they take) is that turn's in the history.
+- **Rally points** (built, the owner's word 2026-11-21: gathering new
+  units into armies is the drudgery, moving armies and taking cities the
+  fun): each side has ten, 0 to 9 (`Game::rally_points`,
+  `Order::RallyPoint`), its own (another side's view has none of them),
+  placed on land it has seen: R, or the Units menu's Rally points, places,
+  moves, looks at and removes them; a numbered flag shows each on the
+  map. Units sent to one (by Go to onto its flag, or by a city) are bound
+  to it (`Unit::bound`): if it moves they go to its new place; if it is
+  removed they stop and wait for orders, and the cities that sent their
+  units there keep them. Once it is full (`MAX_STACK`), those that come
+  after stand beside it, on the nearest hex around it with room (out to
+  three hexes, in a fixed order, so that one stack fills before the
+  next). A point can say "Defend there": those who get there defend it
+  (Next stack and the tasks pass them by, as with F) until they are sent
+  on; else they wait for orders. Selecting a stack there takes them all,
+  defenders too.
 - **Done for the turn** (built): D, or the Done button (`Order::Done`),
   puts the selected units aside: Next stack passes them by, as if they had
   no moves left, and the selection goes on to the next stack that waits.

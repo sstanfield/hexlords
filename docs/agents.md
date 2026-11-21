@@ -238,7 +238,8 @@ A line each, in the order they are to be carried out:
 | `disband <units>` | Send units home for good: they are gone, and their upkeep with them (a ship at sea only with those it carries, or with ships enough left to carry them) |
 | `build <row> <col> <index or none>` | Set what a city of its side builds |
 | `walls <row> <col>` | Raise the walls of a city of its side a level, paid at once: once a turn, up to 6, 25 gold for each level it raises them to |
-| `rally <row> <col> <row> <col> [<row> <col> ...]`, `rally <row> <col> none` | Where a city of its side sends what it builds (with a standing order, as `goto`, by way of the stops before the last), or nowhere: it stays in the city |
+| `rally <row> <col> <row> <col> [<row> <col> ...]`, `rally <row> <col> none`, `rally <row> <col> defend`, `rally <row> <col> point <n> [bless]` | Where a city of its side sends what it builds: along a route (with a standing order, as `goto`, by way of the stops before the last); nowhere (it stays in the city); nowhere, defending the city; or to the side's rally point `n` (0 to 9), with `bless` by way of a temple near the way first |
+| `point <n> <row> <col> [defend]`, `point <n> none` | Place (or move) the side's rally point `n` (0 to 9), where units are sent to gather: once it is full they stand beside it; with `defend` those who get there defend it. `none` removes it: the units on their way there stop, and the cities that sent theirs there keep them. Units sent to a point's hex with `goto` follow it if it moves |
 | `undo` | Take back the order before, if it can be (not a battle, nor one that put a side out) |
 | `end` | The turn is over (the end of the output says so too) |
 

@@ -15,7 +15,7 @@ use hexgame::screen::Scene;
 use hexgame::session::{ALL_CITIES_ID, MENU_CITIES_ID, Session};
 use hexgame::setup::{Controller, Fog, Setup};
 use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, TileType};
+use hexgame::state::{Hex, Sends, Side, TileType};
 use turbo_ferret::Size;
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -355,7 +355,7 @@ fn no_order_goes_into_land_never_seen_nor_through_it() {
     assert_eq!(game.apply(Order::Toward { units: vec![scout], to: BLUEMOOR }), Err(UNSEEN.to_string()));
     assert_eq!(game.apply(Order::GoTo { units: vec![scout], to: BLUEMOOR, via: Vec::new() }), Err(UNSEEN.to_string()));
     let redhold = game.map.city_at(REDHOLD).unwrap().id;
-    assert_eq!(game.apply(Order::Rally { city: redhold, to: Some(beyond), via: Vec::new() }), Err(UNSEEN.to_string()));
+    assert_eq!(game.apply(Order::Rally { city: redhold, to: Sends::Route(vec![beyond]) }), Err(UNSEEN.to_string()));
     // Known land the way to which is not known: no way there.
     let why = game.apply(Order::GoTo { units: vec![scout], to: Hex::new(5, 7), via: Vec::new() }).unwrap_err();
     assert!(why.contains("cannot get there"), "{why}");

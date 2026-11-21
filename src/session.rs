@@ -37,12 +37,13 @@ use crate::help::{HelpSection, command_key, fullscreen_keys};
 use crate::info;
 use crate::log_window::{self, LogWindow};
 use crate::options_window::{self, Options, OptionsWindow};
-use crate::orders::{Event, Order};
+use crate::orders::{Event, Order, RallyPoint};
+use crate::rally_window::{self, RallyClick, RallyWindow};
 use crate::render::{AssetDirs, coin_icon, unit_icon};
 use crate::screen::{FULLSCREEN_ID, HELP_KEYS_ID, MapScreen, QUIT_ID, Scene, ZOOM_IN_ID, ZOOM_OUT_ID};
 use crate::setup::Controller;
 use crate::state::scenario::side_name;
-use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Side, UnitId};
+use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Sends, Side, UnitId};
 use crate::tasks_window::{self, TasksWindow};
 use crate::temple_window::{self, TempleWindow};
 
@@ -119,6 +120,8 @@ pub const MY_CITIES_ID: &str = "my_cities";
 pub const CITY_DETAILS_ID: &str = "city_details";
 /// The Game menu's Options (`options_window`).
 pub const OPTIONS_ID: &str = "options";
+/// The Units menu's Rally points (`rally_window`).
+pub const RALLY_POINTS_ID: &str = "rally_points";
 /// The window End turn opens first while something waits for orders
 /// (Options), and its buttons.
 pub const END_ASK_ID: &str = "end_turn_ask";
@@ -152,6 +155,8 @@ pub enum Pick {
     GoTo,
     /// Where the city sends its new units.
     Rally(CityId),
+    /// Where the side's rally point goes (0 to 9).
+    RallyPoint(u8),
 }
 pub const STATUS_ID: &str = "status";
 /// The selected hex's heading, and the line about the selected unit.
@@ -277,6 +282,7 @@ fn help_section() -> Vec<HelpSection> {
                     "D,  or  Done;  F,  B,  X",
                     "Aside this turn; F: defend, or stand down; B: a temple's blessing; X: disband",
                 ),
+                ("R", "Rally points: place them; Go to (or a city's Send to) onto one's flag sends units there"),
             ],
         ),
         HelpSection::new(
@@ -392,6 +398,10 @@ pub struct Session {
     options_window: Option<OptionsWindow>,
     /// What End turn asks first, while it is open.
     end_ask: Option<WindowParts>,
+    /// The rally points' window, while it is open; and the flags of the
+    /// person's rally points on the map.
+    rally_window: Option<RallyWindow>,
+    flags: Vec<(Hex, u8)>,
     /// How many stacks and cities wait for orders (tier 1 tasks), as of the
     /// map's revision and the side it was counted for.
     waiting: (usize, usize),
@@ -524,6 +534,8 @@ impl Session {
             options,
             options_window: None,
             end_ask: None,
+            rally_window: None,
+            flags: Vec::new(),
             waiting: (0, 0),
             waiting_of: None,
             notice: None,
@@ -1149,10 +1161,20 @@ impl Session {
             map.units().kinds().iter().find(|k| k.commander > 0).map_or("Leader", |k| k.name.as_str()).to_string();
         // The selected unit in a line, wherever it stands; a stack in a word.
         let line = match game.selected().and_then(|id| map.units().get(id)) {
+            _ if matches!(self.picking, Some(Pick::RallyPoint(_))) => {
+                let n = match self.picking {
+                    Some(Pick::RallyPoint(n)) => n,
+                    _ => 0,
+                };
+                match &self.refused {
+                    Some(why) => format!("Rally point {n}: {why}. Click another hex (Esc: never mind)."),
+                    None => format!("Rally point {n}: click the hex where it goes (Esc: never mind)."),
+                }
+            }
             _ if self.picking.is_some() => {
                 let (what, first) = match self.picking {
                     Some(Pick::GoTo) => ("Go to", "click the hex they go to, over as many turns as it takes"),
-                    _ => ("New units go to", "click the hex the city sends its new units to"),
+                    _ => ("New units go to", "click a hex, or a rally point's flag"),
                 };
                 let by = match self.stops.is_empty() {
                     true => String::new(),
@@ -1168,7 +1190,11 @@ impl Session {
             }
             _ if self.notice.is_some() => self.notice.clone().unwrap_or_default(),
             Some(unit) if !unit.route.is_empty() && game.selection().len() == 1 => {
-                format!("{} (on the way to {})", info::unit_line(map, unit), info::route_words(map, &unit.route))
+                format!(
+                    "{} (on the way to {})",
+                    info::unit_line(map, unit),
+                    info::route_words_to(map, &unit.route, unit.bound)
+                )
             }
             Some(_) if game.selection_problem().is_some() => {
                 format!("They cannot go together: {}.", game.selection_problem().unwrap_or_default())
@@ -1343,9 +1369,20 @@ impl Session {
                 self.screen.settle();
             }
         }
+        if self.rally_window.as_ref().is_some_and(|w| !w.is_open(&self.screen.ui)) {
+            self.rally_window = None;
+        }
+        if let Some(window) = &mut self.rally_window {
+            window.refresh(&mut self.screen.ui, &self.screen.game, viewer);
+        }
+        // The person's rally points' flags.
+        let points = self.screen.game.rally_points(self.seer());
+        self.flags = (0..points.len()).filter_map(|n| Some((points[n]?.at, n as u8))).collect();
         let (seer, actor) = (self.seer(), self.actor());
+        let points = self.screen.game.rally_points(viewer).map(|p| p.is_some());
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
         if let Some(window) = &mut self.city_window {
+            window.set_points(points);
             let known = game
                 .map
                 .cities()
@@ -1420,8 +1457,10 @@ impl Session {
             self.panel_of = wanted;
         }
         let actor = self.actor();
+        let points = self.screen.game.rally_points(self.viewer()).map(|p| p.is_some());
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
         if let Some(panel) = &mut self.city_panel {
+            panel.set_points(points);
             if !panel.refresh(ui, &game.map, (actor, info::Known::All)) {
                 if let Some(panel) = self.city_panel.take() {
                     panel.close(ui);
@@ -1494,6 +1533,7 @@ impl Session {
             self.disband.as_ref().and_then(|w| open(w.window())),
             self.options_window.as_ref().and_then(|w| open(w.window())),
             self.end_ask.as_ref().and_then(|w| open(w.window)),
+            self.rally_window.as_ref().and_then(|w| open(w.window())),
         ];
         // The one on top: the last of them among the root window's children.
         let order = ui.children(root).to_vec();
@@ -1512,6 +1552,7 @@ impl Session {
             Some(7) => self.disband.take().map(|w| w.close(ui)).is_some(),
             Some(8) => self.options_window.take().map(|w| w.close(ui)).is_some(),
             Some(9) => self.end_ask.take().map(|w| build::close(ui, w.window)).is_some(),
+            Some(10) => self.rally_window.take().map(|w| w.close(ui)).is_some(),
             _ => false,
         }
     }
@@ -1529,7 +1570,27 @@ impl Session {
                 self.stops.clear();
             }
             CityOrder::NoRally(id) => {
-                let _ = self.screen.game.apply(Order::Rally { city: id, to: None, via: Vec::new() });
+                let _ = self.screen.game.apply(Order::Rally { city: id, to: Sends::Stay });
+            }
+            CityOrder::DefendNew(id) => {
+                let _ = self.screen.game.apply(Order::Rally { city: id, to: Sends::Defend });
+            }
+            CityOrder::ToPoint(id, n) => {
+                // (A blessing on the way stays as it was, from point to point.)
+                let bless = self
+                    .screen
+                    .game
+                    .map
+                    .cities()
+                    .get(id)
+                    .is_some_and(|c| matches!(c.sends, Sends::Point { bless: true, .. }));
+                let _ = self.screen.game.apply(Order::Rally { city: id, to: Sends::Point { n, bless } });
+            }
+            CityOrder::ToggleBless(id) => {
+                let sends = self.screen.game.map.cities().get(id).map(|c| c.sends.clone());
+                if let Some(Sends::Point { n, bless }) = sends {
+                    let _ = self.screen.game.apply(Order::Rally { city: id, to: Sends::Point { n, bless: !bless } });
+                }
             }
             CityOrder::RaiseWalls(id) => {
                 let _ = self.screen.game.apply(Order::Walls { city: id });
@@ -2185,8 +2246,30 @@ impl Session {
                     }
                 }
             }
+            Pick::RallyPoint(n) => {
+                let side = self.screen.game.player();
+                let defend = self.screen.game.rally_point(side, n).is_some_and(|p| p.defend);
+                match self.screen.game.apply(Order::RallyPoint { n, point: Some(RallyPoint { at: hex, defend }) }) {
+                    Ok(_) => {
+                        self.stops.clear();
+                        if self.rally_window().is_none() {
+                            self.toggle_rally_window();
+                        }
+                    }
+                    Err(why) => {
+                        self.refused = Some(why);
+                        self.picking = Some(pick);
+                    }
+                }
+            }
             Pick::Rally(city) => {
-                match self.screen.game.apply(Order::Rally { city, to: Some(hex), via: self.stops.clone() }) {
+                // A rally point's hex, with no stops: to that rally point.
+                let side = self.screen.game.player();
+                let to = match self.screen.game.rally_point_at(side, hex) {
+                    Some(n) if self.stops.is_empty() => Sends::Point { n, bless: false },
+                    _ => Sends::Route(self.stops.iter().copied().chain([hex]).collect()),
+                };
+                match self.screen.game.apply(Order::Rally { city, to }) {
                     Ok(_) => self.stops.clear(),
                     // Refused: say why, and pick again.
                     Err(why) => {
@@ -2203,12 +2286,19 @@ impl Session {
     /// last; else it says why. The picking goes on: a click without Shift
     /// picks where they end.
     fn add_stop(&mut self, pick: Pick, hex: Hex) {
+        // (A rally point has no stops: Shift makes no difference.)
+        if let Pick::RallyPoint(_) = pick {
+            self.picking = None;
+            self.picked(pick, hex);
+            return;
+        }
         let game = &self.screen.game;
         let side = game.player();
         let route: Vec<Hex> = self.stops.iter().copied().chain([hex]).collect();
         let checked = match pick {
             Pick::GoTo => game.check_route(side, game.selection(), &route),
             Pick::Rally(city) => game.check_rally(side, city, &route),
+            Pick::RallyPoint(_) => Ok(()),
         };
         match checked {
             Ok(()) => {
@@ -2270,6 +2360,59 @@ impl Session {
         let window = TasksWindow::open(&mut self.screen.ui, root, &self.screen.game, side, (area, TASKS_ALIGN));
         self.tasks = Some(window);
         self.screen.settle();
+    }
+
+    /// Open the rally points' window (R, or the Units menu's), or close it.
+    pub fn toggle_rally_window(&mut self) {
+        if let Some(window) = self.rally_window.take() {
+            if window.is_open(&self.screen.ui) {
+                window.close(&mut self.screen.ui);
+                return;
+            }
+        }
+        if self.covered() || !self.people_in_play() {
+            return;
+        }
+        let (root, area, side) = (self.screen.root_window(), self.window_area(), self.viewer());
+        let window = RallyWindow::open(&mut self.screen.ui, root, &self.screen.game, side, (area, LIST_ALIGN));
+        self.rally_window = Some(window);
+        self.screen.settle();
+    }
+
+    /// The rally points' window, while it is open.
+    pub fn rally_window(&self) -> Option<&RallyWindow> {
+        self.rally_window.as_ref().filter(|w| w.is_open(&self.screen.ui))
+    }
+
+    /// Do what a click in the rally points' window asked.
+    fn rally_click(&mut self, click: RallyClick) {
+        let side = self.screen.game.player();
+        match click {
+            RallyClick::Look(n) => {
+                if let Some(point) = self.screen.game.rally_point(self.viewer(), n) {
+                    self.look_at(point.at);
+                }
+            }
+            RallyClick::Place(n) if self.can_act() => {
+                // The window makes way for the map, and is back once the
+                // point is placed.
+                if let Some(window) = self.rally_window.take() {
+                    window.close(&mut self.screen.ui);
+                }
+                (self.picking, self.refused) = (Some(Pick::RallyPoint(n)), None);
+                self.stops.clear();
+            }
+            RallyClick::Remove(n) if self.can_act() => {
+                let _ = self.screen.game.apply(Order::RallyPoint { n, point: None });
+            }
+            RallyClick::Defend(n, defend) if self.can_act() => {
+                if let Some(point) = self.screen.game.rally_point(side, n) {
+                    let point = Some(RallyPoint { defend, ..point });
+                    let _ = self.screen.game.apply(Order::RallyPoint { n, point });
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Open the options' window (the Game menu's Options), or close it.
@@ -2362,6 +2505,8 @@ impl Session {
                 .item(DEFEND_ID, "Defend here (or stand down)", "F", own)
                 .item(BLESS_ID, "Seek a blessing", "B", temple)
                 .item(DISBAND_ID, "Disband...", "X", own)
+                .separator()
+                .item(RALLY_POINTS_ID, "Rally points...", "R", people)
                 .item(DESELECT_ID, "Drop the selection", "Esc", units.is_some())
         } else if id == TbId::new(MENU_CITIES_ID) {
             Menu::new(MENU_CITIES_ID)
@@ -2572,6 +2717,19 @@ impl Session {
                 }
                 RootCommand::Click(id) if id == TbId::new(TASKS_ID) => self.toggle_tasks(),
                 RootCommand::Click(id) if id == TbId::new(OPTIONS_ID) => self.toggle_options(),
+                RootCommand::Click(id) if id == TbId::new(RALLY_POINTS_ID) => self.toggle_rally_window(),
+                RootCommand::Click(id) if id == TbId::new(rally_window::RALLY_CLOSE_ID) => {
+                    if let Some(window) = self.rally_window.take() {
+                        window.close(&mut self.screen.ui);
+                    }
+                }
+                RootCommand::Click(id)
+                    if self.rally_window.as_ref().and_then(|w| w.click(&self.screen.ui, id)).is_some() =>
+                {
+                    if let Some(click) = self.rally_window.as_ref().and_then(|w| w.click(&self.screen.ui, id)) {
+                        self.rally_click(click);
+                    }
+                }
                 RootCommand::Key(',', mods) if mods.intersects(Modifiers::CTRL | Modifiers::SUPER) => {
                     self.toggle_options();
                 }
@@ -2625,6 +2783,7 @@ impl Session {
                         'a' | 'A' => self.toggle_list(false),
                         'o' | 'O' => self.open_shown_city(),
                         'h' | 'H' => self.go_to_capital(),
+                        'r' | 'R' => self.toggle_rally_window(),
                         _ => {}
                     }
                 }
@@ -2719,6 +2878,11 @@ impl Scene for Session {
 
     /// The stops picked so far (Go to, or a city's rally point), or else
     /// the route of the selected unit, if it is on one.
+    /// The person's rally points.
+    fn flags(&self) -> &[(Hex, u8)] {
+        &self.flags
+    }
+
     fn outlined(&self) -> &[Hex] {
         if self.picking.is_some() {
             return &self.stops;

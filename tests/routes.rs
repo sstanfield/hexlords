@@ -15,7 +15,7 @@ use hexgame::session::{Pick, Session};
 use hexgame::setup::Setup;
 use hexgame::shell::Shell;
 use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Blessing, Hex, Side, TileType, UnitId};
+use hexgame::state::{Blessing, Hex, Sends, Side, TileType, UnitId};
 use turbo_ferret::{Size, SpecialKey};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -115,11 +115,11 @@ fn a_city_sends_what_it_builds_by_way_of_stops() {
     let city = game.map.city_at(REDHOLD).unwrap().id;
     game.apply(Order::Build { city, what: Some(0) }).unwrap();
     // Stops on the way to nowhere: refused. Stops they cannot get to too.
-    assert!(game.apply(Order::Rally { city, to: None, via: vec![TEMPLE] }).is_err());
-    let why = game.apply(Order::Rally { city, to: Some(FAR), via: vec![LAKE] }).unwrap_err();
+    assert!(game.apply(Order::Rally { city, to: Sends::Route(Vec::new()) }).is_err());
+    let why = game.apply(Order::Rally { city, to: Sends::Route(vec![LAKE, FAR]) }).unwrap_err();
     assert_eq!(why, "nothing Redhold builds can get there");
-    game.apply(Order::Rally { city, to: Some(FAR), via: vec![TEMPLE] }).unwrap();
-    assert_eq!(game.map.cities().get(city).unwrap().rally, [TEMPLE, FAR]);
+    game.apply(Order::Rally { city, to: Sends::Route(vec![TEMPLE, FAR]) }).unwrap();
+    assert_eq!(game.map.cities().get(city).unwrap().sends, Sends::Route(vec![TEMPLE, FAR]));
     let line = hexgame::info::task_line(
         &game,
         &game.tasks(Side::Red).into_iter().find(|t| matches!(t, Task::City { .. })).unwrap(),
@@ -156,7 +156,7 @@ fn the_text_protocol_says_the_stops_in_order() {
     let goto = Order::GoTo { units: vec![id], to: FAR, via: vec![TEMPLE] };
     assert_eq!(hexgame::agents::parse_order(&game, "goto red.0.0 5 8 5 20"), Ok(Some(goto.clone())));
     assert_eq!(hexgame::headless::order_line(&game, &goto), "goto red.0.0 5 8 5 20");
-    let rally = Order::Rally { city, to: Some(FAR), via: vec![TEMPLE] };
+    let rally = Order::Rally { city, to: Sends::Route(vec![TEMPLE, FAR]) };
     assert_eq!(hexgame::agents::parse_order(&game, "rally 5 5 5 8 5 20"), Ok(Some(rally.clone())));
     assert_eq!(hexgame::headless::order_line(&game, &rally), "rally 5 5 5 8 5 20");
     // Without stops, as before.
@@ -232,7 +232,7 @@ fn shift_click_makes_a_stop_for_a_citys_new_units() {
     assert!(s.unit_line().starts_with("New units go to: nothing Redhold builds can get there."), "{}", s.unit_line());
     shift_click_hex(&mut s, TEMPLE);
     click_hex(&mut s, FAR);
-    assert_eq!(s.screen.game.map.city_at(REDHOLD).unwrap().rally, [TEMPLE, FAR]);
+    assert_eq!(s.screen.game.map.city_at(REDHOLD).unwrap().sends, Sends::Route(vec![TEMPLE, FAR]));
     let says: Vec<String> = common::descendants(&s, hexgame::city_windows::CITY_WINDOW_ID)
         .into_iter()
         .filter_map(|id| s.screen.ui.text(id).map(str::to_string))

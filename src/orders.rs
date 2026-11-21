@@ -3,7 +3,21 @@
 //! clicks become orders, an agent makes them, and (later) a saved game and a
 //! network game are made of them (`docs/gameplay.md`).
 
-use crate::state::{Blessing, CityId, Hex, Side, UnitId};
+use crate::state::{Blessing, CityId, Hex, Sends, Side, UnitId};
+
+/// How many rally points a side has: 0 to 9.
+pub const RALLY_POINTS: usize = 10;
+
+/// One of a side's rally points (`Order::RallyPoint`): a hex its units are
+/// sent to, by Go to or by its cities (`Sends::Point`), to gather into
+/// stacks: once one is full, those that come after stand beside it. If it
+/// says so they defend there when they get there (nobody need see to them,
+/// until they are sent on); else they wait for orders.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct RallyPoint {
+    pub at: Hex,
+    pub defend: bool,
+}
 
 /// What a side asks for.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,7 +36,8 @@ pub enum Order {
     /// there (a standing order; another order for them ends it). At a stop
     /// they go on to the next at once, with what movement they have left;
     /// at a stop on a temple (or the end), those it has not blessed seek its
-    /// blessing, and stop there for the turn.
+    /// blessing, and stop there for the turn. To one of the side's rally
+    /// points, they are bound to it (`Unit::bound`).
     GoTo { units: Vec<UnitId>, to: Hex, via: Vec<Hex> },
     /// The player is done with these units this turn: they are not offered
     /// again (Next stack) though they have moves left.
@@ -36,9 +51,15 @@ pub enum Order {
     /// movement is spent); one it has blessed already is not, and keeps its
     /// movement.
     Bless { units: Vec<UnitId> },
-    /// Where a city sends the units it builds (they go there as `GoTo`, by
-    /// way of the stops `via`), or nowhere (and no stops).
-    Rally { city: CityId, to: Option<Hex>, via: Vec<Hex> },
+    /// Where a city sends the units it builds (`Sends`): nowhere (they stay
+    /// in it), nowhere (they defend it), along a route (as `GoTo`), or to one
+    /// of the side's rally points.
+    Rally { city: CityId, to: Sends },
+    /// Put one of the side's rally points (0 to 9) somewhere, or move it
+    /// (the units bound to it go to its new place), or take it away (`None`:
+    /// those bound to it stop and wait for orders, and the cities that sent
+    /// their units there keep them).
+    RallyPoint { n: u8, point: Option<RallyPoint> },
     /// Raise a city's walls a level, paid at once (`state::wall_price`):
     /// once a turn, up to `state::WALLS_CAP`.
     Walls { city: CityId },

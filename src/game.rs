@@ -7,15 +7,15 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::orders::{Event, Fallen, Order, Record};
+use crate::orders::{Event, Fallen, Order, RALLY_POINTS, RallyPoint, Record};
 use crate::setup::{Controller, Fog, Setup, TurnOrder, WhenOut};
 use crate::state::combat::{self, Fighter};
 use crate::state::scenario::{self, Scenario, side_name};
 use crate::state::{ATTACK_COST, Blessing};
 use crate::state::{
-    City, CityId, Direction, Hex, MAX_STACK, Map, MoveCost, MoveCostId, MoveRange, NUM_SIDES, Passage, Rng, Side,
-    TileType, Travel, Unit, UnitId, compute_range, hostile, passage, path_with, reach_with, step_cost, step_toward_by,
-    way_over_land,
+    City, CityId, Direction, Hex, MAX_STACK, Map, MoveCost, MoveCostId, MoveRange, NUM_SIDES, Passage, Rng, Sends,
+    Side, TileType, Travel, Unit, UnitId, compute_range, hostile, passage, path_with, reach_with, step_cost,
+    step_toward_by, way_over_land,
 };
 
 /// The agent that passes its turns: the computer's, when nothing else is said.
@@ -89,8 +89,8 @@ enum Undo {
 }
 
 /// A city as it was before a move took it, for an undo: its id, holder,
-/// work and how far it had got, walls and rally point.
-type CityBefore = (CityId, Side, Option<usize>, u32, u32, Vec<Hex>);
+/// work and how far it had got, walls and where it sent its units.
+type CityBefore = (CityId, Side, Option<usize>, u32, u32, Sends);
 
 /// Something a side has left to do, or to look at, this turn (`Game::tasks`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -172,6 +172,7 @@ pub struct Ghost {
 #[derive(Clone, Debug)]
 struct MarchState {
     route: Vec<Hex>,
+    bound: Option<u8>,
     stalled: bool,
     moved: bool,
     defending: bool,
@@ -182,6 +183,7 @@ impl MarchState {
     fn of(unit: &Unit) -> MarchState {
         MarchState {
             route: unit.route.clone(),
+            bound: unit.bound,
             stalled: unit.stalled,
             moved: unit.moved,
             defending: unit.defending,
@@ -190,8 +192,8 @@ impl MarchState {
     }
 
     fn restore(self, unit: &mut Unit) {
-        (unit.route, unit.stalled, unit.moved, unit.defending, unit.done) =
-            (self.route, self.stalled, self.moved, self.defending, self.done);
+        (unit.route, unit.bound, unit.stalled, unit.moved, unit.defending, unit.done) =
+            (self.route, self.bound, self.stalled, self.moved, self.defending, self.done);
     }
 }
 
@@ -480,6 +482,8 @@ pub struct Game {
     explored: Vec<Vec<bool>>,
     /// The cities whose walls were raised this turn (once a turn each).
     raised: Vec<CityId>,
+    /// Each side's rally points (by `Side::index`), 0 to 9.
+    rally_points: Vec<[Option<RallyPoint>; RALLY_POINTS]>,
     /// The sides that are out, in the order they went.
     out: Vec<Side>,
     winner: Option<Side>,
@@ -513,6 +517,7 @@ impl Game {
             round: 1,
             rng,
             raised: Vec::new(),
+            rally_points: vec![[None; RALLY_POINTS]; NUM_SIDES + 1],
             out: Vec::new(),
             trail: vec![Vec::new(); NUM_SIDES + 1],
             memory: vec![Vec::new(); NUM_SIDES + 1],
@@ -783,9 +788,11 @@ impl Game {
                 }
                 let route: Vec<Hex> = via.into_iter().chain([to]).collect();
                 self.check_route(side, &units, &route)?;
+                // To a rally point: bound to it.
+                let bound = self.rally_point_at(side, to);
                 for id in &units {
                     if let Some(unit) = self.map.unit_mut(*id) {
-                        (unit.route, unit.stalled, unit.defending) = (route.clone(), false, false);
+                        (unit.route, unit.bound, unit.stalled, unit.defending) = (route.clone(), bound, false, false);
                     }
                 }
                 // This turn's step, as the march would, a stack (the units of a
@@ -825,8 +832,7 @@ impl Game {
                     if let Some(unit) = self.map.unit_mut(*id) {
                         unit.defending = on;
                         if on {
-                            unit.route.clear();
-                            unit.stalled = false;
+                            (unit.route, unit.bound, unit.stalled) = (Vec::new(), None, false);
                         }
                     }
                 }
@@ -843,17 +849,22 @@ impl Game {
                 }
                 Ok(Vec::new())
             }
-            Order::Rally { city, to, via } => {
-                if to.is_none() && !via.is_empty() {
-                    return Err("stops on the way to nowhere".to_string());
+            Order::Rally { city, to } => {
+                match &to {
+                    Sends::Stay | Sends::Defend => self.check_rally(side, city, &[])?,
+                    Sends::Route(route) if route.is_empty() => return Err("a route to nowhere".to_string()),
+                    Sends::Route(route) => self.check_rally(side, city, route)?,
+                    Sends::Point { n, .. } => {
+                        let point = self.rally_point(side, *n).ok_or(format!("rally point {n} is not set"))?;
+                        self.check_rally(side, city, &[point.at])?;
+                    }
                 }
-                let route: Vec<Hex> = via.into_iter().chain(to).collect();
-                self.check_rally(side, city, &route)?;
                 if let Some(c) = self.map.city_mut(city) {
-                    c.rally = route;
+                    c.sends = to;
                 }
                 Ok(Vec::new())
             }
+            Order::RallyPoint { n, point } => self.set_rally_point(side, n, point),
         }
     }
 
@@ -874,14 +885,34 @@ impl Game {
         loop {
             let units: Vec<&Unit> = ids.iter().filter_map(|id| self.map.units().get(*id)).collect();
             let Some(first) = units.first() else { break };
-            let (at, route) = (first.pos(), first.route.clone());
+            let (at, mut route, bound) = (first.pos(), first.route.clone(), first.bound);
             ids = units.iter().filter(|u| u.pos() == at).map(|u| u.id()).collect();
+            // On the last leg to a rally point: to the point, or beside it
+            // once it is full.
+            if let (Some(n), [end]) = (bound, route.as_slice()) {
+                let spot = self.rally_spot(side, n, &ids, at).unwrap_or(*end);
+                if spot != *end {
+                    route = vec![spot];
+                    for id in &ids {
+                        if let Some(unit) = self.map.unit_mut(*id) {
+                            unit.route = route.clone();
+                        }
+                    }
+                }
+            }
             let Some(to) = route.first().copied() else { break };
             if at == to {
-                // A stop: on to the next (none: there, and the order ends).
+                // A stop: on to the next (none: there, and the order ends;
+                // at a rally point that says so, they defend there).
+                let defend = bound.and_then(|n| self.rally_point(side, n)).is_some_and(|p| p.defend);
+                let last = route.len() == 1;
                 for id in &ids {
                     if let Some(unit) = self.map.unit_mut(*id) {
                         (unit.route, unit.stalled) = (route[1..].to_vec(), false);
+                        if last {
+                            unit.bound = None;
+                            unit.defending |= defend && bound.is_some();
+                        }
                     }
                 }
                 if self.map.tile(at).is_some_and(|t| t.kind == TileType::Temple) {
@@ -929,7 +960,7 @@ impl Game {
             // The move ended their order: they keep it.
             for id in &coming {
                 if let Some(unit) = self.map.unit_mut(*id) {
-                    unit.route = route.clone();
+                    (unit.route, unit.bound) = (route.clone(), bound);
                 }
             }
             ids = coming;
@@ -1008,9 +1039,9 @@ impl Game {
                         return Err("the units are not where the order left them".to_string());
                     }
                 }
-                if let Some((city, holder, building, progress, walls, rally)) = taken {
+                if let Some((city, holder, building, progress, walls, sends)) = taken {
                     if let Some(c) = self.map.city_mut(city) {
-                        (c.side, c.building, c.progress, c.walls, c.rally) = (holder, building, progress, walls, rally);
+                        (c.side, c.building, c.progress, c.walls, c.sends) = (holder, building, progress, walls, sends);
                     }
                 }
                 for (id, from, movement) in &units {
@@ -1162,7 +1193,7 @@ impl Game {
             units.chain(cities).filter(|h| now.sees(*h) && !sight.sees(*h)).collect()
         };
         let city_before =
-            self.map.city_at(to).map(|c| (c.id, c.side, c.building, c.progress, c.walls, c.rally.clone()));
+            self.map.city_at(to).map(|c| (c.id, c.side, c.building, c.progress, c.walls, c.sends.clone()));
         let mut stacks: Vec<(Hex, Vec<UnitId>)> = Vec::new();
         for (_, from, _) in &before {
             if !stacks.iter().any(|(hex, _)| hex == from) {
@@ -1222,7 +1253,7 @@ impl Game {
         for id in &ids {
             if let Some(unit) = self.map.unit_mut(*id) {
                 (unit.moved, unit.stalled, unit.defending) = (true, false, false);
-                unit.route.clear();
+                (unit.route, unit.bound) = (Vec::new(), None);
             }
         }
         if let Some((side, at)) = self.emerging.take() {
@@ -1272,8 +1303,7 @@ impl Game {
             let Event::Blessed { unit, .. } = event else { continue };
             if let Some(unit) = self.map.unit_mut(*unit) {
                 unit.moved = true;
-                unit.route.clear();
-                unit.stalled = false;
+                (unit.route, unit.bound, unit.stalled) = (Vec::new(), None, false);
             }
         }
         self.undo = None;
@@ -1370,6 +1400,175 @@ impl Game {
             return Err(format!("nothing {} builds can get there", c.name));
         }
         Ok(())
+    }
+
+    /// `side`'s rally point `n`, if it is set.
+    pub fn rally_point(&self, side: Side, n: u8) -> Option<RallyPoint> {
+        self.rally_points.get(side.index())?.get(usize::from(n)).copied().flatten()
+    }
+
+    /// `side`'s rally points, 0 to 9 (`None`: not set).
+    pub fn rally_points(&self, side: Side) -> [Option<RallyPoint>; RALLY_POINTS] {
+        self.rally_points.get(side.index()).copied().unwrap_or([None; RALLY_POINTS])
+    }
+
+    /// Which of `side`'s rally points is on `hex`, if one is (the first).
+    pub fn rally_point_at(&self, side: Side, hex: Hex) -> Option<u8> {
+        let points = self.rally_points(side);
+        (0..RALLY_POINTS as u8).find(|n| points[usize::from(*n)].is_some_and(|p| p.at == hex))
+    }
+
+    /// Put `side`'s rally point `n` somewhere, move it, or take it away
+    /// (`Order::RallyPoint`).
+    fn set_rally_point(&mut self, side: Side, n: u8, point: Option<RallyPoint>) -> Result<Vec<Event>, String> {
+        if usize::from(n) >= RALLY_POINTS {
+            return Err(format!("the rally points are 0 to {}", RALLY_POINTS - 1));
+        }
+        if side == Side::Grey {
+            return Err("nobody has rally points".to_string());
+        }
+        if let Some(p) = point {
+            if !self.map.contains(p.at) {
+                return Err(format!("{} is not on the map", p.at));
+            }
+            if !self.sight(side).knows(p.at) {
+                return Err(UNSEEN.to_string());
+            }
+        }
+        let units: Vec<UnitId> =
+            self.map.units().of_side(side).filter(|u| u.bound == Some(n)).map(|u| u.id()).collect();
+        for id in units {
+            let Some(unit) = self.map.unit_mut(id) else { continue };
+            match point {
+                // Moved: they go to its new place.
+                Some(p) => {
+                    if let Some(end) = unit.route.last_mut() {
+                        *end = p.at;
+                    }
+                    unit.stalled = false;
+                }
+                // Gone: they stop, and wait for orders.
+                None => (unit.route, unit.bound, unit.stalled) = (Vec::new(), None, false),
+            }
+        }
+        if point.is_none() {
+            let cities: Vec<CityId> = self
+                .map
+                .cities()
+                .iter()
+                .filter(|c| c.side == side && matches!(c.sends, Sends::Point { n: m, .. } if m == n))
+                .map(|c| c.id)
+                .collect();
+            for city in cities {
+                if let Some(c) = self.map.city_mut(city) {
+                    c.sends = Sends::Stay;
+                }
+            }
+        }
+        if let Some(slot) = self.rally_points.get_mut(side.index()).and_then(|p| p.get_mut(usize::from(n))) {
+            *slot = point;
+        }
+        Ok(Vec::new())
+    }
+
+    /// Where `ids` of `side` (on `at`) bound to rally point `n` end: on it if
+    /// there is room for them there, else on the nearest hex around it
+    /// (out to three hexes, in a fixed order, so that one fills before the
+    /// next) that has room, that they can stand on and get to, and that has
+    /// nobody else's units or city. `None` if the point is not set, or none
+    /// has room.
+    fn rally_spot(&self, side: Side, n: u8, ids: &[UnitId], at: Hex) -> Option<Hex> {
+        let point = self.rally_point(side, n)?;
+        if self.fits(point.at, ids) || at == point.at {
+            return Some(point.at);
+        }
+        let group = self.group(ids).ok()?;
+        let (lead, table) = group.lead(&self.map)?;
+        let sight = self.sight(side);
+        let (rows, cols) = (self.map.rows(), self.map.cols());
+        let mut ring = vec![point.at];
+        let mut seen = vec![point.at];
+        for _ in 0..3 {
+            let mut next = Vec::new();
+            for hex in &ring {
+                for near in hex.neighbours(rows, cols) {
+                    if !seen.contains(&near) {
+                        seen.push(near);
+                        next.push(near);
+                    }
+                }
+            }
+            for hex in &next {
+                let theirs = self.map.city_at(*hex).is_some_and(|c| c.side != side);
+                let usable = sight.knows(*hex) && !theirs && !hostile(&self.map, side, *hex) && self.fits(*hex, ids);
+                if usable && (*hex == at || self.known_path_by(lead, table, *hex, u32::MAX, &sight).is_some()) {
+                    return Some(*hex);
+                }
+            }
+            ring = next;
+        }
+        None
+    }
+
+    /// A unit just built goes where its city sends it (`Sends`).
+    fn send_new(&mut self, side: Side, id: UnitId, sends: &Sends) {
+        let (route, bound, defend) = match sends {
+            Sends::Stay => (Vec::new(), None, false),
+            Sends::Defend => (Vec::new(), None, true),
+            Sends::Route(route) => (route.clone(), route.last().and_then(|h| self.rally_point_at(side, *h)), false),
+            Sends::Point { n, bless } => match self.rally_point(side, *n) {
+                Some(point) => {
+                    let temple = if *bless { self.temple_on_the_way(side, id, point.at) } else { None };
+                    (temple.into_iter().chain([point.at]).collect(), Some(*n), false)
+                }
+                // (A point taken away: they stay.)
+                None => (Vec::new(), None, false),
+            },
+        };
+        if let Some(unit) = self.map.unit_mut(id) {
+            (unit.route, unit.bound, unit.defending) = (route, bound, defend);
+        }
+    }
+
+    /// A temple near `id`'s way to `to` that has not blessed it, as its side
+    /// knows the map: the one that adds the least to the way, if that is no
+    /// more than a turn's march (its full movement). None if there is none.
+    fn temple_on_the_way(&self, side: Side, id: UnitId, to: Hex) -> Option<Hex> {
+        let unit = self.map.units().get(id)?;
+        let from = unit.pos();
+        let costs = self.map.units().move_cost(unit.move_cost)?;
+        let sight = self.sight(side);
+        let (pass, steps) = self.ground(unit, costs, &sight);
+        let cost = |a: Hex, b: Hex| -> Option<u32> {
+            if a == b {
+                return Some(0);
+            }
+            path_with(&self.map, (a, b), &steps, u32::MAX, &pass).and_then(|way| way.last().map(|(_, c)| *c))
+        };
+        let direct = cost(from, to)?;
+        let budget = unit.base_move_points;
+        // In hexes, a temple farther off the way than a turn's march could go
+        // (a step costs a point at least) is not worth asking the way to.
+        let straight = from.distance(to);
+        let (rows, cols) = (self.map.rows(), self.map.cols());
+        let mut best: Option<(u32, Hex)> = None;
+        for row in 0..rows {
+            for col in 0..cols {
+                let hex = Hex::new(row, col);
+                if self.map.tile(hex).is_none_or(|t| t.kind != TileType::Temple) || unit.blessed_at(hex) {
+                    continue;
+                }
+                if !sight.knows(hex) || from.distance(hex) + hex.distance(to) > straight + budget {
+                    continue;
+                }
+                let Some(by) = cost(from, hex).zip(cost(hex, to)).map(|(a, b)| a.saturating_add(b)) else { continue };
+                let extra = by.saturating_sub(direct);
+                if extra <= budget && best.is_none_or(|(e, _)| extra < e) {
+                    best = Some((extra, hex));
+                }
+            }
+        }
+        best.map(|(_, hex)| hex)
     }
 
     /// What raising the walls of `city` a level costs `side` now, or why it
@@ -1693,7 +1892,7 @@ impl Game {
         if let Some(c) = self.map.city_mut(city) {
             // Where its old holder sent its new units is not the new one's.
             c.side = by;
-            c.rally.clear();
+            c.sends = Sends::Stay;
             // Its walls fall a level (the owner's rule, 2026-11-20).
             if c.walls > 0 {
                 c.walls -= 1;
@@ -1797,13 +1996,11 @@ impl Game {
         }
         for unit in self.map.produce(side, &mut gold) {
             let city =
-                self.map.units().get(unit).and_then(|u| self.map.city_at(u.pos())).map(|c| (c.id, c.rally.clone()));
-            if let Some((city, rally)) = city {
+                self.map.units().get(unit).and_then(|u| self.map.city_at(u.pos())).map(|c| (c.id, c.sends.clone()));
+            if let Some((city, sends)) = city {
                 events.push(Event::Built { city, unit });
                 // Its city sends it on.
-                if let Some(new) = self.map.unit_mut(unit) {
-                    new.route = rally;
-                }
+                self.send_new(side, unit, &sends);
             }
         }
         self.name_commanders();
@@ -2277,6 +2474,11 @@ impl Game {
             }
         }
         view.rng = Rng::new((u64::from(self.round) << 8) ^ (side.index() as u64) ^ 0x005e_ed0f_1e55);
+        for (i, points) in view.rally_points.iter_mut().enumerate() {
+            if i != side.index() {
+                *points = [None; RALLY_POINTS];
+            }
+        }
         view.deselect();
         let sight = self.sight(side);
         let theirs: Vec<(UnitId, bool)> =
@@ -2286,7 +2488,7 @@ impl Game {
                 view.map.kill_unit(id);
             } else if let Some(unit) = view.map.unit_mut(id) {
                 (unit.stalled, unit.moved, unit.done) = (false, false, false);
-                unit.route.clear();
+                (unit.route, unit.bound) = (Vec::new(), None);
                 unit.movement = unit.base_move_points;
             }
         }
@@ -2303,7 +2505,7 @@ impl Game {
         for (id, holder, known, walls) in cities {
             if let Some(city) = view.map.city_mut(id) {
                 (city.building, city.progress) = (None, 0);
-                city.rally.clear();
+                city.sends = Sends::Stay;
                 city.units.clear();
                 city.side = holder;
                 // In the fog: its walls as they were when it was seen.

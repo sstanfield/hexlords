@@ -13,18 +13,28 @@ use turbo_ferret::{ImageHandle, LayoutParams, Rect, TbId, Ui, Visibility, Widget
 use crate::game::Sight;
 use crate::gui::build::{self, WindowParts};
 use crate::info;
+use crate::orders::RALLY_POINTS;
 use crate::render::minimap_image;
 use crate::state::scenario::side_name;
-use crate::state::{CityId, Map, Side};
+use crate::state::{CityId, Map, Sends, Side};
 
 /// A city's window, its buttons for what it builds (`build_0` ... and
 /// nothing), and its close button.
 pub const CITY_WINDOW_ID: &str = "city_window";
 pub const BUILD_NOTHING_ID: &str = "build_none";
 pub const CITY_CLOSE_ID: &str = "city_close";
-/// Where its new units go: a hex to pick on the map, or nowhere (they stay).
+/// Where its new units go: a hex to pick on the map, nowhere (they stay),
+/// nowhere (they defend it), one of the rally points (`point_id`); and
+/// whether they seek a blessing on the way to the point.
 pub const CITY_RALLY_ID: &str = "city_rally";
 pub const CITY_NO_RALLY_ID: &str = "city_no_rally";
+pub const CITY_DEFEND_ID: &str = "city_defend";
+pub const CITY_BLESS_ID: &str = "city_bless";
+
+/// The button that sends a city's new units to rally point `n`.
+pub fn point_id(n: usize) -> String {
+    format!("city_point_{n}")
+}
 pub const CITY_WALLS_ID: &str = "city_walls";
 /// The list of cities, its rows (`city_row_0` ...) and its buttons.
 pub const LIST_WINDOW_ID: &str = "cities_window";
@@ -78,6 +88,13 @@ pub enum CityOrder {
     PickRally(CityId),
     /// The city's new units stay in it.
     NoRally(CityId),
+    /// The city's new units stay in it and defend it.
+    DefendNew(CityId),
+    /// The city's new units go to the side's rally point `n`.
+    ToPoint(CityId, u8),
+    /// The city's new units, sent to a rally point, seek a blessing on the
+    /// way, or no longer.
+    ToggleBless(CityId),
     /// Raise the city's walls a level (`Order::Walls`).
     RaiseWalls(CityId),
 }
@@ -143,7 +160,15 @@ pub struct CityView {
     /// Where its new units go (in the sidebar, on two lines).
     rally: Text,
     rally_to: Option<Text>,
-    rally_buttons: [WidgetId; 2],
+    /// Send to..., Keep, Defend.
+    rally_buttons: [WidgetId; 3],
+    /// The rally points' buttons (shown for those that are set), their row,
+    /// which are set; the box for a blessing on the way, and its row.
+    point_buttons: Vec<WidgetId>,
+    points_row: WidgetId,
+    points: [bool; RALLY_POINTS],
+    bless: WidgetId,
+    bless_row: WidgetId,
     /// What its holder alone knows (what it builds, where its units go):
     /// shown or not, as much as the one looking knows (`info::Known`).
     private: Vec<WidgetId>,
@@ -233,11 +258,30 @@ impl CityView {
         let rally_gap = build::gap(ui, content, space);
         let rally = Text::new(build::text(ui, content, ""));
         let rally_to = compact.then(|| Text::new(build::text(ui, content, "")));
-        let rally_row = build::row(ui, content, space);
-        let (send, keep) =
-            if compact { ("Send to...", "Keep here") } else { ("Send new units to...", "Keep them here") };
+        let rally_row = build::row(ui, content, space / 2);
+        let (send, keep, defend) =
+            if compact { ("Send to...", "Keep", "Defend") } else { ("Send to...", "Keep here", "Defend here") };
         let send = build::button(ui, rally_row, &pid(CITY_RALLY_ID), send);
         let keep = build::button(ui, rally_row, &pid(CITY_NO_RALLY_ID), keep);
+        let defend = build::button(ui, rally_row, &pid(CITY_DEFEND_ID), defend);
+        // The rally points that are set, a button each.
+        let points_row = build::row(ui, content, dp(ui, 2));
+        build::text(ui, points_row, if compact { "To rally point" } else { "To a rally point:" });
+        let point_buttons: Vec<WidgetId> = (0..RALLY_POINTS)
+            .map(|n| {
+                let button = build::button(ui, points_row, &pid(&point_id(n)), &n.to_string());
+                ui.set_visibility(button, Visibility::Gone);
+                button
+            })
+            .collect();
+        // A blessing on the way there (in the window, beside the points: a
+        // city with nine kinds to build still fits 768 high).
+        let bless_row = build::row(ui, if compact { content } else { points_row }, 0);
+        let bless_id = pid(CITY_BLESS_ID);
+        let words = if compact { "A blessing on the way" } else { "  A temple's blessing on the way" };
+        let resource = format!("TBClickLabel: text: \"{words}\"\n\tTBCheckBox: id: {bless_id}, is-focusable: 0\n");
+        let _ = ui.inflate(bless_row, &resource);
+        let bless = ui.find(bless_row, TbId::new(&bless_id)).unwrap_or(bless_row);
         let note = Text::new(build::text(ui, content, ""));
         let private = [heading, options, rally_gap, rally.widget, rally_row]
             .into_iter()
@@ -256,7 +300,12 @@ impl CityView {
             details,
             rally,
             rally_to,
-            rally_buttons: [send, keep],
+            rally_buttons: [send, keep, defend],
+            point_buttons,
+            points_row,
+            points: [false; RALLY_POINTS],
+            bless,
+            bless_row,
             private,
             known,
             builds,
@@ -350,16 +399,23 @@ impl CityView {
             changed |= line.set(ui, details.get(i).map_or("", String::as_str));
         }
         // (In the sidebar, where they end, and how many stops before.)
-        let stops = match city.rally.len().saturating_sub(1) {
-            0 => String::new(),
-            1 => ", after a stop".to_string(),
-            n => format!(", after {n} stops"),
-        };
-        let (rally, rally_to) = match (city.rally.last(), self.compact) {
-            (Some(_), false) => (format!("New units go to {}.", info::route_words(map, &city.rally)), String::new()),
-            (Some(to), true) => ("New units go to".to_string(), format!("{}{stops}", info::place(map, *to))),
-            (None, false) => ("New units stay in the city.".to_string(), String::new()),
-            (None, true) => ("New units stay here".to_string(), String::new()),
+        let (rally, rally_to) = match (&city.sends, self.compact) {
+            (Sends::Route(route), true) => {
+                let stops = match route.len().saturating_sub(1) {
+                    0 => String::new(),
+                    1 => ", after a stop".to_string(),
+                    n => format!(", after {n} stops"),
+                };
+                let end = route.last().map_or(String::new(), |to| info::place(map, *to));
+                ("New units go to".to_string(), format!("{end}{stops}"))
+            }
+            (Sends::Point { n, bless }, true) => {
+                let by = if *bless { ", by a temple" } else { "" };
+                ("New units go to".to_string(), format!("rally point {n}{by}"))
+            }
+            (Sends::Stay, true) => ("New units stay here".to_string(), String::new()),
+            (Sends::Defend, true) => ("New units defend it".to_string(), String::new()),
+            (sends, false) => (format!("New units {}.", info::sends_words(map, sends)), String::new()),
         };
         changed |= self.rally.set(ui, &rally);
         if let Some(line) = &mut self.rally_to {
@@ -370,11 +426,34 @@ impl CityView {
                 changed = true;
             }
         }
-        for button in self.rally_buttons {
-            if ui.node(button).is_some_and(|n| n.is_disabled() == mine) {
-                ui.set_disabled(button, !mine);
+        for button in self.rally_buttons.iter().chain(&self.point_buttons).chain([&self.bless]) {
+            if ui.node(*button).is_some_and(|n| n.is_disabled() == mine) {
+                ui.set_disabled(*button, !mine);
             }
         }
+        // Keep and Defend are pressed while they are what it does; so is
+        // the rally point its units go to.
+        set_pressed(ui, self.rally_buttons[1], city.sends == Sends::Stay);
+        set_pressed(ui, self.rally_buttons[2], city.sends == Sends::Defend);
+        let to_point = match city.sends {
+            Sends::Point { n, bless } => Some((usize::from(n), bless)),
+            _ => None,
+        };
+        let show = |ui: &mut Ui, widget: WidgetId, shown: bool| {
+            let visibility = if shown { Visibility::Visible } else { Visibility::Gone };
+            let change = ui.node(widget).is_some_and(|n| n.visibility() != visibility);
+            if change {
+                ui.set_visibility(widget, visibility);
+            }
+            change
+        };
+        for (n, button) in self.point_buttons.iter().enumerate() {
+            changed |= show(ui, *button, self.points[n]);
+            set_pressed(ui, *button, to_point.is_some_and(|(p, _)| p == n));
+        }
+        changed |= show(ui, self.points_row, all && self.points.iter().any(|p| *p));
+        changed |= show(ui, self.bless_row, all && to_point.is_some());
+        set_pressed(ui, self.bless, to_point.is_some_and(|(_, bless)| bless));
         changed |= self.note.set(ui, &note);
         let visibility = if note.is_empty() { Visibility::Gone } else { Visibility::Visible };
         if ui.node(self.note.widget).is_some_and(|n| n.visibility() != visibility) {
@@ -398,6 +477,15 @@ impl CityView {
         }
         if is(CITY_NO_RALLY_ID) {
             return Some(CityOrder::NoRally(self.city));
+        }
+        if is(CITY_DEFEND_ID) {
+            return Some(CityOrder::DefendNew(self.city));
+        }
+        if is(CITY_BLESS_ID) {
+            return Some(CityOrder::ToggleBless(self.city));
+        }
+        if let Some(n) = (0..RALLY_POINTS).find(|n| is(&point_id(*n))) {
+            return Some(CityOrder::ToPoint(self.city, n as u8));
         }
         if is(BUILD_NOTHING_ID) {
             return Some(CityOrder::SetProduction(self.city, None));
@@ -509,6 +597,12 @@ impl CityWindow {
         build::close(ui, self.parts.window);
     }
 
+    /// Which of the player's rally points are set (a button each, to send
+    /// the city's new units there); the next `refresh` shows them.
+    pub fn set_points(&mut self, points: [bool; RALLY_POINTS]) {
+        self.view.points = points;
+    }
+
     /// Bring it up to date with the city. False if the city is gone.
     pub fn refresh(&mut self, ui: &mut Ui, map: &Map, (player, known): (Side, info::Known)) -> bool {
         if map.cities().get(self.view.city).is_none() {
@@ -574,6 +668,12 @@ impl CityPanel {
     /// Take it out of the sidebar.
     pub fn close(self, ui: &mut Ui) {
         ui.remove(self.root);
+    }
+
+    /// Which of the player's rally points are set (a button each, to send
+    /// the city's new units there); the next `refresh` shows them.
+    pub fn set_points(&mut self, points: [bool; RALLY_POINTS]) {
+        self.view.points = points;
     }
 
     /// Bring it up to date with the city. False if the city is gone.

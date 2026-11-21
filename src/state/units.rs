@@ -164,6 +164,10 @@ pub struct Unit {
     /// its last step was stopped (it waits for its player).
     pub route: Vec<Hex>,
     pub stalled: bool,
+    /// The side's rally point its route ends at, if it does (0 to 9,
+    /// `Game::rally_points`): it follows the point if the point moves, and
+    /// stands beside it if it is full.
+    pub bound: Option<u8>,
     /// This turn: it has been given an order (it moved), or its player is
     /// done with it (`Order::Done`).
     pub moved: bool,
@@ -356,6 +360,7 @@ impl Units {
             blessings: Vec::new(),
             route: Vec::new(),
             stalled: false,
+            bound: None,
             moved: false,
             done: false,
             defending: false,

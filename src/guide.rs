@@ -457,6 +457,15 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                 ),
                 ("Done", "Puts the selected units aside for this turn: Next stack passes them by.".to_string()),
                 (
+                    "Rally points",
+                    "R: up to ten places where units gather into armies, each a numbered flag on the map. \
+                     A city sends its new units to one with its button (with a temple's blessing on the way, \
+                     if one is near it); Go to onto a flag sends a stack. Once a point is full, those who \
+                     come stand beside it. A point can have them defend there, so nobody need see to them; \
+                     a city can keep its new units defending it too."
+                        .to_string(),
+                ),
+                (
                     "Defend",
                     "F: the selected units defend where they stand, turn after turn; Next stack and the \
                      tasks pass them by until you send them somewhere, or press F again."

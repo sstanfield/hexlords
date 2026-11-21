@@ -9,8 +9,8 @@ use crate::agents::{self, Agents};
 use crate::game::Game;
 use crate::orders::{Event, Order};
 use crate::setup::Controller;
-use crate::state::Side;
 use crate::state::scenario::side_name;
+use crate::state::{Sends, Side};
 
 /// How a game without a window ended.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -161,12 +161,22 @@ pub fn order_line(game: &Game, order: &Order) -> String {
             let at = game.map.cities().get(*city).map_or((0, 0), |c| (c.pos.row, c.pos.col));
             format!("walls {} {}", at.0, at.1)
         }
-        Order::Rally { city, to, via } => {
+        Order::Rally { city, to } => {
             let at = game.map.cities().get(*city).map_or((0, 0), |c| (c.pos.row, c.pos.col));
-            match to {
-                Some(to) => format!("rally {} {} {}", at.0, at.1, stops(via, *to)),
-                None => format!("rally {} {} none", at.0, at.1),
-            }
+            let to = match to {
+                Sends::Stay => "none".to_string(),
+                Sends::Defend => "defend".to_string(),
+                Sends::Route(route) => {
+                    route.iter().map(|h| format!("{} {}", h.row, h.col)).collect::<Vec<_>>().join(" ")
+                }
+                Sends::Point { n, bless: false } => format!("point {n}"),
+                Sends::Point { n, bless: true } => format!("point {n} bless"),
+            };
+            format!("rally {} {} {to}", at.0, at.1)
+        }
+        Order::RallyPoint { n, point: None } => format!("point {n} none"),
+        Order::RallyPoint { n, point: Some(p) } => {
+            format!("point {n} {} {}{}", p.at.row, p.at.col, if p.defend { " defend" } else { "" })
         }
         Order::EndTurn => "end".to_string(),
     }

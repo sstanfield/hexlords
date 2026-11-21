@@ -8,7 +8,7 @@
 use crate::game::{CityState, Game, Ghost, Sight, StackState, Task, describe_terrain};
 use crate::orders::{Event, Fallen, Record};
 use crate::state::scenario::side_name;
-use crate::state::{City, Hex, Map, MoveCost, Side, TileType, Travel, Unit, UnitProd};
+use crate::state::{City, Hex, Map, MoveCost, Sends, Side, TileType, Travel, Unit, UnitProd};
 
 /// The line about the hex under the cursor: the turn, the hex's terrain and
 /// road, its city's name, how many units stand there, and, if the selected
@@ -255,6 +255,32 @@ pub fn route_words(map: &Map, route: &[Hex]) -> String {
         _ => place(map, *at),
     };
     route.iter().map(stop).collect::<Vec<_>>().join(", then ")
+}
+
+/// A route in words, as `route_words`, its end named as the rally point it
+/// is if the units on it are `bound` to one: "the temple at row 4, column
+/// 9, then rally point 2 (row 5, column 20)".
+pub fn route_words_to(map: &Map, route: &[Hex], bound: Option<u8>) -> String {
+    match (bound, route.split_last()) {
+        (Some(n), Some((end, []))) => format!("rally point {n} ({})", place(map, *end)),
+        (Some(n), Some((end, stops))) => {
+            format!("{}, then rally point {n} ({})", route_words(map, stops), place(map, *end))
+        }
+        _ => route_words(map, route),
+    }
+}
+
+/// Where a city's new units go, in words after "new units": "stay in the
+/// city", "defend the city", "go to row 5, column 20", "go to rally point
+/// 2, by a temple on the way".
+pub fn sends_words(map: &Map, sends: &Sends) -> String {
+    match sends {
+        Sends::Stay => "stay in the city".to_string(),
+        Sends::Defend => "defend the city".to_string(),
+        Sends::Route(route) => format!("go to {}", route_words(map, route)),
+        Sends::Point { n, bless: false } => format!("go to rally point {n}"),
+        Sends::Point { n, bless: true } => format!("go to rally point {n}, by a temple on the way"),
+    }
 }
 
 /// A line with its first letter a capital.
@@ -651,7 +677,10 @@ pub fn task_line(game: &Game, task: &Task) -> String {
                 Some(city) => format!("in {}", city.name),
                 None => format!("at row {}, column {}", at.row, at.col),
             };
-            let goal = here.iter().find(|u| !u.route.is_empty()).map_or(String::new(), |u| route_words(map, &u.route));
+            let goal = here
+                .iter()
+                .find(|u| !u.route.is_empty())
+                .map_or(String::new(), |u| route_words_to(map, &u.route, u.bound));
             let what = match state {
                 StackState::Waiting => "no orders yet".to_string(),
                 StackState::Stalled => format!("stopped on the way to {goal}"),
@@ -674,9 +703,9 @@ pub fn task_line(game: &Game, task: &Task) -> String {
                 }
                 _ => "builds nothing".to_string(),
             };
-            match city.rally.is_empty() {
-                false => format!("{}: {what}; new units go to {}", city.name, route_words(map, &city.rally)),
-                true => format!("{}: {what}", city.name),
+            match city.sends {
+                Sends::Stay => format!("{}: {what}", city.name),
+                _ => format!("{}: {what}; new units {}", city.name, sends_words(map, &city.sends)),
             }
         }
     }
