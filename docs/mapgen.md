@@ -265,11 +265,11 @@ with an error that says so.
      (a capital the highest of `walls`; a neutral drawn from it, one more by
      the water or in the hills), taxes (a capital 20, a neutral 4 and twice
      its walls), what it builds (from the template by role: a capital its
-     two cheapest, its fastest and its commander; a city in the hills its
+     two cheapest, its fastest, its strongest and its commander; a city in the hills its
      two strongest; the others the cheapest and one more; a port the
      template's ship; a city in the air a flyer first, now and then a strong
      one too), and its garrison (a capital its commander and three of what
-     it builds, a neutral half its walls of the cheapest).
+     it builds; a neutral one unit, the weakest it builds).
    - **Worth**, on the map as it ends: a neutral city hard to come at is
      worth the taking (the owner's wish). Its approach is the travel into
      it from the land 4 hexes round, over the same across open grass (land

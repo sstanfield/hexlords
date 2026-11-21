@@ -3,9 +3,9 @@
 #
 # Four sides start with a city each, and a captain in it; their cities can
 # build captains, to replace one that is lost. The other five cities are
-# nobody's. "income" is the gold a city brings its holder each turn: the
-# sides' cities 20, the others 8 to 15. Gorsehaven trains its units: they
-# come out veterans.
+# nobody's, each held by one of the weakest it builds. "income" is the gold a
+# city brings its holder each turn: the sides' cities 20, the others 8 to 15.
+# Gorsehaven trains its units: they come out veterans.
 
 city 13 7
   name     Brindlewick
@@ -13,13 +13,14 @@ city 13 7
   side     red
   walls    2
   produce  militia 1
+  produce  lightinfantry 2
   produce  archers 2
-  produce  riders 3
+  produce  lightcavalry 3
   produce  captain 4
   produce  warship 4
   produce  transport 3
   garrison militia 2
-  garrison riders
+  garrison lightcavalry
   garrison captain
 
 city 19 42
@@ -28,6 +29,7 @@ city 19 42
   side     green
   walls    2
   produce  militia 1
+  produce  lightinfantry 2
   produce  wardens 2
   produce  archers 2
   produce  captain 4
@@ -42,15 +44,18 @@ city 35 17
   side     yellow
   walls    2
   produce  militia 1
+  produce  lightinfantry 2
   produce  wardens 2
   produce  warship 4
   produce  transport 3
-  # A horse town: its riders cost less than elsewhere.
-  produce  riders 3 8
+  # A horse town: its light cavalry costs less than elsewhere, and it has
+  # the heavy too.
+  produce  lightcavalry 3 6
+  produce  cavalry 4
   produce  captain 4
   garrison militia
   garrison wardens
-  garrison riders
+  garrison lightcavalry
   garrison captain
 
 city 38 48
@@ -59,13 +64,14 @@ city 38 48
   side     blue
   walls    2
   produce  militia 1
+  produce  lightinfantry 2
   produce  archers 2
-  produce  riders 3
+  produce  lightcavalry 3
   produce  captain 4
   produce  warship 4
   produce  transport 3
   garrison archers
-  garrison riders 2
+  garrison lightcavalry 2
   garrison captain
 
 city 11 23
@@ -84,7 +90,7 @@ city 17 29
   produce  militia 2
   produce  wardens 3
   produce  hawkriders 3
-  garrison wardens
+  garrison militia
 
 city 22 11
   name     Fenwyke
@@ -99,14 +105,15 @@ city 25 32
   walls    3
   trains   veteran
   produce  wardens 2
-  produce  riders 4
+  produce  heavyinfantry 4
+  produce  lightcavalry 4
   produce  wyverns 4
-  garrison wardens 2
+  garrison lightcavalry
 
 city 31 25
   name     Ivelmouth
   income   10
   walls    1
   produce  militia 1
-  produce  riders 4
+  produce  lightcavalry 4
   garrison militia

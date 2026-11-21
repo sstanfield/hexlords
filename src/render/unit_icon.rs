@@ -211,7 +211,7 @@ mod tests {
 
     #[test]
     fn the_kinds_picture_is_in_the_middle_of_the_disc() {
-        let sign = assets().image("units/riders.png").unwrap();
+        let sign = assets().image("units/lightcavalry.png").unwrap();
         let icon = unit_icon(Some(&sign), Side::Red, 1, 48);
         // The sign's light body shows on the disc, and the disc around it.
         let light = |p: &[u8]| p[0] > 200 && p[1] > 200 && p[2] > 180 && p[3] == 255;

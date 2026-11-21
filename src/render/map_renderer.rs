@@ -923,7 +923,7 @@ mod tests {
     }
 
     const KINDS: &str = "unit a\nimage units/militia.png\nmoves 5\nenter grass 1\n\
-                         unit b\nimage units/riders.png\nmoves 5\nenter grass 1\n\
+                         unit b\nimage units/lightcavalry.png\nmoves 5\nenter grass 1\n\
                          unit c\nmoves 5\nenter grass 1\n";
 
     /// The discs' middles and colors, the ring of each before it.
@@ -961,7 +961,7 @@ mod tests {
         let at = |g: &MapGeometry, image: &str| -> Vec<[f32; 2]> {
             hexes(g.units_with(image)).iter().map(|h| h[0].pos).collect()
         };
-        assert_eq!(at(&g, "units/riders.png"), [center_of(&view, Hex::new(10, 5))]);
+        assert_eq!(at(&g, "units/lightcavalry.png"), [center_of(&view, Hex::new(10, 5))]);
         assert_eq!(at(&g, "units/militia.png"), [center_of(&view, Hex::new(10, 10))]);
         assert_eq!(at(&g, UNIT_IMAGE), [center_of(&view, Hex::new(10, 14))], "a kind without a picture");
         assert_eq!(g.units().count(), 3);
@@ -997,17 +997,17 @@ mod tests {
         // The selected unit shows on its hex instead of the first: the militia
         // stands behind the rider.
         g.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, Some(militia)));
-        assert!(g.units_with("units/riders.png").is_empty());
+        assert!(g.units_with("units/lightcavalry.png").is_empty());
         assert_eq!(at_all(&g, "units/militia.png"), 2);
         // A unit that is not on a hex changes nothing there.
         g.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, None));
-        assert_eq!(at_all(&g, "units/riders.png"), 1);
+        assert_eq!(at_all(&g, "units/lightcavalry.png"), 1);
 
         // The map changes and the pictures follow: the rider is gone.
         let rider = map.units_at(Hex::new(10, 5))[0];
         map.kill_unit(rider);
         g.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, None));
-        assert!(g.units_with("units/riders.png").is_empty());
+        assert!(g.units_with("units/lightcavalry.png").is_empty());
         assert_eq!(g.units().count(), 2);
         assert_eq!(at_all(&g, "units/militia.png"), 2);
     }

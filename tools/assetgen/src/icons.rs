@@ -1,6 +1,7 @@
-//! The units' pictures: a plain sign for each kind (a sword, a shield, a bow,
-//! a horseshoe, a banner for a commander; a longship and a cog for the ships,
-//! a feather and a pair of wings for the flyers), light with a dark outline,
+//! The units' pictures: a plain sign for each kind (a sword, a spear, a
+//! shield, a helmet, a bow, a horseshoe, a stirrup, a banner for a
+//! commander; a longship and a cog for the ships, a feather and a pair of
+//! wings for the flyers), light with a dark outline,
 //! on nothing. The game draws it on a
 //! disc of the unit's side's color, so the sign itself has no color of a side.
 //!
@@ -17,9 +18,12 @@ use crate::shapes::{Rgb, length, rectangle, rotate, segment};
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Icon {
     Sword,
+    Spear,
     Shield,
+    Helmet,
     Bow,
     Horseshoe,
+    Stirrup,
     Banner,
     Longship,
     Cog,
@@ -35,11 +39,14 @@ pub const OUTLINE: Rgb = [0.13, 0.11, 0.10];
 const LINE: f32 = 0.035;
 
 impl Icon {
-    pub const ALL: [Icon; 9] = [
+    pub const ALL: [Icon; 12] = [
         Icon::Sword,
+        Icon::Spear,
         Icon::Shield,
+        Icon::Helmet,
         Icon::Bow,
         Icon::Horseshoe,
+        Icon::Stirrup,
         Icon::Banner,
         Icon::Longship,
         Icon::Cog,
@@ -52,9 +59,12 @@ impl Icon {
     pub fn name(self) -> &'static str {
         match self {
             Icon::Sword => "militia",
+            Icon::Spear => "lightinfantry",
             Icon::Shield => "wardens",
+            Icon::Helmet => "heavyinfantry",
             Icon::Bow => "archers",
-            Icon::Horseshoe => "riders",
+            Icon::Horseshoe => "lightcavalry",
+            Icon::Stirrup => "cavalry",
             Icon::Banner => "captain",
             Icon::Longship => "warship",
             Icon::Cog => "transport",
@@ -67,9 +77,12 @@ impl Icon {
     pub fn distance(self, x: f32, y: f32) -> f32 {
         match self {
             Icon::Sword => sword(x, y),
+            Icon::Spear => spear(x, y),
             Icon::Shield => shield(x, y),
+            Icon::Helmet => helmet(x, y),
             Icon::Bow => bow(x, y),
             Icon::Horseshoe => horseshoe(x, y),
+            Icon::Stirrup => stirrup(x, y),
             Icon::Banner => banner(x, y),
             Icon::Longship => longship(x, y),
             Icon::Cog => cog(x, y),
@@ -88,6 +101,14 @@ impl Icon {
                 let angle = PI * (0.62 + 0.352 * i as f32);
                 length(x - 0.27 * angle.cos(), y + 0.03 + 0.27 * angle.sin()) < 0.024
             }),
+            // The helmet's eye slits, and the opening below its nose.
+            Icon::Helmet => {
+                let eyes = (y - 0.05).abs() < 0.03 && (0.05..0.24).contains(&x.abs());
+                let mouth = x.abs() < 0.055 && (0.05..0.32).contains(&y);
+                eyes || mouth
+            }
+            // The slot in the stirrup's strap.
+            Icon::Stirrup => x.abs() < 0.04 && (y + 0.37).abs() < 0.022,
             // The banner's round device.
             Icon::Banner => length(x - 0.06, y + 0.15) < 0.055,
             // The shields along the longship's side.
@@ -128,6 +149,35 @@ fn sword(x: f32, y: f32) -> f32 {
     let grip = rectangle(x, y - 0.29, 0.03, 0.08);
     let pommel = length(x, y - 0.39) - 0.05;
     blade.min(point).min(guard).min(grip).min(pommel)
+}
+
+/// A spear, point up and to the right, as the sword leans: a long shaft, a
+/// leaf of a head, a bar under it.
+fn spear(x: f32, y: f32) -> f32 {
+    let (u, v) = rotate(x, y, -PI / 4.0);
+    let shaft = rectangle(u, v - 0.13, 0.04, 0.31);
+    // The head: where two circles cross, 0.34 long and 0.22 wide.
+    let head = (length(u - 0.0764, v + 0.30) - 0.1864).max(length(u + 0.0764, v + 0.30) - 0.1864);
+    let bar = rectangle(u, v + 0.13, 0.09, 0.025);
+    let butt = length(u, v - 0.44) - 0.05;
+    shaft.min(head).min(bar).min(butt)
+}
+
+/// A helmet from the front: a dome with a knob on top, its sides down to the
+/// chin; its eye slits and the opening below the nose are marks.
+fn helmet(x: f32, y: f32) -> f32 {
+    let dome = (length(x, y) - 0.3).max(y);
+    let sides = rectangle(x, y - 0.14, 0.3, 0.16);
+    let knob = length(x, y + 0.31) - 0.05;
+    dome.min(sides).min(knob)
+}
+
+/// A stirrup: a round arch on a flat tread, hung from a strap.
+fn stirrup(x: f32, y: f32) -> f32 {
+    let arch = if y < 0.12 { (length(x, y + 0.02) - 0.25).abs() - 0.055 } else { f32::MAX };
+    let tread = rectangle(x, y - 0.17, 0.29, 0.05);
+    let strap = rectangle(x, y + 0.37, 0.08, 0.06);
+    arch.min(tread).min(strap)
 }
 
 /// A shield: straight at the top, round at the bottom.
@@ -305,12 +355,36 @@ mod tests {
         assert!(Icon::Feather.distance(0.12, -0.12) < 0.0 && Icon::Feather.distance(-0.12, -0.12) > LINE);
         assert!(Icon::Wings.distance(0.3, -0.2) < 0.0 && Icon::Wings.distance(-0.3, -0.2) < 0.0);
         assert!(Icon::Wings.distance(0.0, -0.3) > LINE);
-        // Nine signs, nine names.
+        // The spear leans as the sword does, its head up to the right; the
+        // helmet is whole above its slits, open below its nose; the stirrup
+        // is an arch, open in the middle, on a tread.
+        assert!(Icon::Spear.distance(0.2, -0.2) < 0.0 && Icon::Spear.distance(-0.25, 0.25) < 0.0);
+        assert!(Icon::Spear.distance(-0.2, -0.2) > LINE && Icon::Spear.distance(0.2, 0.2) > LINE);
+        assert_eq!(Icon::Helmet.ink(0.0, -0.15), Some((BODY, 1.0)));
+        assert_eq!(Icon::Helmet.ink(0.15, 0.05), Some((OUTLINE, 1.0)));
+        assert_eq!(Icon::Helmet.ink(0.0, 0.2), Some((OUTLINE, 1.0)));
+        assert_eq!(Icon::Helmet.ink(0.2, 0.2), Some((BODY, 1.0)));
+        assert!(Icon::Stirrup.distance(0.0, -0.27) < 0.0 && Icon::Stirrup.distance(0.0, 0.17) < 0.0);
+        assert!(Icon::Stirrup.distance(0.0, 0.0) > LINE, "open in the middle");
+        // Twelve signs, twelve names.
         let mut names: Vec<&str> = Icon::ALL.iter().map(|i| i.name()).collect();
         names.dedup();
         assert_eq!(
             names,
-            ["militia", "wardens", "archers", "riders", "captain", "warship", "transport", "hawkriders", "wyverns"]
+            [
+                "militia",
+                "lightinfantry",
+                "wardens",
+                "heavyinfantry",
+                "archers",
+                "lightcavalry",
+                "cavalry",
+                "captain",
+                "warship",
+                "transport",
+                "hawkriders",
+                "wyverns"
+            ]
         );
     }
 }

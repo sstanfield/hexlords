@@ -106,13 +106,13 @@ up to the next record, are `key value`. Empty lines and lines that start with
 
 ```
 # Fast on open ground and on roads, slow in rough country, no good in a swamp.
-unit riders
-  name     Riders
-  image    units/riders.png
-  strength 4
-  moves    18
-  upkeep   3
-  price    10
+unit lightcavalry
+  name     Light Cavalry
+  image    units/lightcavalry.png
+  strength 3
+  moves    20
+  upkeep   4
+  price    8
   enter    grass 2, forest 5, hill 5, desert 3
   enter    city 1, road 1, bridge 1
 ```
@@ -178,9 +178,9 @@ city 13 7
   walls    2
   income   20
   produce  militia 1
-  produce  riders 3 12
+  produce  lightcavalry 3 10
   garrison militia 2
-  garrison riders
+  garrison lightcavalry
 ```
 
 | Key | Value | If left out |
@@ -188,7 +188,7 @@ city 13 7
 | `city` | Its row and its column, counted from 0 | (starts the record) |
 | `name` | The city's name; no two cities share one | an error: it must be given |
 | `side` | Who holds it at the start: `black`, `white`, `red`, `green`, `blue`, `orange`, `yellow`, `purple`, or `neutral` | `neutral` |
-| `walls` | How strong its walls are | 0 |
+| `walls` | How strong its walls are at the start (in the game a city that is taken loses a level, and its holder can raise them: `docs/gameplay.md`) | 0 |
 | `income` | The gold it brings its holder at the start of each of the holder's turns (its taxes) | 10 |
 | `trains` | The level the units it builds start at: `regular`, `veteran` or `elite` (`docs/gameplay.md`, levels) | `regular` |
 | `produce` | A kind of unit it can build, the turns one takes, and what one costs this city: `produce <unit> <turns> [<cost>]`; without a cost, the unit's `price`. The cost is paid from its holder's treasury when the unit is done; until it can be, the unit waits. A line for each. The game starts with the city building none of them: its holder chooses | it can build nothing |

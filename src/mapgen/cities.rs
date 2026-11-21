@@ -1252,6 +1252,8 @@ fn records(g: &Gen, cfg: &Config, (places, air): (&Places, &[Hex]), kinds: &[Uni
             add(foot.first());
             add(foot.get(1));
             add(foot.iter().max_by_key(|k| (k.moves, std::cmp::Reverse(k.price))));
+            // And the strongest: late in a game, armies are made of them.
+            add(foot.iter().max_by_key(|k| (k.strength, std::cmp::Reverse(k.price))));
             add(leader.as_ref());
         } else if hills >= 2 {
             let mut strong = foot.clone();
@@ -1283,8 +1285,17 @@ fn records(g: &Gen, cfg: &Config, (places, air): (&Places, &[Hex]), kinds: &[Uni
             for (i, (id, _)) in soldiers.into_iter().enumerate() {
                 garrison.push((id.clone(), if i == 0 { 2 } else { 1 }));
             }
-        } else if let Some(k) = foot.first() {
-            garrison.push((k.id.clone(), (walls / 2).clamp(1, 8)));
+        } else {
+            // Nobody's: one of the weakest it builds (the owner, 2026-11-20),
+            // on foot (not a ship, nor a flyer where there are others).
+            let weakest = produce
+                .iter()
+                .filter_map(|(id, _)| foot.iter().find(|k| k.id == *id))
+                .min_by_key(|k| (k.strength, k.price, k.id.clone()))
+                .or(foot.first());
+            if let Some(k) = weakest {
+                garrison.push((k.id.clone(), 1));
+            }
         }
         out.push(City {
             hex,

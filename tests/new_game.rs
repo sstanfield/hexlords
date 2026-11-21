@@ -170,7 +170,7 @@ fn duel(setup: impl FnOnce(&mut Setup)) -> Session {
     let mut rows = vec!["g".repeat(20); 20];
     rows[5] = "gggggcgggcgggggggggg".to_string();
     let terrain = format!("20\n20\n{}\n", rows.join("\n"));
-    let units = "unit riders\nname Riders\nimage units/riders.png\nstrength 4\nmoves 12\nenter grass 2, city 1\n";
+    let units = "unit riders\nname Riders\nimage units/lightcavalry.png\nstrength 4\nmoves 12\nenter grass 2, city 1\n";
     let cities = "city 5 5\nname Redhold\nside red\ngarrison riders 2\ncity 5 9\nname Bluemoor\nside blue\n";
     let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
     let game = Game::from_scenario(Scenario { map, assets: None, warnings });

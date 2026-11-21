@@ -784,8 +784,8 @@ fn the_format_pages_units_and_cities_are_read_as_it_says() {
                         assert_eq!((kinds[0].travel, kinds[0].carries), (hexgame::state::Travel::Sea, 6));
                     }
                     _ => {
-                        let riders = (kinds[0].id.as_str(), kinds[0].moves, kinds[0].cost.bridge);
-                        assert_eq!(riders, ("riders", 18, 1));
+                        let horse = (kinds[0].id.as_str(), kinds[0].moves, kinds[0].cost.bridge);
+                        assert_eq!(horse, ("lightcavalry", 20, 1));
                     }
                 }
                 units += 1;
@@ -793,9 +793,9 @@ fn the_format_pages_units_and_cities_are_read_as_it_says() {
             Some(first) if first.starts_with("city ") => {
                 let entries = parse_cities(block).unwrap_or_else(|e| panic!("{e}"));
                 assert_eq!((entries[0].name.as_str(), entries[0].hex), ("Brindlewick", Hex::new(13, 7)));
-                assert_eq!(entries[0].garrison, [("militia".to_string(), 2), ("riders".to_string(), 1)]);
+                assert_eq!(entries[0].garrison, [("militia".to_string(), 2), ("lightcavalry".to_string(), 1)]);
                 let costs: Vec<Option<u32>> = entries[0].produce.iter().map(|p| p.cost).collect();
-                assert_eq!(costs, [None, Some(12)]);
+                assert_eq!(costs, [None, Some(10)]);
                 cities += 1;
             }
             _ => {}
@@ -808,7 +808,7 @@ fn the_format_pages_units_and_cities_are_read_as_it_says() {
 fn the_example_continent_is_a_whole_map() {
     let report = mapeditor::check::check_path(&assets().join("maps/continent"), Some(&assets())).unwrap();
     assert_eq!((report.rows, report.cols), (46, 72));
-    assert_eq!((report.units.len(), report.cities.len()), (9, 9));
+    assert_eq!((report.units.len(), report.cities.len()), (12, 9));
     assert!(report.units.iter().any(|u| u.contains("commander 1")), "a captain: {:?}", report.units);
     assert!(report.units.iter().any(|u| u.contains("travels sea, carries 6")), "a transport: {:?}", report.units);
     assert!(report.units.iter().any(|u| u.contains("travels air")), "a flyer: {:?}", report.units);

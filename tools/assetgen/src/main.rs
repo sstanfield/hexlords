@@ -248,7 +248,9 @@ mod tests {
             assert!(is_png(dir.join("assets/roads").join(name)), "{name}");
         }
         assert_eq!(std::fs::read_dir(dir.join("assets/roads")).unwrap().count(), 28);
-        for name in ["militia.png", "wardens.png", "archers.png", "riders.png", "captain.png"] {
+        for name in
+            ["militia.png", "lightinfantry.png", "wardens.png", "heavyinfantry.png", "cavalry.png", "captain.png"]
+        {
             assert!(is_png(dir.join("assets/units").join(name)), "{name}");
         }
         for name in ["near.png", "near_no_border.png", "closeup.png", "far.png", "seams.png", "far.map"] {

@@ -222,7 +222,7 @@ mod tests {
         std::fs::write(dir.join("terrain.map"), format!("20\n20\n{}\n", rows.join("\n"))).unwrap();
         std::fs::write(
             dir.join("units.txt"),
-            "unit riders\nname Riders\nimage units/riders.png\nmoves 9\nenter grass 2\n\
+            "unit riders\nname Riders\nimage units/lightcavalry.png\nmoves 9\nenter grass 2\n\
              unit ghosts\nimage units/ghosts.png\nmoves 3\nenter grass 1\n",
         )
         .unwrap();
@@ -237,7 +237,7 @@ mod tests {
         assert_eq!(
             report.units,
             [
-                "riders \"Riders\": strength 1, moves 9, upkeep 0, price 0, units/riders.png".to_string(),
+                "riders \"Riders\": strength 1, moves 9, upkeep 0, price 0, units/lightcavalry.png".to_string(),
                 "ghosts \"ghosts\": strength 1, moves 3, upkeep 0, price 0, units/ghosts.png".to_string()
             ]
         );
@@ -254,7 +254,7 @@ mod tests {
 
         // The map brings the picture itself: no warning for it.
         std::fs::create_dir_all(dir.join("assets/units")).unwrap();
-        std::fs::copy(game_assets.join("units/riders.png"), dir.join("assets/units/ghosts.png")).unwrap();
+        std::fs::copy(game_assets.join("units/lightcavalry.png"), dir.join("assets/units/ghosts.png")).unwrap();
         assert_eq!(check_path(&dir, Some(&game_assets)).unwrap().warnings.len(), 1);
         // Without knowing the game's assets, pictures are not looked for.
         std::fs::remove_dir_all(dir.join("assets")).unwrap();

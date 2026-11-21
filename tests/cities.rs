@@ -30,7 +30,7 @@ fn session_at(w: i32, h: i32, dpi: i32) -> Session {
     rows[3] = "gggcgggggggggggggggg".to_string();
     rows[10] = "ggggggggcGGWGgggcggg".to_string();
     let terrain = format!("20\n20\n{}\n", rows.join("\n"));
-    let units = "unit riders\nname Riders\nimage units/riders.png\nstrength 4\nmoves 10\nprice 9\n\
+    let units = "unit riders\nname Riders\nimage units/lightcavalry.png\nstrength 4\nmoves 10\nprice 9\n\
                  enter grass 2, city 1, road 1, bridge 1\n\
                  unit militia\nname Militia\nimage units/militia.png\nstrength 2\nmoves 8\nenter grass 2, city 1, road 1\n";
     let cities = "city 10 8\nname Wrenfold\nside green\nwalls 1\nproduce riders 2\nproduce militia 1\n\

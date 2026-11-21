@@ -22,7 +22,7 @@ fn session_at(w: i32, h: i32, dpi: i32) -> Session {
     let mut rows = vec!["g".repeat(20); 20];
     rows[10] = "ggggggggcGGWGgggcggg".to_string();
     let terrain = format!("20\n20\n{}\n", rows.join("\n"));
-    let units = "unit riders\nname Riders\nimage units/riders.png\nstrength 4\nmoves 10\nupkeep 3\nprice 9\n\
+    let units = "unit riders\nname Riders\nimage units/lightcavalry.png\nstrength 4\nmoves 10\nupkeep 3\nprice 9\n\
                  enter grass 2, forest 5, city 1, road 1, bridge 1\n\
                  unit militia\nname Militia\nimage units/militia.png\nstrength 2\nmoves 8\nenter grass 2, city 1, road 1\n";
     let cities = "city 10 8\nname Wrenfold\nside green\nwalls 1\nproduce riders 2\ngarrison militia 2\ngarrison riders\n\
@@ -103,7 +103,7 @@ fn at_the_start_the_panels_are_about_the_hex_the_cursor_starts_on() {
     // The units in the stack's order, each its strength and its moves.
     assert_eq!(s.stack(), ["2 \u{b7} 8/8", "2 \u{b7} 8/8", "4 \u{b7} 10/10"]);
     assert_eq!(s.slot_icon(0), Some(("units/militia.png", Side::Green)));
-    assert_eq!(s.slot_icon(2), Some(("units/riders.png", Side::Green)));
+    assert_eq!(s.slot_icon(2), Some(("units/lightcavalry.png", Side::Green)));
     assert_eq!(s.slot_icon(3), None);
     // Nothing is selected yet: a word on what to do. No box is open.
     assert_eq!(s.unit_line(), HINT);
@@ -326,7 +326,7 @@ fn the_selected_unit_goes_where_it_is_sent_and_the_panels_follow() {
     assert_eq!(s.shown(), far);
     assert_eq!(s.hex_title(), "Row 10, column 12: grass, road, 1 unit (green)");
     assert_eq!(s.stack(), ["4 \u{b7} 6/10"]);
-    assert_eq!(s.slot_icon(0), Some(("units/riders.png", Side::Green)));
+    assert_eq!(s.slot_icon(0), Some(("units/lightcavalry.png", Side::Green)));
     assert!(filled(&s, "unit_0") && !filled(&s, "unit_1") && !pressed(&s, "unit_0"));
     assert_eq!(s.city(), Vec::<&str>::new(), "no city here");
     assert_eq!(s.unit_line(), HINT);

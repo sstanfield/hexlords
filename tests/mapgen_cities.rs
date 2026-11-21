@@ -250,3 +250,31 @@ fn a_checkbox_needs_its_kind_of_unit_and_fairness_can_be_off() {
     off.set("fairness", "off").unwrap();
     assert!(generate(&off, UNITS, "units.txt").unwrap().state.fairness.is_empty());
 }
+
+/// The owner (2026-11-20): a neutral city is held by one of the weakest it
+/// builds; and a capital builds the template's strongest on foot besides,
+/// for the armies of the late game.
+#[test]
+fn a_neutral_holds_one_of_its_weakest_and_a_capital_builds_the_strongest() {
+    let kinds = hexgame::state::scenario::parse_units(UNITS).unwrap();
+    let foot = |id: &str| kinds.iter().find(|k| k.id == id && movement_class(k) == MoveClass::Foot && k.commander == 0);
+    let strongest = kinds
+        .iter()
+        .filter(|k| foot(&k.id).is_some())
+        .max_by_key(|k| (k.strength, std::cmp::Reverse(k.price)))
+        .unwrap();
+    for seed in 1..=6 {
+        let made = generate(&config(seed, "medium"), UNITS, "units.txt").unwrap();
+        for city in &made.state.cities {
+            let builds = |id: &str| city.produce.iter().any(|(p, _)| p == id);
+            if city.side != Side::Grey {
+                assert!(builds(&strongest.id), "seed {seed}: {} builds {:?}", city.name, city.produce);
+                continue;
+            }
+            let [(id, 1)] = city.garrison.as_slice() else { panic!("seed {seed}: {} {:?}", city.name, city.garrison) };
+            let weakest = city.produce.iter().filter_map(|(p, _)| foot(p)).map(|k| k.strength).min().unwrap();
+            assert!(builds(id), "seed {seed}: {} holds {id}, builds {:?}", city.name, city.produce);
+            assert_eq!(foot(id).unwrap().strength, weakest, "seed {seed}: {}", city.name);
+        }
+    }
+}
