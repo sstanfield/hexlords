@@ -474,7 +474,10 @@ impl Planner {
                 .cities()
                 .iter()
                 .any(|c| c.side == side && c.pos.distance(unit.pos()) <= unit.base_move_points / 2 + 1);
-            let near_free = free.iter().any(|u| u.pos().distance(unit.pos()) <= 4);
+            // Near its free units, or where they can strike this turn (a
+            // stack they went for, in the only way to a city, waited them
+            // out five hexes off).
+            let near_free = free.iter().any(|u| u.pos().distance(unit.pos()) <= 4 || reaches(u.id(), unit.pos()));
             if (near_home || near_free) && map.city_at(unit.pos()).is_none() {
                 targets.push((unit.pos(), if near_home { 300 } else { 50 }));
             }
@@ -816,6 +819,23 @@ impl Planner {
             if best.is_none_or(|(s, _)| score > s) && game.known_step_toward(lead, city.pos, &room, sight).is_some() {
                 best = Some((score, city.pos));
             }
+        }
+        if best.is_none() {
+            // No way to any city it knows of: another side's stack stands in
+            // the only way (on a bridge, in a pass), and a way never goes
+            // through a stack. It goes for the nearest such stack it sees,
+            // to strike it when it can (a side once waited for ever, with
+            // gold piling up, while one held the bridge to the last city).
+            let mut stacks: Vec<Hex> = map
+                .units()
+                .iter()
+                .filter(|u| u.side() != side && u.side() != Side::Grey && map.contains(u.pos()))
+                .map(|u| u.pos())
+                .filter(|h| map.city_at(*h).is_none() && sight.sees(*h) && !self.is_blocked(*h, game))
+                .collect();
+            stacks.sort_by_key(|h| (h.distance(here), h.row, h.col));
+            stacks.dedup();
+            return stacks.into_iter().find(|h| game.known_step_toward(lead, *h, &room, sight).is_some());
         }
         best.map(|(_, h)| h)
     }

@@ -258,3 +258,34 @@ fn a_stack_it_saw_near_its_city_keeps_its_defenders_home() {
     assert_eq!(stayed(true), 6, "the stack it remembers may come back: all stay");
     assert!(stayed(false) < 6, "with nothing seen, an army goes out");
 }
+
+/// A stack of another side's on the only way to its last city (a land
+/// bridge one hex wide): the planner goes for that stack, and on to the
+/// city. (It once waited for ever: a way never goes through a stack, so it
+/// knew no way to any city, and the stack was too far to strike.)
+#[test]
+fn a_stack_in_the_only_way_is_gone_for() {
+    let mut rows = vec!["g".repeat(30); 30];
+    for row in rows.iter_mut().take(18).skip(13) {
+        *row = format!("{}g{}", "w".repeat(15), "w".repeat(14));
+    }
+    rows[5] = format!("{}c{}", "g".repeat(5), "g".repeat(24));
+    rows[25] = format!("{}c{}", "g".repeat(25), "g".repeat(4));
+    let terrain = format!("30\n30\n{}\n", rows.join("\n"));
+    let units = "unit militia\nname Militia\nstrength 2\nmoves 10\nprice 4\nupkeep 1\nenter grass 2, city 1\n\
+                 unit levy\nname Levy\nstrength 1\nmoves 10\nenter grass 2, city 1\n";
+    let cities = "city 5 5\nname Redhold\nside red\nincome 30\ngarrison militia 8\n\
+                  city 25 25\nname Bluemoor\nside blue\ngarrison levy\n";
+    let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+    let mut game = Game::from_scenario(Scenario { map, assets: None, warnings });
+    let levy = game.map.units().kind_named("levy").unwrap();
+    for _ in 0..2 {
+        let unit = game.map.new_unit_of(Side::Blue, levy).unwrap();
+        game.map.place_unit(unit, Hex::new(15, 15)).unwrap();
+    }
+    let mut s = Setup::solo(&game.map, None, "steady");
+    s.set_players("red=steady,blue=passive").unwrap();
+    let mut game = game.with_setup(s);
+    let outcome = headless::play(&mut game, 40, &mut |_, _| {}).unwrap();
+    assert_eq!(outcome.winner, Some(Side::Red));
+}
