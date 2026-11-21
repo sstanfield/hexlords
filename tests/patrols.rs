@@ -450,6 +450,18 @@ fn a_patrolling_stack_says_so_and_shows_its_waypoints() {
 }
 
 #[test]
+fn the_help_says_p_and_u_and_the_orders_topic_explains_them() {
+    let s = session(game());
+    let keys: Vec<String> = s.screen.help().iter().flat_map(|h| h.rows.iter().map(|(k, _)| k.clone())).collect();
+    assert!(keys.contains(&"P".to_string()) && keys.contains(&"U".to_string()), "{keys:?}");
+    let (_, sections) = hexgame::guide::topic(&s.screen.game, "help_orders").expect("the topic");
+    let rows: Vec<String> = sections.iter().flat_map(|h| h.rows.iter().map(|(k, _)| k.clone())).collect();
+    for title in ["Patrol", "Maraud", "After a battle"] {
+        assert!(rows.contains(&title.to_string()), "{title} is not in {rows:?}");
+    }
+}
+
+#[test]
 fn after_a_battle_next_goes_to_the_patrol_and_d_lets_it_go_on() {
     let mut game = game_with_levy();
     let red: Vec<UnitId> = game.map.units_at(WEST).to_vec();
