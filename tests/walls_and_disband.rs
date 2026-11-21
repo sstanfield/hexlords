@@ -320,7 +320,7 @@ fn an_undone_capture_gives_back_the_rally_point() {
     let mut game = game("garrison levy\n", "", 50);
     let bluemoor = game.map.city_at(BLUEMOOR).unwrap().id;
     let rally = Hex::new(7, 9);
-    game.map.city_mut(bluemoor).unwrap().rally = Some(rally);
+    game.map.city_mut(bluemoor).unwrap().rally = vec![rally];
     let levy = at(&game, REDHOLD)[0];
     game.apply(Order::Toward { units: vec![levy], to: BLUEMOOR }).unwrap();
     while game.map.city_at(BLUEMOOR).unwrap().side != Side::Red {
@@ -328,10 +328,10 @@ fn an_undone_capture_gives_back_the_rally_point() {
         game.end_turn();
         game.apply(Order::Toward { units: vec![levy], to: BLUEMOOR }).unwrap();
     }
-    assert_eq!(game.map.city_at(BLUEMOOR).unwrap().rally, None);
+    assert_eq!(game.map.city_at(BLUEMOOR).unwrap().rally, []);
     game.apply(Order::Undo).unwrap();
     let city = game.map.city_at(BLUEMOOR).unwrap();
-    assert_eq!((city.side, city.rally, city.walls), (Side::Blue, Some(rally), 3));
+    assert_eq!((city.side, city.rally.clone(), city.walls), (Side::Blue, vec![rally], 3));
 }
 
 /// A threatened city behind walls 1 that its defenders cannot hold: the

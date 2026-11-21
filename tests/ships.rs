@@ -228,7 +228,7 @@ fn a_ship_sent_far_takes_its_riders_along_turn_after_turn() {
     let ship = put(&mut game, Side::Red, "transport", Hex::new(1, 9));
     let man = put(&mut game, Side::Red, "militia", Hex::new(1, 8));
     moves(&mut game, &[man], Hex::new(1, 9)).unwrap();
-    game.apply(Order::GoTo { units: vec![ship, man], to: Hex::new(19, 14) }).unwrap();
+    game.apply(Order::GoTo { units: vec![ship, man], to: Hex::new(19, 14), via: Vec::new() }).unwrap();
     for _ in 0..4 {
         game.apply(Order::EndTurn).unwrap();
         while game.player() != Side::Red {

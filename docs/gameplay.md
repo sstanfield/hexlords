@@ -375,6 +375,19 @@ thing to happen. Ideas to try, as the rules grow:
   order (an undo gives it back). In rounds, the same: a stopped march is
   in the list again, and goes on if it is not given another order. Later:
   a stack follows another.
+- **Routes** (built; the owner, 2026-11-21: "march to a temple, get a
+  blessing, then march to a rally point"): a standing order is a list of
+  stops (`Unit::route`; `Order::GoTo { to, via }`). In Go to, Shift+click
+  (or Shift+Enter) adds a stop and a plain click picks where they end; each
+  stop is checked as it is picked (`Game::check_route`: every leg one the
+  units can make over the land the side knows). At a stop the stack goes
+  on to the next at once, with what movement it has left; at a stop on a
+  temple, those of it the temple has not blessed seek its blessing and the
+  stack stops there for the turn (one it has blessed them all passes on).
+  More than one leg in a turn, or a blessing, cannot be undone. A city's
+  rally point is a route too (`Order::Rally { to, via }`, Shift+click after
+  Send new units to, `Game::check_rally`): what it builds goes by way of
+  the stops.
 - **Rally points** (built): a city's window has "Send new units to..."
   (then a hex) and "Keep them here" (`Order::Rally`): what it builds is
   sent there with a standing order the moment it is done. The hex has to

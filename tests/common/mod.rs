@@ -111,6 +111,22 @@ pub fn click(s: &mut Session, p: Point) {
     s.pump();
 }
 
+/// Click on a window pixel with Shift held, and apply what that did.
+pub fn shift_click(s: &mut Session, p: Point) {
+    s.screen.ui.pointer_move(p, Modifiers::SHIFT);
+    s.screen.ui.pointer_down(p, 1, Modifiers::SHIFT);
+    s.screen.ui.pointer_up(p, Modifiers::SHIFT);
+    s.pump();
+}
+
+/// Press and release a special key with Shift held.
+pub fn shift_press(s: &mut Session, key: SpecialKey) -> bool {
+    let handled = s.screen.ui.key(None, key, Modifiers::SHIFT, true);
+    s.screen.ui.key(None, key, Modifiers::SHIFT, false);
+    s.pump();
+    handled
+}
+
 /// Press and release a special key. Returns whether the press was handled.
 pub fn press(s: &mut Session, key: SpecialKey) -> bool {
     let handled = s.screen.ui.key(None, key, Modifiers::NONE, true);

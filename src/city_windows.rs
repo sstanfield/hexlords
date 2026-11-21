@@ -349,9 +349,15 @@ impl CityView {
         for (i, line) in self.details.iter_mut().enumerate() {
             changed |= line.set(ui, details.get(i).map_or("", String::as_str));
         }
-        let (rally, rally_to) = match (city.rally, self.compact) {
-            (Some(to), false) => (format!("New units go to {}.", info::place(map, to)), String::new()),
-            (Some(to), true) => ("New units go to".to_string(), info::place(map, to)),
+        // (In the sidebar, where they end, and how many stops before.)
+        let stops = match city.rally.len().saturating_sub(1) {
+            0 => String::new(),
+            1 => ", after a stop".to_string(),
+            n => format!(", after {n} stops"),
+        };
+        let (rally, rally_to) = match (city.rally.last(), self.compact) {
+            (Some(_), false) => (format!("New units go to {}.", info::route_words(map, &city.rally)), String::new()),
+            (Some(to), true) => ("New units go to".to_string(), format!("{}{stops}", info::place(map, *to))),
             (None, false) => ("New units stay in the city.".to_string(), String::new()),
             (None, true) => ("New units stay here".to_string(), String::new()),
         };

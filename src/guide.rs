@@ -439,7 +439,10 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                     "Go to",
                     "Sends the selected units somewhere far: they go there over the turns, on their own, \
                            at the start of each of yours. A march never attacks: if something is in the way it \
-                           stops and waits for orders."
+                           stops and waits for orders. Shift+click on the way there makes a stop: they go by \
+                           way of it, and on at once; at a temple they seek its blessing and stop for the turn. \
+                           A city's new units can go by stops too. Once they get where they go, they wait for \
+                           orders."
                         .to_string(),
                 ),
                 ("Done", "Puts the selected units aside for this turn: Next stack passes them by.".to_string()),

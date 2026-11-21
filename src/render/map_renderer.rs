@@ -34,6 +34,9 @@ use crate::view::{HEX_HEIGHT_ADJUST, MapView};
 pub const CURSOR_BORDER: [f32; 3] = [1.0, 0.0, 0.0];
 /// The border of every other hex.
 pub const HEX_BORDER: [f32; 3] = [0.0, 0.0, 0.0];
+/// The border of a hex the caller outlines (in the game: the stops of a
+/// route), as thick as the cursor's.
+pub const STOP_BORDER: [f32; 3] = [1.0, 0.82, 0.2];
 /// Laid over the hexes a selected unit can move to. C++: HexOverlayFragment.glsl
 pub const RANGE_OVERLAY: [f32; 4] = [1.0, 0.0, 0.0, 0.3];
 /// Drawn for a unit whose kind has no picture of its own.
@@ -111,12 +114,15 @@ pub struct Marks<'a> {
     /// held them when they were seen last; land never seen is black, and
     /// nothing of it shows (`UNKNOWN`).
     pub sight: &'a Sight,
+    /// The hexes outlined (`STOP_BORDER`; the cursor's border wins): in the
+    /// game, the stops of the route being picked, or of the selected unit's.
+    pub outlined: &'a [Hex],
 }
 
 impl Marks<'_> {
     /// Marks of a map seen whole, everyone's units shown: a tool's.
     pub fn plain(color: [f32; 4], marked: &dyn Fn(Hex) -> bool, front: Option<UnitId>) -> Marks<'_> {
-        Marks { color, marked, front, viewer: None, sight: &SEE_ALL }
+        Marks { color, marked, front, viewer: None, sight: &SEE_ALL, outlined: &[] }
     }
 }
 
@@ -339,8 +345,13 @@ impl MapGeometry {
             let variant = HexVariant::choose(hex.row, hex.col, rows, cols);
             let (positions, uvs) = (variant.positions(), variant.uvs());
             let is_cursor = hex == map.cursor;
-            let [r, g, b] = if is_cursor { CURSOR_BORDER } else { HEX_BORDER };
-            let border = [r, g, b, view.border_threshold(is_cursor)];
+            let outlined = !is_cursor && marks.outlined.contains(&hex);
+            let [r, g, b] = match (is_cursor, outlined) {
+                (true, _) => CURSOR_BORDER,
+                (false, true) => STOP_BORDER,
+                _ => HEX_BORDER,
+            };
+            let border = [r, g, b, view.border_threshold(is_cursor || outlined)];
             let corner =
                 |i: usize| view.to_ndc([positions[i][0] + visible.center[0], positions[i][1] + visible.center[1]]);
 
@@ -838,6 +849,27 @@ mod tests {
             }
         }
         assert_eq!(red, 1);
+    }
+
+    #[test]
+    fn an_outlined_hex_has_the_stops_border() {
+        let mut game = crate::game::grassland();
+        game.set_cursor(Hex::new(50, 52));
+        let view = view_at(START);
+        let stops = [Hex::new(50, 51), Hex::new(50, 52)];
+        let marks = Marks { outlined: &stops, ..Marks::plain(RANGE_OVERLAY, &|_| false, None) };
+        let mut g = MapGeometry::new();
+        g.build(&game.map, &view, &marks);
+        let border_at = |hex: Hex| {
+            let at = center_of(&view, hex);
+            hexes(g.terrain(TileType::Grass)).iter().find(|h| h[0].pos == at).map(|h| h[0].border).unwrap()
+        };
+        let (thick, thin) = (view.border_threshold(true), view.border_threshold(false));
+        let [r, g_, b] = STOP_BORDER;
+        assert_eq!(border_at(Hex::new(50, 51)), [r, g_, b, thick]);
+        // The cursor's border wins.
+        assert_eq!(border_at(Hex::new(50, 52)), [1.0, 0.0, 0.0, thick]);
+        assert_eq!(border_at(Hex::new(50, 53)), [0.0, 0.0, 0.0, thin]);
     }
 
     #[test]

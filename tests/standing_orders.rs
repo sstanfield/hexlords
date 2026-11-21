@@ -52,7 +52,7 @@ fn pos(game: &Game, id: UnitId) -> Hex {
 }
 
 fn goto(game: &Game, id: UnitId) -> Option<Hex> {
-    game.map.units().get(id).unwrap().goto
+    game.map.units().get(id).unwrap().goto()
 }
 
 /// Red's turn ends, blue's (it does nothing) too: red's next begins.
@@ -69,7 +69,7 @@ fn a_stack_sent_far_goes_there_over_turns() {
     let red = at(&game, REDHOLD);
     // This turn's part at once: as far as soldiers go (6 hexes), and the
     // order stands.
-    game.apply(Order::GoTo { units: red.clone(), to: FAR }).unwrap();
+    game.apply(Order::GoTo { units: red.clone(), to: FAR, via: Vec::new() }).unwrap();
     let here = pos(&game, red[0]);
     assert_eq!((here.distance(REDHOLD), here.distance(FAR)), (6, 9));
     assert!(red.iter().all(|id| pos(&game, *id) == here && goto(&game, *id) == Some(FAR)));
@@ -85,7 +85,7 @@ fn a_stack_sent_far_goes_there_over_turns() {
     // The text protocol says it, and reads it back.
     assert_eq!(
         hexgame::agents::parse_order(&game, "goto red.0.0 5 21"),
-        Ok(Some(Order::GoTo { units: vec![red[0]], to: Hex::new(5, 21) }))
+        Ok(Some(Order::GoTo { units: vec![red[0]], to: Hex::new(5, 21), via: Vec::new() }))
     );
 }
 
@@ -97,7 +97,7 @@ fn a_march_stops_short_of_another_sides_units_and_waits_for_orders() {
     let kind = game.map.units().kind_named("soldiers").unwrap();
     let blue = game.map.new_unit_of(Side::Blue, kind).unwrap();
     game.map.place_unit(blue, Hex::new(5, 13)).unwrap();
-    game.apply(Order::GoTo { units: red.clone(), to: Hex::new(5, 13) }).unwrap();
+    game.apply(Order::GoTo { units: red.clone(), to: Hex::new(5, 13), via: Vec::new() }).unwrap();
     assert_eq!(pos(&game, red[0]).distance(Hex::new(5, 13)), 2);
     // Next turn: the step it would take is onto blue. It does not attack: it
     // stops, keeps its order, and waits for its player.
@@ -109,7 +109,7 @@ fn a_march_stops_short_of_another_sides_units_and_waits_for_orders() {
     assert_eq!(stalled, Some((red.clone(), Hex::new(5, 13))));
     let unit = game.map.units().get(red[0]).unwrap();
     let unit_at = unit.pos();
-    assert!(unit.stalled && unit.goto == Some(Hex::new(5, 13)));
+    assert!(unit.stalled && unit.goto() == Some(Hex::new(5, 13)));
     assert_eq!(game.next_stack(None, false), Some(unit.pos()), "back with the stacks that wait for orders");
     assert!(game.tasks(Side::Red).iter().any(|t| matches!(t, Task::Stack { state: StackState::Stalled, .. })));
     // Its log says so.
@@ -131,12 +131,12 @@ fn a_march_stops_short_of_another_sides_units_and_waits_for_orders() {
 fn a_move_ends_a_standing_order_and_undo_gives_it_back() {
     let mut game = game("garrison soldiers\n");
     let id = at(&game, REDHOLD)[0];
-    game.apply(Order::GoTo { units: vec![id], to: FAR }).unwrap();
+    game.apply(Order::GoTo { units: vec![id], to: FAR, via: Vec::new() }).unwrap();
     assert!(game.can_undo());
     // Taken back: home, and no order.
     game.apply(Order::Undo).unwrap();
     assert_eq!((pos(&game, id), goto(&game, id)), (REDHOLD, None));
-    game.apply(Order::GoTo { units: vec![id], to: FAR }).unwrap();
+    game.apply(Order::GoTo { units: vec![id], to: FAR, via: Vec::new() }).unwrap();
     round(&mut game);
     let here = pos(&game, id);
     assert_eq!(goto(&game, id), Some(FAR));
@@ -150,7 +150,7 @@ fn a_move_ends_a_standing_order_and_undo_gives_it_back() {
     game.apply(Order::Undo).unwrap();
     assert_eq!((pos(&game, id), goto(&game, id)), (here, Some(FAR)));
     // Nowhere to go: refused.
-    assert!(game.apply(Order::GoTo { units: vec![id], to: Hex::new(99, 99) }).is_err());
+    assert!(game.apply(Order::GoTo { units: vec![id], to: Hex::new(99, 99), via: Vec::new() }).is_err());
 }
 
 #[test]
@@ -158,8 +158,8 @@ fn a_city_sends_what_it_builds_where_its_holder_says() {
     let mut game = game("");
     let city = game.map.city_at(REDHOLD).unwrap().id;
     game.apply(Order::Build { city, what: Some(0) }).unwrap();
-    game.apply(Order::Rally { city, to: Some(FAR) }).unwrap();
-    assert_eq!(game.map.cities().get(city).unwrap().rally, Some(FAR));
+    game.apply(Order::Rally { city, to: Some(FAR), via: Vec::new() }).unwrap();
+    assert_eq!(game.map.cities().get(city).unwrap().rally, [FAR]);
     // Built at the start of red's turn, and on its way at once.
     let events = round(&mut game);
     let built = events.iter().find_map(|e| if let Event::Built { unit, .. } = e { Some(*unit) } else { None });
@@ -168,12 +168,18 @@ fn a_city_sends_what_it_builds_where_its_holder_says() {
     assert_eq!(pos(&game, built).distance(REDHOLD), 6);
     // Only its holder says where.
     let bluemoor = game.map.city_at(BLUEMOOR).unwrap().id;
-    assert!(game.apply(Order::Rally { city: bluemoor, to: Some(FAR) }).is_err());
+    assert!(game.apply(Order::Rally { city: bluemoor, to: Some(FAR), via: Vec::new() }).is_err());
     // Nowhere: what it builds stays in it.
-    game.apply(Order::Rally { city, to: None }).unwrap();
-    assert_eq!(game.map.cities().get(city).unwrap().rally, None);
-    assert_eq!(hexgame::agents::parse_order(&game, "rally 5 5 5 20"), Ok(Some(Order::Rally { city, to: Some(FAR) })));
-    assert_eq!(hexgame::agents::parse_order(&game, "rally 5 5 none"), Ok(Some(Order::Rally { city, to: None })));
+    game.apply(Order::Rally { city, to: None, via: Vec::new() }).unwrap();
+    assert_eq!(game.map.cities().get(city).unwrap().rally, []);
+    assert_eq!(
+        hexgame::agents::parse_order(&game, "rally 5 5 5 20"),
+        Ok(Some(Order::Rally { city, to: Some(FAR), via: Vec::new() }))
+    );
+    assert_eq!(
+        hexgame::agents::parse_order(&game, "rally 5 5 none"),
+        Ok(Some(Order::Rally { city, to: None, via: Vec::new() }))
+    );
 }
 
 #[test]
@@ -286,10 +292,10 @@ fn a_stack_that_arrives_on_a_standing_order_waits_for_orders() {
     let mut game = game("garrison soldiers\ngarrison riders\n");
     let red = at(&game, REDHOLD);
     let (soldiers, riders) = (red[0], red[1]);
-    game.apply(Order::GoTo { units: vec![soldiers], to: FAR }).unwrap();
+    game.apply(Order::GoTo { units: vec![soldiers], to: FAR, via: Vec::new() }).unwrap();
     // The riders, a little way, this turn.
     let near = Hex::new(5, 8);
-    game.apply(Order::GoTo { units: vec![riders], to: near }).unwrap();
+    game.apply(Order::GoTo { units: vec![riders], to: near, via: Vec::new() }).unwrap();
     assert_eq!((pos(&game, riders), goto(&game, riders)), (near, None));
     let task = |game: &Game, hex: Hex| {
         game.tasks(Side::Red).into_iter().find(|t| matches!(t, Task::Stack { at, .. } if *at == hex)).unwrap()
@@ -362,7 +368,7 @@ fn go_to_is_a_key_or_a_button_and_then_a_hex() {
     // A far hex (out of this turn's reach).
     click_hex(&mut s, FAR);
     let unit = s.screen.game.map.units().get(id).unwrap();
-    assert_eq!((unit.goto, unit.pos().distance(REDHOLD)), (Some(FAR), 6));
+    assert_eq!((unit.goto(), unit.pos().distance(REDHOLD)), (Some(FAR), 6));
     let here = unit.pos();
     assert_eq!(s.screen.game.selected(), None);
     // Selected again, its line says where it goes.
@@ -423,10 +429,10 @@ fn a_city_window_sends_new_units_to_a_picked_hex() {
     assert!(matches!(s.picking(), Some(Pick::Rally(_))));
     click_hex(&mut s, Hex::new(10, 10));
     let city = s.screen.game.map.city_at(REDHOLD).unwrap();
-    assert_eq!(city.rally, Some(Hex::new(10, 10)));
+    assert_eq!(city.rally, [Hex::new(10, 10)]);
     assert!(says(&s).contains(&"New units go to row 10, column 10.".to_string()), "{:?}", says(&s));
     push(&mut s, CITY_NO_RALLY_ID);
-    assert_eq!(s.screen.game.map.city_at(REDHOLD).unwrap().rally, None);
+    assert_eq!(s.screen.game.map.city_at(REDHOLD).unwrap().rally, []);
 }
 
 // What the review found.
@@ -438,13 +444,13 @@ fn go_to_is_taken_with_no_moves_left_and_marches_next_turn() {
     game.apply(Order::Move { units: vec![id], to: Hex::new(5, 11) }).unwrap();
     assert_eq!(game.map.units().get(id).unwrap().movement, 0, "spent");
     // No moves left this turn: the order stands all the same.
-    game.apply(Order::GoTo { units: vec![id], to: FAR }).unwrap();
+    game.apply(Order::GoTo { units: vec![id], to: FAR, via: Vec::new() }).unwrap();
     assert_eq!((pos(&game, id), goto(&game, id)), (Hex::new(5, 11), Some(FAR)));
     round(&mut game);
     assert!(pos(&game, id).distance(FAR) < Hex::new(5, 11).distance(FAR), "on its way");
     // A hex no unit of it can get to over the land is refused, naming it.
     game.map.tile_mut(Hex::new(20, 20)).unwrap().kind = hexgame::state::TileType::Water;
-    let refused = game.apply(Order::GoTo { units: vec![id], to: Hex::new(20, 20) }).unwrap_err();
+    let refused = game.apply(Order::GoTo { units: vec![id], to: Hex::new(20, 20), via: Vec::new() }).unwrap_err();
     assert_eq!(refused, "Soldiers cannot get there");
 }
 
@@ -458,7 +464,7 @@ fn go_to_from_several_hexes_sends_each_stack() {
     // The soldiers are already where the riders are sent: they stay, and the
     // riders go.
     let to = Hex::new(5, 5);
-    game.apply(Order::GoTo { units: vec![a, b], to }).unwrap();
+    game.apply(Order::GoTo { units: vec![a, b], to, via: Vec::new() }).unwrap();
     assert_eq!(pos(&game, a), to);
     assert_eq!((pos(&game, b), goto(&game, b)), (to, None), "the riders went, and arrived");
 }
@@ -468,9 +474,9 @@ fn a_rally_point_is_somewhere_the_city_s_units_can_get_and_is_lost_with_the_city
     let mut game = game("");
     let city = game.map.city_at(REDHOLD).unwrap().id;
     game.map.tile_mut(Hex::new(20, 20)).unwrap().kind = hexgame::state::TileType::Water;
-    let refused = game.apply(Order::Rally { city, to: Some(Hex::new(20, 20)) }).unwrap_err();
+    let refused = game.apply(Order::Rally { city, to: Some(Hex::new(20, 20)), via: Vec::new() }).unwrap_err();
     assert_eq!(refused, "nothing Redhold builds can get there");
-    game.apply(Order::Rally { city, to: Some(FAR) }).unwrap();
+    game.apply(Order::Rally { city, to: Some(FAR), via: Vec::new() }).unwrap();
     // Blue takes it: where red sent its units is not blue's.
     let kind = game.map.units().kind_named("riders").unwrap();
     let blue = game.map.new_unit_of(Side::Blue, kind).unwrap();
@@ -478,7 +484,7 @@ fn a_rally_point_is_somewhere_the_city_s_units_can_get_and_is_lost_with_the_city
     game.apply(Order::EndTurn).unwrap();
     game.apply(Order::Move { units: vec![blue], to: REDHOLD }).unwrap();
     let redhold = game.map.cities().get(city).unwrap();
-    assert_eq!((redhold.side, redhold.rally), (Side::Blue, None));
+    assert_eq!((redhold.side, redhold.rally.is_empty()), (Side::Blue, true));
 }
 
 #[test]
@@ -488,7 +494,7 @@ fn undo_gives_a_stalled_stack_back_all_it_was() {
     let kind = game.map.units().kind_named("soldiers").unwrap();
     let blue = game.map.new_unit_of(Side::Blue, kind).unwrap();
     game.map.place_unit(blue, Hex::new(5, 13)).unwrap();
-    game.apply(Order::GoTo { units: vec![id], to: Hex::new(5, 13) }).unwrap();
+    game.apply(Order::GoTo { units: vec![id], to: Hex::new(5, 13), via: Vec::new() }).unwrap();
     round(&mut game);
     let unit = game.map.units().get(id).unwrap();
     assert!(unit.stalled && !unit.moved);
@@ -497,7 +503,7 @@ fn undo_gives_a_stalled_stack_back_all_it_was() {
     game.apply(Order::Move { units: vec![id], to: next }).unwrap();
     game.apply(Order::Undo).unwrap();
     let unit = game.map.units().get(id).unwrap();
-    assert_eq!((unit.pos(), unit.goto, unit.stalled, unit.moved), (here, Some(Hex::new(5, 13)), true, false));
+    assert_eq!((unit.pos(), unit.goto(), unit.stalled, unit.moved), (here, Some(Hex::new(5, 13)), true, false));
     assert!(game.tasks(Side::Red).iter().any(|t| matches!(t, Task::Stack { state: StackState::Stalled, .. })));
 }
 
@@ -608,7 +614,7 @@ fn defenders_stay_put_and_are_passed_by_until_sent_somewhere() {
     game.apply(Order::Undo).unwrap();
     assert!(game.map.units().get(a[0]).unwrap().defending);
     // A standing order ends it; so does standing down.
-    game.apply(Order::GoTo { units: vec![a[0]], to: FAR }).unwrap();
+    game.apply(Order::GoTo { units: vec![a[0]], to: FAR, via: Vec::new() }).unwrap();
     assert!(!game.map.units().get(a[0]).unwrap().defending);
     game.apply(Order::Defend { units: vec![a[1]], on: false }).unwrap();
     assert!(!game.map.units().get(a[1]).unwrap().defending);

@@ -16,10 +16,14 @@ pub enum Order {
     Toward { units: Vec<UnitId>, to: Hex },
     /// Set what a city builds: an index into what it can build, or nothing.
     Build { city: CityId, what: Option<usize> },
-    /// Send units to a hex, near or far: they go as far as the slowest gets
-    /// this turn, and on at the start of each of their side's turns until
-    /// they are there (a standing order; another order for them ends it).
-    GoTo { units: Vec<UnitId>, to: Hex },
+    /// Send units to a hex, near or far, by way of the stops `via` in order
+    /// (none: straight there): they go as far as the slowest gets this turn,
+    /// and on at the start of each of their side's turns until they are
+    /// there (a standing order; another order for them ends it). At a stop
+    /// they go on to the next at once, with what movement they have left;
+    /// at a stop on a temple (or the end), those it has not blessed seek its
+    /// blessing, and stop there for the turn.
+    GoTo { units: Vec<UnitId>, to: Hex, via: Vec<Hex> },
     /// The player is done with these units this turn: they are not offered
     /// again (Next stack) though they have moves left.
     Done { units: Vec<UnitId> },
@@ -32,9 +36,9 @@ pub enum Order {
     /// movement is spent); one it has blessed already is not, and keeps its
     /// movement.
     Bless { units: Vec<UnitId> },
-    /// Where a city sends the units it builds (they go there as `GoTo`), or
-    /// nowhere.
-    Rally { city: CityId, to: Option<Hex> },
+    /// Where a city sends the units it builds (they go there as `GoTo`, by
+    /// way of the stops `via`), or nowhere (and no stops).
+    Rally { city: CityId, to: Option<Hex>, via: Vec<Hex> },
     /// Raise a city's walls a level, paid at once (`state::wall_price`):
     /// once a turn, up to `state::WALLS_CAP`.
     Walls { city: CityId },

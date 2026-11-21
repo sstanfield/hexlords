@@ -135,6 +135,12 @@ fn names(units: &[crate::state::UnitId]) -> String {
 }
 
 /// The order an agent gave, in its text form (for logs and tests).
+/// A route's stops in the protocol's words: rows and columns in pairs, the
+/// last where it ends.
+fn stops(via: &[crate::state::Hex], to: crate::state::Hex) -> String {
+    via.iter().chain([&to]).map(|h| format!("{} {}", h.row, h.col)).collect::<Vec<_>>().join(" ")
+}
+
 pub fn order_line(game: &Game, order: &Order) -> String {
     match order {
         Order::Move { units, to } => format!("move {} {} {}", names(units), to.row, to.col),
@@ -145,7 +151,7 @@ pub fn order_line(game: &Game, order: &Order) -> String {
             format!("build {} {} {what}", at.0, at.1)
         }
         Order::Undo => "undo".to_string(),
-        Order::GoTo { units, to } => format!("goto {} {} {}", names(units), to.row, to.col),
+        Order::GoTo { units, to, via } => format!("goto {} {}", names(units), stops(via, *to)),
         Order::Done { units } => format!("done {}", names(units)),
         Order::Defend { units, on: true } => format!("defend {}", names(units)),
         Order::Defend { units, on: false } => format!("undefend {}", names(units)),
@@ -155,10 +161,10 @@ pub fn order_line(game: &Game, order: &Order) -> String {
             let at = game.map.cities().get(*city).map_or((0, 0), |c| (c.pos.row, c.pos.col));
             format!("walls {} {}", at.0, at.1)
         }
-        Order::Rally { city, to } => {
+        Order::Rally { city, to, via } => {
             let at = game.map.cities().get(*city).map_or((0, 0), |c| (c.pos.row, c.pos.col));
             match to {
-                Some(to) => format!("rally {} {} {} {}", at.0, at.1, to.row, to.col),
+                Some(to) => format!("rally {} {} {}", at.0, at.1, stops(via, *to)),
                 None => format!("rally {} {} none", at.0, at.1),
             }
         }

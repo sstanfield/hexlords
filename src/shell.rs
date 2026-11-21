@@ -123,6 +123,10 @@ impl Scene for Shell {
         self.scene().mark_color()
     }
 
+    fn outlined(&self) -> &[Hex] {
+        self.scene().outlined()
+    }
+
     fn confirm_quit(&mut self) -> bool {
         self.scene_mut().confirm_quit()
     }

@@ -36,9 +36,10 @@ pub struct City {
     /// The level the units it builds start at: 1, or more where it trains
     /// them (a veteran, 2; elite, 3).
     pub trains: u8,
-    /// Where the units it builds go, a turn at a time (their `goto`), if its
-    /// holder said (`Order::Rally`).
-    pub rally: Option<Hex>,
+    /// Where the units it builds go, a turn at a time (their route: the
+    /// stops in order, the last where they end), if its holder said
+    /// (`Order::Rally`). Empty: they stay in it.
+    pub rally: Vec<Hex>,
     /// What it is building: an index into `units`, or nothing. Set it with
     /// `Map::set_production`.
     pub building: Option<usize>,
@@ -91,7 +92,7 @@ impl Cities {
             walls,
             income: DEFAULT_INCOME,
             trains: 1,
-            rally: None,
+            rally: Vec::new(),
             building: None,
             progress: 0,
         };

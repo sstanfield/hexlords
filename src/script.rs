@@ -7,7 +7,8 @@
 //! - `key:X`: type the character X; with modifiers, `key:ctrl+s`,
 //!   `key:shift+cmd+z` (`ctrl`, `shift`, `alt`, `cmd`);
 //! - `click:ROW:COL`, `hover:ROW:COL`: click on, or point at, the middle of that
-//!   hex of the main map (it has to be in view);
+//!   hex of the main map (it has to be in view); `shiftclick:ROW:COL`, a
+//!   click with Shift held;
 //! - `drag:ROW:COL:ROW:COL`: press the button on the first hex, move to the
 //!   second and let go (both have to be in view). In the game and on the new
 //!   game screen that moves the map; in the editor it paints;
@@ -64,7 +65,8 @@ pub fn run<S: Scene>(scene: &mut S, script: &str) -> Result<(), String> {
 enum Step {
     Key(SpecialKey),
     Char(char, Modifiers),
-    Click(Hex),
+    /// A click on a hex, with Shift held or not.
+    Click(Hex, Modifiers),
     Hover(Hex),
     Drag(Hex, Hex),
     MiniMap(Hex),
@@ -160,7 +162,8 @@ fn parse_step(action: &str) -> Result<Step, String> {
         "space" => Step::Char(' ', Modifiers::NONE),
         "1" => Step::Char('1', Modifiers::NONE),
         "2" => Step::Char('2', Modifiers::NONE),
-        "click" => Step::Click(hex()?),
+        "click" => Step::Click(hex()?, Modifiers::NONE),
+        "shiftclick" => Step::Click(hex()?, Modifiers::SHIFT),
         "hover" => Step::Hover(hex()?),
         "drag" => Step::Drag(hex()?, hex()?),
         "minimap" => Step::MiniMap(hex()?),
@@ -189,9 +192,13 @@ fn middle(r: turbo_ferret::Rect) -> Point {
 }
 
 fn click(screen: &mut MapScreen, p: Point) {
-    screen.ui.pointer_move(p, Modifiers::NONE);
-    screen.ui.pointer_down(p, 1, Modifiers::NONE);
-    screen.ui.pointer_up(p, Modifiers::NONE);
+    click_with(screen, p, Modifiers::NONE);
+}
+
+fn click_with(screen: &mut MapScreen, p: Point, mods: Modifiers) {
+    screen.ui.pointer_move(p, mods);
+    screen.ui.pointer_down(p, 1, mods);
+    screen.ui.pointer_up(p, mods);
 }
 
 fn run_step<S: Scene>(scene: &mut S, action: &str, clock: &mut u64) -> Result<(), String> {
@@ -224,9 +231,9 @@ fn run_step<S: Scene>(scene: &mut S, action: &str, clock: &mut u64) -> Result<()
             let p = pixel(screen, hex)?;
             screen.ui.pointer_move(p, Modifiers::NONE);
         }
-        Step::Click(hex) => {
+        Step::Click(hex, mods) => {
             let p = pixel(screen, hex)?;
-            click(screen, p);
+            click_with(screen, p, mods);
         }
         Step::Drag(from, to) => {
             let (a, b) = (pixel(screen, from)?, pixel(screen, to)?);

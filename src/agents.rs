@@ -572,11 +572,12 @@ pub fn describe(game: &Game, side: Side) -> String {
 
 /// An order in a line of text (`docs/agents.md`): `move <units> <row> <col>`,
 /// `toward <units> <row> <col>` (units: names with commas between),
-/// `goto <units> <row> <col>`, `done <units>`, `defend <units>`,
-/// `undefend <units>`, `bless <units>`, `disband <units>`,
-/// `build <row> <col> <index or none>`, `rally <row> <col> <row> <col>` (or
-/// `none`), `walls <row> <col>`, `undo`, `end`. `None` for an empty line or
-/// a comment (`#`).
+/// `goto <units> <row> <col> [<row> <col> ...]` (stops in order, the last
+/// where they end), `done <units>`, `defend <units>`, `undefend <units>`,
+/// `bless <units>`, `disband <units>`, `build <row> <col> <index or none>`,
+/// `rally <row> <col> <row> <col> [<row> <col> ...]` (or `none`),
+/// `walls <row> <col>`, `undo`, `end`. `None` for an empty line or a comment
+/// (`#`).
 pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
     let words: Vec<&str> = line.split_whitespace().collect();
     let hex = |row: &str, col: &str| -> Result<Hex, String> {
@@ -586,6 +587,15 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
     };
     let units = |names: &str| -> Result<Vec<UnitId>, String> {
         names.split(',').map(|name| parse_unit(name).ok_or(format!("\"{name}\" is not a unit's name"))).collect()
+    };
+    // Stops: rows and columns in pairs, the last where they end.
+    let route = |words: &[&str]| -> Result<(Hex, Vec<Hex>), String> {
+        if words.is_empty() || words.len() % 2 != 0 {
+            return Err("a route is rows and columns in pairs".to_string());
+        }
+        let mut stops: Vec<Hex> = words.chunks(2).map(|w| hex(w[0], w[1])).collect::<Result<_, _>>()?;
+        let to = stops.pop().ok_or("no stops")?;
+        Ok((to, stops))
     };
     Ok(Some(match words[..] {
         [] => return Ok(None),
@@ -602,7 +612,10 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
             };
             Order::Build { city, what }
         }
-        ["goto", u, row, col] => Order::GoTo { units: units(u)?, to: hex(row, col)? },
+        ["goto", u, ref stops @ ..] if !stops.is_empty() => {
+            let (to, via) = route(stops)?;
+            Order::GoTo { units: units(u)?, to, via }
+        }
         ["done", u] => Order::Done { units: units(u)? },
         ["defend", u] => Order::Defend { units: units(u)?, on: true },
         ["undefend", u] => Order::Defend { units: units(u)?, on: false },
@@ -611,12 +624,15 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
         ["walls", row, col] => {
             Order::Walls { city: game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id }
         }
-        ["rally", row, col, "none"] => {
-            Order::Rally { city: game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id, to: None }
-        }
-        ["rally", row, col, to_row, to_col] => {
+        ["rally", row, col, "none"] => Order::Rally {
+            city: game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id,
+            to: None,
+            via: Vec::new(),
+        },
+        ["rally", row, col, ref stops @ ..] if !stops.is_empty() => {
             let city = game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id;
-            Order::Rally { city, to: Some(hex(to_row, to_col)?) }
+            let (to, via) = route(stops)?;
+            Order::Rally { city, to: Some(to), via }
         }
         _ => {
             return Err(

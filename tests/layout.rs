@@ -174,7 +174,7 @@ fn the_map_records_pointer_moves_presses_and_clicks() {
         [
             MapCommand::Hover(Point::new(102, 51), size),
             MapCommand::Release,
-            MapCommand::Click(Point::new(102, 51), size)
+            MapCommand::Click(Point::new(102, 51), size, false)
         ]
     );
     // A press on the map released outside it is no click.

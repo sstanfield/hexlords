@@ -4,7 +4,7 @@
 //!
 //! C++: src/gui/mapwidget.cpp MapWidget, src/gui/glwidget.cpp GLWidget
 
-use turbo_ferret::{Ctx, Event, EventKind, Point, Size, SpecialKey, Widget};
+use turbo_ferret::{Ctx, Event, EventKind, Modifiers, Point, Size, SpecialKey, Widget};
 
 /// A key the map acts on.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -15,6 +15,8 @@ pub enum MapKey {
     Down,
     /// Enter: choose the hex under the cursor.
     Enter,
+    /// Shift+Enter: the same, as Shift+click (a stop on a route, in the game).
+    ShiftEnter,
     /// Esc: close what is open over the map (the help).
     Esc,
     /// `1`
@@ -36,7 +38,8 @@ pub enum MapCommand {
     /// The button came up again, or the press ended some other way.
     Release,
     /// A click (press and release) on the map. It comes after its `Release`.
-    Click(Point, Size),
+    /// True if Shift was held (in the game, a stop on a route).
+    Click(Point, Size, bool),
     Key(MapKey),
     /// Move the main map by so many pixels, with the pointer: a drag, made
     /// of the `Hover`s by `MapScreen` where a drag moves the map
@@ -95,7 +98,7 @@ impl Widget for MapWidget {
             }
             EventKind::Click => {
                 let (p, size) = Self::map_point(cx, ev);
-                self.commands.push(MapCommand::Click(p, size));
+                self.commands.push(MapCommand::Click(p, size, ev.mods.contains(Modifiers::SHIFT)));
                 true
             }
             EventKind::KeyDown => {
@@ -104,6 +107,7 @@ impl Widget for MapWidget {
                     (SpecialKey::Right, _) => MapKey::Right,
                     (SpecialKey::Up, _) => MapKey::Up,
                     (SpecialKey::Down, _) => MapKey::Down,
+                    (SpecialKey::Enter, _) if ev.mods.contains(Modifiers::SHIFT) => MapKey::ShiftEnter,
                     (SpecialKey::Enter, _) => MapKey::Enter,
                     (SpecialKey::Esc, _) => MapKey::Esc,
                     (SpecialKey::None, Some('1')) => MapKey::ZoomOut,

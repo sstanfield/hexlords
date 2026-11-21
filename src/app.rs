@@ -300,6 +300,7 @@ impl<S: Scene> App<S> {
                 front: scene.front_unit(),
                 viewer: scene.viewer(),
                 sight,
+                outlined: scene.outlined(),
             };
             self.map_renderer.draw(ctx, &self.pipelines, &screen.game.map, &screen.view, &marks);
         }

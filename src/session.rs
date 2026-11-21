@@ -253,8 +253,15 @@ fn help_section() -> Vec<HelpSection> {
         HelpSection::new(
             "Units",
             &[
-                ("N,  or  Next", "Select the next stack that can still move (Shift+N: the one before)"),
+                (
+                    "N,  or  Next",
+                    "Select the next stack waiting for orders (Shift+N: the one before); moved ones are done",
+                ),
                 ("G,  or  Go to", "Then click a hex: the selected units go there, over as many turns as it takes"),
+                (
+                    "Shift+click,  or  Shift+Enter",
+                    "After G (or a city's Send to): a stop on the way; at a temple, they seek its blessing",
+                ),
                 (
                     "D,  or  Done;  F,  B,  X",
                     "Aside this turn; F: defend, or stand down; B: a temple's blessing; X: disband",
@@ -330,6 +337,8 @@ pub struct Session {
     /// a hex: where the selected units go, or where a city sends its new
     /// ones. Esc lets it go.
     picking: Option<Pick>,
+    /// The stops picked so far on the way (Shift+click), in order.
+    stops: Vec<Hex>,
     /// Why the last pick was refused, said until the next one.
     refused: Option<String>,
 
@@ -452,6 +461,7 @@ impl Session {
             go_to: find(&screen, GO_TO_ID)?,
             done: find(&screen, DONE_ID)?,
             picking: None,
+            stops: Vec::new(),
             refused: None,
 
             tasks: None,
@@ -974,20 +984,26 @@ impl Session {
             map.units().kinds().iter().find(|k| k.commander > 0).map_or("Leader", |k| k.name.as_str()).to_string();
         // The selected unit in a line, wherever it stands; a stack in a word.
         let line = match game.selected().and_then(|id| map.units().get(id)) {
-            _ if self.picking == Some(Pick::GoTo) => match &self.refused {
-                Some(why) => format!("Go to: {why}. Click another hex (Esc: never mind)."),
-                None => {
-                    "Go to: click the hex they go to, over as many turns as it takes (Esc: never mind).".to_string()
+            _ if self.picking.is_some() => {
+                let (what, first) = match self.picking {
+                    Some(Pick::GoTo) => ("Go to", "click the hex they go to, over as many turns as it takes"),
+                    _ => ("New units go to", "click the hex the city sends its new units to"),
+                };
+                let by = match self.stops.is_empty() {
+                    true => String::new(),
+                    false => format!(" (by way of {})", info::route_words(map, &self.stops)),
+                };
+                match (&self.refused, self.stops.is_empty()) {
+                    (Some(why), _) => format!("{what}{by}: {why}. Click another hex (Esc: never mind)."),
+                    (None, true) => format!("{what}: {first} (Shift+click: a stop on the way; Esc: never mind)."),
+                    (None, false) => {
+                        format!("{what}{by}: click where they end (Shift+click: another stop).")
+                    }
                 }
-            },
-            _ if matches!(self.picking, Some(Pick::Rally(_))) => {
-                "Click the hex the city sends its new units to (Esc: never mind).".to_string()
             }
-            Some(unit) if unit.goto.is_some() && game.selection().len() == 1 => format!(
-                "{} (on the way to {})",
-                info::unit_line(map, unit),
-                info::place(map, unit.goto.unwrap_or_default())
-            ),
+            Some(unit) if !unit.route.is_empty() && game.selection().len() == 1 => {
+                format!("{} (on the way to {})", info::unit_line(map, unit), info::route_words(map, &unit.route))
+            }
             Some(_) if game.selection_problem().is_some() => {
                 format!("They cannot go together: {}.", game.selection_problem().unwrap_or_default())
             }
@@ -1335,9 +1351,12 @@ impl Session {
                 let _ = self.screen.game.apply(Order::Build { city: id, what });
             }
             CityOrder::Details(id) => self.open_city(id),
-            CityOrder::PickRally(id) => self.picking = Some(Pick::Rally(id)),
+            CityOrder::PickRally(id) => {
+                (self.picking, self.refused) = (Some(Pick::Rally(id)), None);
+                self.stops.clear();
+            }
             CityOrder::NoRally(id) => {
-                let _ = self.screen.game.apply(Order::Rally { city: id, to: None });
+                let _ = self.screen.game.apply(Order::Rally { city: id, to: None, via: Vec::new() });
             }
             CityOrder::RaiseWalls(id) => {
                 let _ = self.screen.game.apply(Order::Walls { city: id });
@@ -1802,6 +1821,7 @@ impl Session {
         let own = game.selected().and_then(|id| game.map.units().get(id)).is_some_and(|u| u.side() == game.player());
         if own && self.can_act() {
             (self.picking, self.refused) = (Some(Pick::GoTo), None);
+            self.stops.clear();
         }
     }
 
@@ -1870,8 +1890,9 @@ impl Session {
         match pick {
             Pick::GoTo => {
                 let units = self.screen.game.selection().to_vec();
-                match self.screen.game.apply(Order::GoTo { units: units.clone(), to: hex }) {
+                match self.screen.game.apply(Order::GoTo { units: units.clone(), to: hex, via: self.stops.clone() }) {
                     Ok(_) => {
+                        self.stops.clear();
                         // The cursor follows them; nothing stays selected.
                         let game = &self.screen.game;
                         let at = units.iter().find_map(|id| game.map.units().get(*id)).map(|u| u.pos());
@@ -1889,8 +1910,36 @@ impl Session {
                 }
             }
             Pick::Rally(city) => {
-                let _ = self.screen.game.apply(Order::Rally { city, to: Some(hex) });
+                match self.screen.game.apply(Order::Rally { city, to: Some(hex), via: self.stops.clone() }) {
+                    Ok(_) => self.stops.clear(),
+                    // Refused: say why, and pick again.
+                    Err(why) => {
+                        self.refused = Some(why);
+                        self.picking = Some(pick);
+                    }
+                }
             }
+        }
+    }
+
+    /// Shift+click (or Shift+Enter) while picking where units go: a stop on
+    /// the way, if they (or what the city builds) can get there from the
+    /// last; else it says why. The picking goes on: a click without Shift
+    /// picks where they end.
+    fn add_stop(&mut self, pick: Pick, hex: Hex) {
+        let game = &self.screen.game;
+        let side = game.player();
+        let route: Vec<Hex> = self.stops.iter().copied().chain([hex]).collect();
+        let checked = match pick {
+            Pick::GoTo => game.check_route(side, game.selection(), &route),
+            Pick::Rally(city) => game.check_rally(side, city, &route),
+        };
+        match checked {
+            Ok(()) => {
+                self.stops.push(hex);
+                self.refused = None;
+            }
+            Err(why) => self.refused = Some(why),
         }
     }
 
@@ -2110,12 +2159,18 @@ impl Session {
             self.screen.navigate(command);
             // A click, or Enter at the cursor, chooses a hex (or picks it).
             // C++: MapWidget::OnEvent
-            let hex = match command {
-                MapCommand::Click(p, size) => self.screen.pick(p, size),
-                MapCommand::Key(MapKey::Enter) => Some(self.screen.game.map.cursor),
-                _ => None,
+            // With Shift, while picking, a stop on the way.
+            let (hex, stop) = match command {
+                MapCommand::Click(p, size, shift) => (self.screen.pick(p, size), shift),
+                MapCommand::Key(MapKey::Enter) => (Some(self.screen.game.map.cursor), false),
+                MapCommand::Key(MapKey::ShiftEnter) => (Some(self.screen.game.map.cursor), true),
+                _ => (None, false),
             };
             match (hex, self.picking.take()) {
+                (Some(hex), Some(pick)) if stop => {
+                    self.picking = Some(pick);
+                    self.add_stop(pick, hex);
+                }
                 (Some(hex), Some(pick)) => {
                     self.refused = None;
                     self.picked(pick, hex);
@@ -2315,6 +2370,16 @@ impl Scene for Session {
     /// Where the selected unit can go.
     fn marked(&self, hex: Hex) -> bool {
         self.screen.game.can_move_to(hex)
+    }
+
+    /// The stops picked so far (Go to, or a city's rally point), or else
+    /// the route of the selected unit, if it is on one.
+    fn outlined(&self) -> &[Hex] {
+        if self.picking.is_some() {
+            return &self.stops;
+        }
+        let game = &self.screen.game;
+        game.selected().and_then(|id| game.map.units().get(id)).map_or(&[], |u| u.route.as_slice())
     }
 
     /// The selected unit shows on its hex, over the others of its stack (in a

@@ -8,7 +8,7 @@
 use crate::game::{CityState, Game, Ghost, Sight, StackState, Task, describe_terrain};
 use crate::orders::{Event, Fallen, Record};
 use crate::state::scenario::side_name;
-use crate::state::{City, Hex, Map, MoveCost, Side, Travel, Unit, UnitProd};
+use crate::state::{City, Hex, Map, MoveCost, Side, TileType, Travel, Unit, UnitProd};
 
 /// The line about the hex under the cursor: the turn, the hex's terrain and
 /// road, its city's name, how many units stand there, and, if the selected
@@ -243,6 +243,18 @@ fn whose(side: Side) -> String {
 /// or "row 5, column 9".
 pub fn place(map: &Map, at: Hex) -> String {
     map.city_at(at).map_or(format!("row {}, column {}", at.row, at.col), |c| c.name.clone())
+}
+
+/// A standing order's stops in words, in order: "the temple at row 9,
+/// column 12, then Redhold".
+pub fn route_words(map: &Map, route: &[Hex]) -> String {
+    let stop = |at: &Hex| match map.tile(*at) {
+        Some(tile) if tile.kind == TileType::Temple && map.city_at(*at).is_none() => {
+            format!("the temple at {}", place(map, *at))
+        }
+        _ => place(map, *at),
+    };
+    route.iter().map(stop).collect::<Vec<_>>().join(", then ")
 }
 
 /// A line with its first letter a capital.
@@ -639,7 +651,7 @@ pub fn task_line(game: &Game, task: &Task) -> String {
                 Some(city) => format!("in {}", city.name),
                 None => format!("at row {}, column {}", at.row, at.col),
             };
-            let goal = here.iter().find_map(|u| u.goto).map_or(String::new(), |to| place(map, to));
+            let goal = here.iter().find(|u| !u.route.is_empty()).map_or(String::new(), |u| route_words(map, &u.route));
             let what = match state {
                 StackState::Waiting => "no orders yet".to_string(),
                 StackState::Stalled => format!("stopped on the way to {goal}"),
@@ -662,9 +674,9 @@ pub fn task_line(game: &Game, task: &Task) -> String {
                 }
                 _ => "builds nothing".to_string(),
             };
-            match city.rally {
-                Some(to) => format!("{}: {what}; new units go to {}", city.name, place(map, to)),
-                None => format!("{}: {what}", city.name),
+            match city.rally.is_empty() {
+                false => format!("{}: {what}; new units go to {}", city.name, route_words(map, &city.rally)),
+                true => format!("{}: {what}", city.name),
             }
         }
     }

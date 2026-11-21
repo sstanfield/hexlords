@@ -236,7 +236,7 @@ fn a_march_into_the_fog_meets_what_is_there() {
     // unseen on the road: a battle, not a stop.
     let mut game = road(true);
     let id = game.map.units_at(REDHOLD)[0];
-    let events = game.apply(Order::GoTo { units: vec![id], to: Hex::new(5, 20) }).unwrap();
+    let events = game.apply(Order::GoTo { units: vec![id], to: Hex::new(5, 20), via: Vec::new() }).unwrap();
     assert!(events.iter().any(|e| matches!(e, Event::Surprise { .. })), "{events:?}");
     assert!(!events.iter().any(|e| matches!(e, Event::Stalled { .. })));
 }
@@ -353,11 +353,11 @@ fn no_order_goes_into_land_never_seen_nor_through_it() {
     assert!(!game.sight(Side::Red).knows(beyond));
     assert_eq!(game.apply(Order::Move { units: vec![scout], to: beyond }), Err(UNSEEN.to_string()));
     assert_eq!(game.apply(Order::Toward { units: vec![scout], to: BLUEMOOR }), Err(UNSEEN.to_string()));
-    assert_eq!(game.apply(Order::GoTo { units: vec![scout], to: BLUEMOOR }), Err(UNSEEN.to_string()));
+    assert_eq!(game.apply(Order::GoTo { units: vec![scout], to: BLUEMOOR, via: Vec::new() }), Err(UNSEEN.to_string()));
     let redhold = game.map.city_at(REDHOLD).unwrap().id;
-    assert_eq!(game.apply(Order::Rally { city: redhold, to: Some(beyond) }), Err(UNSEEN.to_string()));
+    assert_eq!(game.apply(Order::Rally { city: redhold, to: Some(beyond), via: Vec::new() }), Err(UNSEEN.to_string()));
     // Known land the way to which is not known: no way there.
-    let why = game.apply(Order::GoTo { units: vec![scout], to: Hex::new(5, 7) }).unwrap_err();
+    let why = game.apply(Order::GoTo { units: vec![scout], to: Hex::new(5, 7), via: Vec::new() }).unwrap_err();
     assert!(why.contains("cannot get there"), "{why}");
     // Selected, it can go to the edge of what is known, and no farther.
     assert!(game.select_unit(scout));

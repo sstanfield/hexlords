@@ -159,9 +159,10 @@ pub struct Unit {
     /// What the temples gave it: each temple's place, and what it gave. A
     /// unit is blessed once at each temple (`Unit::bless`).
     pub blessings: Vec<(Hex, Blessing)>,
-    /// A standing order: where it goes, a turn at a time (`Order::GoTo`);
-    /// and whether its last step was stopped (it waits for its player).
-    pub goto: Option<Hex>,
+    /// A standing order: the stops it goes to, a turn at a time, in order
+    /// (`Order::GoTo`); the last is where it ends. Empty: none. And whether
+    /// its last step was stopped (it waits for its player).
+    pub route: Vec<Hex>,
     pub stalled: bool,
     /// This turn: it has been given an order (it moved), or its player is
     /// done with it (`Order::Done`).
@@ -237,6 +238,11 @@ impl Unit {
         self.strength
             .saturating_add(u32::from(self.level.saturating_sub(1)))
             .saturating_add(blessed.saturating_mul(Blessing::STRENGTH))
+    }
+
+    /// Where its standing order takes it now: the first stop of its route.
+    pub fn goto(&self) -> Option<Hex> {
+        self.route.first().copied()
     }
 
     /// True if the temple at `at` has blessed it.
@@ -348,7 +354,7 @@ impl Units {
             experience: 0,
             given_name: None,
             blessings: Vec::new(),
-            goto: None,
+            route: Vec::new(),
             stalled: false,
             moved: false,
             done: false,

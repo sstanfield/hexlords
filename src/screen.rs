@@ -461,7 +461,7 @@ impl MapScreen {
     pub fn navigate(&mut self, command: MapCommand) {
         match command {
             // The view stays where it is.
-            MapCommand::Hover(p, size) | MapCommand::Press(p, size) | MapCommand::Click(p, size) => {
+            MapCommand::Hover(p, size) | MapCommand::Press(p, size) | MapCommand::Click(p, size, _) => {
                 if let Some(hex) = self.pick(p, size) {
                     self.game.set_cursor(hex);
                 }
@@ -483,7 +483,7 @@ impl MapScreen {
                         self.view.center_on(self.game.map.cursor);
                     }
                 }
-                MapKey::Enter => {}
+                MapKey::Enter | MapKey::ShiftEnter => {}
                 MapKey::Esc => self.close_help(),
             },
             MapCommand::Pan(dx, dy) => {
@@ -736,6 +736,11 @@ pub trait Scene {
     /// one, in the game.
     fn front_unit(&self) -> Option<crate::state::UnitId> {
         None
+    }
+
+    /// The hexes the main map outlines: in the game, the stops of a route.
+    fn outlined(&self) -> &[Hex] {
+        &[]
     }
 
     /// The tint of the marked hexes: red, green, blue and how much of it.
