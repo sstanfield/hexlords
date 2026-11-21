@@ -169,7 +169,7 @@ fn the_text_protocol_says_the_stops_in_order() {
 // The screen.
 
 fn session(game: Game) -> Session {
-    Session::with_game(&assets(), Size::new(1024, 768), 96, game).expect("the session starts")
+    common::with_game(&assets(), Size::new(1024, 768), 96, game).expect("the session starts")
 }
 
 fn click_hex(s: &mut Session, hex: Hex) {

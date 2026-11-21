@@ -2520,14 +2520,26 @@ impl Game {
     }
 
     fn stack_after(&self, side: Side, from: Option<Hex>, back: bool) -> Option<Hex> {
+        let hexes = self.stacks_of(side);
+        let able = self.waiting_stacks(side);
+        next_in(if able.is_empty() { &hexes } else { &able }, from, back)
+    }
+
+    /// The hexes with stacks of `side`'s, in reading order.
+    pub fn stacks_of(&self, side: Side) -> Vec<Hex> {
         let map = &self.map;
         let mut hexes: Vec<Hex> = map.units().of_side(side).map(|u| u.pos()).filter(|h| map.contains(*h)).collect();
         hexes.sort_by_key(|h| (h.row, h.col));
         hexes.dedup();
-        // A stack waits for orders if one of its units can still go
-        // somewhere, its player is not done with it (nor has moved it this
-        // turn: a stack moved and stopped has had its orders), and it is on
-        // no standing order (or one that stalled).
+        hexes
+    }
+
+    /// The hexes of `side`'s stacks that wait for orders, in reading order:
+    /// one of its units can still go somewhere, its player is not done with
+    /// it (nor has moved it this turn: a stack moved and stopped has had its
+    /// orders), and it is on no standing order (or one that stalled).
+    pub fn waiting_stacks(&self, side: Side) -> Vec<Hex> {
+        let map = &self.map;
         let can_go = |hex: &Hex| {
             map.units_at(*hex).iter().filter_map(|id| map.units().get(*id)).any(|u| {
                 u.side() == side
@@ -2539,8 +2551,7 @@ impl Game {
                     && compute_range(map, u).reachable().next().is_some()
             })
         };
-        let able: Vec<Hex> = hexes.iter().copied().filter(can_go).collect();
-        next_in(if able.is_empty() { &hexes } else { &able }, from, back)
+        self.stacks_of(side).into_iter().filter(can_go).collect()
     }
 
     /// What `side` has: each of its stacks and cities, as a task (what it
@@ -2548,10 +2559,8 @@ impl Game {
     /// ([`Task::tier`]), then stacks before cities, then by place.
     pub fn tasks(&self, side: Side) -> Vec<Task> {
         let map = &self.map;
-        let mut hexes: Vec<Hex> = map.units().of_side(side).map(|u| u.pos()).filter(|h| map.contains(*h)).collect();
-        hexes.sort_by_key(|h| (h.row, h.col));
-        hexes.dedup();
-        let mut tasks: Vec<Task> = hexes
+        let mut tasks: Vec<Task> = self
+            .stacks_of(side)
             .into_iter()
             .map(|at| {
                 let units: Vec<&Unit> = map

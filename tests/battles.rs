@@ -247,7 +247,7 @@ fn push_id(s: &mut Session, name: &str) {
 }
 
 fn session(game: Game) -> Session {
-    Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap()
+    common::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap()
 }
 
 #[test]

@@ -101,7 +101,7 @@ fn each_side_reads_what_is_about_it() {
 // The screen.
 
 fn session(setup: impl FnOnce(&mut Setup)) -> Session {
-    Session::with_game(&assets(), Size::new(1024, 768), 96, game(setup)).unwrap()
+    common::with_game(&assets(), Size::new(1024, 768), 96, game(setup)).unwrap()
 }
 
 fn push(s: &mut Session, name: &str) {
@@ -130,14 +130,14 @@ fn the_log_has_the_battles_you_fought_on_both_sides() {
     assert!(s.battle().is_none() && !s.log_lines().is_empty());
     press(&mut s, SpecialKey::Esc);
     assert!(s.log_lines().is_empty());
-    // End turn: red's log opens, and says whose turn it is; the button waits.
+    // End turn: the button waits for blue (the log stays shut).
     let button = |s: &Session| s.screen.ui.text(widget(s, END_TURN_ID)).unwrap_or("").to_string();
     push(&mut s, END_TURN_ID);
-    assert_eq!(s.log_status_line(), "Blue is playing...");
+    assert!(s.log_lines().is_empty());
     assert_eq!(button(&s), "Waiting for blue");
     // A frame: blue plays. It attacks Redhold's last levy and takes the
-    // city, and red's log has it at once, new (red's own attack, before it
-    // ended its turn, is not).
+    // city: red's turn starts with its log open, and it has that, new
+    // (red's own attack, before it ended its turn, is not).
     s.frame(0);
     let new = s.log_new_lines();
     assert!(
@@ -151,7 +151,7 @@ fn the_log_has_the_battles_you_fought_on_both_sides() {
     assert_eq!(button(&s), "Start turn");
     push(&mut s, END_TURN_ID);
     assert!(s.log_lines().is_empty());
-    assert_eq!(button(&s), "End red's turn");
+    assert_eq!(button(&s), "End turn (1)", "what red has left waits");
     // L opens it again: all of round 1, in order.
     type_char(&mut s, 'l');
     let lines = s.log_lines();
@@ -203,7 +203,7 @@ fn when_the_last_person_is_out_the_computer_plays_on_a_turn_a_frame() {
     let mut setup = Setup::solo(&game.map, Some(Side::Red), "passive");
     setup.combat.chance = 0;
     setup.set_players("blue=simple").unwrap();
-    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(setup)).unwrap();
+    let mut s = common::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(setup)).unwrap();
     let end_turn = |s: &Session| s.screen.ui.state(widget(s, hexgame::session::END_TURN_ID));
     assert!(!end_turn(&s).contains(turbo_ferret::WidgetState::DISABLED));
     // Green's turn, then blue's: blue takes Redhold, red is out, and its log

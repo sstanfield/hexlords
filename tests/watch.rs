@@ -83,7 +83,7 @@ fn the_game_keeps_a_battles_fight_for_a_few_rounds() {
 // The screen.
 
 fn session(game: Game) -> Session {
-    Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap()
+    common::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap()
 }
 
 fn push(s: &mut Session, name: &str) {

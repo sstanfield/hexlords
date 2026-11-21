@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use turbo_ferret::Size;
 
 use crate::new_game::NewGame;
+use crate::options_window::Options;
 use crate::screen::{MapScreen, Scene};
 use crate::session::Session;
 use crate::state::{Hex, UnitId};
@@ -22,18 +23,21 @@ enum Now {
 pub struct Shell {
     assets: PathBuf,
     now: Now,
+    /// The person's options, from one game to the next.
+    options: Options,
 }
 
 impl Shell {
     /// Begin with the new game screen, `chosen` (a map's path) chosen.
     pub fn new_game(assets: &Path, viewport: Size, dpi: i32, chosen: Option<&Path>) -> Result<Shell, String> {
         let screen = NewGame::new(assets, viewport, dpi, chosen)?;
-        Ok(Shell { assets: assets.to_path_buf(), now: Now::NewGame(Box::new(screen)) })
+        Ok(Shell { assets: assets.to_path_buf(), now: Now::NewGame(Box::new(screen)), options: Options::default() })
     }
 
     /// Begin with a game.
     pub fn playing(assets: &Path, session: Session) -> Shell {
-        Shell { assets: assets.to_path_buf(), now: Now::Playing(Box::new(session)) }
+        let options = session.options();
+        Shell { assets: assets.to_path_buf(), now: Now::Playing(Box::new(session)), options }
     }
 
     /// The new game screen, while it shows.
@@ -73,12 +77,13 @@ impl Shell {
         match &mut self.now {
             Now::NewGame(screen) if screen.wants_to_start() => {
                 let game = screen.take_game();
-                match Session::with_game(&self.assets, viewport, dpi, game) {
+                match Session::with_options(&self.assets, viewport, dpi, game, self.options) {
                     Ok(session) => self.now = Now::Playing(Box::new(session)),
                     Err(e) => eprintln!("hexgame: the game did not start: {e}"),
                 }
             }
             Now::Playing(session) if session.wants_new_game() => {
+                self.options = session.options();
                 match NewGame::new(&self.assets, viewport, dpi, None) {
                     Ok(screen) => self.now = Now::NewGame(Box::new(screen)),
                     Err(e) => eprintln!("hexgame: {e}"),

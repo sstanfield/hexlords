@@ -34,7 +34,7 @@ fn patterned(rows: u16, cols: u16) -> Map {
 /// 1024 x 768.
 fn session_on(rows: u16, cols: u16) -> Session {
     let game = common::rider_on(Map::new(rows, cols, TileType::Grass).unwrap());
-    Session::with_game(&assets(), Size::new(1024, 768), 96, game).expect("the session starts")
+    common::with_game(&assets(), Size::new(1024, 768), 96, game).expect("the session starts")
 }
 
 #[test]

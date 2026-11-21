@@ -433,18 +433,40 @@ thing to happen. Ideas to try, as the rules grow:
   the player can work down it.
 - **Production that repeats** until told otherwise (it does), and the lists
   of cities to see and change all of it in one place (they do).
-- **The next stack with points left**, a key away (built: N, and the Next
-  stack button; C and Next city for the cities); End turn could warn of
-  stacks that have done nothing.
+- **The next stack that waits for orders**, a key away (built: N, and the
+  Next stack button; C and Next city for the cities): the nearest to the
+  stack selected (or the last one Next went to) that it has not gone to
+  since it last went round them all, so that N works outward from where
+  the player is and never goes back and forth between two; Shift+N goes
+  back the way it came.
+- **Options** (built, the owner's word 2026-11-21: the turn should not be
+  burdensome, nor leave out details): the Game menu's Options (Cmd+, or
+  Ctrl+,) are the person's, not rules: they change what the screen does
+  for them, never what an order does (`options_window::Options`). The
+  first selects the next stack that waits by itself: when a turn starts
+  (the nearest to the cursor) and after each move or battle, as Done and
+  Defend do (on at first). End turn counts what waits for orders ("End
+  turn (3)": the tier-1 tasks), and, as the second option says (on at
+  first), asks before the turn ends while anything does, or while the
+  gold and the taxes will not pay next turn's upkeep (units would leave);
+  its window can show the tasks. The third tells a battle of the
+  person's in a line under the stack instead of playing it out in its
+  window (the log's Watch plays it); the fourth has a stack moved onto a
+  temple seek its blessing unasked, and says in that line what each was
+  given. The shell carries them from one game to the next.
 - **A log** (built): every battle a side fought, attacking or attacked,
   with who won and who died; the cities it took and lost; the units that
   left it unpaid; the sides out. The game keeps the history
   (`Game::history`); the log is what it says to the side at the screen.
-  End turn opens it, and while the others play (the computer's turns a
-  little apart, `COMPUTER_TURN_MS`) it fills, what is new in a color of its
-  own, a line on top saying whose turn it is; when the person's turn comes,
-  the button says Start turn, which closes it. (Fog of war will decide what
-  more a side may hear.)
+  When the person's turn comes it opens if the others did something to
+  them, or something went wrong at the start of their turn (a march
+  stopped short, units left unpaid), what is new in a color of its own;
+  the button says Start turn, which closes it (so does any order). With
+  nothing to tell, the turn starts at once (the owner's word 2026-11-21).
+  While the others play (the computer's turns a little apart,
+  `COMPUTER_TURN_MS`) the button says whose turn it waits for; L opens the
+  log, which fills as they play. A person put out of the game is told in
+  their log, once.
 - **Battles watched** (built): a battle is played out in a window, both
   stacks with each unit's strength and where its bonuses come from, then
   the exchanges a few a second (who fights lit, who is hit in red with an

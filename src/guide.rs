@@ -413,8 +413,17 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                 ("This game", order.to_string()),
                 (
                     "Your turn",
-                    "Move your stacks, set what your cities build, then End turn. While the others \
-                               play, your log shows what they do to you; Start turn begins yours."
+                    "Move your stacks, set what your cities build, then End turn. When your turn comes \
+                     again, your log opens if the others did something to you (Start turn closes it); \
+                     else your turn starts at once, the stack nearest the cursor that waits for orders \
+                     selected."
+                        .to_string(),
+                ),
+                (
+                    "Options",
+                    "The Game menu's Options: whether the next stack that waits is selected after each \
+                     move, whether a battle is told in a line or played out, whether a temple asks, \
+                     whether End turn asks while something waits for orders."
                         .to_string(),
                 ),
                 (
@@ -462,7 +471,8 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                     "Tasks",
                     "What you have left to do this turn: stacks with no orders and cities that build \
                            nothing first, then cities held up, then the rest. A stack you moved, or put \
-                           aside with D, is done for the turn: N passes it by (click it to move it again)."
+                           aside with D, is done for the turn: N passes it by (click it to move it again). \
+                           N goes to the nearest stack that waits, round them all; Shift+N goes back."
                         .to_string(),
                 ),
             ],

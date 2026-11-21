@@ -102,7 +102,7 @@ fn start_hands_the_window_to_the_game_set_up_as_chosen() {
     assert_eq!(game.controller(Side::Yellow), Some(&Controller::Computer("simple".to_string())));
     // Red plays first, and the button says so.
     assert_eq!(game.player(), Side::Red);
-    assert_eq!(session.screen.ui.text(widget(session, END_TURN_ID)), Some("End red's turn"));
+    assert_eq!(session.screen.ui.text(widget(session, END_TURN_ID)), Some("End turn (2)"));
     assert!(exists(session, "main_map") && !exists(session, START_ID));
 }
 
@@ -176,7 +176,7 @@ fn duel(setup: impl FnOnce(&mut Setup)) -> Session {
     let game = Game::from_scenario(Scenario { map, assets: None, warnings });
     let mut s = Setup::solo(&game.map, Some(Side::Red), "passive");
     setup(&mut s);
-    Session::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(s)).unwrap()
+    common::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(s)).unwrap()
 }
 
 #[test]
@@ -204,7 +204,7 @@ fn between_two_peoples_turns_the_map_is_covered() {
     // Blue says they are there.
     begin(&mut s);
     assert!(!s.covered() && !exists(&s, COVER_ID));
-    assert_eq!(s.screen.ui.text(widget(&s, END_TURN_ID)), Some("End blue's turn"));
+    assert_eq!(s.screen.ui.text(widget(&s, END_TURN_ID)), Some("End turn (1)"));
     // Red's units are not blue's to move.
     let p = common::pixel_of(&s, Hex::new(5, 5));
     click(&mut s, p);
@@ -215,18 +215,17 @@ fn between_two_peoples_turns_the_map_is_covered() {
 fn the_computer_plays_its_turn_between_the_persons() {
     let mut s = duel(|s| s.set_players("blue=simple").unwrap());
     s.end_turn();
-    // Red's log is open while blue plays (the frames play its turn).
-    assert_eq!(s.log_status_line(), "Blue is playing...");
+    s.pump();
+    // The button waits while blue plays (the frames play its turn).
+    assert_eq!(s.screen.ui.text(widget(&s, END_TURN_ID)), Some("Waiting for blue"));
     s.frame(0);
-    // Blue played (and passed: it has nothing), and it is red's turn again,
-    // to start when red is ready.
+    // Blue played (and passed: it has nothing), and it is red's turn again:
+    // nothing happened to red, so it starts at once, the log shut.
     assert_eq!((s.screen.game.player(), s.screen.game.turn()), (Side::Red, 2));
     assert!(!s.covered(), "one person: no cover");
-    assert_eq!(s.screen.ui.text(widget(&s, END_TURN_ID)), Some("Start turn"));
-    s.start_turn();
     s.pump();
     assert!(s.log_lines().is_empty());
-    assert_eq!(s.screen.ui.text(widget(&s, END_TURN_ID)), Some("End red's turn"));
+    assert_eq!(s.screen.ui.text(widget(&s, END_TURN_ID)), Some("End turn (2)"));
 }
 
 #[test]

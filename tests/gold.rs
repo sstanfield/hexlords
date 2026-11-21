@@ -149,7 +149,7 @@ fn a_map_gives_its_cities_taxes() {
 #[test]
 fn the_menu_bar_shows_the_treasury_and_a_city_its_taxes() {
     let mut s =
-        Session::with_game(&assets(), Size::new(1024, 768), 96, game("garrison soldiers\n", 30, |_| {})).unwrap();
+        common::with_game(&assets(), Size::new(1024, 768), 96, game("garrison soldiers\n", 30, |_| {})).unwrap();
     let says = |s: &Session, name: &str| s.screen.ui.text(widget(s, name)).unwrap_or("").to_string();
     // At a glance, at the right end of the menu bar: the gold, what comes in
     // a turn, what goes out.

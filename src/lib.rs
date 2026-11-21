@@ -45,6 +45,7 @@ pub mod log_window;
 pub mod mapgen;
 pub mod minimap_view;
 pub mod new_game;
+pub mod options_window;
 pub mod orders;
 pub mod paths;
 pub mod planner;

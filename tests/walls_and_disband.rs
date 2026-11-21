@@ -170,7 +170,7 @@ fn push(s: &mut Session, name: &str) {
 fn x_asks_and_disbands_the_selected_units() {
     let game = game("garrison soldiers 2\n", "", 50);
     let red = at(&game, REDHOLD);
-    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
+    let mut s = common::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
     click_hex(&mut s, REDHOLD);
     type_char(&mut s, 'x');
     let asks = s.disband().expect("it asks");
@@ -192,7 +192,7 @@ fn x_asks_and_disbands_the_selected_units() {
 #[test]
 fn the_city_window_raises_the_walls() {
     let game = game("", "", 100);
-    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
+    let mut s = common::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
     click_hex(&mut s, REDHOLD);
     type_char(&mut s, 'o');
     s.frame(0);
@@ -395,7 +395,7 @@ fn a_city_window_with_nine_kinds_fits_the_screen() {
     let game = Game::from_scenario(Scenario { map, assets: None, warnings });
     let mut setup = Setup::solo(&game.map, Some(Side::Red), "passive");
     setup.gold = 500;
-    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(setup)).unwrap();
+    let mut s = common::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(setup)).unwrap();
     click_hex(&mut s, REDHOLD);
     type_char(&mut s, 'o');
     s.frame(0);
@@ -412,7 +412,7 @@ fn a_city_window_with_nine_kinds_fits_the_screen() {
 #[test]
 fn the_disband_window_lives_in_its_turn_and_says_why_not() {
     let game = game("garrison soldiers 2\n", "", 50);
-    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
+    let mut s = common::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
     click_hex(&mut s, REDHOLD);
     type_char(&mut s, 'x');
     assert!(s.disband().is_some());

@@ -318,7 +318,7 @@ fn the_panels_show_a_units_level_and_blessing() {
         "{details:?}"
     );
     // On the screen, its slot's icon has a veteran's ring.
-    let s = Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
+    let s = common::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
     assert_eq!(s.stack(), ["5 \u{b7} 12/12"]);
 }
 
@@ -357,7 +357,7 @@ fn push(s: &mut Session, name: &str) {
 fn a_stack_on_a_temple_is_asked_and_told_what_each_was_given() {
     let game = game("garrison soldiers 2\n", "", |s| s.seed = 3);
     let red = at(&game, REDHOLD);
-    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
+    let mut s = common::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
     click_hex(&mut s, REDHOLD);
     click_hex(&mut s, TEMPLE);
     let asks = s.temple().expect("the temple asks");
@@ -385,7 +385,7 @@ fn a_stack_on_a_temple_is_asked_and_told_what_each_was_given() {
 fn a_temple_says_why_it_would_not_bless() {
     let game = game("garrison soldiers 2\n", "", |_| {});
     let red = at(&game, REDHOLD);
-    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
+    let mut s = common::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
     click_hex(&mut s, REDHOLD);
     click_hex(&mut s, TEMPLE);
     assert!(s.temple().is_some_and(|t| t.asks()));
@@ -401,7 +401,7 @@ fn a_temple_says_why_it_would_not_bless() {
 fn no_orders_once_the_game_is_over() {
     let game = game("garrison soldiers 3\n", "", |s| s.combat.chance = 0);
     let red = at(&game, REDHOLD);
-    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
+    let mut s = common::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
     let farwater = s.screen.game.map.city_at(Hex::new(15, 15)).unwrap().id;
     s.screen.game.map.city_mut(farwater).unwrap().side = Side::Red;
     s.screen.game.apply(Order::Move { units: red.clone(), to: BLUEMOOR }).unwrap();

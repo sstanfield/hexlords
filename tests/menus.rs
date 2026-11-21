@@ -40,7 +40,7 @@ fn game(setup: impl FnOnce(&mut Setup)) -> Game {
 }
 
 fn session(setup: impl FnOnce(&mut Setup)) -> Session {
-    Session::with_game(&assets(), Size::new(1024, 768), 96, game(setup)).unwrap()
+    common::with_game(&assets(), Size::new(1024, 768), 96, game(setup)).unwrap()
 }
 
 fn open(s: &Session) -> Option<TbId> {

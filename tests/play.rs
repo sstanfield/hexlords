@@ -154,7 +154,7 @@ fn the_stacks_that_can_move_and_the_cities_one_after_the_other() {
 // The screen.
 
 fn session(setup: impl FnOnce(&mut Setup)) -> Session {
-    Session::with_game(&assets(), Size::new(1024, 768), 96, game(setup)).unwrap()
+    common::with_game(&assets(), Size::new(1024, 768), 96, game(setup)).unwrap()
 }
 
 fn push(s: &mut Session, name: &str) {

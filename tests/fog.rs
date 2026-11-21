@@ -63,7 +63,7 @@ fn a_side_sees_near_its_units_and_cities() {
 }
 
 fn session(game: Game) -> Session {
-    Session::with_game(&assets(), Size::new(1024, 768), 96, game).expect("the session starts")
+    common::with_game(&assets(), Size::new(1024, 768), 96, game).expect("the session starts")
 }
 
 fn look(s: &mut Session, hex: Hex) {

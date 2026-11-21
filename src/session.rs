@@ -36,6 +36,7 @@ use crate::guide;
 use crate::help::{HelpSection, command_key, fullscreen_keys};
 use crate::info;
 use crate::log_window::{self, LogWindow};
+use crate::options_window::{self, Options, OptionsWindow};
 use crate::orders::{Event, Order};
 use crate::render::{AssetDirs, coin_icon, unit_icon};
 use crate::screen::{FULLSCREEN_ID, HELP_KEYS_ID, MapScreen, QUIT_ID, Scene, ZOOM_IN_ID, ZOOM_OUT_ID};
@@ -116,6 +117,14 @@ pub const DONE_ID: &str = "done";
 pub const TASKS_ID: &str = "tasks";
 pub const MY_CITIES_ID: &str = "my_cities";
 pub const CITY_DETAILS_ID: &str = "city_details";
+/// The Game menu's Options (`options_window`).
+pub const OPTIONS_ID: &str = "options";
+/// The window End turn opens first while something waits for orders
+/// (Options), and its buttons.
+pub const END_ASK_ID: &str = "end_turn_ask";
+pub const END_ANYWAY_ID: &str = "end_turn_anyway";
+pub const END_TASKS_ID: &str = "end_turn_tasks";
+pub const END_KEEP_ID: &str = "end_turn_keep";
 /// The cover between two people's turns, and its button.
 pub const COVER_ID: &str = "turn_cover";
 pub const BEGIN_TURN_ID: &str = "begin_turn";
@@ -230,6 +239,7 @@ fn help_section() -> Vec<HelpSection> {
     let end_turn = format!("{}+T,  or  End turn", command_key());
     let undo = format!("{}+Z,  or  Undo", command_key());
     let new_game = format!("{}+N", command_key());
+    let options = format!("{}+,", command_key());
     vec![
         HelpSection::new(
             "The game",
@@ -246,17 +256,15 @@ fn help_section() -> Vec<HelpSection> {
                 ),
                 ("Esc", "Close the menu or the window on top; with none open, drop the selection"),
                 (&undo, "Take back the last move, a city's work or its walls (not a battle)"),
-                (&end_turn, "End the turn: your log shows what the others do; then Start turn"),
+                (&end_turn, "End the turn (End turn (3): three stacks or cities still wait for orders)"),
                 (&new_game, "A new game (once this one is over at once; before, it asks)"),
+                (&options, "Options: what the game does for you as a turn goes (selects, asks, tells)"),
             ],
         ),
         HelpSection::new(
             "Units",
             &[
-                (
-                    "N,  or  Next",
-                    "Select the next stack waiting for orders (Shift+N: the one before); moved ones are done",
-                ),
+                ("N,  or  Next", "Select the nearest stack waiting for orders (Shift+N: back); moved ones are done"),
                 ("G,  or  Go to", "Then click a hex: the selected units go there, over as many turns as it takes"),
                 (
                     "Shift+click,  or  Shift+Enter",
@@ -371,6 +379,24 @@ pub struct Session {
     last_play: Option<u64>,
     /// The hex of the stack Next stack went to last.
     cycled: Option<Hex>,
+    /// The stacks Next stack has gone to since it last went round (it goes
+    /// to the nearest it has not), and the way it came (Shift+N goes back).
+    visited: Vec<Hex>,
+    trail: Vec<Hex>,
+    /// What the person at the screen has chosen, and its window while it is
+    /// open.
+    options: Options,
+    options_window: Option<OptionsWindow>,
+    /// What End turn asks first, while it is open.
+    end_ask: Option<WindowParts>,
+    /// How many stacks and cities wait for orders (tier 1 tasks), as of the
+    /// map's revision and the side it was counted for.
+    waiting: (usize, usize),
+    waiting_of: Option<(u64, Side)>,
+    /// A line said under the stack in place of the selected unit's, until
+    /// the next click or key: how a battle went (Options: told in a line),
+    /// what a temple gave.
+    notice: Option<String>,
     /// The windows about cities, while they are open.
     city_window: Option<CityWindow>,
     city_list: Option<CityList>,
@@ -385,6 +411,8 @@ pub struct Session {
     game_over: Option<WindowParts>,
     /// A new game was asked for (the game over window's button, the menu).
     wants_new_game: bool,
+    /// The last person here is out, and their log said so.
+    told_out: bool,
     /// The window that asks whether to leave the game for a new one, while
     /// it is open.
     ask_new: Option<WindowParts>,
@@ -394,8 +422,20 @@ pub struct Session {
 
 impl Session {
     /// Set up the UI for a window of `viewport` pixels at `dpi` with the skin and
-    /// the layout from the asset directory, playing `game`.
+    /// the layout from the asset directory, playing `game`, with the options
+    /// the game starts with (`Options::default`).
     pub fn with_game(assets: &Path, viewport: Size, dpi: i32, game: Game) -> Result<Session, String> {
+        Session::with_options(assets, viewport, dpi, game, Options::default())
+    }
+
+    /// The same, with the person's `options`.
+    pub fn with_options(
+        assets: &Path,
+        viewport: Size,
+        dpi: i32,
+        game: Game,
+        options: Options,
+    ) -> Result<Session, String> {
         let dirs = AssetDirs::new(assets, game.assets.as_deref());
         let mut screen = MapScreen::new(assets, viewport, dpi, LAYOUT, game)?;
         screen.set_help(help_section());
@@ -476,6 +516,14 @@ impl Session {
             sight_of: None,
             minimap_of: (Vec::new(), None),
             cycled: None,
+            visited: Vec::new(),
+            trail: Vec::new(),
+            options,
+            options_window: None,
+            end_ask: None,
+            waiting: (0, 0),
+            waiting_of: None,
+            notice: None,
             city_window: None,
             city_list: None,
             end_turn: Line::find(&screen, END_TURN_ID)?,
@@ -484,19 +532,16 @@ impl Session {
             last_person: None,
             game_over: None,
             wants_new_game: false,
+            told_out: false,
             ask_new: None,
             battle: None,
             screen,
         };
         session.apply_layout_sizes();
         // The computer's turns that come before the first person's are
-        // played by the frames, the log open; or the first person is handed
-        // the game.
+        // played by the frames; or the first person is handed the game.
         session.between = !session.persons_turn();
         session.turn_passed();
-        if session.between {
-            session.open_log();
-        }
         session.refresh();
         session.screen.settle();
         Ok(session)
@@ -515,9 +560,9 @@ impl Session {
     }
 
     /// The person whose turn it is has done (End turn): the next side's
-    /// turn. Their log opens, and shows what the others do, a turn at a time
-    /// (the frames play the computer's); when it is a person's turn again,
-    /// Start turn begins it.
+    /// turn (the frames play the computer's, a turn at a time). When it is a
+    /// person's turn again, their log opens if anything happened to them,
+    /// and Start turn begins it; else it begins at once.
     pub fn end_turn(&mut self) {
         // Only a person's turn is the screen's to end (once nobody here is in
         // the game, the computer plays on by itself).
@@ -535,9 +580,6 @@ impl Session {
         // Nobody else plays before this person's next turn (a side alone):
         // nothing to wait for.
         self.between = !(self.persons_turn() && self.screen.game.player() == side);
-        if self.between {
-            self.open_log();
-        }
         self.turn_passed();
     }
 
@@ -551,12 +593,115 @@ impl Session {
         if let Some(log) = self.log.take() {
             log.close(&mut self.screen.ui);
         }
+        self.begin_orders();
+    }
+
+    /// The person's turn begins at the screen (no cover over it, no log in
+    /// the way): Next stack goes round afresh, from the first stack that
+    /// waits for orders, which is selected (if the person said so: Options).
+    fn begin_orders(&mut self) {
+        (self.cycled, self.visited, self.trail) = (None, Vec::new(), Vec::new());
+        let busy = self.between || self.screen.game.selected().is_some();
+        if !self.options.next_after_move || !self.can_act() || busy {
+            return;
+        }
+        if !self.screen.game.waiting_stacks(self.screen.game.player()).is_empty() {
+            self.next_stack(false);
+        }
     }
 
     /// The button under the minimap, or Ctrl+T: Start turn between turns,
-    /// else End turn.
+    /// else End turn; but first, if the person said so (Options), a window
+    /// asks while stacks or cities wait for orders or the gold will not pay
+    /// the upkeep.
     fn turn_button(&mut self) {
-        if self.between { self.start_turn() } else { self.end_turn() }
+        if self.between {
+            self.start_turn();
+            return;
+        }
+        if self.options.ask_end_turn && self.can_act() && self.end_ask.is_none() {
+            let lines = self.end_turn_worries();
+            if !lines.is_empty() {
+                self.ask_end_turn(&lines);
+                return;
+            }
+        }
+        self.close_end_ask();
+        self.end_turn();
+    }
+
+    /// How many of the player's stacks and cities wait for orders (the
+    /// tasks that need them), counted again only when the map changed.
+    fn waiting_now(&mut self) -> (usize, usize) {
+        let game = &self.screen.game;
+        let key = (game.map.revision(), game.player());
+        if self.waiting_of != Some(key) {
+            let tasks = game.tasks(key.1);
+            let needs = tasks.iter().filter(|t| t.tier() == 1);
+            let stacks = needs.clone().filter(|t| matches!(t, Task::Stack { .. })).count();
+            self.waiting = (stacks, needs.count() - stacks);
+            self.waiting_of = Some(key);
+        }
+        if self.persons_turn() { self.waiting } else { (0, 0) }
+    }
+
+    /// What End turn would leave undone, in lines: the stacks and cities
+    /// that wait for orders, and upkeep the gold will not pay (units leave).
+    fn end_turn_worries(&mut self) -> Vec<String> {
+        let (stacks, cities) = self.waiting_now();
+        let mut lines = Vec::new();
+        match stacks {
+            0 => {}
+            1 => lines.push("A stack waits for orders.".to_string()),
+            n => lines.push(format!("{n} stacks wait for orders.")),
+        }
+        match cities {
+            0 => {}
+            1 => lines.push("A city builds nothing.".to_string()),
+            n => lines.push(format!("{n} cities build nothing.")),
+        }
+        let game = &self.screen.game;
+        let side = game.player();
+        let (have, owed) = (game.gold(side).saturating_add(game.income(side)), game.upkeep(side));
+        if owed > have {
+            lines.push(format!(
+                "Next turn your gold and taxes ({have}) will not pay the upkeep ({owed}): units will leave you."
+            ));
+        }
+        lines
+    }
+
+    /// The window that asks before the turn ends, saying what waits.
+    fn ask_end_turn(&mut self, lines: &[String]) {
+        let (root, area) = (self.screen.root_window(), self.window_area());
+        let ui = &mut self.screen.ui;
+        let parts = build::window(ui, root, END_ASK_ID, "End turn");
+        build::heading(ui, parts.content, "End your turn?");
+        for line in lines {
+            build::text(ui, parts.content, line);
+        }
+        let space = ui.dimension_converter().dp_to_px(SPACING_DP * 2);
+        build::gap(ui, parts.content, space);
+        let buttons = build::row(ui, parts.content, space);
+        build::primary_button(ui, buttons, END_ANYWAY_ID, "End the turn");
+        build::button(ui, buttons, END_TASKS_ID, "Show the tasks");
+        build::button(ui, buttons, END_KEEP_ID, "Keep playing");
+        build::text(ui, parts.content, "(Options: whether End turn asks.)");
+        build::place(ui, parts, area, (0.5, 0.4));
+        self.end_ask = Some(parts);
+        self.screen.settle();
+    }
+
+    /// Close the window End turn opened, if it is open.
+    fn close_end_ask(&mut self) {
+        if let Some(ask) = self.end_ask.take() {
+            build::close(&mut self.screen.ui, ask.window);
+        }
+    }
+
+    /// True while End turn asks first.
+    pub fn asks_end_turn(&self) -> bool {
+        self.end_ask.as_ref().is_some_and(|ask| build::is_open(&self.screen.ui, ask.window))
     }
 
     /// The computer plays one turn, that of the side whose turn it is, if the
@@ -642,6 +787,23 @@ impl Session {
         }
         // The panels are about the hex the cursor is on.
         self.shown = self.screen.game.map.cursor;
+        // The last person here is out: their log tells them (the computer
+        // plays on).
+        let out = self.last_person.is_some_and(|p| self.screen.game.out().contains(&p));
+        if out && !self.people_in_play() && !self.told_out {
+            self.told_out = true;
+            self.open_log();
+        }
+        // A person's turn has come (with no cover over it): their log, if
+        // anything happened to them; else it begins.
+        if person && self.screen.game.winner().is_none() && self.cover.is_none() {
+            if self.between && self.has_news(side) {
+                self.open_log();
+            } else {
+                self.between = false;
+                self.begin_orders();
+            }
+        }
     }
 
     /// Cover the map until `side`'s person says they are there.
@@ -1001,6 +1163,7 @@ impl Session {
                     }
                 }
             }
+            _ if self.notice.is_some() => self.notice.clone().unwrap_or_default(),
             Some(unit) if !unit.route.is_empty() && game.selection().len() == 1 => {
                 format!("{} (on the way to {})", info::unit_line(map, unit), info::route_words(map, &unit.route))
             }
@@ -1090,6 +1253,7 @@ impl Session {
         // The button says whose turn it ends (on a map without sides,
         // nobody's), or, between turns, that the next can start; while the
         // computer plays, whose turn it waits for.
+        let (stacks, cities) = self.waiting_now();
         let game = &self.screen.game;
         let (person, side) = (self.persons_turn(), game.player());
         let theirs = person && game.winner().is_none();
@@ -1098,6 +1262,8 @@ impl Session {
             Side::Grey => "End turn".to_string(),
             _ if !person => format!("Waiting for {}", side_name(side)),
             _ if self.between => "Start turn".to_string(),
+            // What still waits for orders, counted.
+            _ if stacks + cities > 0 => format!("End turn ({})", stacks + cities),
             side => format!("End {}'s turn", side_name(side)),
         };
         self.end_turn.set(&mut self.screen, &label);
@@ -1323,6 +1489,8 @@ impl Session {
             self.tasks.as_ref().and_then(|w| open(w.window())),
             self.temple.as_ref().and_then(|w| open(w.window())),
             self.disband.as_ref().and_then(|w| open(w.window())),
+            self.options_window.as_ref().and_then(|w| open(w.window())),
+            self.end_ask.as_ref().and_then(|w| open(w.window)),
         ];
         // The one on top: the last of them among the root window's children.
         let order = ui.children(root).to_vec();
@@ -1339,6 +1507,8 @@ impl Session {
             Some(5) => self.tasks.take().map(|w| w.close(ui)).is_some(),
             Some(6) => self.temple.take().map(|w| w.close(ui)).is_some(),
             Some(7) => self.disband.take().map(|w| w.close(ui)).is_some(),
+            Some(8) => self.options_window.take().map(|w| w.close(ui)).is_some(),
+            Some(9) => self.end_ask.take().map(|w| build::close(ui, w.window)).is_some(),
             _ => false,
         }
     }
@@ -1491,20 +1661,55 @@ impl Session {
             self.start_turn();
         }
         let before = self.screen.game.history().len();
-        match self.screen.game.select_hex(hex) {
+        let outcome = self.screen.game.select_hex(hex);
+        self.shown = hex;
+        match outcome {
             SelectOutcome::Fought(_) => {
-                // The battle, played out.
+                // The battle, played out; or told in a line (Options).
                 let history = self.screen.game.history();
                 let battle = (before..history.len()).find(|i| matches!(history[*i].event, Event::Battle { .. }));
                 if let Some(record) = battle {
-                    self.open_battle(record);
+                    if self.options.quick_battles {
+                        let side = self.screen.game.player();
+                        let lines = info::battle_outcome(&self.screen.game, record, side);
+                        self.notice = Some(format!("{} (L: the log, to watch it.)", lines.join(" ")));
+                    } else {
+                        self.open_battle(record);
+                    }
                 }
+                self.after_move(hex);
             }
-            // Onto a temple: does the stack seek its blessing?
-            SelectOutcome::Moved { .. } => self.offer_blessing(hex),
+            // Onto a temple: does the stack seek its blessing? (Options: it
+            // does, unasked.)
+            SelectOutcome::Moved { .. } => {
+                if self.options.always_bless {
+                    self.bless_unasked(hex);
+                } else {
+                    self.offer_blessing(hex);
+                }
+                self.after_move(hex);
+            }
             _ => {}
         }
-        self.shown = hex;
+    }
+
+    /// The person's stack moved to `at` (or fought there): the next stack
+    /// that waits for orders is selected, if the person said so (Options).
+    fn after_move(&mut self, at: Hex) {
+        if self.options.next_after_move {
+            self.go_on(Some(at));
+        }
+    }
+
+    /// The person is done with the stack on `here`: the selection goes, and
+    /// on to the next stack, if one waits for orders.
+    fn go_on(&mut self, here: Option<Hex>) {
+        self.picking = None;
+        self.screen.game.deselect();
+        if !self.screen.game.waiting_stacks(self.screen.game.player()).is_empty() {
+            self.cycled = here.or(self.cycled);
+            self.next_stack(false);
+        }
     }
 
     /// Ask whether the person's stack on `at` seeks the temple's blessing, if
@@ -1523,6 +1728,23 @@ impl Session {
         let window = TempleWindow::ask(&mut self.screen.ui, (root, area), &self.screen.game.map, (at, &units), &icons);
         self.temple = Some(window);
         self.screen.settle();
+    }
+
+    /// The person's stack on `at` seeks the temple's blessing unasked
+    /// (Options), if it is a temple that has not blessed all of it; a line
+    /// under the stack says what each was given.
+    fn bless_unasked(&mut self, at: Hex) {
+        let side = self.screen.game.player();
+        let Some(units) = temple_window::seekers(&self.screen.game.map, side, at) else { return };
+        let Ok(events) = self.screen.game.apply(Order::Bless { units }) else { return };
+        let given: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Blessed { name, blessing, .. } => Some(format!("{name} {}", blessing.words())),
+                _ => None,
+            })
+            .collect();
+        self.notice = Some(format!("The temple blessed them: {}.", given.join(", ")));
     }
 
     /// B, or Seek a blessing: the selected stack (or, with none, the stack
@@ -1698,11 +1920,18 @@ impl Session {
         self.screen.settle();
     }
 
-    /// True if something happened to `side` since it last ended a turn.
+    /// True if something happened to `side` since it last ended a turn
+    /// that its log tells: what the others did to it, and what went wrong
+    /// at the start of its turn (a march stopped short, units left unpaid);
+    /// not what goes on as it should (units built, blessed on their way).
     fn has_news(&self, side: Side) -> bool {
         let game = &self.screen.game;
         let records = game.history().get(self.seen_by(side)..).unwrap_or_default();
-        records.iter().any(|r| !info::record_lines(&game.map, r, side).is_empty())
+        records.iter().any(|r| {
+            let routine = r.turn == side
+                && matches!(r.event, Event::Built { .. } | Event::Blessed { .. } | Event::Promoted { .. });
+            !routine && !info::record_lines(&game.map, r, side).is_empty()
+        })
     }
 
     /// How long the history was when `side` last ended a turn (0: never).
@@ -1787,14 +2016,52 @@ impl Session {
         }
     }
 
-    /// Select the next stack of the player's that can still move (or the one
-    /// before, `back`), and look at it: the one after the selected stack, or
-    /// else after the last one this went to (at first, the first).
+    /// Select the next stack of the player's that waits for orders, and look
+    /// at it: the nearest to the selected stack (or else to the last one this
+    /// went to, or to the cursor) that it has not gone to since it last went
+    /// round them all. With none waiting, any of the player's stacks. `back`
+    /// (Shift+N): the one it came from before, back along the way it came.
     pub fn next_stack(&mut self, back: bool) {
         let (side, mine) = (self.viewer(), self.persons_turn());
         let game = &self.screen.game;
         let selected = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos());
-        let Some(hex) = game.next_stack_of(side, selected.or(self.cycled), back) else { return };
+        let from = selected.or(self.cycled);
+        let stacks = game.stacks_of(side);
+        let hex = if back {
+            // Back the way it came, to a stack that is still there.
+            let mut came = None;
+            while let Some(hex) = self.trail.pop() {
+                if Some(hex) != from && stacks.contains(&hex) {
+                    came = Some(hex);
+                    break;
+                }
+            }
+            came.or_else(|| game.next_stack_of(side, from, true))
+        } else {
+            let waiting = game.waiting_stacks(side);
+            let pool = if waiting.is_empty() { stacks } else { waiting };
+            let mut fresh: Vec<Hex> =
+                pool.iter().copied().filter(|h| Some(*h) != from && !self.visited.contains(h)).collect();
+            if fresh.is_empty() {
+                // Round them all: again from the nearest.
+                self.visited.clear();
+                fresh = pool.iter().copied().filter(|h| Some(*h) != from).collect();
+            }
+            let origin = from.unwrap_or(game.map.cursor);
+            let nearest = fresh.into_iter().min_by_key(|h| (origin.distance(*h), h.row, h.col));
+            // The stack it leaves has been seen to, too.
+            if let (Some(_), Some(from)) = (nearest, from) {
+                self.trail.push(from);
+                if !self.visited.contains(&from) {
+                    self.visited.push(from);
+                }
+            }
+            nearest.or(pool.first().copied())
+        };
+        let Some(hex) = hex else { return };
+        if !back {
+            self.visited.push(hex);
+        }
         let game = &mut self.screen.game;
         game.deselect();
         // (On another side's turn, only looked at.)
@@ -1864,21 +2131,9 @@ impl Session {
     /// The selected stack was put aside (done, or defending): the selection
     /// goes, and on to the next stack, if one waits for orders.
     fn after_aside(&mut self) {
-        self.picking = None;
         let game = &self.screen.game;
         let here = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos());
-        self.screen.game.deselect();
-        // On to the next, if one waits for orders.
-        let waits = self
-            .screen
-            .game
-            .tasks(self.screen.game.player())
-            .iter()
-            .any(|t| t.tier() == 1 && matches!(t, Task::Stack { .. }));
-        if waits {
-            self.cycled = here.or(self.cycled);
-            self.next_stack(false);
-        }
+        self.go_on(here);
     }
 
     /// What a pick on the map does: the selected units go there, or the
@@ -1893,13 +2148,15 @@ impl Session {
                 match self.screen.game.apply(Order::GoTo { units: units.clone(), to: hex, via: self.stops.clone() }) {
                     Ok(_) => {
                         self.stops.clear();
-                        // The cursor follows them; nothing stays selected.
+                        // The cursor follows them; nothing stays selected
+                        // (or the next stack is, if the person said so).
                         let game = &self.screen.game;
                         let at = units.iter().find_map(|id| game.map.units().get(*id)).map(|u| u.pos());
                         self.screen.game.deselect();
                         if let Some(at) = at {
                             self.screen.game.set_cursor(at);
                             self.shown = at;
+                            self.after_move(at);
                         }
                     }
                     // Refused: say why, and pick again.
@@ -1996,6 +2253,35 @@ impl Session {
         self.screen.settle();
     }
 
+    /// Open the options' window (the Game menu's Options), or close it.
+    pub fn toggle_options(&mut self) {
+        if let Some(window) = self.options_window.take() {
+            if window.is_open(&self.screen.ui) {
+                window.close(&mut self.screen.ui);
+                return;
+            }
+        }
+        let (root, area) = (self.screen.root_window(), self.window_area());
+        let window = OptionsWindow::open(&mut self.screen.ui, root, self.options, (area, (0.5, 0.3)));
+        self.options_window = Some(window);
+        self.screen.settle();
+    }
+
+    /// The options' window, while it is open.
+    pub fn options_window(&self) -> Option<&OptionsWindow> {
+        self.options_window.as_ref().filter(|w| w.is_open(&self.screen.ui))
+    }
+
+    /// What the person at the screen has chosen (Options).
+    pub fn options(&self) -> Options {
+        self.options
+    }
+
+    /// Choose the options (the shell carries them from one game to the next).
+    pub fn set_options(&mut self, options: Options) {
+        self.options = options;
+    }
+
     /// The list of tasks, while it is open.
     pub fn tasks_window(&self) -> Option<&TasksWindow> {
         self.tasks.as_ref().filter(|t| t.is_open(&self.screen.ui))
@@ -2044,6 +2330,7 @@ impl Session {
                 .item(END_TURN_ID, if self.between { "Start turn" } else { "End turn" }, &command('T'), turn)
                 .item(UNDO_ID, "Undo", &command('Z'), turn && game.can_undo())
                 .separator()
+                .item(OPTIONS_ID, "Options...", &command(','), true)
                 .item(NEW_GAME_ASK_ID, "New game...", &command('N'), true)
                 .item(QUIT_ID, "Quit", &command('Q'), true)
         } else if id == TbId::new(MENU_UNITS_ID) {
@@ -2124,6 +2411,8 @@ impl Session {
                     self.between = self.has_news(side);
                     if self.between {
                         self.open_log();
+                    } else {
+                        self.begin_orders();
                     }
                 }
             }
@@ -2131,6 +2420,9 @@ impl Session {
             return;
         }
         for command in self.screen.take_map_commands() {
+            if matches!(command, MapCommand::Click(..) | MapCommand::Key(..)) {
+                self.notice = None;
+            }
             // A press on the map, or Esc, closes an open menu, and does
             // nothing else (nor does the click the press makes).
             let menu_open = self.menus.open_menu(&self.screen.ui).is_some();
@@ -2180,6 +2472,7 @@ impl Session {
             }
         }
         for command in self.screen.pump_shared() {
+            self.notice = None;
             // A title opens its menu, or closes it if it is open; anything
             // else closes the menu open (a click on an item then does what
             // it says).
@@ -2196,6 +2489,17 @@ impl Session {
             self.menus.close(&mut self.screen.ui);
             match command {
                 RootCommand::Click(id) if id == TbId::new(END_TURN_ID) => self.turn_button(),
+                RootCommand::Click(id) if id == TbId::new(END_ANYWAY_ID) => {
+                    self.close_end_ask();
+                    self.end_turn();
+                }
+                RootCommand::Click(id) if id == TbId::new(END_TASKS_ID) => {
+                    self.close_end_ask();
+                    if self.tasks_window().is_none() {
+                        self.toggle_tasks();
+                    }
+                }
+                RootCommand::Click(id) if id == TbId::new(END_KEEP_ID) => self.close_end_ask(),
                 RootCommand::Click(id) if id == TbId::new(PREV_STACK_ID) => self.next_stack(true),
                 RootCommand::Click(id) if id == TbId::new(PREV_CITY_ID) => self.next_city(true),
                 RootCommand::Click(id) if id == TbId::new(DESELECT_ID) => {
@@ -2248,6 +2552,28 @@ impl Session {
                     }
                 }
                 RootCommand::Click(id) if id == TbId::new(TASKS_ID) => self.toggle_tasks(),
+                RootCommand::Click(id) if id == TbId::new(OPTIONS_ID) => self.toggle_options(),
+                RootCommand::Key(',', mods) if mods.intersects(Modifiers::CTRL | Modifiers::SUPER) => {
+                    self.toggle_options();
+                }
+                RootCommand::Click(id) if id == TbId::new(options_window::OPTIONS_CLOSE_ID) => {
+                    if let Some(window) = self.options_window.take() {
+                        window.close(&mut self.screen.ui);
+                    }
+                }
+                RootCommand::Click(id)
+                    if self
+                        .options_window
+                        .as_ref()
+                        .and_then(|w| w.click(&self.screen.ui, id, self.options))
+                        .is_some() =>
+                {
+                    if let Some(options) =
+                        self.options_window.as_ref().and_then(|w| w.click(&self.screen.ui, id, self.options))
+                    {
+                        self.options = options;
+                    }
+                }
                 RootCommand::Click(id) if id == TbId::new(tasks_window::TASKS_CLOSE_ID) => {
                     if let Some(tasks) = self.tasks.take() {
                         tasks.close(&mut self.screen.ui);

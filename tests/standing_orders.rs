@@ -328,7 +328,7 @@ fn a_captain_moves_as_fast_as_the_fastest_of_its_stack() {
 // The screen.
 
 fn session(game: Game) -> Session {
-    Session::with_game(&assets(), Size::new(1024, 768), 96, game).expect("the session starts")
+    common::with_game(&assets(), Size::new(1024, 768), 96, game).expect("the session starts")
 }
 
 fn push(s: &mut Session, name: &str) {

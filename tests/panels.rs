@@ -29,7 +29,7 @@ fn session_at(w: i32, h: i32, dpi: i32) -> Session {
                   city 10 16\nname Low Tarn\n";
     let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
     let game = Game::from_scenario(Scenario { map, assets: None, warnings });
-    Session::with_game(&assets(), Size::new(w, h), dpi, game).unwrap()
+    common::with_game(&assets(), Size::new(w, h), dpi, game).unwrap()
 }
 
 fn session() -> Session {
@@ -416,7 +416,7 @@ fn a_map_whose_picture_is_missing_still_shows_its_units() {
     let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
     let game = Game::from_scenario(Scenario { map, assets: None, warnings });
     // (The icon is the default unit's picture on a red disc.)
-    let s = Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
+    let s = common::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
     assert_eq!(s.stack().len(), 1);
     assert_eq!(s.slot_icon(0), Some(("units/nowhere.png", Side::Red)));
 }

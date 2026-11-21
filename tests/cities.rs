@@ -39,7 +39,7 @@ fn session_at(w: i32, h: i32, dpi: i32) -> Session {
                   city 3 3\nname Highcliff\nside blue\nproduce militia 1\n";
     let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
     let game = Game::from_scenario(Scenario { map, assets: None, warnings });
-    Session::with_game(&assets(), Size::new(w, h), dpi, game).unwrap()
+    common::with_game(&assets(), Size::new(w, h), dpi, game).unwrap()
 }
 
 fn session() -> Session {
@@ -52,7 +52,7 @@ fn session_as(side: Side) -> Session {
     let s = session();
     let game = std::mem::replace(&mut { s }.screen.game, common::grassland());
     let setup = Setup::solo(&game.map, Some(side), "passive");
-    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(setup)).unwrap();
+    let mut s = common::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(setup)).unwrap();
     // The computer's turns before the person's (the frames would play them,
     // the log open), and the person's started.
     s.wait_for_turn();
