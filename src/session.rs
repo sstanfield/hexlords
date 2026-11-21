@@ -260,6 +260,10 @@ fn help_section() -> Vec<HelpSection> {
                 ("The menus along the top", "Everything there is to do; each item says its keys"),
                 ("Click a hex,  or  Enter", "Choose it: select its stack, or send the selected units there"),
                 (
+                    "Click one of your stacks",
+                    "Select it, even with another selected (to join stacks: G, then click the other)",
+                ),
+                (
                     "Click a hex beyond their reach",
                     "Send them there, over as many turns as it takes (Go to); your stack there: select it",
                 ),
@@ -634,6 +638,12 @@ impl Session {
     /// Start the turn of the person whose turn it is (Start turn): the log
     /// closes, and the map is theirs.
     pub fn start_turn(&mut self) {
+        self.start_turn_with(true);
+    }
+
+    /// Start the turn; `select`: the first stack that waits is selected (as
+    /// the person said, in Options), unless an order of theirs starts it.
+    fn start_turn_with(&mut self, select: bool) {
         if !self.between || !self.persons_turn() || self.cover.is_some() {
             return;
         }
@@ -641,7 +651,11 @@ impl Session {
         if let Some(log) = self.log.take() {
             log.close(&mut self.screen.ui);
         }
-        self.begin_orders();
+        if select {
+            self.begin_orders();
+        } else {
+            (self.cycled, self.visited, self.trail) = (None, Vec::new(), Vec::new());
+        }
     }
 
     /// The person's turn begins at the screen (no cover over it, no log in
@@ -667,7 +681,7 @@ impl Session {
             self.start_turn();
             return;
         }
-        if self.options.ask_end_turn && self.can_act() && self.end_ask.is_none() {
+        if self.options.ask_end_turn && self.can_act() && !self.asks_end_turn() {
             let lines = self.end_turn_worries();
             if !lines.is_empty() {
                 self.ask_end_turn(&lines);
@@ -807,7 +821,7 @@ impl Session {
     fn turn_passed(&mut self) {
         // Nothing picked, nothing said, carries over to another turn; nor a
         // question about units (they may be gone, or another side's turn).
-        (self.picking, self.refused, self.confirm) = (None, None, None);
+        (self.picking, self.refused, self.confirm, self.reopen) = (None, None, None, None);
         if let Some(window) = self.disband.take() {
             window.close(&mut self.screen.ui);
         }
@@ -1663,11 +1677,19 @@ impl Session {
                     item.count = if up { item.count + 1 } else { item.count.saturating_sub(1).max(1) };
                 }
             }),
-            CityOrder::QueueRemove(id, i) => self.edit_queue(id, |items, _| {
-                if i < items.len() {
-                    items.remove(i);
+            CityOrder::QueueRemove(id, i) => {
+                let chosen = self.city_window.as_ref().and_then(|w| w.item());
+                self.edit_queue(id, |items, _| {
+                    if i < items.len() {
+                        items.remove(i);
+                    }
+                });
+                // The item chosen is the same item still (or the one after
+                // the one taken out).
+                if let (Some(window), Some(c)) = (&mut self.city_window, chosen) {
+                    window.choose_item(if c > i { c - 1 } else { c });
                 }
-            }),
+            }
             CityOrder::QueueStop(id) => self.edit_queue(id, |_, end| *end = QueueEnd::Stop),
             CityOrder::QueueRepeat(id, from) => self.edit_queue(id, |_, end| {
                 let times = match *end {
@@ -1705,12 +1727,8 @@ impl Session {
                 Sends::Point { n, bless } => Sends::Point { n: *n, bless: !bless },
                 other => other.clone(),
             }),
-            CityOrder::NoRally(id) => {
-                let _ = self.screen.game.apply(Order::Rally { city: id, to: Sends::Stay });
-            }
-            CityOrder::DefendNew(id) => {
-                let _ = self.screen.game.apply(Order::Rally { city: id, to: Sends::Defend });
-            }
+            CityOrder::NoRally(id) => self.city_order(Order::Rally { city: id, to: Sends::Stay }),
+            CityOrder::DefendNew(id) => self.city_order(Order::Rally { city: id, to: Sends::Defend }),
             CityOrder::ToPoint(id, n) => {
                 // (A blessing on the way stays as it was, from point to point.)
                 let bless = self
@@ -1720,12 +1738,12 @@ impl Session {
                     .cities()
                     .get(id)
                     .is_some_and(|c| matches!(c.sends, Sends::Point { bless: true, .. }));
-                let _ = self.screen.game.apply(Order::Rally { city: id, to: Sends::Point { n, bless } });
+                self.city_order(Order::Rally { city: id, to: Sends::Point { n, bless } });
             }
             CityOrder::ToggleBless(id) => {
                 let sends = self.screen.game.map.cities().get(id).map(|c| c.sends.clone());
                 if let Some(Sends::Point { n, bless }) = sends {
-                    let _ = self.screen.game.apply(Order::Rally { city: id, to: Sends::Point { n, bless: !bless } });
+                    self.city_order(Order::Rally { city: id, to: Sends::Point { n, bless: !bless } });
                 }
             }
             CityOrder::RaiseWalls(id) => {
@@ -1739,6 +1757,14 @@ impl Session {
                 }
             }
         }
+    }
+
+    /// The pick under way, if any, is over (another stack or city is gone
+    /// to): its stops are forgotten, and a window that made way for it is
+    /// not coming back.
+    fn drop_pick(&mut self) {
+        (self.picking, self.refused, self.rally_item, self.reopen) = (None, None, None, None);
+        self.stops.clear();
     }
 
     /// The city's window makes way for the map while a hex is picked for
@@ -1772,7 +1798,15 @@ impl Session {
                 n => QueueEnd::Repeat { from: from.min(n - 1), times },
             };
         }
-        let _ = self.screen.game.apply(Order::Queue { city, items, end });
+        self.city_order(Order::Queue { city, items, end });
+    }
+
+    /// Give an order about a city; if it is refused, the line under the
+    /// stack says why.
+    fn city_order(&mut self, order: Order) {
+        if let Err(why) = self.screen.game.apply(order) {
+            self.notice = Some(format!("The city cannot do that: {why}."));
+        }
     }
 
     /// Where the units of `city`'s queue's `i`th item go: what `to` makes
@@ -1900,9 +1934,10 @@ impl Session {
             self.shown = hex;
             return;
         }
-        // An order starts the turn, if it has not been started.
+        // An order starts the turn, if it has not been started (with
+        // nothing selected by the screen: the click is the person's).
         if self.between {
-            self.start_turn();
+            self.start_turn_with(false);
         }
         // A stack on patrol or marauding is not sent elsewhere by a stray
         // click: a click that would give it an order (and so end its duty)
@@ -1934,6 +1969,8 @@ impl Session {
             // Beyond their reach: sent there (Go to). The cursor follows
             // them, or the next stack is selected.
             SelectOutcome::Sent(_) => {
+                // (One met on the way, unseen, is a battle: told.)
+                self.tell_battle(before);
                 let game = &self.screen.game;
                 if let Some(at) = sent.iter().find_map(|id| game.map.units().get(*id)).map(|u| u.pos()) {
                     self.screen.game.set_cursor(at);
@@ -2309,6 +2346,7 @@ impl Session {
     /// round them all. With none waiting, any of the player's stacks. `back`
     /// (Shift+N): the one it came from before, back along the way it came.
     pub fn next_stack(&mut self, back: bool) {
+        self.drop_pick();
         let (side, mine) = (self.viewer(), self.persons_turn());
         let game = &self.screen.game;
         let selected = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos());
@@ -2362,6 +2400,7 @@ impl Session {
     /// Go to the next city of the player's (or the one before), and look at
     /// it; nothing stays selected.
     pub fn next_city(&mut self, back: bool) {
+        self.drop_pick();
         let side = self.viewer();
         let Some(hex) = self.screen.game.next_city_of(side, self.shown, back) else { return };
         self.screen.game.deselect();
@@ -2374,8 +2413,8 @@ impl Session {
         let game = &self.screen.game;
         let own = game.selected().and_then(|id| game.map.units().get(id)).is_some_and(|u| u.side() == game.player());
         if own && self.can_act() {
-            (self.picking, self.refused) = (Some(Pick::GoTo), None);
-            self.stops.clear();
+            self.drop_pick();
+            self.picking = Some(Pick::GoTo);
         }
     }
 
@@ -2387,8 +2426,8 @@ impl Session {
         let game = &self.screen.game;
         let own = game.selected().and_then(|id| game.map.units().get(id)).is_some_and(|u| u.side() == game.player());
         if own && self.can_act() {
-            (self.picking, self.refused) = (Some(Pick::Patrol), None);
-            self.stops.clear();
+            self.drop_pick();
+            self.picking = Some(Pick::Patrol);
         }
     }
 
@@ -2562,14 +2601,16 @@ impl Session {
     /// city sends its new units there.
     fn picked(&mut self, pick: Pick, hex: Hex) {
         if self.between && self.persons_turn() {
-            self.start_turn();
+            self.start_turn_with(false);
         }
         match pick {
             Pick::GoTo => {
                 let units = self.screen.game.selection().to_vec();
+                let before = self.screen.game.history().len();
                 match self.screen.game.apply(Order::GoTo { units: units.clone(), to: hex, via: self.stops.clone() }) {
                     Ok(_) => {
                         self.stops.clear();
+                        self.tell_battle(before);
                         // The cursor follows them; nothing stays selected
                         // (or the next stack is, if the person said so).
                         let game = &self.screen.game;
@@ -2760,8 +2801,8 @@ impl Session {
                 if let Some(window) = self.rally_window.take() {
                     window.close(&mut self.screen.ui);
                 }
-                (self.picking, self.refused) = (Some(Pick::RallyPoint(n)), None);
-                self.stops.clear();
+                self.drop_pick();
+                self.picking = Some(Pick::RallyPoint(n));
             }
             RallyClick::Remove(n) if self.can_act() => {
                 let _ = self.screen.game.apply(Order::RallyPoint { n, point: None });
@@ -3219,6 +3260,10 @@ impl Session {
                     };
                     let unit = i.and_then(|i| self.boxes().get(i).copied().flatten());
                     if let (Some(unit), true) = (unit, self.persons_turn()) {
+                        // (A pick for the units selected before is over.)
+                        if self.picking.is_some_and(|p| matches!(p, Pick::GoTo | Pick::Patrol)) {
+                            self.drop_pick();
+                        }
                         self.screen.game.toggle_unit(unit);
                     }
                 }

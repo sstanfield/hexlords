@@ -66,12 +66,14 @@ fn click_to_select_click_to_move() {
 }
 
 #[test]
-fn clicking_the_selected_unit_again_deselects_it() {
+fn clicking_the_selected_unit_again_keeps_it_and_esc_drops_it() {
     let mut s = session();
     let p = pixel_of(&s, START);
     click(&mut s, p);
     assert!(s.screen.game.selected().is_some());
     click(&mut s, p);
+    assert!(s.screen.game.selected().is_some(), "a click on a stack is to take it");
+    press(&mut s, SpecialKey::Esc);
     assert!(s.screen.game.selected().is_none());
 }
 
@@ -131,11 +133,12 @@ fn enter_selects_and_moves_at_the_cursor() {
     assert_eq!(s.screen.game.map.units_at(Hex::new(50, 53)), [cav]);
     assert_eq!(s.screen.game.map.units().get(cav).unwrap().movement, 14);
     assert!(s.screen.game.selected().is_none());
-    // Enter again selects it where it stands now, and once more deselects.
+    // Enter again selects it where it stands now, and once more keeps it.
     press(&mut s, SpecialKey::Enter);
     assert_eq!(s.screen.game.selected(), Some(cav));
     press(&mut s, SpecialKey::Enter);
-    assert!(s.screen.game.selected().is_none());
+    assert_eq!(s.screen.game.selected(), Some(cav));
+    press(&mut s, SpecialKey::Esc);
 }
 
 #[test]

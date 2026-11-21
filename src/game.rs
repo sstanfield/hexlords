@@ -93,7 +93,32 @@ enum Undo {
 
 /// A city as it was before a move took it, for an undo: its id, holder,
 /// work and how far it had got, walls and where it sent its units.
-type CityBefore = (CityId, Side, Option<usize>, u32, u32, Sends);
+#[derive(Clone, Debug)]
+struct CityBefore {
+    id: CityId,
+    side: Side,
+    building: Option<usize>,
+    progress: u32,
+    walls: u32,
+    sends: Sends,
+    queue: Queue,
+    resting: bool,
+}
+
+impl CityBefore {
+    fn of(c: &City) -> CityBefore {
+        CityBefore {
+            id: c.id,
+            side: c.side,
+            building: c.building,
+            progress: c.progress,
+            walls: c.walls,
+            sends: c.sends.clone(),
+            queue: c.queue.clone(),
+            resting: c.resting,
+        }
+    }
+}
 
 /// Something a side has left to do, or to look at, this turn (`Game::tasks`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -684,8 +709,18 @@ impl Game {
         }
         let (round, mark) = (self.round, self.history.len());
         // Being done with units changes nothing to take back: the order
-        // before can still be (unless it sent a patrol on: `Order::Done`).
-        let keeps = matches!(order, Order::Done { .. } | Order::Defend { .. } | Order::Maraud { .. });
+        // before can still be (unless it sent a patrol on: `Order::Done`);
+        // nor does Defend, unless it ends a standing order (a march, a
+        // patrol, marauding), which an undo of the order before would not
+        // give back. Marauding is a standing order.
+        let ends_orders = |units: &[UnitId]| {
+            units.iter().filter_map(|id| self.map.units().get(*id)).any(|u| !u.route.is_empty() || u.on_duty())
+        };
+        let keeps = match &order {
+            Order::Done { .. } => true,
+            Order::Defend { units, .. } => !ends_orders(units),
+            _ => false,
+        };
         let done = self.carry_out(side, order);
         if keeps && done.as_ref().is_ok_and(|events| events.is_empty()) {
             self.undo = last;
@@ -979,8 +1014,13 @@ impl Game {
             // does not is met).
             let sight = self.sight(side);
             let room = |hex: Hex| self.fits(hex, &ids);
-            let step = self
-                .known_path_by(lead, table, to, u32::MAX, &sight)
+            let way = self.known_path_by(lead, table, to, u32::MAX, &sight);
+            // Too few points left for the first step: that is no stop, it
+            // goes on next time.
+            if way.as_ref().and_then(|w| w.first()).is_some_and(|(_, cost)| *cost > lead.movement) {
+                break;
+            }
+            let step = way
                 .and_then(|way| way.into_iter().rev().find(|(hex, cost)| *cost <= lead.movement && room(*hex)))
                 .filter(|(hex, _)| !(sight.sees(*hex) && hostile(&self.map, side, *hex)));
             let coming: Vec<UnitId> = match (step, &group) {
@@ -1080,9 +1120,11 @@ impl Game {
                         return Err("the units are not where the order left them".to_string());
                     }
                 }
-                if let Some((city, holder, building, progress, walls, sends)) = taken {
-                    if let Some(c) = self.map.city_mut(city) {
-                        (c.side, c.building, c.progress, c.walls, c.sends) = (holder, building, progress, walls, sends);
+                if let Some(before) = taken {
+                    if let Some(c) = self.map.city_mut(before.id) {
+                        (c.side, c.building, c.progress, c.walls) =
+                            (before.side, before.building, before.progress, before.walls);
+                        (c.sends, c.queue, c.resting) = (before.sends, before.queue, before.resting);
                     }
                 }
                 for (id, from, movement) in &units {
@@ -1233,8 +1275,7 @@ impl Game {
             let cities = game.map.cities().iter().filter(|c| c.side != side).map(|c| c.pos);
             units.chain(cities).filter(|h| now.sees(*h) && !sight.sees(*h)).collect()
         };
-        let city_before =
-            self.map.city_at(to).map(|c| (c.id, c.side, c.building, c.progress, c.walls, c.sends.clone()));
+        let city_before = self.map.city_at(to).map(CityBefore::of);
         let mut stacks: Vec<(Hex, Vec<UnitId>)> = Vec::new();
         for (_, from, _) in &before {
             if !stacks.iter().any(|(hex, _)| hex == from) {
@@ -1340,10 +1381,10 @@ impl Game {
         if events.is_empty() {
             return Err("this temple has blessed them all already".to_string());
         }
-        // An order of their player's: any standing order ends.
-        for event in &events {
-            let Event::Blessed { unit, .. } = event else { continue };
-            if let Some(unit) = self.map.unit_mut(*unit) {
+        // An order of their player's, for all of them (those blessed before
+        // too, so that the stack stays one): any standing order ends.
+        for id in ids {
+            if let Some(unit) = self.map.unit_mut(*id) {
                 unit.moved = true;
                 (unit.route, unit.bound, unit.stalled) = (Vec::new(), None, false);
                 unit.stand_down();
@@ -1487,10 +1528,23 @@ impl Game {
             c.queue = Queue::default();
             return Ok(Vec::new());
         }
-        // On from the item it was building, if that is still there.
+        // On from the item it was building, if that is still there: where it
+        // was (changed in place, or the same kind there); else the nearest of
+        // its kind (an item before it taken out); else from the start.
         let old = &c.queue;
-        let same = old.current().is_some_and(|item| items.get(old.at).is_some_and(|new| new.what == item.what));
-        let (at, made, rounds) = if same { (old.at, old.made, old.rounds) } else { (0, 0, 0) };
+        let at = old.current().and_then(|current| {
+            let same_kind = |j: usize| items.get(j).is_some_and(|new| new.what == current.what);
+            if same_kind(old.at) || (items.len() == old.items.len() && old.at < items.len()) {
+                Some(old.at)
+            } else {
+                (0..items.len()).filter(|j| same_kind(*j)).min_by_key(|j| (j.abs_diff(old.at), *j))
+            }
+        });
+        let (at, made, rounds) = match (at, old.current()) {
+            (Some(at), Some(current)) if items[at].what == current.what => (at, old.made, old.rounds),
+            (Some(at), _) => (at, 0, old.rounds),
+            (None, _) => (0, 0, 0),
+        };
         let made = made.min(items[at].count - 1);
         c.queue = Queue { items, end, at, made, rounds };
         c.follow_queue();
@@ -1557,6 +1611,27 @@ impl Game {
             for city in cities {
                 if let Some(c) = self.map.city_mut(city) {
                     c.sends = Sends::Stay;
+                }
+            }
+            // And the items of queues that sent theirs there.
+            let queued: Vec<CityId> = self
+                .map
+                .cities()
+                .iter()
+                .filter(|c| {
+                    c.side == side
+                        && c.queue.items.iter().any(|i| matches!(i.sends, Sends::Point { n: m, .. } if m == n))
+                })
+                .map(|c| c.id)
+                .collect();
+            for city in queued {
+                if let Some(c) = self.map.city_mut(city) {
+                    for item in &mut c.queue.items {
+                        if matches!(item.sends, Sends::Point { n: m, .. } if m == n) {
+                            item.sends = Sends::Stay;
+                        }
+                    }
+                    c.follow_queue();
                 }
             }
         }
@@ -1653,7 +1728,8 @@ impl Game {
                 if self.map.tile(hex).is_none_or(|t| t.kind != TileType::Temple) || unit.blessed_at(hex) {
                     continue;
                 }
-                if !sight.knows(hex) || from.distance(hex) + hex.distance(to) > straight + budget {
+                let off_the_way = from.distance(hex).saturating_add(hex.distance(to)) > straight.saturating_add(budget);
+                if !sight.knows(hex) || off_the_way {
                     continue;
                 }
                 let Some(by) = cost(from, hex).zip(cost(hex, to)).map(|(a, b)| a.saturating_add(b)) else { continue };
@@ -2773,7 +2849,8 @@ impl Game {
 
     /// The player chose a hex (a click, or Enter at the cursor).
     ///
-    /// - Units are selected and this is their hex: deselect them.
+    /// - Units are selected and this is their hex, or one with another of
+    ///   the side's stacks: that stack is selected.
     /// - Units are selected and all of them can reach the hex: they move there
     ///   (`Order::Move`: each pays its cost; into another side's units it is a
     ///   battle; a city may be taken) and are deselected.
@@ -2790,17 +2867,23 @@ impl Game {
     pub fn select_hex(&mut self, hex: Hex) -> SelectOutcome {
         self.refresh();
         let Some(first) = self.selected() else { return self.select_stack(hex) };
-        if self.map.units().get(first).is_some_and(|u| u.pos() == hex) {
+        // Their own hex, or another of the side's stacks: that stack is
+        // selected (the screen selects a stack by itself, so a click on one
+        // is to take it; a stack joins another by Go to).
+        let side = self.player();
+        let ours = |game: &Game| {
+            game.map.units_at(hex).iter().any(|id| game.map.units().get(*id).is_some_and(|u| u.side() == side))
+        };
+        if self.map.units().get(first).is_some_and(|u| u.pos() == hex) || ours(self) {
             self.deselect();
-            return SelectOutcome::Deselected;
+            return self.select_stack(hex);
         }
-        let Some(cost) = self.range.as_ref().and_then(|r| r.cost(hex)) else {
+        // A rally point of the side's: they are sent there (Go to), bound to
+        // it, near or far.
+        let to_point = self.rally_point_at(side, hex).is_some();
+        let Some(cost) = self.range.as_ref().and_then(|r| r.cost(hex)).filter(|_| !to_point) else {
             let units = self.selected.clone();
             self.deselect();
-            match self.select_stack(hex) {
-                SelectOutcome::Nothing => {}
-                selected => return selected,
-            }
             // Beyond their reach: they are sent there, if the side's.
             if !units.iter().all(|id| self.own(*id)) {
                 return SelectOutcome::Deselected;
@@ -2931,7 +3014,7 @@ impl Game {
                 let free: Vec<&Unit> = units.iter().copied().filter(can_go).collect();
                 let state = if let Some(alarm) = patrol::alarm_state(&units) {
                     alarm
-                } else if free.iter().any(|u| !u.route.is_empty() && u.stalled && !u.done) {
+                } else if free.iter().any(|u| !u.route.is_empty() && u.stalled && !u.done && !u.moved) {
                     // (One its player put aside is done with, stopped or not.)
                     StackState::Stalled
                 } else if free.iter().any(|u| !u.moved && !u.done && u.route.is_empty()) {
@@ -3122,11 +3205,12 @@ mod tests {
         assert!(game.selected().is_none() && game.range().is_none());
         assert!(!game.can_move_to(Hex::new(50, 54)));
 
-        // Selecting again uses what is left; choosing its own hex deselects.
+        // Selecting again uses what is left; choosing its own hex selects it
+        // still.
         assert_eq!(game.select_hex(target), SelectOutcome::Selected(id));
         assert!(game.range().unwrap().reachable().all(|(_, c)| c <= 14));
-        assert_eq!(game.select_hex(target), SelectOutcome::Deselected);
-        assert!(game.selected().is_none());
+        assert_eq!(game.select_hex(target), SelectOutcome::Selected(id));
+        assert_eq!(game.selected(), Some(id));
         assert_eq!(game.map.units().get(id).unwrap().movement, 14);
     }
 
@@ -3190,18 +3274,22 @@ mod tests {
     }
 
     #[test]
-    fn a_full_stack_refuses_the_move_and_drops_the_selection() {
+    fn a_click_on_another_stack_selects_it_and_a_full_one_refuses_a_move() {
         let mut game = grassland();
         let &[cav] = game.map.units_at(START) else { panic!() };
         let cost = game.map.units().get(cav).unwrap().move_cost;
         let target = Hex::new(50, 51);
+        let mut guards = Vec::new();
         for i in 0..MAX_STACK {
             let id = game.map.new_unit(Side::Black, &format!("Guard {i}"), 1, 1, 0, cost);
             game.map.place_unit(id, target).unwrap();
+            guards.push(id);
         }
+        // A click on the side's other stack, in reach: that stack is taken.
         game.select_hex(START);
-        assert_eq!(game.select_hex(target), SelectOutcome::Deselected);
-        assert_eq!(game.selected(), None);
+        assert_eq!(game.select_hex(target), SelectOutcome::Selected(guards[0]));
+        // A move onto it (as Go to gives): refused, it is full.
+        assert!(game.apply(Order::Move { units: vec![cav], to: target }).is_err());
         assert!(!game.can_undo(), "nothing happened");
         assert_eq!(game.map.units().get(cav).unwrap().movement, 20);
         assert_eq!(game.map.units().get(cav).unwrap().pos(), START);

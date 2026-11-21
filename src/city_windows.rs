@@ -525,11 +525,13 @@ impl CityView {
         }
         // The queue (the window's): an item a row, the one it builds marked,
         // the one chosen pressed; what it does after the last.
+        // (In the sidebar, always the item it builds now: what it builds
+        // and where they go are set for that item, and the queue stays.)
         let queue = &city.queue;
-        let about = if self.compact || queue.is_empty() {
-            None
-        } else {
-            Some(self.chosen.filter(|i| *i < queue.items.len()).unwrap_or(queue.at))
+        let about = match (queue.is_empty(), self.compact) {
+            (true, _) => None,
+            (false, true) => Some(queue.at),
+            (false, false) => Some(self.chosen.filter(|i| *i < queue.items.len()).unwrap_or(queue.at)),
         };
         self.about = about;
         if let Some(hint) = &mut self.queue_hint {

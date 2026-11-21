@@ -142,8 +142,10 @@ impl City {
                     self.queue.at = from.min(self.queue.items.len() - 1);
                 }
                 _ => {
+                    // (Where its last item sent its units is not where a
+                    // later order's go.)
                     self.queue = Queue::default();
-                    (self.building, self.progress, self.resting) = (None, 0, false);
+                    (self.building, self.progress, self.resting, self.sends) = (None, 0, false, Sends::Stay);
                     return;
                 }
             }

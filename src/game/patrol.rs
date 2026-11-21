@@ -289,8 +289,12 @@ impl Game {
             // This turn's step, as a march's.
             let sight = self.sight(side);
             let room = |hex: Hex| self.fits(hex, &ids);
-            let step = self
-                .known_path_by(lead, table, to, u32::MAX, &sight)
+            let way = self.known_path_by(lead, table, to, u32::MAX, &sight);
+            // Too few points left for the first step: no stop, on next time.
+            if way.as_ref().and_then(|w| w.first()).is_some_and(|(_, cost)| *cost > lead.movement) {
+                break;
+            }
+            let step = way
                 .and_then(|way| way.into_iter().rev().find(|(hex, cost)| *cost <= lead.movement && room(*hex)))
                 .filter(|(hex, _)| !(sight.sees(*hex) && hostile(&self.map, side, *hex)));
             let coming: Vec<UnitId> = match (step, &group) {

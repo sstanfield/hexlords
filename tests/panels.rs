@@ -340,8 +340,12 @@ fn the_selected_unit_goes_where_it_is_sent_and_the_panels_follow() {
     assert_eq!(s.slot_icon(0), Some(("units/militia.png", Side::Green)));
     assert!(texts_in(&s, "city_box").iter().any(|t| t == "Garrison: 2 units"));
     assert!(s.unit_line().starts_with("2 units selected"), "{}", s.unit_line());
-    // A click on its own hex deselects it.
+    // A click on its own hex keeps it selected (the review, 2026-11-21: the
+    // screen selects stacks by itself, and a click on one is to take it);
+    // Esc drops it.
     click_hex(&mut s, CITY);
+    assert_eq!(s.screen.game.selection(), [ids[0], ids[1]]);
+    common::press(&mut s, turbo_ferret::SpecialKey::Esc);
     assert_eq!(s.screen.game.selected(), None);
     assert!(!pressed(&s, "unit_0") && !pressed(&s, "unit_1"));
 

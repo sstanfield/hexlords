@@ -512,8 +512,11 @@ thing to happen. Ideas to try, as the rules grow:
   has a button for each, with the unit's icon, name, strength and moves,
   and all about the one under the pointer (turns, price, upkeep, what each
   terrain costs it).
-- **Mistakes cost little** (built): Esc drops the selection, a drag moves
-  the map rather than a unit, a click beyond the selection's reach (a Go
+- **Mistakes cost little** (built): Esc drops the selection (a click on
+  the selected stack keeps it; a click on another of the player's stacks
+  selects that one: the review of 2026-11-21, since the screen selects
+  stacks by itself; stacks join by Go to), a drag moves the map rather
+  than a unit, a click beyond the selection's reach (a Go
   to) can be taken back until the stack has gone more than a leg, and the
   last order can be taken back (`Order::Undo`), unless chance had a say in
   it (a battle) or it put a side out.
