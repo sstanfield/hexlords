@@ -97,7 +97,9 @@ fn a_side_may_move_only_its_own_on_its_turn() {
     assert_eq!(game.player(), Side::Red);
     assert!(game.apply(Order::Move { units: vec![id], to: Hex::new(18, 18) }).is_err());
     let events = game.apply(Order::Move { units: vec![id], to }).unwrap();
-    assert_eq!(events, [Event::Moved { unit: id, from: RED_HOME, to, cost: 4 }]);
+    assert!(
+        matches!(&events[..], [Event::Moved { unit, from: RED_HOME, to: t, cost: 4, .. }] if *unit == id && *t == to)
+    );
     // Another side's city: only its holder sets what it builds.
     let blues = game.map.city_at(BLUE_HOME).unwrap().id;
     assert_eq!(game.apply(Order::Build { city: blues, what: Some(0) }).unwrap_err(), "only blue sets what it builds");

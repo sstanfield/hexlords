@@ -79,7 +79,7 @@ pub fn summary(outcome: &Outcome) -> String {
 pub fn event_line(game: &Game, event: &Event) -> String {
     let city = |id| game.map.cities().get(id).map_or("?".to_string(), |c| c.name.clone());
     match event {
-        Event::Moved { unit, from, to, cost } => {
+        Event::Moved { unit, from, to, cost, .. } => {
             format!("{} moves from {from} to {to} for {cost}", agents::unit_name(*unit))
         }
         Event::Taken { city: id, from, by, walls } => {

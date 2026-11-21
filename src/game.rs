@@ -1322,10 +1322,16 @@ impl Game {
             return Err("there is no room there".to_string());
         }
         let mut arrived = Vec::new();
+        // The way they went, as the first of them went it (straight from
+        // where each was, if that is not it).
+        let way_of = |from: Hex| match ways.first() {
+            Some(way) if way.first() == Some(&from) && way.last() == Some(&to) => way.clone(),
+            _ => vec![from, to],
+        };
         for (id, from, cost) in going {
             // After a battle, those that do not fit stay where they were.
             if self.map.move_unit(id, to).is_ok() {
-                events.push(Event::Moved { unit: id, from, to, cost });
+                events.push(Event::Moved { unit: id, from, to, cost, way: way_of(from) });
                 arrived.push(id);
             }
             // (An attack uses up the attackers' movement for the turn.)
@@ -3229,7 +3235,8 @@ mod tests {
         assert_eq!(game.range().unwrap().cost(Hex::new(50, 53)), Some(6));
 
         let target = Hex::new(50, 53);
-        let moved = Event::Moved { unit: id, from: START, to: target, cost: 6 };
+        let way = vec![START, Hex::new(50, 51), Hex::new(49, 52), target];
+        let moved = Event::Moved { unit: id, from: START, to: target, cost: 6, way };
         assert_eq!(game.select_hex(target), SelectOutcome::Moved { unit: id, cost: 6, events: vec![moved] });
         assert_eq!(game.map.units().get(id).unwrap().movement, 14);
         assert_eq!(game.map.units().get(id).unwrap().pos(), target);

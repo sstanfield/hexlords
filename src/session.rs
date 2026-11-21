@@ -1424,7 +1424,9 @@ impl Session {
                 self.screen.ui.set_disabled(button, !own);
             }
         }
-        if let (Some(winner), None) = (self.screen.game.winner(), self.game_over) {
+        // (Once the battle that ended it has been played out.)
+        let playing = self.battle.as_ref().is_some_and(|b| b.is_open(&self.screen.ui) && !b.done());
+        if let (Some(winner), None, false) = (self.screen.game.winner(), self.game_over, playing) {
             self.open_game_over(winner);
         }
         self.refresh_windows();
@@ -2461,8 +2463,15 @@ impl Session {
             if [fight.attacker, fight.defender].contains(&self.viewer()) { self.viewer() } else { fight.attacker };
         let outcome = info::battle_outcome(game, record, viewer);
         let (root, area) = (self.screen.root_window(), self.window_area());
-        let window =
-            BattleWindow::open(&mut self.screen.ui, root, &fight, icons, (&place, outcome), (area, (0.5, 0.2)));
+        let window = BattleWindow::open(
+            &mut self.screen.ui,
+            root,
+            &fight,
+            icons,
+            (&place, outcome),
+            (area, (0.5, 0.2)),
+            self.options.fast_battles,
+        );
         self.battle = Some(window);
         self.screen.settle();
     }

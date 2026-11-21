@@ -104,12 +104,10 @@ pub enum Order {
 /// What happened.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
-    Moved {
-        unit: UnitId,
-        from: Hex,
-        to: Hex,
-        cost: u32,
-    },
+    /// A unit went from `from` to `to`, by way of the hexes `way` (the
+    /// first `from`, the last `to`: the stack's way, for a screen to show it
+    /// going), and paid `cost`.
+    Moved { unit: UnitId, from: Hex, to: Hex, cost: u32, way: Vec<Hex> },
     /// A battle: `attacker`'s units went into `defender`'s on `at`.
     Battle {
         at: Hex,
@@ -129,96 +127,42 @@ pub enum Event {
     },
     /// A unit rose to a level (`name`, its title: "Captain Aldric"; a
     /// commander's levels are numbers, the others' ranks).
-    Promoted {
-        unit: UnitId,
-        side: Side,
-        name: String,
-        level: u8,
-        commander: bool,
-    },
+    Promoted { unit: UnitId, side: Side, name: String, level: u8, commander: bool },
     /// A unit was blessed at a temple.
-    Blessed {
-        unit: UnitId,
-        side: Side,
-        name: String,
-        blessing: Blessing,
-    },
+    Blessed { unit: UnitId, side: Side, name: String, blessing: Blessing },
     /// A captain rose from the ranks of a stack that won a hard battle
     /// without one.
-    Emerged {
-        unit: UnitId,
-        side: Side,
-        at: Hex,
-        name: String,
-    },
+    Emerged { unit: UnitId, side: Side, at: Hex, name: String },
     /// With fog of war, `side`'s units met another side's on their way, where
     /// they had not been seen: the move ended there, in a battle (the next
     /// event).
-    Surprise {
-        side: Side,
-        at: Hex,
-    },
+    Surprise { side: Side, at: Hex },
     /// Units of `side` that rode ships that sank (or were left with none
     /// after a battle at sea) went down at `at`.
-    Drowned {
-        side: Side,
-        at: Hex,
-        dead: Vec<Fallen>,
-    },
+    Drowned { side: Side, at: Hex, dead: Vec<Fallen> },
     /// Units on a standing order (`GoTo`) could not go on: the next step was
     /// into another side's units, or there is no way. They wait for orders.
-    Stalled {
-        side: Side,
-        units: Vec<UnitId>,
-        at: Hex,
-        to: Hex,
-    },
+    Stalled { side: Side, units: Vec<UnitId>, at: Hex, to: Hex },
     /// A side's unit went into another's (or nobody's) city with nobody in it.
     /// Its walls fall a level: `walls`, what is left of them, if they fell.
-    Taken {
-        city: CityId,
-        from: Side,
-        by: Side,
-        walls: Option<u32>,
-    },
+    Taken { city: CityId, from: Side, by: Side, walls: Option<u32> },
     /// A city's holder raised its walls a level, to `walls`, for `price`.
-    WallsRaised {
-        city: CityId,
-        side: Side,
-        walls: u32,
-        price: u32,
-    },
+    WallsRaised { city: CityId, side: Side, walls: u32, price: u32 },
     /// A side sent units home (`Order::Disband`): what they were called.
-    Disbanded {
-        side: Side,
-        names: Vec<String>,
-    },
+    Disbanded { side: Side, names: Vec<String> },
     /// A unit of `side`'s left it, unpaid: its treasury could not pay all
     /// the upkeep. (It is gone; this is its name.)
-    Deserted {
-        side: Side,
-        name: String,
-    },
+    Deserted { side: Side, name: String },
     /// A city finished what it builds: the unit stands in it.
-    Built {
-        city: CityId,
-        unit: UnitId,
-    },
+    Built { city: CityId, unit: UnitId },
     /// The side's last order was taken back: all is as it was before it.
     Undone,
     /// A side's turn began.
-    Began {
-        side: Side,
-        round: u32,
-    },
+    Began { side: Side, round: u32 },
     /// A side lost its last city: it is out of the game.
-    Out {
-        side: Side,
-    },
+    Out { side: Side },
     /// One side is left.
-    Won {
-        side: Side,
-    },
+    Won { side: Side },
 }
 
 /// A unit that fell in a battle: its side, what it was called (its kind,

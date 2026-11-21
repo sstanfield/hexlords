@@ -27,7 +27,8 @@ pub const BATTLE_AGAIN_ID: &str = "battle_again";
 pub const BATTLE_CLOSE_ID: &str = "battle_close";
 
 /// How long before the first exchange shows, and how long each shows at
-/// most and at least, in ms: a battle takes about [`BATTLE_MS`].
+/// most and at least, in ms: a battle takes about [`BATTLE_MS`] (played
+/// fast; at the pace a player gets at first, twice as long).
 const START_MS: u64 = 700;
 const SLOWEST_MS: u64 = 450;
 const FASTEST_MS: u64 = 150;
@@ -149,6 +150,7 @@ impl BattleWindow {
         icons: [Vec<ImageHandle>; 2],
         (place, outcome): (&str, Vec<String>),
         (area, align): (Rect, (f32, f32)),
+        fast: bool,
     ) -> BattleWindow {
         let dp = |ui: &Ui, n: i32| ui.dimension_converter().dp_to_px(n);
         let parts = build::window(ui, parent, BATTLE_WINDOW_ID, &format!("Battle at {place}"));
@@ -204,7 +206,8 @@ impl BattleWindow {
         build::button(ui, buttons, BATTLE_CLOSE_ID, "Close");
 
         let n = fight.trace.len().max(1) as u64;
-        let pace = (BATTLE_MS / n).clamp(FASTEST_MS, SLOWEST_MS);
+        let slow = if fast { 1 } else { 2 };
+        let pace = (BATTLE_MS / n).clamp(FASTEST_MS, SLOWEST_MS) * slow;
         let hits = [vec![0; fight.attackers.len()], vec![0; fight.defenders.len()]];
         let mut window = BattleWindow {
             parts,
@@ -229,7 +232,8 @@ impl BattleWindow {
     /// the last.
     pub fn tick(&mut self, ui: &mut Ui, now_ms: u64) {
         let Some(next) = self.next_at else {
-            self.next_at = Some(now_ms + START_MS);
+            // (The first a little after it opens, as slow as the pace.)
+            self.next_at = Some(now_ms + START_MS.max(self.pace));
             return;
         };
         if now_ms < next || self.done() {

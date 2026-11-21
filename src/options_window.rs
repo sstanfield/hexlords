@@ -14,6 +14,7 @@ pub const OPTIONS_CLOSE_ID: &str = "options_close";
 /// The options' boxes.
 pub const NEXT_AFTER_MOVE_ID: &str = "option_next_after_move";
 pub const QUICK_BATTLES_ID: &str = "option_quick_battles";
+pub const FAST_BATTLES_ID: &str = "option_fast_battles";
 pub const ALWAYS_BLESS_ID: &str = "option_always_bless";
 pub const ASK_END_TURN_ID: &str = "option_ask_end_turn";
 
@@ -32,6 +33,9 @@ pub struct Options {
     /// A battle of theirs is told in a line under the map instead of played
     /// out in its window (the log's Watch plays it).
     pub quick_battles: bool,
+    /// A battle played out goes at twice the pace (at first it goes at
+    /// the slower: the owner's word, 2026-11-21, "more tension").
+    pub fast_battles: bool,
     /// A stack moved onto a temple seeks its blessing without being asked.
     pub always_bless: bool,
     /// End turn asks first while stacks wait for orders or cities build
@@ -41,7 +45,13 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Options {
-        Options { next_after_move: true, quick_battles: false, always_bless: false, ask_end_turn: true }
+        Options {
+            next_after_move: true,
+            quick_battles: false,
+            fast_battles: false,
+            always_bless: false,
+            ask_end_turn: true,
+        }
     }
 }
 
@@ -49,11 +59,17 @@ impl Options {
     /// Every option off: the screen selects nothing by itself, tells every
     /// battle in its window, asks at every temple and never before End turn.
     pub fn manual() -> Options {
-        Options { next_after_move: false, quick_battles: false, always_bless: false, ask_end_turn: false }
+        Options {
+            next_after_move: false,
+            quick_battles: false,
+            fast_battles: false,
+            always_bless: false,
+            ask_end_turn: false,
+        }
     }
 
     /// Each option's box: its id, its words, and the option.
-    fn boxes() -> [OptionBox; 4] {
+    fn boxes() -> [OptionBox; 5] {
         [
             (
                 NEXT_AFTER_MOVE_ID,
@@ -63,6 +79,7 @@ impl Options {
             (QUICK_BATTLES_ID, "Tell a battle in a line, not played out (the log can play it)", |o| {
                 &mut o.quick_battles
             }),
+            (FAST_BATTLES_ID, "Play battles out fast (twice the pace)", |o| &mut o.fast_battles),
             (ALWAYS_BLESS_ID, "On a temple, seek its blessing without asking", |o| &mut o.always_bless),
             (ASK_END_TURN_ID, "Ask before ending a turn with stacks or cities that need orders", |o| {
                 &mut o.ask_end_turn

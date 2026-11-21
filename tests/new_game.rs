@@ -338,3 +338,37 @@ fn a_random_map_of_more_sides_than_its_preset_is_made() {
     push(&mut shell, hexgame::new_game::MAKE_ID);
     assert!(shell.new_game_screen().unwrap().problem().is_none());
 }
+
+/// The owner (2026-11-21): "the end game dialog pops up while the combat
+/// box is still playing; it should only pop up after combat is resolved."
+#[test]
+fn the_end_waits_for_the_battle_that_ended_it_to_be_played_out() {
+    let mut rows = vec!["g".repeat(20); 20];
+    rows[5] = "gggggcgggcgggggggggg".to_string();
+    let terrain = format!("20\n20\n{}\n", rows.join("\n"));
+    let units = "unit riders\nname Riders\nstrength 4\nmoves 12\nenter grass 2, city 1\n\
+                 unit levy\nname Levy\nstrength 1\nmoves 12\nenter grass 2, city 1\n";
+    let cities =
+        "city 5 5\nname Redhold\nside red\ngarrison riders 2\ncity 5 9\nname Bluemoor\nside blue\ngarrison levy\n";
+    let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+    let game = Game::from_scenario(Scenario { map, assets: None, warnings });
+    let mut setup = Setup::solo(&game.map, Some(Side::Red), "passive");
+    setup.combat.chance = 0;
+    let mut s = common::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(setup)).unwrap();
+    let p = common::pixel_of(&s, Hex::new(5, 5));
+    click(&mut s, p);
+    let p = common::pixel_of(&s, Hex::new(5, 9));
+    click(&mut s, p);
+    assert_eq!(s.screen.game.winner(), Some(Side::Red));
+    // The battle plays out first.
+    assert!(s.battle().is_some_and(|b| !b.done()));
+    s.frame(0);
+    assert!(!exists(&s, GAME_OVER_ID), "not while the battle plays");
+    let mut t = 0;
+    while s.battle().is_some_and(|b| !b.done()) && t < 60_000 {
+        t += 100;
+        s.frame(t);
+    }
+    s.frame(t + 100);
+    assert!(exists(&s, GAME_OVER_ID), "once it is over");
+}

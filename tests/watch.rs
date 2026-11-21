@@ -134,13 +134,14 @@ fn an_attack_is_played_out_in_the_battles_window() {
     assert!(fate.starts_with("A hit on ") || fate.ends_with(": out of the battle."), "{fate}");
     let hits: u32 = s.battle().unwrap().hits().iter().flatten().sum();
     assert_eq!(hits, 1, "one hit, on one card");
-    // All of it, then how it went.
+    // All of it, then how it went (at the pace a player gets at first,
+    // half the fast one: an exchange in a second at most).
     let mut t = 1000;
     while !s.battle().unwrap().done() {
-        t += 500;
+        t += 1000;
         s.frame(t);
     }
-    assert!(t < 1000 + 500 * n as u64 + 500);
+    assert!(t < 1000 + 1000 * n as u64 + 1000);
     let record = battle_record(&s.screen.game);
     let outcome = info::battle_outcome(&s.screen.game, record, Side::Red);
     assert_eq!(s.battle().unwrap().outcome(&s.screen.ui), outcome);
