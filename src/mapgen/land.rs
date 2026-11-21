@@ -270,9 +270,10 @@ fn rebalance_shore(g: &mut Gen, want: usize) -> bool {
 }
 
 /// Islands out at sea, for cities only ships reach: one for every two or
-/// three of them, 6 to 60 hexes each, grown as blobs in open water at least
-/// 3 hexes from other land; the water they take is given back by the lowest
-/// coast.
+/// three of them, 6 to 60 hexes each, grown as blobs in the open water of the
+/// biggest sea (5 hexes from land if there is such water, else 4, else 3: a
+/// small map's sea is narrow), a strait of 2 hexes at least from other land;
+/// the water they take is given back by the lowest coast.
 fn islands(g: &mut Gen, cfg: &Config, rng: &mut Rng, sea: usize) {
     let (rows, cols) = (g.rows(), g.cols());
     let cities = f64::from(cfg.cities.unwrap_or(u32::from(cfg.sides) * cfg.cities_per_side));
@@ -282,8 +283,15 @@ fn islands(g: &mut Gen, cfg: &Config, rng: &mut Rng, sea: usize) {
         let t = g.terrain.clone();
         let land_hexes = t.hexes().filter(|h| *t.get(*h) != TileType::Water);
         let from_land = steps_from(rows, cols, land_hexes, |_| true);
-        let open: Vec<Hex> =
-            t.hexes().filter(|h| from_land.get(*h).is_some_and(|d| d >= 5) && t.edge_distance(*h) >= 3).collect();
+        let (piece, sizes) = super::grid::pieces(rows, cols, |h| *t.get(h) == TileType::Water);
+        let Some(sea) = (0..sizes.len()).max_by_key(|p| (sizes[*p], std::cmp::Reverse(*p))) else { break };
+        let open_at = |d: u32| -> Vec<Hex> {
+            t.hexes()
+                .filter(|h| *piece.get(*h) == Some(sea) && from_land.get(*h).is_some_and(|f| f >= d))
+                .filter(|h| t.edge_distance(*h) >= 3)
+                .collect()
+        };
+        let open = [5, 4, 3].into_iter().map(open_at).find(|o| !o.is_empty()).unwrap_or_default();
         let Some(&start) = rng.pick(&open) else { break };
         let size = rng.range(6, 60) as usize;
         let mut grown = vec![start];

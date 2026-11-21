@@ -207,7 +207,13 @@ impl Stats {
         let (_, mut land_pieces) = pieces(rows, cols, |h| !water(h));
         land_pieces.sort_unstable_by(|a, b| b.cmp(a));
         s.land_pieces = land_pieces;
-        let mut walled: Vec<usize> = pockets(rows, cols, &|h| kind(map, h)).iter().map(Vec::len).collect();
+        // (A ring of mountains round a city is meant: a city only flyers
+        // reach.)
+        let mut walled: Vec<usize> = pockets(rows, cols, &|h| kind(map, h))
+            .iter()
+            .filter(|p| !p.iter().any(|h| kind(map, *h) == TileType::City))
+            .map(Vec::len)
+            .collect();
         walled.sort_unstable_by(|a, b| b.cmp(a));
         s.pockets = walled;
 

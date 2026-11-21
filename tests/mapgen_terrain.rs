@@ -116,11 +116,9 @@ fn mountain_ranges_are_thin() {
         let depths: Vec<u32> =
             t.hexes().filter(|h| *t.get(*h) == TileType::Mountain).filter_map(|h| *depth.get(h)).collect();
         let deeper = depths.iter().filter(|d| **d > DEPTH).count();
-        assert!(
-            deeper * 100 <= depths.len(),
-            "seed {seed}: {deeper} of {} mountains deeper than {DEPTH}",
-            depths.len()
-        );
+        // (A hollow in a range, too small to leave land walled in, is filled
+        // with mountain: a few hexes deeper. One in fifty at most.)
+        assert!(deeper * 50 <= depths.len(), "seed {seed}: {deeper} of {} mountains deeper than {DEPTH}", depths.len());
         let deepest = depths.iter().copied().max().unwrap_or(0);
         assert!(deepest <= DEPTH + 2, "seed {seed}: a mountain {deepest} deep");
     }

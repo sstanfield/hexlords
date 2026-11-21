@@ -159,13 +159,20 @@ fn make(batch: bool, args: &[String]) -> Result<ExitCode, String> {
         }
         println!("seed {}", ask.config.seed);
         let made = generate(&ask.config, &units, &template)?;
-        write(&made, &out, ask.preview, ask.layers)?;
+        let (_, summary) = write(&made, &out, ask.preview, ask.layers)?;
+        println!("{summary}");
         println!("wrote {}", out.display());
-        return Ok(ExitCode::SUCCESS);
+        // A map no try made pass: written all the same, to look at, and
+        // what it fails said.
+        for f in &made.failures {
+            println!("FAILS: {f}");
+        }
+        return Ok(if made.failures.is_empty() { ExitCode::SUCCESS } else { ExitCode::FAILURE });
     }
     let (a, b) = ask.seeds.ok_or("--seeds A..B is needed")?;
     let mut sheet: Vec<(u64, Image)> = Vec::new();
     let mut lines = String::new();
+    let (mut failing, mut tries, started) = (0, 0, std::time::Instant::now());
     for seed in a..=b {
         let mut cfg = ask.config.clone();
         cfg.seed = seed;
@@ -173,8 +180,19 @@ fn make(batch: bool, args: &[String]) -> Result<ExitCode, String> {
         let dir = out.join(format!("seed-{seed}"));
         let (img, summary) = write(&made, &dir, true, ask.layers)?;
         lines.push_str(&format!("seed {seed}: {summary}\n"));
+        for f in &made.failures {
+            lines.push_str(&format!("  FAILS: {f}\n"));
+        }
+        failing += usize::from(!made.failures.is_empty());
+        tries += made.attempts;
         sheet.push((seed, img));
     }
+    let n = (b + 1).saturating_sub(a).max(1);
+    lines.push_str(&format!(
+        "{n} maps, {failing} failing; {:.1} tries and {:.2} s a map\n",
+        f64::from(tries) / n as f64,
+        started.elapsed().as_secs_f64() / n as f64
+    ));
     if ask.sheet {
         let columns = (sheet.len() as f64).sqrt().ceil() as usize;
         let img = preview::sheet(&sheet, columns, 400);
@@ -182,7 +200,7 @@ fn make(batch: bool, args: &[String]) -> Result<ExitCode, String> {
         std::fs::write(out.join("sheet.txt"), &lines).map_err(|e| e.to_string())?;
     }
     print!("{lines}");
-    Ok(ExitCode::SUCCESS)
+    Ok(if failing == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 
 /// Write a map's directory; its preview and a line about it.
@@ -195,7 +213,7 @@ fn write(made: &Generated, dir: &Path, picture: bool, layers: bool) -> Result<(I
     put("mapgen.txt", made.config_text().as_bytes())?;
     let map = made.map()?;
     let stats = Stats::of(&map);
-    let metrics = score::terrain(&made.config, &stats);
+    let metrics = score::all(&made.config, &made.plan, &stats);
     let misses: Vec<&str> = metrics.iter().filter(|m| !m.ok()).map(|m| m.name.as_str()).collect();
     let tries = if made.attempts > 1 {
         format!(" (made from seed {}, try {})", made.config.seed, made.attempts)
@@ -217,10 +235,20 @@ fn write(made: &Generated, dir: &Path, picture: bool, layers: bool) -> Result<(I
         .collect();
     let unfair: Vec<&str> = made.state.fairness.iter().filter(|f| !f.ok()).map(|f| f.name.as_str()).collect();
     let summary = if unfair.is_empty() { summary } else { format!("{summary}; unfair: {}", unfair.join(", ")) };
-    let text =
-        format!("{}\nthe targets:\n{}\nfairness:\n{}\n", stats.report(), score::table(&metrics), fair.join("\n"));
+    let fails = if made.failures.is_empty() {
+        "  none\n".to_string()
+    } else {
+        made.failures.iter().map(|f| format!("  {f}\n")).collect()
+    };
+    let text = format!(
+        "{}\nthe targets:\n{}\nfairness:\n{}\n\nside by side:\n{}\nthe hard checks failed:\n{fails}",
+        stats.report(),
+        score::table(&metrics),
+        fair.join("\n"),
+        made.sides_table()
+    );
     put("stats.txt", text.as_bytes())?;
-    let img = preview::preview(&map, PREVIEW, &made.city_marks());
+    let img = preview::preview(&map, PREVIEW, &made.city_marks(), Some(&made.cells()));
     if picture {
         put("preview.png", &img.png())?;
     }

@@ -13,7 +13,7 @@ use std::collections::BinaryHeap;
 use crate::state::{Hex, HexSide, Side, TileType};
 
 use super::Gen;
-use super::cities::travel;
+use super::cities::walk;
 use super::config::{Config, Plan, Roads};
 use super::grid::{Grid, cheapest_path};
 use super::noise::center;
@@ -189,8 +189,15 @@ pub fn roads(g: &mut Gen, cfg: &Config, plan: &Plan) {
     let (rows, cols) = (g.rows(), g.cols());
     let air: Vec<Hex> = g.cities.iter().filter(|c| c.reach == ReachClass::Air).map(|c| c.hex).collect();
     let banned = Grid::from_fn(rows, cols, |h| *g.island.get(h) || air.iter().any(|a| a.distance(h) <= 2));
-    let foot: Vec<(Hex, bool)> =
-        g.cities.iter().filter(|c| c.reach == ReachClass::Foot).map(|c| (c.hex, c.side != Side::Grey)).collect();
+    // The cities roads join: those on foot, and on a map of islands those
+    // on the other islands too, each island's among themselves (a road
+    // never crosses the sea); not the islands raised for cities at sea.
+    let foot: Vec<(Hex, bool)> = g
+        .cities
+        .iter()
+        .filter(|c| c.reach == ReachClass::Foot || (c.reach == ReachClass::Sea && !*g.island.get(c.hex)))
+        .map(|c| (c.hex, c.side != Side::Grey))
+        .collect();
     let mut road: Grid<bool> = Grid::new(rows, cols, false);
     if cfg.roads != Roads::None && foot.len() > 1 {
         let ways = Ways::new(g, cfg, &banned);
@@ -299,7 +306,7 @@ fn links(ways: &Ways, foot: &[(Hex, bool)]) -> Vec<Link> {
     let bare = Grid::new(t.rows(), t.cols(), false);
     let mut pairs: Vec<(usize, usize, u32)> = Vec::new();
     for (i, (hex, capital)) in foot.iter().enumerate() {
-        let (cost, _) = travel(g, &[*hex]);
+        let cost = walk(g, &[*hex]);
         let mut near: Vec<(u32, usize)> =
             (0..foot.len()).filter(|j| *j != i).filter_map(|j| cost.get(foot[j].0).map(|c| (c, j))).collect();
         near.sort_unstable();

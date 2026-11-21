@@ -13,7 +13,7 @@
 use crate::state::{Hex, Side, TileType, UnitKind};
 
 use super::Gen;
-use super::config::{Config, Fairness, Plan};
+use super::config::{Config, Fairness, Layout, Plan};
 use super::grid::{Grid, cheapest_from, pieces, steps_from};
 use super::names::{NAMES, Syllables};
 use super::noise::center;
@@ -63,6 +63,9 @@ const MOVES: usize = 50;
 /// How many sets of capitals are tried on one terrain (a terrain that will
 /// not share out fairly is made anew: `generate`).
 const CAPITAL_TRIES: u32 = 6;
+/// How many sets of capitals that cannot share the land out fairly are tried
+/// before the terrain is given up.
+const HOPELESS: usize = 1;
 /// How many places a capital may be at are weighed, and how many swaps the
 /// search for the best of them makes.
 const SAMPLES: usize = 140;
@@ -73,6 +76,11 @@ const SWEEPS: usize = 12;
 /// What a degree of a capital's widest view short of a half turn costs a
 /// set of capitals (`hemmed`), against the travel from the land to them.
 const HEMMED: f64 = 4.0;
+/// What two capitals on one island cost a set, when each could have its own.
+const SHARED: f64 = 1000.0;
+/// Up to how many sides no capital may be hemmed in: with more, some are
+/// in the middle of the others, as they would be on any map.
+pub const HEMMED_SIDES: usize = 4;
 
 fn walkable(t: TileType) -> bool {
     !matches!(t, TileType::Water | TileType::Mountain)
@@ -92,11 +100,28 @@ fn price(g: &Gen, h: Hex) -> Option<u32> {
     }
 }
 
-/// Travel costs from the nearest of `sources`, and which it is.
+/// Travel costs from the nearest of `sources`, and which it is: on foot,
+/// and, on a map of islands (`Gen::by_sea`), by sea too (on the main sea,
+/// `Gen::main_sea`): a hex of sea `SEA`, putting to sea `EMBARK` more.
 pub fn travel(g: &Gen, sources: &[Hex]) -> (Grid<Option<u32>>, Grid<Option<usize>>) {
     let s: Vec<(Hex, u32)> = sources.iter().map(|h| (*h, 0)).collect();
-    cheapest_from(g.rows(), g.cols(), &s, |_, to| price(g, to))
+    let water = |h: Hex| *g.terrain.get(h) == TileType::Water;
+    cheapest_from(g.rows(), g.cols(), &s, |from, to| {
+        if g.by_sea && *g.main_sea.get(to) { Some(SEA + if water(from) { 0 } else { EMBARK }) } else { price(g, to) }
+    })
 }
+
+/// Travel costs on foot alone (a river crossed), from the nearest of
+/// `sources`.
+pub fn walk(g: &Gen, sources: &[Hex]) -> Grid<Option<u32>> {
+    let s: Vec<(Hex, u32)> = sources.iter().map(|h| (*h, 0)).collect();
+    cheapest_from(g.rows(), g.cols(), &s, |_, to| price(g, to)).0
+}
+
+/// A hex of sea by ship, and putting to sea, in travel (a ship goes some
+/// twenty hexes a turn; boarding takes a turn).
+const SEA: u32 = 1;
+const EMBARK: u32 = 10;
 
 /// The levels of the fairness table, by `Fairness`: neutral cities in a
 /// cell, within 3 turns of a capital, land in a cell (a ratio), the way to
@@ -136,16 +161,28 @@ pub fn cities(g: &mut Gen, cfg: &Config, plan: &Plan, kinds: &[UnitKind]) -> Res
         if cfg.fly_cities { cfg.fly_city_count.map_or((total / 40).clamp(1, 3), |n| n as usize) } else { 0 };
     let ports = cfg.ports && has(MoveClass::Naval);
     g.navigable = navigable(g);
+    g.main_sea = main_sea(g);
+    g.by_sea = cfg.layout == Layout::Archipelago;
     let mut best: Option<(usize, Places, Vec<Fair>)> = None;
     let places = capital_places(g, cfg, plan, &mut Rng::stream(cfg.seed, "capital places"));
+    let mut hopeless = 0;
     for attempt in 0..CAPITAL_TRIES {
         let mut rng = Rng::stream(cfg.seed, &format!("cities {attempt}"));
-        let Some(capitals) = places.as_ref().and_then(|p| pick_capitals(g, cfg, p, &mut rng)) else { continue };
+        let Some((capitals, hopeful)) = places.as_ref().and_then(|p| pick_capitals(g, cfg, p, &mut rng)) else {
+            continue;
+        };
+        // Two sets of capitals that cannot share this land out fairly: the
+        // terrain will not (a new map is quicker than more tries).
+        hopeless += usize::from(!hopeful);
+        if hopeless > HOPELESS && best.is_some() {
+            break;
+        }
         let mut places = Places { capitals, neutrals: Vec::new(), sea: Vec::new() };
         places.sea = sea_places(g, cfg, plan, &places.capitals, sea_count, &mut rng);
         let foot = total.saturating_sub(sides + places.sea.len());
         places.neutrals = place_neutrals(g, cfg, plan, &places, foot, &mut rng);
         relax(g, cfg, plan, &mut places);
+        to_the_water(g, cfg, plan, &mut places);
         let fair = make_fair(g, cfg, plan, &mut places, ports);
         // The holes the fairness pass leaves, filled as far as fairness allows.
         let fair = fill_holes(g, cfg, plan, &mut places, (ports, fair));
@@ -175,6 +212,9 @@ struct CapitalPlaces {
     kept: Vec<Hex>,
     grids: Vec<Vec<u32>>,
     land: Vec<usize>,
+    /// The piece of land (on foot) each place is on, when the capitals are
+    /// to be one to an island (`by_sea`, and islands enough).
+    island: Option<Vec<usize>>,
 }
 
 /// The capitals' places: grass on the main land, well in from the edges,
@@ -190,7 +230,9 @@ fn capital_places(g: &Gen, cfg: &Config, plan: &Plan, rng: &mut Rng) -> Option<C
         pieces(rows, cols, |h| walkable(*t.get(h)) || (*t.get(h) == TileType::Water && *g.river.get(h)));
     let biggest = sizes.iter().copied().max().unwrap_or(0);
     let big = |h: Hex| piece.get(h).is_some_and(|p| sizes[p] * 3 >= biggest);
-    let margin = (cols / 10).max(8).min(rows / 5).min(cols / 5);
+    // (More sides need room nearer the edges.)
+    let room_for = |n: u16| if sides > 4 { n * 2 / 3 } else { n };
+    let margin = room_for((cols / 10).max(8).min(rows / 5).min(cols / 5));
     let open = |h: Hex| t.neighbours(h).filter(|n| matches!(*t.get(*n), TileType::Grass | TileType::Forest)).count();
     let fits = |h: Hex| {
         *t.get(h) == TileType::Grass
@@ -233,18 +275,36 @@ fn capital_places(g: &Gen, cfg: &Config, plan: &Plan, rng: &mut Rng) -> Option<C
     // (some two thousand of them).
     let all: Vec<usize> = t.hexes().filter(|h| walkable(*t.get(*h)) && big(*h)).map(|h| t.index(h)).collect();
     let land: Vec<usize> = all.iter().copied().step_by((all.len() / 2000).max(3)).collect();
-    Some(CapitalPlaces { kept, grids, land })
+    // On a map of islands with a big one for each side (land between the
+    // water, mountains and all), a capital to each.
+    let (isle, isles) = pieces(rows, cols, |h| *t.get(h) != TileType::Water || *g.river.get(h));
+    let most = isles.iter().copied().max().unwrap_or(0);
+    let big_isles = isles.iter().filter(|n| **n * 3 >= most).count();
+    let island = (g.by_sea && big_isles >= sides).then(|| kept.iter().map(|h| isle.get(*h).unwrap_or(0)).collect());
+    Some(CapitalPlaces { kept, grids, land, island })
 }
 
 /// The capitals: of the places a capital may be (`capital_places`), the
 /// best set (`score`, below): farthest points first, then each capital to
 /// the best place in its own land, then swaps that make it better.
-fn pick_capitals(g: &Gen, cfg: &Config, places: &CapitalPlaces, rng: &mut Rng) -> Option<Vec<Hex>> {
+/// Also says whether the land and the ways to the nearest enemy come within
+/// the fairness limits (near enough: the neutral cities and the terrain's
+/// last touches move them a little): if not, this terrain is unlikely to.
+fn pick_capitals(g: &Gen, cfg: &Config, places: &CapitalPlaces, rng: &mut Rng) -> Option<(Vec<Hex>, bool)> {
     let t = &g.terrain;
     let sides = usize::from(cfg.sides);
     let [_, _, land_limit, enemy_limit, _, _] = limits(cfg.fairness).unwrap_or([0.0, 0.0, 1.3, 1.3, 0.0, 0.0]);
-    let CapitalPlaces { kept, grids, land } = places;
+    let CapitalPlaces { kept, grids, land, island } = places;
     let land = land.as_slice();
+    // Two capitals on one island, when each could have its own.
+    let shared = |set: &[usize]| -> f64 {
+        let Some(island) = island else { return 0.0 };
+        let mut n = 0;
+        for (i, a) in set.iter().enumerate() {
+            n += set[i + 1..].iter().filter(|b| island[**b] == island[*a]).count();
+        }
+        n as f64
+    };
     let between = |a: usize, b: usize| -> f64 {
         let c = grids[a][t.index(kept[b])];
         if c == u32::MAX { f64::from(kept[a].distance(kept[b]) * 4 + 20) } else { f64::from(c) }
@@ -262,7 +322,10 @@ fn pick_capitals(g: &Gen, cfg: &Config, places: &CapitalPlaces, rng: &mut Rng) -
     // travel from the land to its capital, on the whole); within what
     // fairness allows (land, the way to the nearest enemy), beyond it
     // weighing most; and none hemmed in by the others.
-    let score = |set: &[usize]| -> f64 {
+    // The land in the cells (most over least) and the ways to the nearest
+    // enemy (longest over shortest), and the travel from the land to its
+    // capital, on the whole.
+    let ratios = |set: &[usize]| -> (f64, f64, f64) {
         let mut nearest = vec![f64::MAX; set.len()];
         for (i, a) in set.iter().enumerate() {
             for (j, b) in set.iter().enumerate() {
@@ -284,10 +347,14 @@ fn pick_capitals(g: &Gen, cfg: &Config, places: &CapitalPlaces, rng: &mut Rng) -
         }
         let mean = total as f64 / counted.max(1) as f64;
         let (most, least) = (*cells.iter().max().unwrap_or(&1), (*cells.iter().min().unwrap_or(&1)).max(1));
-        let (land, enemy) = (most as f64 / least as f64, farthest / closest.max(1.0));
+        (most as f64 / least as f64, farthest / closest.max(1.0), mean)
+    };
+    let score = |set: &[usize]| -> f64 {
+        let (land, enemy, mean) = ratios(set);
         let over = |r: f64, limit: f64| 400.0 * (r - limit * 0.95).max(0.0) + 20.0 * (r - 1.0);
         let hexes: Vec<Hex> = set.iter().map(|i| kept[*i]).collect();
-        -mean - over(land, land_limit) - over(enemy, enemy_limit) - HEMMED * hemmed(&hexes)
+        let hemmed = if sides <= HEMMED_SIDES { hemmed(&hexes) } else { 0.0 };
+        -mean - over(land, land_limit) - over(enemy, enemy_limit) - HEMMED * hemmed - SHARED * shared(set)
     };
     // From a few starts: farthest points from a first by chance, then swaps
     // that make it better; the best of them.
@@ -338,7 +405,10 @@ fn pick_capitals(g: &Gen, cfg: &Config, places: &CapitalPlaces, rng: &mut Rng) -
             best = Some((now, set));
         }
     }
-    best.map(|(_, set)| set.into_iter().map(|i| kept[i]).collect())
+    let (_, set) = best?;
+    let (land, enemy, _) = ratios(&set);
+    let hopeful = cfg.fairness == Fairness::Off || (land <= land_limit * 1.05 && enemy <= enemy_limit * 1.05);
+    Some((set.into_iter().map(|i| kept[i]).collect(), hopeful))
 }
 
 /// How hemmed in capitals are: for each, the widest angle with no other
@@ -369,6 +439,23 @@ pub fn hemmed(capitals: &[Hex]) -> f64 {
         short += (180.0 - widest).max(0.0);
     }
     short
+}
+
+/// The land a neutral city may be on, and the travel to it from the
+/// capitals: what they reach; on a map of islands, land no walker gets to
+/// from a capital only by the water (a city there is its island's port).
+fn city_land(g: &Gen, capitals: &[Hex]) -> Grid<Option<u32>> {
+    let (mut reached, _) = travel(g, capitals);
+    if g.by_sea {
+        let walked = walk(g, capitals);
+        let t = &g.terrain;
+        for h in t.hexes() {
+            if walked.get(h).is_none() && !t.neighbours(h).any(|n| *t.get(n) == TileType::Water) {
+                reached.set(h, None);
+            }
+        }
+    }
+    reached
 }
 
 /// Where a neutral city may stand: on the land a capital can get to, not a
@@ -402,7 +489,7 @@ fn liking(g: &Gen, h: Hex, coast_wanted: bool) -> f64 {
 /// more in the emptiest places, if it made too few); then evened out.
 fn place_neutrals(g: &Gen, cfg: &Config, plan: &Plan, places: &Places, count: usize, rng: &mut Rng) -> Vec<Hex> {
     let (rows, cols) = (g.rows(), g.cols());
-    let (reached, _) = travel(g, &places.capitals);
+    let reached = city_land(g, &places.capitals);
     let gap = cfg.min_gap(plan);
     let r = (((f64::from(gap) + cfg.gap_target(plan)) / 2.0).round() as u32).max(gap);
     let mut cities: Vec<Hex> = places.capitals.iter().chain(&places.sea).copied().collect();
@@ -483,7 +570,7 @@ fn place_neutrals(g: &Gen, cfg: &Config, plan: &Plan, places: &Places, count: us
 /// (or, if that is not allowed, the next most crowded).
 fn even_out(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places, allowed: &dyn Fn(&Places) -> bool) {
     let (rows, cols) = (g.rows(), g.cols());
-    let (reached, _) = travel(g, &places.capitals);
+    let reached = city_land(g, &places.capitals);
     let gap = cfg.min_gap(plan);
     let land: Vec<Hex> =
         g.terrain.hexes().filter(|h| reached.get(*h).is_some() && walkable(*g.terrain.get(*h))).collect();
@@ -539,11 +626,12 @@ fn even_out(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places, allowed: &d
 /// out stays as fair (no measure that was within its limit goes beyond it).
 fn fill_holes(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places, (ports, fair): (bool, Vec<Fair>)) -> Vec<Fair> {
     let grids: Vec<Grid<Option<u32>>> = places.capitals.iter().map(|c| travel(g, &[*c]).0).collect();
+    let homes = homes(g, places);
     let misses = |f: &[Fair]| f.iter().filter(|f| !f.ok()).count();
     let before = misses(&fair);
-    let allowed = |p: &Places| misses(&fairness(g, cfg, p, (ports, &grids))) <= before;
+    let allowed = |p: &Places| misses(&fairness(g, cfg, p, (ports, &grids, &homes))) <= before;
     even_out(g, cfg, plan, places, &allowed);
-    fairness(g, cfg, places, (ports, &grids))
+    fairness(g, cfg, places, (ports, &grids, &homes))
 }
 
 /// A few passes of moving each neutral city a hex toward the middle of its
@@ -551,7 +639,7 @@ fn fill_holes(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places, (ports, f
 /// keeps its distance: spacing evens out.
 fn relax(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places) {
     let (rows, cols) = (g.rows(), g.cols());
-    let (reached, _) = travel(g, &places.capitals);
+    let reached = city_land(g, &places.capitals);
     let gap = cfg.min_gap(plan);
     for _ in 0..3 {
         let all = places.all();
@@ -589,6 +677,39 @@ fn relax(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places) {
     }
 }
 
+/// While the cities by the water are fewer than `coastal_cities`, a neutral
+/// city a hex or two from it steps to the water's edge (where it may stand
+/// and keeps its distance), the shortest step first: an even spread keeps
+/// most cities off the shores, the target map has a quarter on them.
+fn to_the_water(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places) {
+    let t = &g.terrain;
+    let reached = city_land(g, &places.capitals);
+    let gap = cfg.min_gap(plan);
+    let wet = |h: Hex| t.neighbours(h).any(|n| *t.get(n) == TileType::Water);
+    for _ in 0..places.neutrals.len() {
+        let all = places.all();
+        if all.iter().filter(|h| wet(**h)).count() as f64 >= cfg.coastal_cities * all.len() as f64 {
+            return;
+        }
+        let mut best: Option<(u32, usize, Hex)> = None;
+        for (i, from) in places.neutrals.iter().enumerate().filter(|(_, h)| !wet(**h)) {
+            let others: Vec<Hex> = all.iter().copied().filter(|c| c != from).collect();
+            let step = t
+                .hexes()
+                .filter(|h| h.distance(*from) <= 2 && wet(*h) && site(g, cfg, &reached, *h))
+                .filter(|h| others.iter().all(|c| c.distance(*h) >= gap))
+                .min_by_key(|h| (h.distance(*from), t.index(*h)));
+            if let Some(to) = step {
+                if best.is_none_or(|(d, _, _)| to.distance(*from) < d) {
+                    best = Some((to.distance(*from), i, to));
+                }
+            }
+        }
+        let Some((_, i, to)) = best else { return };
+        places.neutrals[i] = to;
+    }
+}
+
 /// Cities for islands only ships reach: on the islands made for them, the
 /// first of each by the water.
 fn sea_places(g: &Gen, cfg: &Config, plan: &Plan, capitals: &[Hex], count: usize, rng: &mut Rng) -> Vec<Hex> {
@@ -608,7 +729,8 @@ fn sea_places(g: &Gen, cfg: &Config, plan: &Plan, capitals: &[Hex], count: usize
         }
         let mut spots: Vec<Hex> = t
             .hexes()
-            .filter(|h| *piece.get(*h) == Some(p) && t.neighbours(*h).any(|n| *t.get(n) == TileType::Water))
+            .filter(|h| *piece.get(*h) == Some(p) && t.neighbours(*h).any(|n| *g.main_sea.get(n)))
+            .filter(|h| u32::from(t.edge_distance(*h)) >= cfg.edge_margin)
             .filter(|h| capitals.iter().chain(&out).all(|c| c.distance(*h) >= gap))
             .collect();
         if spots.is_empty() {
@@ -630,18 +752,31 @@ fn air_places(g: &mut Gen, places: &Places, count: usize) -> Vec<Hex> {
     let (cost, _) = travel(g, &places.capitals);
     let t = g.terrain.clone();
     let ring = |c: Hex| -> Vec<Hex> { t.hexes().filter(|h| h.distance(c) == 2).collect() };
-    let mut picks: Vec<(usize, Hex)> = places
+    // Three turns from every capital, if any is (on a small map none may
+    // be: then the farthest), the most mountain round it first.
+    let mut picks: Vec<(bool, usize, u32, Hex)> = places
         .neutrals
         .iter()
         .copied()
-        .filter(|c| cost.get(*c).is_some_and(|d| d >= 3 * TURN))
         .filter(|c| t.edge_distance(*c) >= 3)
         .filter(|c| ring(*c).iter().all(|h| *t.get(*h) != TileType::Water))
-        .map(|c| (t.hexes().filter(|h| h.distance(c) <= 3 && *t.get(*h) == TileType::Mountain).count(), c))
+        .map(|c| {
+            let far = cost.get(c).unwrap_or(u32::MAX);
+            (
+                far >= 3 * TURN,
+                t.hexes().filter(|h| h.distance(c) <= 3 && *t.get(*h) == TileType::Mountain).count(),
+                far,
+                c,
+            )
+        })
         .collect();
-    picks.sort_by(|a, b| b.0.cmp(&a.0).then(t.index(a.1).cmp(&t.index(b.1))));
+    picks.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(b.2.cmp(&a.2)).then(t.index(a.3).cmp(&t.index(b.3))));
+    if !picks.iter().any(|p| p.0) {
+        picks.sort_by(|a, b| b.2.cmp(&a.2).then(t.index(a.3).cmp(&t.index(b.3))));
+    }
+    let chosen: Vec<Hex> = picks.iter().take(count).map(|p| p.3).collect();
     let mut out = Vec::new();
-    for (_, c) in picks.into_iter().take(count) {
+    for c in chosen.iter().copied() {
         let mut added = 0usize;
         for h in ring(c) {
             if *g.terrain.get(h) != TileType::Mountain {
@@ -657,7 +792,8 @@ fn air_places(g: &mut Gen, places: &Places, count: usize) -> Vec<Hex> {
         let snap = g.terrain.clone();
         let mut edges: Vec<(Hex, f64)> = snap
             .hexes()
-            .filter(|h| *snap.get(*h) == TileType::Mountain && h.distance(c) > 2)
+            // (Not another air city's ring.)
+            .filter(|h| *snap.get(*h) == TileType::Mountain && chosen.iter().all(|a| h.distance(*a) > 2))
             .filter(|h| snap.neighbours(*h).any(|n| *snap.get(n) != TileType::Mountain))
             .map(|h| (h, *g.ridge.get(h)))
             .collect();
@@ -718,7 +854,40 @@ pub const REMOTE: f64 = 2.8;
 /// cell (the land it gets to before any other), within 3 turns of each,
 /// the land in each cell, the way to each one's nearest enemy, the ports in
 /// each cell, and the cities at sea nearest one capital.
-fn fairness(g: &Gen, cfg: &Config, places: &Places, (ports, grids): (bool, &[Grid<Option<u32>>])) -> Vec<Fair> {
+/// Each capital's home land, on a map of islands or with cities at sea (a
+/// port on the sea must be on it): what a walker gets to from it; else
+/// nothing (no measure needs it).
+fn homes(g: &Gen, places: &Places) -> Vec<Grid<Option<u32>>> {
+    if g.by_sea || !places.sea.is_empty() {
+        places.capitals.iter().map(|c| walk(g, &[*c])).collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// True if a city at `h` is a port on the main sea.
+fn on_main_sea(g: &Gen, h: Hex) -> bool {
+    g.terrain.neighbours(h).any(|n| *g.main_sea.get(n))
+}
+
+/// A capital's home land with a coast on the main sea and no port on it
+/// (its side could never put to sea): which.
+fn home_without_port(g: &Gen, places: &Places, homes: &[Grid<Option<u32>>]) -> Option<usize> {
+    let t = &g.terrain;
+    (0..homes.len()).find(|i| {
+        let home = &homes[*i];
+        let coast = t.hexes().any(|h| home.get(h).is_some() && walkable(*t.get(h)) && on_main_sea(g, h));
+        coast && !places.neutrals.iter().any(|c| home.get(*c).is_some() && on_main_sea(g, *c))
+    })
+}
+
+#[allow(clippy::type_complexity)]
+fn fairness(
+    g: &Gen,
+    cfg: &Config,
+    places: &Places,
+    (ports, grids, homes): (bool, &[Grid<Option<u32>>], &[Grid<Option<u32>>]),
+) -> Vec<Fair> {
     let Some(limit) = limits(cfg.fairness) else { return Vec::new() };
     let sides = places.capitals.len();
     let owner = |h: Hex| -> Option<usize> {
@@ -800,14 +969,34 @@ fn fairness(g: &Gen, cfg: &Config, places: &Places, (ports, grids): (bool, &[Gri
                 can[o] = true;
             }
         }
-        let short = (0..sides).filter(|i| can[*i] && port[*i] < cfg.ports_per_side as usize).count();
+        // (Nor can a cell with no neutral city: a capital stands off the
+        // water.)
+        let mut neutral = vec![false; sides];
+        for c in &places.neutrals {
+            if let Some(o) = owner(*c) {
+                neutral[o] = true;
+            }
+        }
+        let short = (0..sides).filter(|i| can[*i] && neutral[*i] && port[*i] < cfg.ports_per_side as usize).count();
         out.push(Fair { name: "cells short of their ports".to_string(), value: short as f64, limit: 0.0 });
     }
-    out.push(Fair {
-        name: "capitals hemmed in (degrees short of a half turn)".to_string(),
-        value: hemmed(&places.capitals),
-        limit: 0.0,
-    });
+    if sides <= HEMMED_SIDES {
+        out.push(Fair {
+            name: "capitals hemmed in (degrees short of a half turn)".to_string(),
+            value: hemmed(&places.capitals),
+            limit: 0.0,
+        });
+    }
+    if ports && !homes.is_empty() {
+        let short = (0..homes.len())
+            .filter(|i| {
+                let one =
+                    Places { capitals: vec![places.capitals[*i]], neutrals: places.neutrals.clone(), sea: Vec::new() };
+                home_without_port(g, &one, &homes[*i..=*i]).is_some()
+            })
+            .count();
+        out.push(Fair { name: "home islands with no port on the sea".to_string(), value: short as f64, limit: 0.0 });
+    }
     if !places.sea.is_empty() {
         let mut at_sea = vec![0usize; sides];
         for c in &places.sea {
@@ -828,6 +1017,18 @@ fn fairness(g: &Gen, cfg: &Config, places: &Places, (ports, grids): (bool, &[Gri
 /// and the rivers that run into it), not a lake shut off.
 fn is_port(g: &Gen, c: Hex) -> bool {
     g.terrain.neighbours(c).any(|n| *g.navigable.get(n))
+}
+
+/// The main sea: the biggest piece of the water a ship sails on (not a
+/// river).
+fn main_sea(g: &Gen) -> Grid<bool> {
+    let (rows, cols) = (g.rows(), g.cols());
+    let sea = |h: Hex| *g.navigable.get(h) && !*g.river.get(h);
+    let (piece, sizes) = pieces(rows, cols, sea);
+    let Some(biggest) = (0..sizes.len()).max_by_key(|p| (sizes[*p], std::cmp::Reverse(*p))) else {
+        return Grid::new(rows, cols, false);
+    };
+    Grid::from_fn(rows, cols, |h| *piece.get(h) == Some(biggest))
 }
 
 /// The water a ship sails on: the pieces of water at the map's edge (or the
@@ -860,10 +1061,11 @@ fn make_fair(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places, ports: boo
     let (rows, cols) = (g.rows(), g.cols());
     let gap = cfg.min_gap(plan);
     let sides = places.capitals.len();
-    let (reached, _) = travel(g, &places.capitals);
+    let reached = city_land(g, &places.capitals);
     let grids: Vec<Grid<Option<u32>>> = places.capitals.iter().map(|c| travel(g, &[*c]).0).collect();
+    let homes = homes(g, places);
     for _ in 0..MOVES {
-        let fair = fairness(g, cfg, places, (ports, &grids));
+        let fair = fairness(g, cfg, places, (ports, &grids, &homes));
         if fair.iter().all(Fair::ok) {
             return fair;
         }
@@ -914,6 +1116,14 @@ fn make_fair(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places, ports: boo
                     cost(poor, h) <= 3 * TURN && (0..sides).all(|s| s == poor || cost(s, h) > 3 * TURN)
                 }),
             )
+        } else if failing("home islands") {
+            // One of that island's inland cities to its coast on the sea.
+            let lacking = home_without_port(g, places, &homes).unwrap_or(0);
+            let home = &homes[lacking];
+            let inland = (0..places.neutrals.len())
+                .filter(|i| home.get(places.neutrals[*i]).is_some() && !on_main_sea(g, places.neutrals[*i]))
+                .max_by_key(|i| (home.get(places.neutrals[*i]).unwrap_or(0), std::cmp::Reverse(*i)));
+            (inland, emptiest(inland, &|h| home.get(h).is_some() && on_main_sea(g, h)))
         } else if failing("ports") || failing("cells short") {
             let mut count = vec![0usize; sides];
             for c in places.neutrals.iter().chain(&places.capitals) {
@@ -935,7 +1145,7 @@ fn make_fair(g: &Gen, cfg: &Config, plan: &Plan, places: &mut Places, ports: boo
             _ => return fair,
         }
     }
-    fairness(g, cfg, places, (ports, &grids))
+    fairness(g, cfg, places, (ports, &grids, &homes))
 }
 
 /// Room around each city: it is a city; a mountain beside it is a hill, a
@@ -995,17 +1205,27 @@ fn records(g: &Gen, cfg: &Config, (places, air): (&Places, &[Hex]), kinds: &[Uni
     };
     let mut taken: Vec<String> = Vec::new();
     let mut out = Vec::new();
+    // On a map of islands, a neutral city on another island than the
+    // capitals' (water between, not only mountains: a range is crossed by a
+    // pass) is reached by sea.
+    let t = &g.terrain;
+    let (land, _) = pieces(g.rows(), g.cols(), |h| *t.get(h) != TileType::Water || *g.river.get(h));
+    let homes: Vec<Option<usize>> = places.capitals.iter().map(|c| *land.get(*c)).collect();
+    let class = |h: &Hex| {
+        if air.contains(h) {
+            ReachClass::Air
+        } else if g.by_sea && !homes.contains(land.get(*h)) {
+            ReachClass::Sea
+        } else {
+            ReachClass::Foot
+        }
+    };
     let all: Vec<(Hex, Option<Side>, ReachClass)> = places
         .capitals
         .iter()
         .enumerate()
         .map(|(i, h)| (*h, Some(cfg.colours[i]), ReachClass::Foot))
-        .chain(
-            places
-                .neutrals
-                .iter()
-                .map(|h| (*h, None, if air.contains(h) { ReachClass::Air } else { ReachClass::Foot })),
-        )
+        .chain(places.neutrals.iter().map(|h| (*h, None, class(h))))
         .chain(places.sea.iter().map(|h| (*h, None, ReachClass::Sea)))
         .collect();
     for (hex, side, reach) in all {
@@ -1044,7 +1264,10 @@ fn records(g: &Gen, cfg: &Config, (places, air): (&Places, &[Hex]), kinds: &[Uni
                 add(foot.get(1 + rng.below(foot.len() as u64 - 1) as usize));
             }
         }
-        if cfg.ports && is_port(g, hex) {
+        // A port builds the template's ship; a city reached by sea, by any
+        // water, must (or its island is shut).
+        let by_any_water = t.neighbours(hex).any(|n| *t.get(n) == TileType::Water);
+        if (cfg.ports && is_port(g, hex)) || (reach == ReachClass::Sea && by_any_water) {
             add(ship.as_ref());
         }
         if !capital && walls == top_walls && rng.below(15) == 0 {
@@ -1075,6 +1298,25 @@ fn records(g: &Gen, cfg: &Config, (places, air): (&Places, &[Hex]), kinds: &[Uni
             trains: 1,
         });
     }
+    // Each island with a city reached by sea has a port that builds the
+    // ship (or its cities could never be left): the first city by the
+    // water there, if none does.
+    if let Some(ship) = ship {
+        let t = &g.terrain;
+        let (island, count) = pieces(g.rows(), g.cols(), |h| walkable(*t.get(h)) || *t.get(h) == TileType::City);
+        let by_water = |h: Hex| t.neighbours(h).any(|n| *t.get(n) == TileType::Water);
+        let builds = |c: &City| c.produce.iter().any(|(id, _)| *id == ship.id);
+        for i in 0..count.len() {
+            let here: Vec<usize> = (0..out.len()).filter(|k| *island.get(out[*k].hex) == Some(i)).collect();
+            let wanted = here.iter().any(|k| out[*k].reach == ReachClass::Sea);
+            if !wanted || here.iter().any(|k| builds(&out[*k]) && by_water(out[*k].hex)) {
+                continue;
+            }
+            if let Some(k) = here.iter().copied().find(|k| by_water(out[*k].hex)) {
+                out[k].produce.push((ship.id.clone(), turns(ship)));
+            }
+        }
+    }
     out
 }
 
@@ -1083,7 +1325,15 @@ fn records(g: &Gen, cfg: &Config, (places, air): (&Places, &[Hex]), kinds: &[Uni
 pub fn tier(g: &Gen, city: &City) -> u8 {
     match city.reach {
         _ if city.side != Side::Grey => 0,
-        ReachClass::Sea | ReachClass::Air => 2,
+        // (On a map of islands, a city on another island is not remote for
+        // that: the islands raised for cities at sea are.)
+        ReachClass::Sea if *g.island.get(city.hex) => 2,
+        ReachClass::Air => 2,
+        ReachClass::Sea => match approach(g, city.hex) {
+            a if a >= REMOTE => 2,
+            a if a >= HARD => 1,
+            _ => 0,
+        },
         ReachClass::Foot => match approach(g, city.hex) {
             a if a >= REMOTE => 2,
             a if a >= HARD => 1,

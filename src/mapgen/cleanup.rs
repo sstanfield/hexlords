@@ -103,6 +103,8 @@ pub fn join_land(g: &mut Gen) {
                     cols,
                     &land[p],
                     |h| match *t.get(h) {
+                        // (Never over an island raised for a city at sea.)
+                        _ if *g.island.get(h) => None,
                         TileType::Mountain => Some(10 + (g.ridge.get(h) * 20.0) as u32),
                         TileType::Water if *g.river.get(h) => Some(6),
                         TileType::Water => water,

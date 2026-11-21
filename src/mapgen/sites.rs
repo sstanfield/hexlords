@@ -8,7 +8,7 @@
 use crate::state::{Hex, Side, TileType};
 
 use super::Gen;
-use super::cities::{Fair, travel};
+use super::cities::{Fair, travel, walk};
 use super::config::{Amount, Config, Fairness, Plan};
 use super::grid::{Grid, steps_from};
 use super::reach::ReachClass;
@@ -85,6 +85,8 @@ pub fn sites(g: &mut Gen, cfg: &Config, plan: &Plan) {
     };
     let air: Vec<Hex> = g.cities.iter().filter(|c| c.reach == ReachClass::Air).map(|c| c.hex).collect();
     let cities: Vec<Hex> = g.cities.iter().map(|c| c.hex).collect();
+    // (On a map of islands, the capitals' islands: a site is walked to.)
+    let walked = walk(g, &capitals);
     let near_city = steps_from(rows, cols, cities.iter().copied(), |_| true);
     // Where a site may be: land a walker gets to from the capitals, not a
     // city, off the edge, not on an island, not in an air city's ring, far
@@ -92,6 +94,7 @@ pub fn sites(g: &mut Gen, cfg: &Config, plan: &Plan) {
     let fits = |t: &Grid<TileType>, h: Hex| {
         matches!(*t.get(h), TileType::Grass | TileType::Forest | TileType::Hill | TileType::Desert | TileType::Swamp)
             && owner(h).is_some()
+            && walked.get(h).is_some()
             && inside(h)
             && t.edge_distance(h) >= 1
             && !*g.island.get(h)

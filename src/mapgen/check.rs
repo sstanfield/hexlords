@@ -75,6 +75,17 @@ pub fn check(map: &Map, strict: bool) -> Check {
     let units = map.units();
     let class_of = |name: &str| units.kind_named(name).and_then(|k| units.kind(k)).map(movement_class);
     let has = |class: MoveClass| units.kinds().iter().any(|k| movement_class(k) == class);
+    // The islands (land a walker crosses) that have a port: a city by the
+    // water that builds a ship. A city reached by sea is left from one.
+    let land = |h: Hex| tile(h).is_some_and(|t| !matches!(t.kind, TileType::Water | TileType::Mountain));
+    let (island, count) = pieces(rows, cols, land);
+    let mut port = vec![false; count.len()];
+    for city in map.cities().iter() {
+        let ships = city.units.iter().any(|p| class_of(&p.basename) == Some(MoveClass::Naval));
+        if let Some(i) = *island.get(city.pos) {
+            port[i] |= ships && by_water(map, city.pos);
+        }
+    }
     for (city, r) in map.cities().iter().zip(&classes) {
         c.reach.push((city.name.clone(), *r));
         let builds = |class: MoveClass| city.units.iter().any(|p| class_of(&p.basename) == Some(class));
@@ -83,8 +94,9 @@ pub fn check(map: &Map, strict: bool) -> Check {
             ReachClass::Sea => {
                 if !has(MoveClass::Naval) && !has(MoveClass::Flyer) {
                     c.warnings.push(format!("{} is reached only by sea, and the map has no ship", city.name));
-                } else if !builds(MoveClass::Naval) && !by_water(map, city.pos) {
-                    c.warnings.push(format!("{} is reached only by sea, and builds no ship to leave by", city.name));
+                } else if has(MoveClass::Naval) && !island.get(city.pos).is_some_and(|i| port[i]) {
+                    c.warnings
+                        .push(format!("{} is reached only by sea, and no port on its island builds a ship", city.name));
                 }
             }
             ReachClass::Air => {

@@ -17,9 +17,10 @@ numbers are used.
 mountains and hills, rivers and lakes, forest, swamp, desert, grass,
 cleanup), the cities (capitals, neutrals, sea and air cities, fairness,
 names, walls, what they build and who stands in them), the temples and
-ruins, and the roads (bridges, passes, every city and site meant to be
-reached on foot made so). To come: the rest of scoring, retries by score,
-symmetry.
+ruins, the roads (bridges, passes, every city and site meant to be
+reached on foot made so), and the hard checks, retries and scores (`accept
+best N`), with maps of islands. Not built: `symmetry` (below); the game's
+"new random map" window (the plan's G8).
 
 ## Commands
 
@@ -39,7 +40,18 @@ cargo run -p mapgen --release -- check assets/maps/continent
   seed from the clock, printed.
 - `batch` makes `seed-N/` for each seed, each with its preview, and with
   `--sheet` a contact sheet of them all (`sheet.png`, the seed in each
-  corner) and `sheet.txt` (each seed's score and what it misses).
+  corner) and `sheet.txt` (each seed's score and what it misses); last, how
+  many maps failed the hard checks, and the tries and the time a map.
+- `stats.txt`: what `stats` says; the targets (each soft measure, its
+  target or range, its value, a mark, and the score); the fairness measures;
+  side by side, a line for each side (its capital, the neutral cities in its
+  cell and within 3 turns, its land, the way to the nearest enemy and to
+  the nearest temple in turns, the cities in its cell that build ships, its
+  temples and ruins); and what the hard checks failed. The preview draws a
+  thin line round each capital's cell.
+- A map no try made pass the hard checks is written all the same, to look
+  at; `gen` and `batch` then say what it fails (`FAILS: ...`) and exit with
+  1.
 - `stats DIR` measures any map: water (the sea, lakes, open and narrow
   water, the edge, the coast, the land's pieces), the land mix, how each
   terrain lies (how much of a hex's neighbourhood is its own terrain against
@@ -118,7 +130,11 @@ the density; `size` alone: the cities at the density; neither: the size for
 the cities). It warns of a density outside 100 to 300, or fewer than 3
 cities a side. The knobs of the stages to come (cities, sites, roads,
 fairness, ships and flyers, retries) are read and written already, and do
-nothing yet: `symmetry`, `accept`. A
+nothing yet: `symmetry` (a map built on a half or a quarter and copied:
+every stage would have to keep to it; the fairness measures already hold
+the sides to a fair share, and the owner wants random maps fun to play,
+bespoke ones from the editor). `accept` is `first` (the first map that
+passes the hard checks) or `best N` (the lowest score of N that pass). A
 checkbox on with a units template that has no such unit stops the generator
 with an error that says so.
 
@@ -210,9 +226,25 @@ with an error that says so.
      empty; the owner wants none wasted). The cities are farther apart
      than the target map's, so: a median of about 10 to the nearest, not 8.
    - **At sea and in the air** (the checkboxes): cities on the islands
-     raised for them, the first of each by the water; and neutral cities
-     three turns from every capital, in or by a range, ringed by mountains
-     two hexes out (the mountains taken from ranges' edges elsewhere).
+     raised for them (in the main sea, 5 hexes from land if there is such
+     water, else 4 or 3), by the water and off the edge; and neutral cities
+     three turns from every capital (on a small map where none is, the
+     farthest), in or by a range, ringed by mountains two hexes out (the
+     mountains taken from ranges' edges elsewhere, never another air city's
+     ring).
+   - **To the water**: while fewer cities stand by the water than
+     `coastal_cities`, one a hex or two from it steps to its edge (an even
+     spread keeps most off the shores).
+   - **Maps of islands** (`layout archipelago`, the `islands` preset):
+     travel goes by sea too, on the main sea (the biggest water a ship
+     sails on), a hex of sea 1, putting to sea a turn: the cells, the
+     fairness and the cities' places reach every island. A capital to each
+     big island (land between the water), when there are as many as sides;
+     neutral cities on every island, those on another island than the
+     capitals' reached by sea, by the water (each its island's port) and
+     building the template's ship; roads on each island among its own
+     cities; temples and ruins on the capitals' islands. Each home island
+     with a coast on the main sea needs a port on it (fairness).
    - **Fairness**: while the neutral cities are shared out unfairly (the
      table below), the side with the most gives up the city it holds most
      narrowly and the side with the fewest gets one in its emptiest place;
@@ -256,7 +288,8 @@ crossed:
 | The way to the nearest enemy capital, longest over shortest | 1.5 | 1.3 | 1.15 |
 | Ports in each cell (that has water a ship reaches the sea on), most less fewest; and none short of `ports_per_side` | 3 | 2 | 1 |
 | Cities at sea nearest one capital | 2 | 1 | 1 |
-| Capitals hemmed in (degrees short of a half turn) | 0 | 0 | 0 |
+| Capitals hemmed in (degrees short of a half turn; up to 4 sides: with more, some stand amid the others on any map) | 0 | 0 | 0 |
+| Home islands with no port on the main sea (a map of islands, or with cities at sea) | 0 | 0 | 0 |
 | Temples in each cell, most less fewest | 2 | 1 | 0 |
 | Ruins in each cell, most less fewest | 2 | 1 | 0 |
 | The way from each capital to its nearest temple, longest less shortest, in turns | 3 | 2 | 1 |
@@ -323,7 +356,60 @@ terrain (no `sin`, `exp` or `powf`, whose last bits differ between
 platforms), breaks ties by the hex's index, and draws its chance from its own
 stream (`rng.rs`, SplitMix64).
 
+## Hard checks, retries, the score
+
+A map must pass the hard checks (`validate.rs`), or it is made again from
+another seed (the seed and the try scrambled), at most `attempts` times:
+
+- the game reads it, and `mapgen check` finds no problem (strict: every
+  bridge and pass on a road from land to land);
+- every city is reached as planned (on foot, by sea, through the air), and
+  every temple and ruin off the islands on foot;
+- as many cities, capitals, temples and ruins as asked; a city at sea, and
+  one in the air, if their checkboxes are on;
+- the cities `city_min_gap` apart and `edge_margin` off the edge;
+- fair at the level asked (the table above).
+
+`accept best N` makes N maps that pass and keeps the lowest soft score: the
+sum over the measures of the miss over the tolerance, squared, at most 4
+each. The measures (`score.rs`): the water share (1 point), each land
+terrain's share (1 point), how each keeps to itself (the target map's, 0.08),
+land walled in by mountains (none; an air city's ring is meant), mountain
+edges on hills (`hill_ring`, 0.08); the nearest city's median (0.9 x the
+square root of the density, an even spread over the land; 1.5), cities by
+the water (`coastal_cities`, 0.08), cities on foot on a road (`linked` and
+`dense` all; `sparse` 55 to 70%), road hexes for each city (`linked` 9 to
+15, `sparse` 4 to 11, `dense` 11 to 19), road hexes in clean lines (80% and
+more), bridges for each city (one for 5 to 8), ports among the cities by
+the water (50 to 90%).
+
 ## How well it does
+
+Every size and number of sides, 10 seeds each, in release on the owner's
+machine (`mapgen batch`; the full 50-seed run is
+`cargo test --release --test mapgen_validate -- --ignored`): maps that fail
+the hard checks after `attempts` tries; tries and seconds a map.
+
+| Size, sides | Checkboxes off | Both on | `islands` |
+|---|---|---|---|
+| tiny, 2 | 0; 1.0, 0.02 s | 0; 1.3, 0.03 s | 0; 1.4, 0.02 s |
+| tiny, 4 | 0; 1.6, 0.06 s | 0; 4.7, 0.20 s | 10 (5 cities for 4 sides) |
+| tiny, 8 | 3; 8.8, 0.8 s | 10 | none (too few cities for 8 capitals) |
+| medium, 2 | 0; 1.1, 0.24 s | 0; 1.0, 0.28 s | 0; 1.1, 0.22 s |
+| medium, 4 | 0; 1.6, 0.6 s | 0; 1.5, 0.4 s | 0; 2.1, 0.5 s |
+| medium, 8 | 0; 3.8, 3.0 s | 0; 4.0, 2.6 s | 0; 9.0, 3.4 s |
+| huge, 2 | 0; 1.0, 0.8 s | 0; 1.0, 0.8 s | 0; 1.2, 0.7 s |
+| huge, 4 | 0; 1.2, 1.1 s | 0; 1.1, 1.0 s | 0; 1.8, 1.6 s |
+| huge, 8 | 0; 4.5, 5.9 s | 0; 8.8, 12.6 s | 0; 10.4, 12.0 s |
+
+A tiny map has a city for some 170 land hexes: with 8 sides (or 4 on the
+islands' 45% of water) that is fewer than 3 cities a side, and the
+generator warns of it; its land cannot always be shared out fairly, nor a
+city found for the sea. With 8 sides, the land in eight cells within 1.3 of
+each other takes a few terrains: a try gives a terrain up as soon as two
+sets of capitals show it will not share out, but a huge map still takes
+some seconds.
+
 
 Over 20 seeds each of medium and huge maps (`tests/mapgen_terrain.rs`):
 water and every land share within a point of the config on every map; the

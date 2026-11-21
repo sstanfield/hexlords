@@ -37,6 +37,7 @@ const PASS: Rgb = [240, 240, 240];
 const CITY: Rgb = [205, 205, 205];
 const DIGIT: Rgb = [250, 250, 250];
 const RING: Rgb = [20, 18, 16];
+const BORDER: Rgb = [235, 230, 200];
 const TEMPLE: Rgb = [240, 200, 60];
 const RUIN: Rgb = [120, 75, 40];
 const PORT: Rgb = [20, 40, 120];
@@ -148,9 +149,27 @@ impl Layout {
     }
 }
 
+/// A thin line round each capital's cell (`cells`: whose each hex is):
+/// fairness at a glance.
+fn borders(img: &mut Image, (rows, cols): (u16, u16), s: f64, cells: &Grid<Option<usize>>) {
+    let layout = Layout { s, rows, cols };
+    let owner = |px: u32, py: u32| layout.hex_at(px, py).and_then(|h| *cells.get(h));
+    for py in 0..img.h.saturating_sub(1) {
+        for px in 0..img.w.saturating_sub(1) {
+            let here = owner(px, py);
+            let edge =
+                [owner(px + 1, py), owner(px, py + 1)].iter().any(|o| o.is_some() && here.is_some() && *o != here);
+            if edge {
+                img.put(i64::from(px), i64::from(py), BORDER);
+            }
+        }
+    }
+}
+
 /// The whole map in flat colours, a hex `2 s` pixels wide, its roads, cities
-/// and sites on it; `marks` says more of the cities, in their order.
-pub fn preview(map: &Map, s: f64, marks: &[CityMark]) -> Image {
+/// and sites on it; `marks` says more of the cities, in their order; a thin
+/// line round each capital's cell, if `cells` says whose each hex is.
+pub fn preview(map: &Map, s: f64, marks: &[CityMark], cells: Option<&Grid<Option<usize>>>) -> Image {
     let layout = Layout { s, rows: map.rows(), cols: map.cols() };
     let (w, h) = layout.size();
     let mut img = Image::new(w, h, BACKGROUND);
@@ -165,6 +184,9 @@ pub fn preview(map: &Map, s: f64, marks: &[CityMark]) -> Image {
                 img.put(i64::from(px), i64::from(py), byte(terrain_color(t)));
             }
         }
+    }
+    if let Some(cells) = cells {
+        borders(&mut img, (map.rows(), map.cols()), s, cells);
     }
     // Roads: a line from each road hex to each road or city beside it.
     let road = |hex: Hex| map.tile(hex).is_some_and(|t| t.road);

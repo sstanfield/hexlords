@@ -43,6 +43,7 @@ pub mod roads;
 pub mod score;
 pub mod sites;
 pub mod stats;
+pub mod validate;
 
 use crate::state::scenario::{self, parse_units};
 use crate::state::{Map, TileType};
@@ -71,6 +72,13 @@ pub struct Gen {
     pub river: Grid<bool>,
     /// The water ships sail to the sea on (the sea, and rivers into it).
     pub navigable: Grid<bool>,
+    /// Travel goes by sea too (`archipelago`): a hex of sea costs little, a
+    /// turn to embark (`cities::travel`).
+    pub by_sea: bool,
+    /// The main sea: the biggest water a ship sails on (`cities`). Travel by
+    /// sea and the cities at sea keep to it, so that a port on the
+    /// capitals' land opens on it.
+    pub main_sea: Grid<bool>,
     /// Hexes the last pass over the mix leaves as they are (the ways cut
     /// into walled-off land: `cleanup::join_land`).
     pub keep: Grid<bool>,
@@ -92,6 +100,8 @@ impl Gen {
             fresh: Grid::new(rows, cols, false),
             river: Grid::new(rows, cols, false),
             navigable: Grid::new(rows, cols, false),
+            by_sea: false,
+            main_sea: Grid::new(rows, cols, false),
             keep: Grid::new(rows, cols, false),
             cities: Vec::new(),
             fairness: Vec::new(),
@@ -118,20 +128,32 @@ pub struct Generated {
     pub units: String,
     /// How many seeds were tried before this map (its config has its own).
     pub attempts: u32,
+    /// What it fails of the hard checks (`validate::hard`): nothing, unless
+    /// no try passed (then the map that failed least is given).
+    pub failures: Vec<String>,
+    /// Its soft score (`score::all`): lower is nearer what was asked.
+    pub score: f64,
 }
 
 /// Make a map: `units` is the units template's text (`template` names it, for
-/// what is said of it). A map whose cities will not share out fairly is
-/// made again from another seed (the seed and the try, scrambled: not the
-/// next seed, which a batch makes too), at most `attempts` times; the map's
-/// config says the seed that made it (which makes it again at the first
-/// try), and how many tries it took. If none was fair, the fairest is given,
-/// and says what is unfair.
+/// what is said of it). A map that fails a hard check (`validate::hard`:
+/// unfair, a city out of reach, ...) is made again from another seed (the
+/// seed and the try, scrambled: not the next seed, which a batch makes too),
+/// at most `attempts` times; `accept best N` makes N maps that pass and
+/// keeps the one with the lowest soft score. The map's config says the seed
+/// that made it (which makes it again at the first try), and how many tries
+/// it took. If none passed, the one that failed least is given, and says
+/// what it fails (`Generated::failures`).
 pub fn generate(config: &Config, units: &str, template: &str) -> Result<Generated, String> {
     let plan = config.plan()?;
     let kinds = parse_units(units).map_err(|e| format!("{template}: {e}"))?;
     config.check_units(&kinds, template)?;
-    let mut best: Option<(usize, Generated)> = None;
+    let wanted = match config.accept {
+        config::Accept::First => 1,
+        config::Accept::Best(n) => n.max(1) as usize,
+    };
+    let mut passed: Vec<Generated> = Vec::new();
+    let mut failed: Option<Generated> = None;
     for attempt in 0..config.attempts.max(1) {
         let mut cfg = config.clone();
         if attempt > 0 {
@@ -139,16 +161,22 @@ pub fn generate(config: &Config, units: &str, template: &str) -> Result<Generate
         }
         let mut made = make(&cfg, &plan, (&kinds, units))?;
         made.attempts = attempt + 1;
-        let unfair = made.state.fairness.iter().filter(|f| !f.ok()).count();
-        if best.as_ref().is_none_or(|(u, _)| unfair < *u) {
-            best = Some((unfair, made));
-        }
-        if unfair == 0 {
-            break;
+        made.failures = validate::hard(&made);
+        made.score =
+            made.map().map_or(f64::MAX, |map| score::score(&score::all(&made.config, &plan, &stats::Stats::of(&map))));
+        if made.failures.is_empty() {
+            passed.push(made);
+            if passed.len() >= wanted {
+                break;
+            }
+        } else if failed.as_ref().is_none_or(|f| made.failures.len() < f.failures.len()) {
+            failed = Some(made);
         }
     }
-    let (_, mut made) = best.ok_or("no map was made")?;
-    made.attempts = made.attempts.max(1);
+    let tries = passed.last().map_or(config.attempts.max(1), |m| m.attempts);
+    let best = passed.into_iter().min_by(|a, b| a.score.total_cmp(&b.score)).or(failed);
+    let mut made = best.ok_or("no map was made")?;
+    made.attempts = made.attempts.max(1).max(if wanted > 1 { tries } else { 0 });
     Ok(made)
 }
 
@@ -184,7 +212,15 @@ fn make(config: &Config, plan: &Plan, (kinds, units): (&[crate::state::UnitKind]
     cleanup::quotas(&mut g, config);
     sites::judge(&mut g, config);
     cities::worth(&mut g, config, kinds);
-    Ok(Generated { config: config.clone(), plan, state: g, units: units.to_string(), attempts: 1 })
+    Ok(Generated {
+        config: config.clone(),
+        plan,
+        state: g,
+        units: units.to_string(),
+        attempts: 1,
+        failures: Vec::new(),
+        score: 0.0,
+    })
 }
 
 impl Generated {
@@ -241,6 +277,66 @@ impl Generated {
                 }) && g.terrain.neighbours(c.hex).any(|n| *g.terrain.get(n) == TileType::Water),
             })
             .collect()
+    }
+
+    /// Each hex's capital: the one that gets to it first (`cities::travel`),
+    /// as the fairness measures count; by the capitals' order.
+    pub fn cells(&self) -> Grid<Option<usize>> {
+        let capitals: Vec<crate::state::Hex> =
+            self.state.cities.iter().filter(|c| c.side != crate::state::Side::Grey).map(|c| c.hex).collect();
+        cities::travel(&self.state, &capitals).1
+    }
+
+    /// Each side's share, a line each: its capital, the neutral cities in its
+    /// cell and within 3 turns, its land, the way to its nearest enemy and
+    /// to its nearest temple (turns), the ports, temples and ruins in its
+    /// cell. (What the fairness measures compare, side by side.)
+    pub fn sides_table(&self) -> String {
+        use crate::state::{Side, TileType};
+        let g = &self.state;
+        let t = &g.terrain;
+        let capitals: Vec<&cities::City> = g.cities.iter().filter(|c| c.side != Side::Grey).collect();
+        let grids: Vec<Grid<Option<u32>>> = capitals.iter().map(|c| cities::travel(g, &[c.hex]).0).collect();
+        let owner = |h: crate::state::Hex| {
+            (0..grids.len()).filter_map(|i| grids[i].get(h).map(|c| (c, i))).min().map(|(_, i)| i)
+        };
+        let turns = |c: Option<u32>| c.map_or("-".to_string(), |c| format!("{:.1}", f64::from(c) / 10.0));
+        let mut out = format!(
+            "  {:<8} {:<14} {:>7} {:>9} {:>6} {:>8} {:>8} {:>6} {:>8} {:>6}\n",
+            "side", "capital", "cities", "in 3 t.", "land", "enemy t.", "temple t.", "ships", "temples", "ruins"
+        );
+        for (i, cap) in capitals.iter().enumerate() {
+            let neutral = g.cities.iter().filter(|c| c.side == Side::Grey);
+            let mine = neutral.clone().filter(|c| owner(c.hex) == Some(i)).count();
+            let near = neutral.filter(|c| grids[i].get(c.hex).is_some_and(|d| d <= 30)).count();
+            let land = t
+                .hexes()
+                .filter(|h| !matches!(*t.get(*h), TileType::Water | TileType::Mountain) && owner(*h) == Some(i))
+                .count();
+            let enemy = capitals.iter().filter(|c| c.hex != cap.hex).filter_map(|c| *grids[i].get(c.hex)).min();
+            let temple = t.hexes().filter(|h| *t.get(*h) == TileType::Temple).filter_map(|h| *grids[i].get(h)).min();
+            let ships = |c: &&cities::City| {
+                c.produce.iter().any(|(id, _)| {
+                    self.kinds().iter().any(|k| k.id == *id && reach::movement_class(k) == reach::MoveClass::Naval)
+                })
+            };
+            let ports = g.cities.iter().filter(|c| owner(c.hex) == Some(i)).filter(ships).count();
+            let of = |k: TileType| t.hexes().filter(|h| *t.get(*h) == k && owner(*h) == Some(i)).count();
+            out.push_str(&format!(
+                "  {:<8} {:<14} {:>7} {:>9} {:>6} {:>8} {:>8} {:>6} {:>8} {:>6}\n",
+                crate::state::scenario::side_name(cap.side),
+                cap.name,
+                mine,
+                near,
+                land,
+                turns(enemy),
+                turns(temple),
+                ports,
+                of(TileType::Temple),
+                of(TileType::Ruin)
+            ));
+        }
+        out
     }
 
     /// The units template's kinds.
