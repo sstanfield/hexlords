@@ -73,7 +73,8 @@ cities' work weighs). Each turn, order by order, it:
 1. keeps its treasury in hand: what its cities build is what it can keep
    and pay for, and what is worth most under the rules of this game; late
    (with two stacks' worth of soldiers, more than it fields at once) the
-   strongest it can keep, and it disbands its weakest (never a siege
+   strongest it can keep (a city that builds only what it would send home
+   for the best waits), and it disbands its weakest (never a siege
    engine), up to four a turn, to make room for one three points the
    stronger (the owner: late in the game, quality stacks, not junk); and,
    late, it builds a siege engine when it has none
@@ -98,7 +99,8 @@ cities' work weighs). Each turn, order by order, it:
    price;
 4. gathers the rest around its commander (where it stood at the turn's
    start), sends small stacks to the army or keeps them home until there is
-   a force, stops at temples on the way that have not blessed some of the
+   a force (but a city of nobody's it is likely to take as it is, it goes
+   for), stops at temples on the way that have not blessed some of the
    stack (free of others, with room) and seeks their blessing there, and
    sends each army toward the city most worth the trouble (its taxes
    against the way there and what defends it), a step at a time as far as
@@ -113,8 +115,12 @@ total fog it goes by the land it has seen: while it knows of no city to go
 for, every stack goes to see more, a few steps a turn, toward the nearest
 edge of that land it can get to and away from where its others went; and
 while there is land it has not seen, its fastest spare unit goes on looking.
-Under total fog its styles win 76 to 80 games in 100 against `simple` (which
-explores too), and games last half again as long. Its sense of worth
+Under total fog its styles won 76 to 80 games in 100 against `simple`
+(which explores too), and games lasted half again as long (on the
+continent, before the rules of 2026-11-20). On generated maps of four
+sides they now last far longer: 3 or 4 in 24 end within 300 rounds (most
+go past 240; mountains, walls for anything that walks, make the ways
+round long through land not yet seen). Its sense of worth
 is plain arithmetic (no `powf`), so a seed plays the same game on every
 machine.
 
@@ -132,6 +138,15 @@ rules, nearly all with little chance or fog. They finish off a passive
 side, an all-out rusher and a turtle.
 Among themselves no style beats another by much, and each has rules it
 does best under.
+
+Measured again (2026-11-21) on twelve generated maps, under the rules of
+now (upkeep half a unit's price, every neutral city garrisoned, walls by
+steps, the new kinds), each style on two seats against `simple` on two,
+both ways round: at the default rules steady won 13 games of 24 and lost
+7, careful 15 and 7, bold 11 and 13; with strength against strength, 15
+and 8, 10 and 10, 9 and 12. Bold, the quickest, does no better than
+`simple` now; all four styles on a map together, bold wins most (14 of
+46, simple 12, careful 11, steady 9).
 
 ## A program that plays: the text protocol
 

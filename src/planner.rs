@@ -579,10 +579,16 @@ impl Planner {
             }
             // A small stack joins the army first, if the army is near; the
             // army's own, while small, waits for them. (Not for a city of
-            // nobody's that it sees nobody in: that, it goes and takes.)
+            // nobody's it sees and is likely to take as it is, empty or held
+            // by a few: that, it goes and takes; every neutral city has a
+            // garrison, and the armies waited while others took them.)
             let target = self.objective(game, (side, &sight), here, lead, ids.len());
-            let empty = |t: Hex| map.city_at(t).is_some_and(|c| c.side == Side::Grey) && map.units_at(t).is_empty();
-            let small = ids.len() < style.muster && !target.is_some_and(|t| sight.sees(t) && empty(t));
+            let takes = |t: Hex| {
+                map.city_at(t).is_some_and(|c| c.side == Side::Grey)
+                    && (map.units_at(t).is_empty()
+                        || game.battle_forecast(&ids, t).is_some_and(|f| f.odds >= daring(&style, game).0))
+            };
+            let small = ids.len() < style.muster && !target.is_some_and(|t| sight.sees(t) && takes(t));
             if small && hub == Some(here) {
                 continue;
             }
@@ -728,6 +734,11 @@ impl Planner {
         let soldiers: Vec<&Unit> =
             units.of_side(side).filter(|u| map.contains(u.pos()) && !map.is_commander(u.id())).collect();
         let late = soldiers.len() >= LATE_SOLDIERS;
+        // (Its scout, or under total fog the one that would be: its fastest.)
+        let explorer = (game.setup().fog == crate::setup::Fog::Total)
+            .then(|| soldiers.iter().max_by_key(|u| (u.base_move_points, u.id().index)).map(|u| u.id()))
+            .flatten();
+        let scouts = [self.scout, explorer];
         if late && self.disbanded < MAX_DISBANDS {
             let could = |p: &&UnitProd| {
                 !leads(p)
@@ -750,8 +761,10 @@ impl Planner {
                     .iter()
                     .filter(|u| u.power() + DISBAND_GAP <= p.strength && !alone(u) && !at_sea(u))
                     // (Not a ship, nor a siege engine: weak, but not junk; it
-                    // once sent home each it had just built for the walls.)
+                    // once sent home each it had just built for the walls.
+                    // Nor its scout, which it would then replace.)
                     .filter(|u| units.kind_of(u).is_some_and(|k| k.travel != Travel::Sea && k.siege == 0))
+                    .filter(|u| !scouts.contains(&Some(u.id())))
                     .min_by_key(|u| (u.power(), std::cmp::Reverse(u.upkeep), u.id().index))
             });
             if let Some(unit) = junk {
@@ -777,7 +790,9 @@ impl Planner {
             let score = |p: &UnitProd| production_score(p, game, &self.style);
             // Late, nothing it would send home for the best its cities build:
             // a city that builds only that waits (one built militia while
-            // another sent militia home for knights, again and again).
+            // another sent militia home for knights, again and again; built
+            // when there was room, they were sent home a few hundred times a
+            // game, for few more wins).
             let worth_keeping = |p: &UnitProd| !late || p.strength + DISBAND_GAP > side_best;
             city.units
                 .iter()

@@ -36,7 +36,8 @@ fn game(red: &str, blue: &str, gold: u32) -> Game {
                  unit captain\nname Captain\nstrength 2\nmoves 12\ncommander 1\nenter grass 2, city 1\n\
                  unit hawk\nname Hawk\nstrength 1\nmoves 12\ntravels air\nenter grass 2, water 2, city 1\n\
                  unit ram\nname Ram\nstrength 1\nmoves 6\nupkeep 1\nsiege 1\nenter grass 2, city 1\n\
-                 unit ranger\nname Ranger\nstrength 2\nmoves 12\nbonus forest 2, city 1\nenter grass 2, forest 2, city 1\n";
+                 unit ranger\nname Ranger\nstrength 2\nmoves 12\nbonus forest 2, city 1\nenter grass 2, forest 2, city 1\n\
+                 unit runner\nname Runner\nstrength 1\nmoves 24\nupkeep 2\nenter grass 2, city 1\n";
     let cities = format!(
         "city 5 5\nname Redhold\nside red\nwalls 2\nincome 20\nproduce levy 1\nproduce knights 2\n{red}\
          city 15 5\nname Southwick\nside red\n\
@@ -552,6 +553,12 @@ fn a_siege_counts_the_units_seen_before() {
     let sure = Some(hexgame::state::combat::Forecast { odds: 100, kills: 1.0, losses: 0.0 });
     // Nine red units against five blue it knows of: no siege (9 < 3 x 5).
     assert!(!hexgame::agents::siege(&view, Side::Red, BLUEMOOR, sure));
+    // Seen long ago, they count no more (under total fog, sightings a
+    // hundred rounds old barred every siege).
+    while game.turn() <= 1 + hexgame::agents::SIEGE_MEMORY {
+        game.end_turn();
+    }
+    assert!(hexgame::agents::siege(&game.view_for(Side::Red), Side::Red, BLUEMOOR, sure));
 }
 
 /// The generator's walls are 0 to 6, as high as walls go in the game.
@@ -582,4 +589,35 @@ fn the_help_topics_tell_the_new_rules() {
     let orders = text("help_orders");
     assert!(orders.contains("Defend: F:") && orders.contains("Disband: X:"), "{orders}");
     assert!(orders.contains("a city's work or its walls"), "{orders}");
+}
+
+/// Under total fog the planner keeps a scout looking: late, it never
+/// sends that one home to make room (it sent its scout home, built
+/// another, and sent that home, hundreds of times a game).
+#[test]
+fn the_planner_keeps_its_scout() {
+    let mut game = game("garrison levy 8\n", "", 200);
+    let mut setup = game.setup().clone();
+    setup.fog = hexgame::setup::Fog::Total;
+    game = game.with_setup(setup);
+    for row in [2, 3] {
+        for _ in 0..8 {
+            new_unit(&mut game, Side::Red, "levy", Hex::new(row, 2));
+        }
+    }
+    // The fastest, as weak as a levy and dearer to keep: the first to go,
+    // were it not the scout.
+    let runner = new_unit(&mut game, Side::Red, "runner", Hex::new(4, 2));
+    let mut planner = hexgame::planner::Planner::new(hexgame::planner::STEADY);
+    for _ in 0..3 {
+        let report = hexgame::agents::play_turn(&mut game, &mut planner);
+        let gone = report
+            .events
+            .iter()
+            .any(|e| matches!(e, Event::Disbanded { names, .. } if names.contains(&"Runner".to_string())));
+        assert!(!gone && game.map.units().get(runner).is_some(), "it sent its scout home");
+        while game.player() != Side::Red {
+            game.end_turn();
+        }
+    }
 }

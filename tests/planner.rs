@@ -289,3 +289,36 @@ fn a_stack_in_the_only_way_is_gone_for() {
     let outcome = headless::play(&mut game, 40, &mut |_, _| {}).unwrap();
     assert_eq!(outcome.winner, Some(Side::Red));
 }
+
+/// A stack too small to march on a held city by itself (fewer than its
+/// style musters) still goes for a city of nobody's it is likely to take as
+/// it is: every neutral city has a garrison now, and the planner's armies
+/// waited for musters while others took them.
+#[test]
+fn a_small_stack_takes_a_neutral_city_it_can_beat() {
+    let mut rows = vec!["g".repeat(30); 30];
+    // (The waste three turns' march off: beyond a strike this turn.)
+    rows[5] = format!("{}c{}c{}", "g".repeat(5), "g".repeat(14), "g".repeat(9));
+    rows[25] = format!("{}c{}", "g".repeat(25), "g".repeat(4));
+    let terrain = format!("30\n30\n{}\n", rows.join("\n"));
+    let units = "unit militia\nname Militia\nstrength 2\nmoves 10\nprice 4\nupkeep 1\nenter grass 2, city 1\n\
+                 unit levy\nname Levy\nstrength 1\nmoves 10\nenter grass 2, city 1\n";
+    let cities = "city 5 5\nname Redhold\nside red\nincome 30\ngarrison militia 4\n\
+                  city 5 20\nname Waste\ngarrison levy\n\
+                  city 25 25\nname Bluemoor\nside blue\ngarrison levy\n";
+    let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+    let game = Game::from_scenario(Scenario { map, assets: None, warnings });
+    let mut s = Setup::solo(&game.map, None, "steady");
+    s.set_players("red=steady,blue=passive").unwrap();
+    let mut game = game.with_setup(s);
+    for _ in 0..8 {
+        agents::play_turn(&mut game, &mut Planner::new(STEADY));
+        if game.map.city_at(WASTE).unwrap().side == Side::Red {
+            return;
+        }
+        game.apply(Order::EndTurn).unwrap();
+    }
+    panic!("the waste is still nobody's: {} wait in Redhold", game.map.units_at(Hex::new(5, 5)).len());
+}
+
+const WASTE: Hex = Hex::new(5, 20);

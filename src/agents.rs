@@ -433,6 +433,9 @@ pub fn blessing(game: &Game, side: Side, pilgrims: &mut Vec<UnitId>) -> Option<O
 /// the defenders rise in level, and the side waits for stronger units.
 pub const SIEGE_ODDS: u32 = 5;
 pub const SIEGE_KILLS: f64 = 1.0;
+/// How many rounds the holder's units it saw and sees no more count in a
+/// siege's sum (fog of war).
+pub const SIEGE_MEMORY: u32 = 5;
 
 /// True if `side` so outnumbers the holder of the city at `target` (three
 /// times its units and its cities) that it takes the city in waves, each
@@ -450,9 +453,17 @@ pub fn siege(game: &Game, side: Side, target: Hex, forecast: Option<crate::state
     let units = |s: Side| map.units().of_side(s).count();
     let cities = |s: Side| map.cities().iter().filter(|c| c.side == s).count();
     // (With fog of war its view holds only the holder's units it sees: and
-    // those it saw, and sees no more, count too.)
+    // those it saw lately, and sees no more, count too; not those seen long
+    // ago, which may be dead or anywhere: under total fog they barred every
+    // siege.)
     let sight = game.sight(side);
-    let unseen: usize = sight.ghosts().iter().filter(|g| g.side == holder && !sight.sees(g.at)).map(|g| g.count).sum();
+    let lately = |round: u32| round + SIEGE_MEMORY >= game.turn();
+    let unseen: usize = sight
+        .ghosts()
+        .iter()
+        .filter(|g| g.side == holder && !sight.sees(g.at) && lately(g.round))
+        .map(|g| g.count)
+        .sum();
     let theirs = units(holder) + unseen;
     units(side) >= 3 * theirs.max(1) && cities(side) >= 3 * cities(holder).max(1)
 }
