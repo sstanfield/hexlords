@@ -6,7 +6,9 @@
 //! - `--players red=person,blue=simple`: who plays which side (`person`, or an
 //!   agent: `passive`, `simple`, `cmd:<program>`);
 //! - `--order fixed|drawn`: the sides play in the same order each round, or
-//!   one drawn anew; `--seed <n>`: the seed of the game's chance;
+//!   one drawn anew; `--seed <n>`: the seed of the game's chance (without
+//!   it, one from the clock in a window, each game its own; 1 headless, so
+//!   a run can be made again);
 //! - `--chance <0-10>`: how much chance there is in a battle (5); `--battles
 //!   lines|strength`: how a battle goes (lines); `--gold <n>`: the gold each
 //!   side starts with (50); `--fog`: fog of war; `--total-fog`: fog of war,
@@ -162,7 +164,7 @@ fn main() {
                 }
             }
             setup.order = order.unwrap_or(setup.order);
-            setup.seed = seed.unwrap_or(setup.seed);
+            setup.seed = game_seed(seed, headless, setup.seed);
             setup.combat.chance = chance.unwrap_or(setup.combat.chance);
             setup.combat.system = battles.unwrap_or(setup.combat.system);
             setup.gold = gold.unwrap_or(setup.gold);
@@ -205,12 +207,35 @@ fn main() {
     });
 }
 
+/// The seed of a game from the command line: `--seed`'s; without it, one
+/// from the clock in a window (each game its own chance), and the setup's
+/// own (`default`) headless, so a run can be made again.
+fn game_seed(given: Option<u64>, headless: bool, default: u64) -> u64 {
+    given.unwrap_or_else(|| {
+        if headless {
+            return default;
+        }
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+        now.map_or(default, |d| (d.as_nanos() as u64).max(2))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn parse(args: &[&str]) -> Result<Args, String> {
         parse_args(args.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn a_game_in_a_window_has_its_own_seed() {
+        // In a window, without --seed, one from the clock: the same seed each
+        // time gave the same battles and blessings in every game.
+        assert_ne!(game_seed(None, false, 1), 1);
+        // Headless, the setup's, so a run can be made again; --seed wins.
+        assert_eq!(game_seed(None, true, 1), 1);
+        assert_eq!((game_seed(Some(9), false, 1), game_seed(Some(9), true, 1)), (9, 9));
     }
 
     #[test]
