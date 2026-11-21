@@ -458,7 +458,8 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                 (
                     "Tasks",
                     "What you have left to do this turn: stacks with no orders and cities that build \
-                           nothing first, then what could do more, then the rest."
+                           nothing first, then cities held up, then the rest. A stack you moved, or put \
+                           aside with D, is done for the turn: N passes it by (click it to move it again)."
                         .to_string(),
                 ),
             ],

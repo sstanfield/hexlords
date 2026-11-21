@@ -408,9 +408,14 @@ thing to happen. Ideas to try, as the rules grow:
 - **A list of tasks** (built): T, or the Tasks button, opens what the
   player has left to do this turn (`Game::tasks`), most pressing first:
   stacks that have had no orders (or whose march stopped short) and cities
-  that build nothing; then stacks that can go further, or were put aside
-  with moves left, and cities whose work is done and waits (for gold, or
-  for room); then the rest (marching, spent, building). A row is a button:
+  that build nothing; then cities whose work is done and waits (for gold,
+  or for room); then the rest (marching, spent, building, and the stacks
+  the player is done with this turn: put aside, or moved). A stack the
+  player moved and that stopped has had its orders, moves left or not:
+  Next stack passes it by, as it does one put aside, and a click on its
+  hex picks the units that have not moved first. A stack that got where
+  a standing order sent it, at the start of the turn, waits for orders
+  again. A row is a button:
   a stack's selects it, a city's opens it; the list follows the game, so
   the player can work down it.
 - **Production that repeats** until told otherwise (it does), and the lists

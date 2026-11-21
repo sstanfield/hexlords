@@ -1,7 +1,7 @@
 //! The list of tasks (T, or the Tasks button): what the player has left to do
 //! this turn, the most pressing first (`Game::tasks`): the stacks that have
-//! had no orders and the cities that build nothing; then the stacks that
-//! could go further and the cities whose work waits; then the rest. A row is
+//! had no orders and the cities that build nothing; then the cities whose
+//! work waits; then the rest (with the stacks moved or put aside). A row is
 //! a button: a stack's selects it, a city's opens it. It follows the game as
 //! it goes, so the player can work down it.
 
@@ -22,7 +22,7 @@ const SPACING_DP: i32 = 8;
 const SCROLL_BAR_DP: i32 = 16;
 
 /// The headings of the tiers ([`Task::tier`]).
-pub const TIERS: [&str; 3] = ["Needs orders", "Could do more", "The rest"];
+pub const TIERS: [&str; 3] = ["Needs orders", "Held up", "The rest"];
 
 /// The id of the `i`th row.
 pub fn row_id(i: usize) -> String {

@@ -104,7 +104,8 @@ pub enum StackState {
     Waiting,
     /// Its standing order stopped short: something is in the way.
     Stalled,
-    /// It went, and can go further.
+    /// Its player moved it this turn, and it can go further: its player is
+    /// taken to be done with it, as with Done.
     MovesLeft,
     /// Its player is done with it, though it could still go.
     Done,
@@ -130,14 +131,15 @@ pub enum CityState {
 
 impl Task {
     /// How pressing it is: 1, what has had no orders (stacks that wait, or
-    /// whose way is blocked, and cities that build nothing); 2, what could
-    /// do more (stacks with moves left, or put aside with moves, and cities
-    /// whose work waits); 3, the rest.
+    /// whose way is blocked, and cities that build nothing); 2, what is held
+    /// up (cities whose work waits for the gold or for room); 3, the rest,
+    /// with the stacks its player is done with this turn: put aside, or
+    /// moved (a stack moved and stopped has had its orders, moves left or
+    /// not).
     pub fn tier(&self) -> u8 {
         match self {
             Task::Stack { state: StackState::Waiting | StackState::Stalled, .. } => 1,
             Task::City { state: CityState::Idle, .. } => 1,
-            Task::Stack { state: StackState::MovesLeft | StackState::Done, .. } => 2,
             Task::City { state: CityState::Waiting, .. } => 2,
             _ => 3,
         }
@@ -974,6 +976,13 @@ impl Game {
         let mut events = Vec::new();
         for (_, to, ids) in groups {
             events.extend(self.march(side, &ids, to));
+            // Nor has the player moved them this turn: a stack that got where
+            // it was sent waits for orders.
+            for id in &ids {
+                if let Some(unit) = self.map.unit_mut(*id) {
+                    unit.moved = false;
+                }
+            }
         }
         // What marched on its own is not the player's to take back.
         self.undo = None;
@@ -2390,11 +2399,16 @@ impl Game {
             .collect();
         let able: Vec<UnitId> =
             own.iter().copied().filter(|id| units.get(*id).is_some_and(|u| u.movement > 0)).collect();
-        // Not those that defend or were put aside, unless they are all it
-        // has (the stack's boxes take them in one by one): a stack put aside
-        // in part was selected whole again, and sent off, defenders and all.
-        let waiting: Vec<UnitId> =
-            able.iter().copied().filter(|id| units.get(*id).is_some_and(|u| !u.defending && !u.done)).collect();
+        // Not those that defend, were put aside or have moved this turn,
+        // unless they are all it has (the stack's boxes take them in one by
+        // one): a stack put aside in part was selected whole again, and sent
+        // off, defenders and all; a stack that moved onto another went on
+        // with it.
+        let waiting: Vec<UnitId> = able
+            .iter()
+            .copied()
+            .filter(|id| units.get(*id).is_some_and(|u| !u.defending && !u.done && !u.moved))
+            .collect();
         // (At sea, all of them: the ships carry who has no points left.)
         let stack = if self.map.open_water(hex) {
             own
@@ -2425,13 +2439,15 @@ impl Game {
         hexes.sort_by_key(|h| (h.row, h.col));
         hexes.dedup();
         // A stack waits for orders if one of its units can still go
-        // somewhere, its player is not done with it, and it is on no
-        // standing order (or one that stalled).
+        // somewhere, its player is not done with it (nor has moved it this
+        // turn: a stack moved and stopped has had its orders), and it is on
+        // no standing order (or one that stalled).
         let can_go = |hex: &Hex| {
             map.units_at(*hex).iter().filter_map(|id| map.units().get(*id)).any(|u| {
                 u.side() == side
                     && u.movement > 0
                     && !u.done
+                    && !u.moved
                     && !u.defending
                     && (u.goto.is_none() || u.stalled)
                     && compute_range(map, u).reachable().next().is_some()

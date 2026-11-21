@@ -183,13 +183,15 @@ fn done_puts_a_stack_aside_for_the_turn() {
     let kind = game.map.units().kind_named("soldiers").unwrap();
     let b = game.map.new_unit_of(Side::Red, kind).unwrap();
     game.map.place_unit(b, SOUTHWICK).unwrap();
+    let c = game.map.new_unit_of(Side::Red, kind).unwrap();
+    game.map.place_unit(c, Hex::new(20, 5)).unwrap();
     assert_eq!(game.next_stack(None, false), Some(REDHOLD));
     // The order before can still be taken back: Done changes nothing to take
     // back.
     game.apply(Order::Move { units: vec![b], to: Hex::new(16, 5) }).unwrap();
     game.apply(Order::Done { units: a.clone() }).unwrap();
     assert!(game.can_undo());
-    assert_eq!(game.next_stack(None, false), Some(Hex::new(16, 5)), "Redhold's is passed by");
+    assert_eq!(game.next_stack(None, false), Some(Hex::new(20, 5)), "Redhold's is passed by, and the moved one");
     let tasks = game.tasks(Side::Red);
     assert!(tasks.contains(&Task::Stack { at: REDHOLD, units: 1, state: StackState::Done }));
     // Another side's units are not red's to put aside.
@@ -222,17 +224,84 @@ fn the_tasks_come_most_pressing_first() {
             Task::City { city: southwick, state: CityState::Building },
         ]
     );
-    assert_eq!(tasks.iter().map(Task::tier).collect::<Vec<_>>(), [1, 1, 2, 3]);
+    // The riders have had their orders: among the rest.
+    assert_eq!(tasks.iter().map(Task::tier).collect::<Vec<_>>(), [1, 1, 3, 3]);
     let lines: Vec<String> = tasks.iter().map(|t| hexgame::info::task_line(&game, t)).collect();
     assert_eq!(
         lines,
         [
             "Soldiers in Redhold: no orders yet",
             "Redhold: builds nothing",
-            "Riders at row 6, column 5: can go further",
+            "Riders at row 6, column 5: moved, with moves left",
             "Southwick: building Soldiers, 0/2",
         ]
     );
+}
+
+/// A stack its player moved, and that stopped, has had its orders for the
+/// turn, though some of it could go further: Next stack passes it by, and
+/// the tasks put it with the rest, as they do a stack put aside (Done). A
+/// click on its hex still selects it, to go on.
+#[test]
+fn a_stack_moved_or_put_aside_is_done_with_for_the_turn() {
+    let mut game = game("garrison soldiers\ngarrison riders\n");
+    let red = at(&game, REDHOLD);
+    let kind = game.map.units().kind_named("soldiers").unwrap();
+    let other = game.map.new_unit_of(Side::Red, kind).unwrap();
+    game.map.place_unit(other, SOUTHWICK).unwrap();
+    // Together, 6 hexes: the soldiers are spent, the riders are not.
+    let there = Hex::new(5, 11);
+    game.apply(Order::Move { units: red.clone(), to: there }).unwrap();
+    let riders = red[1];
+    assert!(game.map.units().get(riders).unwrap().movement > 0);
+    assert_eq!(game.next_stack(None, false), Some(SOUTHWICK), "the moved stack is passed by");
+    let task = |game: &Game, hex: Hex| {
+        game.tasks(Side::Red).into_iter().find(|t| matches!(t, Task::Stack { at, .. } if *at == hex)).unwrap()
+    };
+    assert_eq!(task(&game, there), Task::Stack { at: there, units: 2, state: StackState::MovesLeft });
+    assert_eq!(task(&game, there).tier(), 3);
+    // Done: put aside, and as little pressing.
+    game.apply(Order::Done { units: vec![other] }).unwrap();
+    assert_eq!(task(&game, SOUTHWICK), Task::Stack { at: SOUTHWICK, units: 1, state: StackState::Done });
+    assert_eq!(task(&game, SOUTHWICK).tier(), 3);
+    assert!(game.tasks(Side::Red).iter().all(|t| t.tier() > 1 || matches!(t, Task::City { .. })));
+    // A click on the moved stack: those of it that can go on.
+    game.select_hex(there);
+    assert_eq!(game.selection(), [riders]);
+    game.deselect();
+    // A stack that has not moved joins it: a click picks the newcomer, not
+    // the riders, who have had their orders.
+    let fresh = game.map.new_unit_of(Side::Red, kind).unwrap();
+    game.map.place_unit(fresh, there).unwrap();
+    assert_eq!(game.next_stack(None, false), Some(there));
+    game.select_hex(there);
+    assert_eq!(game.selection(), [fresh]);
+}
+
+/// A stack that gets where a standing order sent it at the start of the
+/// turn has had no orders this turn: it waits for them. One sent there this
+/// turn, and arrived, has had them.
+#[test]
+fn a_stack_that_arrives_on_a_standing_order_waits_for_orders() {
+    let mut game = game("garrison soldiers\ngarrison riders\n");
+    let red = at(&game, REDHOLD);
+    let (soldiers, riders) = (red[0], red[1]);
+    game.apply(Order::GoTo { units: vec![soldiers], to: FAR }).unwrap();
+    // The riders, a little way, this turn.
+    let near = Hex::new(5, 8);
+    game.apply(Order::GoTo { units: vec![riders], to: near }).unwrap();
+    assert_eq!((pos(&game, riders), goto(&game, riders)), (near, None));
+    let task = |game: &Game, hex: Hex| {
+        game.tasks(Side::Red).into_iter().find(|t| matches!(t, Task::Stack { at, .. } if *at == hex)).unwrap()
+    };
+    assert_eq!(task(&game, near), Task::Stack { at: near, units: 1, state: StackState::MovesLeft });
+    round(&mut game);
+    round(&mut game);
+    assert_eq!((pos(&game, soldiers), goto(&game, soldiers)), (FAR, None));
+    assert!(game.map.units().get(soldiers).unwrap().movement > 0);
+    assert_eq!(task(&game, FAR), Task::Stack { at: FAR, units: 1, state: StackState::Waiting });
+    assert_eq!(task(&game, FAR).tier(), 1);
+    assert_eq!(game.next_stack(Some(near), false), Some(FAR));
 }
 
 #[test]
@@ -515,12 +584,14 @@ fn defenders_stay_put_and_are_passed_by_until_sent_somewhere() {
     let kind = game.map.units().kind_named("soldiers").unwrap();
     let b = game.map.new_unit_of(Side::Red, kind).unwrap();
     game.map.place_unit(b, SOUTHWICK).unwrap();
+    let c = game.map.new_unit_of(Side::Red, kind).unwrap();
+    game.map.place_unit(c, Hex::new(20, 5)).unwrap();
     // The order before can still be taken back: defending changes nothing
     // to take back.
     game.apply(Order::Move { units: vec![b], to: Hex::new(16, 5) }).unwrap();
     game.apply(Order::Defend { units: a.clone(), on: true }).unwrap();
     assert!(game.can_undo());
-    assert_eq!(game.next_stack(None, false), Some(Hex::new(16, 5)), "Redhold's defenders are passed by");
+    assert_eq!(game.next_stack(None, false), Some(Hex::new(20, 5)), "Redhold's defenders are passed by");
     let tasks = game.tasks(Side::Red);
     let defending = Task::Stack { at: REDHOLD, units: 2, state: StackState::Defending };
     assert!(tasks.contains(&defending), "{tasks:?}");

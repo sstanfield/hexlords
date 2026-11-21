@@ -624,7 +624,7 @@ pub fn city_row(map: &Map, city: &City, own: bool) -> String {
 /// unit, the turns one takes, its price).
 /// A task (`Game::tasks`) in a line, for the list of tasks: what it is,
 /// where, and what is left to do with it. "Riders at row 5, column 9: no
-/// orders yet", "3 units in Brindlewick: can go further", "Brindlewick:
+/// orders yet", "3 units in Brindlewick: moved, with moves left", "Brindlewick:
 /// builds nothing".
 pub fn task_line(game: &Game, task: &Task) -> String {
     let map = &game.map;
@@ -643,7 +643,7 @@ pub fn task_line(game: &Game, task: &Task) -> String {
             let what = match state {
                 StackState::Waiting => "no orders yet".to_string(),
                 StackState::Stalled => format!("stopped on the way to {goal}"),
-                StackState::MovesLeft => "can go further".to_string(),
+                StackState::MovesLeft => "moved, with moves left".to_string(),
                 StackState::Done => "put aside, with moves left".to_string(),
                 StackState::Marching => format!("on the way to {goal}"),
                 StackState::Defending => "defending: stays put".to_string(),
