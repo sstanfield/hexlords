@@ -1,7 +1,7 @@
 //! The units' pictures: a plain sign for each kind (a sword, a spear, a
-//! shield, a helmet, a bow, a horseshoe, a stirrup, a banner for a
-//! commander; a longship and a cog for the ships, a feather and a pair of
-//! wings for the flyers), light with a dark outline,
+//! shield, a helmet, a bow, a pine, two peaks, a catapult, a horseshoe, a
+//! stirrup, a banner for a commander; a longship and a cog for the ships, a
+//! feather and a pair of wings for the flyers), light with a dark outline,
 //! on nothing. The game draws it on a
 //! disc of the unit's side's color, so the sign itself has no color of a side.
 //!
@@ -22,6 +22,9 @@ pub enum Icon {
     Shield,
     Helmet,
     Bow,
+    Pine,
+    Peaks,
+    Catapult,
     Horseshoe,
     Stirrup,
     Banner,
@@ -39,12 +42,15 @@ pub const OUTLINE: Rgb = [0.13, 0.11, 0.10];
 const LINE: f32 = 0.035;
 
 impl Icon {
-    pub const ALL: [Icon; 12] = [
+    pub const ALL: [Icon; 15] = [
         Icon::Sword,
         Icon::Spear,
         Icon::Shield,
         Icon::Helmet,
         Icon::Bow,
+        Icon::Pine,
+        Icon::Peaks,
+        Icon::Catapult,
         Icon::Horseshoe,
         Icon::Stirrup,
         Icon::Banner,
@@ -63,6 +69,9 @@ impl Icon {
             Icon::Shield => "wardens",
             Icon::Helmet => "heavyinfantry",
             Icon::Bow => "archers",
+            Icon::Pine => "rangers",
+            Icon::Peaks => "highlanders",
+            Icon::Catapult => "siegeengine",
             Icon::Horseshoe => "lightcavalry",
             Icon::Stirrup => "cavalry",
             Icon::Banner => "captain",
@@ -81,6 +90,9 @@ impl Icon {
             Icon::Shield => shield(x, y),
             Icon::Helmet => helmet(x, y),
             Icon::Bow => bow(x, y),
+            Icon::Pine => pine(x, y),
+            Icon::Peaks => peaks(x, y),
+            Icon::Catapult => catapult(x, y),
             Icon::Horseshoe => horseshoe(x, y),
             Icon::Stirrup => stirrup(x, y),
             Icon::Banner => banner(x, y),
@@ -107,6 +119,13 @@ impl Icon {
                 let mouth = x.abs() < 0.055 && (0.05..0.32).contains(&y);
                 eyes || mouth
             }
+            // The snow line across the high peak, a zigzag.
+            Icon::Peaks => {
+                let line = -0.1 + 0.035 * if (x * 12.0).rem_euclid(2.0) < 1.0 { 1.0 } else { -1.0 };
+                (y - line).abs() < 0.022 && peaks_high(x, y) < -0.03
+            }
+            // The hubs of the catapult's wheels.
+            Icon::Catapult => [-0.22f32, 0.22].iter().any(|cx| length(x - cx, y - 0.25) < 0.035),
             // The slot in the stirrup's strap.
             Icon::Stirrup => x.abs() < 0.04 && (y + 0.37).abs() < 0.022,
             // The banner's round device.
@@ -178,6 +197,36 @@ fn stirrup(x: f32, y: f32) -> f32 {
     let tread = rectangle(x, y - 0.17, 0.29, 0.05);
     let strap = rectangle(x, y + 0.37, 0.08, 0.06);
     arch.min(tread).min(strap)
+}
+
+/// A pine: three tiers of boughs, widening downward, on a short trunk.
+fn pine(x: f32, y: f32) -> f32 {
+    let tier = |top: f32, bottom: f32, half: f32| triangle(x, y, [(0.0, top), (half, bottom), (-half, bottom)]);
+    let boughs = tier(-0.44, -0.12, 0.2).min(tier(-0.3, 0.06, 0.28)).min(tier(-0.14, 0.24, 0.36));
+    let trunk = rectangle(x, y - 0.32, 0.06, 0.09);
+    boughs.min(trunk)
+}
+
+/// The high peak of the two (its snow line is a mark).
+fn peaks_high(x: f32, y: f32) -> f32 {
+    triangle(x, y, [(-0.08, -0.36), (0.3, 0.26), (-0.42, 0.26)])
+}
+
+/// Two peaks, a high one and a lower one behind it to the right.
+fn peaks(x: f32, y: f32) -> f32 {
+    let low = triangle(x, y, [(0.22, -0.14), (0.44, 0.26), (0.0, 0.26)]);
+    peaks_high(x, y).min(low)
+}
+
+/// A catapult from the side: a frame on two wheels, a post, and its arm
+/// raised to the upper right with a cup at the end.
+fn catapult(x: f32, y: f32) -> f32 {
+    let frame = rectangle(x, y - 0.12, 0.36, 0.05);
+    let wheels = [-0.22f32, 0.22].iter().map(|cx| length(x - cx, y - 0.25) - 0.1).fold(f32::MAX, f32::min);
+    let post = rectangle(x + 0.06, y + 0.02, 0.04, 0.12);
+    let arm = segment(x, y, -0.26, 0.08, 0.24, -0.3) - 0.035;
+    let cup = length(x - 0.27, y + 0.33) - 0.075;
+    frame.min(wheels).min(post).min(arm).min(cup)
 }
 
 /// A shield: straight at the top, round at the bottom.
@@ -366,7 +415,15 @@ mod tests {
         assert_eq!(Icon::Helmet.ink(0.2, 0.2), Some((BODY, 1.0)));
         assert!(Icon::Stirrup.distance(0.0, -0.27) < 0.0 && Icon::Stirrup.distance(0.0, 0.17) < 0.0);
         assert!(Icon::Stirrup.distance(0.0, 0.0) > LINE, "open in the middle");
-        // Twelve signs, twelve names.
+        // The pine is widest low; the peaks are two, apart at the top; the
+        // catapult stands on two wheels, its cup high to the right.
+        assert!(Icon::Pine.distance(0.0, -0.35) < 0.0 && Icon::Pine.distance(0.3, 0.2) < 0.0);
+        assert!(Icon::Pine.distance(0.3, -0.3) > LINE && Icon::Pine.distance(0.0, 0.33) < 0.0, "a trunk");
+        assert!(Icon::Peaks.distance(-0.08, -0.3) < 0.0 && Icon::Peaks.distance(0.22, -0.08) < 0.0);
+        assert!(Icon::Peaks.distance(0.1, -0.25) > 0.0, "a notch between them");
+        assert!(Icon::Catapult.distance(-0.22, 0.32) < 0.0 && Icon::Catapult.distance(0.27, -0.33) < 0.0);
+        assert!(Icon::Catapult.distance(0.0, 0.3) > LINE, "under the frame, between the wheels");
+        // Fifteen signs, fifteen names.
         let mut names: Vec<&str> = Icon::ALL.iter().map(|i| i.name()).collect();
         names.dedup();
         assert_eq!(
@@ -377,6 +434,9 @@ mod tests {
                 "wardens",
                 "heavyinfantry",
                 "archers",
+                "rangers",
+                "highlanders",
+                "siegeengine",
                 "lightcavalry",
                 "cavalry",
                 "captain",

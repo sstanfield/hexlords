@@ -91,7 +91,10 @@ pub fn event_line(game: &Game, event: &Event) -> String {
             format!("{} raises the walls of {} to {walls} for {price}", side_name(*side), city(*id))
         }
         Event::Disbanded { side, names } => format!("{} disbands {}", side_name(*side), names.join(", ")),
-        Event::Built { city: id, unit } => format!("{} builds {}", city(*id), agents::unit_name(*unit)),
+        Event::Built { city: id, unit } => {
+            let kind = game.map.units().get(*unit).map_or(String::new(), |u| format!(" ({})", u.name));
+            format!("{} builds {}{kind}", city(*id), agents::unit_name(*unit))
+        }
         Event::Began { side, round } => format!("round {round}: {}'s turn", side_name(*side)),
         Event::Battle { at, attacker, defender, attackers, defenders, attackers_lost, defenders_lost, won, dead } => {
             let (a, d) = (side_name(*attacker), side_name(*defender));

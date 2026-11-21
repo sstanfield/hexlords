@@ -4,6 +4,7 @@
 
 use super::hex::Hex;
 use super::terrain::MoveCost;
+use crate::state::TileType;
 
 /// Who owns a unit or a city. The first eight are players; grey is neutral.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
@@ -110,6 +111,28 @@ pub struct UnitKind {
     /// A ship: how many land units it carries (its stack's commander goes
     /// besides). 0 for the others.
     pub carries: u32,
+    /// Where it fights the stronger (`bonus` in `units.txt`): the ground of
+    /// a battle's hex (`grass`, `forest`, `hill` ...; a temple or a ruin is
+    /// grass), or `city`, and by how many points. Attacking or defending.
+    pub bonus: Vec<(String, u32)>,
+    /// A siege engine: the walls of a city its stack attacks count this many
+    /// points less for the defenders (`combat::walls_bonus`). 0 for others.
+    pub siege: u32,
+}
+
+/// The grounds a kind can be at home on (`UnitKind::bonus`).
+pub const BONUS_GROUNDS: [&str; 8] = ["grass", "forest", "swamp", "desert", "hill", "mountain", "water", "city"];
+
+impl UnitKind {
+    /// How much stronger it fights on `ground` (`TileType::name`; a temple
+    /// or a ruin counts as grass).
+    pub fn bonus_on(&self, ground: TileType) -> u32 {
+        let name = match ground {
+            TileType::Temple | TileType::Ruin => "grass",
+            other => other.name(),
+        };
+        self.bonus.iter().find(|(g, _)| g == name).map_or(0, |(_, n)| *n)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -575,6 +598,8 @@ mod tests {
             commander: 0,
             travel: Travel::Land,
             carries: 0,
+            bonus: Vec::new(),
+            siege: 0,
         };
         let kind = units.add_kind(lancers.clone()).unwrap();
         assert_eq!(units.add_kind(lancers.clone()), None, "an id is used once");

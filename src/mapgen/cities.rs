@@ -1178,19 +1178,39 @@ fn room(g: &mut Gen, cities: &[Hex], air: &[Hex]) {
     }
 }
 
+/// The turns a city takes to build a kind: a commander 4; the others a
+/// turn for each 6 of its price, 1 to 4 (the owner, 2026-11-21: light and
+/// heavy infantry took too long; now 1 and 2).
+pub fn build_turns(k: &UnitKind) -> u32 {
+    if k.commander > 0 { 4 } else { k.price.div_ceil(6).clamp(1, 4) }
+}
+
 /// Each city's record: a name (a capital's grand), its holder, walls (a
 /// capital the highest of the mix; a neutral drawn from it, one more by the
 /// water or in the hills), taxes, what it builds, who stands in it.
 fn records(g: &Gen, cfg: &Config, (places, air): (&Places, &[Hex]), kinds: &[UnitKind], rng: &mut Rng) -> Vec<City> {
     let syllables = Syllables::parse(NAMES);
     let class = |k: &UnitKind| movement_class(k);
-    let mut foot: Vec<&UnitKind> = kinds.iter().filter(|k| class(k) == MoveClass::Foot && k.commander == 0).collect();
+    // On foot, of all work: no siege engine, nor one at home somewhere
+    // (those are built where they belong).
+    let special = |k: &UnitKind| k.siege > 0 || !k.bonus.iter().all(|(g, _)| g == "city");
+    let mut foot: Vec<&UnitKind> =
+        kinds.iter().filter(|k| class(k) == MoveClass::Foot && k.commander == 0 && !special(k)).collect();
     foot.sort_by_key(|k| (k.price, k.strength, k.id.clone()));
+    let at_home = |grounds: &[&str]| -> Vec<&UnitKind> {
+        kinds
+            .iter()
+            .filter(|k| class(k) == MoveClass::Foot && k.bonus.iter().any(|(g, _)| grounds.contains(&g.as_str())))
+            .collect()
+    };
+    let (woods, highs) = (at_home(&["forest", "swamp"]), at_home(&["hill", "mountain"]));
+    let siege =
+        kinds.iter().filter(|k| class(k) == MoveClass::Foot && k.siege > 0).min_by_key(|k| (k.price, k.id.clone()));
     let leader = kinds.iter().find(|k| k.commander > 0 && class(k) == MoveClass::Foot);
     let ship =
         kinds.iter().filter(|k| class(k) == MoveClass::Naval).max_by_key(|k| (k.carries, std::cmp::Reverse(k.price)));
     let flyer = kinds.iter().filter(|k| class(k) == MoveClass::Flyer).min_by_key(|k| (k.price, k.id.clone()));
-    let turns = |k: &UnitKind| if k.commander > 0 { 4 } else { k.price.div_ceil(4).clamp(1, 4) };
+    let turns = |k: &UnitKind| build_turns(k);
     let top_walls = cfg.walls.iter().map(|(w, _)| *w).max().unwrap_or(0);
     let draw_walls = |rng: &mut Rng| {
         let total: f64 = cfg.walls.iter().map(|(_, s)| s).sum();
@@ -1254,8 +1274,10 @@ fn records(g: &Gen, cfg: &Config, (places, air): (&Places, &[Hex]), kinds: &[Uni
             add(foot.first());
             add(foot.get(1));
             add(foot.iter().max_by_key(|k| (k.moves, std::cmp::Reverse(k.price))));
-            // And the strongest: late in a game, armies are made of them.
+            // And the strongest: late in a game, armies are made of them; and
+            // a siege engine, for the walls.
             add(foot.iter().max_by_key(|k| (k.strength, std::cmp::Reverse(k.price))));
+            add(siege.as_ref());
             add(leader.as_ref());
         } else if hills >= 2 {
             let mut strong = foot.clone();
@@ -1267,6 +1289,15 @@ fn records(g: &Gen, cfg: &Config, (places, air): (&Places, &[Hex]), kinds: &[Uni
             if foot.len() > 1 {
                 add(foot.get(1 + rng.below(foot.len() as u64 - 1) as usize));
             }
+        }
+        // Who is at home on the ground around it: woodsmen among forests and
+        // marshes, hillmen among hills and mountains.
+        let around = |kinds: &[TileType]| t.neighbours(hex).filter(|n| kinds.contains(t.get(*n))).count();
+        if around(&[TileType::Forest, TileType::Swamp]) >= 2 {
+            add(woods.first());
+        }
+        if around(&[TileType::Hill, TileType::Mountain]) >= 2 {
+            add(highs.first());
         }
         // A port builds the template's ship; a city reached by sea, by any
         // water, must (or its island is shut).
@@ -1292,9 +1323,10 @@ fn records(g: &Gen, cfg: &Config, (places, air): (&Places, &[Hex]), kinds: &[Uni
             // on foot (not a ship, nor a flyer where there are others).
             let weakest = produce
                 .iter()
-                .filter_map(|(id, _)| foot.iter().find(|k| k.id == *id))
+                .filter_map(|(id, _)| kinds.iter().find(|k| k.id == *id && movement_class(k) == MoveClass::Foot))
+                .filter(|k| k.siege == 0 && k.commander == 0)
                 .min_by_key(|k| (k.strength, k.price, k.id.clone()))
-                .or(foot.first());
+                .or(foot.first().copied());
             if let Some(k) = weakest {
                 garrison.push((k.id.clone(), 1));
             }
@@ -1365,7 +1397,7 @@ pub fn worth(g: &mut Gen, cfg: &Config, kinds: &[UnitKind]) {
     let foot = |k: &&UnitKind| movement_class(k) == MoveClass::Foot && k.commander == 0;
     let strongest = kinds.iter().filter(foot).max_by_key(|k| (k.strength, std::cmp::Reverse(k.price)));
     let flyer = kinds.iter().filter(|k| movement_class(k) == MoveClass::Flyer).min_by_key(|k| (k.price, k.id.clone()));
-    let turns = |k: &UnitKind| k.price.div_ceil(4).clamp(1, 4);
+    let turns = |k: &UnitKind| build_turns(k);
     let tiers: Vec<u8> = g.cities.iter().map(|c| tier(g, c)).collect();
     for (c, tier) in g.cities.iter_mut().zip(tiers) {
         if tier == 0 {

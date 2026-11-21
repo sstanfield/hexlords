@@ -130,6 +130,8 @@ unit lightcavalry
 | `commander` | The kind is a commander: every other unit of its stack fights this much stronger, and it fights last. A hex holds one commander besides its 8 units. At least 1 | not a commander |
 | `travels` | How it goes: `land`, `sea` (a ship) or `air` (a flyer); below | `land` |
 | `carries` | A ship: how many land units it takes aboard, 0 to 8 (a commander goes besides). Only with `travels sea` | 0 |
+| `bonus` | Where it fights the stronger, attacking or defending: `<ground> <points>`, with commas between, the ground one of `grass`, `forest`, `swamp`, `desert`, `hill`, `mountain`, `water` (a temple or a ruin is grass) or `city`; may be given on several lines | nowhere |
+| `siege` | A siege engine: the walls of a city its stack attacks count this many points less for the defenders (never below nothing). At least 1 | not one |
 
 What `enter` can name: `grass`, `forest`, `swamp`, `desert`, `hill`,
 `mountain`, `water`, `city`, and `road` and `bridge`, the price of a step along

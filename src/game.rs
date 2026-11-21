@@ -330,10 +330,36 @@ pub struct Combatant {
     pub growth: u32,
     pub led: u32,
     pub ground: u32,
-    /// The walls' bonus, in quarters (a defender's in a city).
+    /// Its kind's bonus on this ground (`UnitKind::bonus`).
+    pub home: u32,
+    /// The walls' bonus, in quarters (a defender's in a city), less what
+    /// the attackers' siege engines broke.
     pub walls: u32,
     /// All of it, in quarters: what it fought with.
     pub quarters: u32,
+}
+
+/// What a unit's strength in a battle is made of (`Game::strength_parts`):
+/// its own (`Unit::power`: its kind's, its level, its blessings), the best
+/// bonus of a commander in its stack, its kind's bonus on the battle's
+/// ground (`UnitKind::bonus`), and, a defender's, the ground's bonus, in
+/// points; and the walls' (a defender's in a city, less what the
+/// attackers' siege engines break), in quarters.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct StrengthParts {
+    pub own: u32,
+    pub led: u32,
+    pub home: u32,
+    pub ground: u32,
+    pub walls: u32,
+}
+
+impl StrengthParts {
+    /// All of it, in quarters of a point (`combat::QUARTER`).
+    pub fn quarters(&self) -> u32 {
+        let points = self.own.saturating_add(self.led).saturating_add(self.home).saturating_add(self.ground);
+        points.saturating_mul(combat::QUARTER).saturating_add(self.walls)
+    }
 }
 
 /// A battle, kept so that it can be watched again: where, who, under what
@@ -347,6 +373,8 @@ pub struct Fight {
     /// The ground of the hex, and the walls of a city there.
     pub terrain: TileType,
     pub walls: u32,
+    /// How many points of the walls the attackers' siege engines broke.
+    pub siege: u32,
     pub attackers: Vec<Combatant>,
     pub defenders: Vec<Combatant>,
     pub trace: Vec<combat::Exchange>,
@@ -1278,20 +1306,19 @@ impl Game {
     }
 
     /// How strong a unit fights in a battle on `at`, in quarters of a point
-    /// (`combat::QUARTER`): its strength and the best bonus of a commander in
-    /// its stack (`stack`, not itself), and, if it defends, the ground's
-    /// bonus, and three quarters of a point for each level of the walls of a
-    /// city there.
+    /// (`combat::QUARTER`): its strength, the best bonus of a commander in its
+    /// stack (`stack`, not itself), its kind's bonus on that ground, and, if
+    /// it defends, the ground's bonus and the walls' of a city there
+    /// (`combat::walls_bonus`); see `strength_parts`, which also counts what
+    /// siege engines break.
     pub fn battle_strength(&self, unit: &Unit, at: Hex, defending: bool, stack: &[UnitId]) -> u32 {
-        let (own, led, ground, walls) = self.strength_parts(unit, at, defending, stack);
-        own.saturating_add(led).saturating_add(ground).saturating_mul(combat::QUARTER).saturating_add(walls)
+        self.strength_parts(unit, at, defending, stack, 0).quarters()
     }
 
-    /// What `battle_strength` is made of: the unit's own strength (with its
-    /// level and blessing, `Unit::power`), the best
-    /// bonus of a commander in its stack, the ground's bonus (a defender's),
-    /// in points; and the walls' (a defender's in a city), in quarters.
-    pub fn strength_parts(&self, unit: &Unit, at: Hex, defending: bool, stack: &[UnitId]) -> (u32, u32, u32, u32) {
+    /// What `battle_strength` is made of (`StrengthParts`), against
+    /// attackers whose siege engines break `siege` points of walls (0 for
+    /// an attacker).
+    pub fn strength_parts(&self, unit: &Unit, at: Hex, defending: bool, stack: &[UnitId], siege: u32) -> StrengthParts {
         let units = self.map.units();
         let led = stack
             .iter()
@@ -1300,12 +1327,30 @@ impl Game {
             .map(|u| self.command(u))
             .max()
             .unwrap_or(0);
-        if !defending {
-            return (unit.power(), led, 0, 0);
+        let ground_kind = self.map.tile(at).map_or(TileType::Grass, |t| t.kind);
+        let home = units.kind_of(unit).map_or(0, |k| k.bonus_on(ground_kind));
+        let mut parts = StrengthParts { own: unit.power(), led, home, ground: 0, walls: 0 };
+        if defending {
+            parts.ground = combat::ground_bonus(ground_kind);
+            parts.walls = self
+                .map
+                .city_at(at)
+                .map_or(0, |c| combat::walls_bonus(c.walls).saturating_sub(siege) * combat::QUARTER);
         }
-        let ground = self.map.tile(at).map_or(0, |t| combat::ground_bonus(t.kind));
-        let walls = self.map.city_at(at).map_or(0, |c| combat::walls_bonus(c.walls) * combat::QUARTER);
-        (unit.power(), led, ground, walls)
+        parts
+    }
+
+    /// How many points of walls `attackers` break: their best siege engine's
+    /// (`UnitKind::siege`).
+    pub fn siege_of(&self, attackers: &[UnitId]) -> u32 {
+        let units = self.map.units();
+        attackers
+            .iter()
+            .filter_map(|id| units.get(*id))
+            .filter_map(|u| units.kind_of(u))
+            .map(|k| k.siege)
+            .max()
+            .unwrap_or(0)
     }
 
     /// How much stronger a commander makes the others of its stack: what its
@@ -1330,13 +1375,14 @@ impl Game {
     /// those of them that fight there (`fights_at`).
     fn fighters(&self, attackers: &[UnitId], at: Hex) -> (Vec<Fighter>, Vec<Fighter>) {
         let defenders: Vec<UnitId> = self.map.units_at(at).to_vec();
+        let siege = self.siege_of(attackers);
         let side = |ids: &[UnitId], defending: bool| -> Vec<Fighter> {
             ids.iter()
                 .filter_map(|id| self.map.units().get(*id))
                 .filter(|unit| self.fights_at(unit, at))
                 .map(|unit| Fighter {
                     unit: unit.id(),
-                    strength: self.battle_strength(unit, at, defending, ids),
+                    strength: self.strength_parts(unit, at, defending, ids, siege).quarters(),
                     commander: self.map.is_commander(unit.id()),
                 })
                 .collect()
@@ -1382,8 +1428,9 @@ impl Game {
             rules: self.setup.combat,
             terrain: self.map.tile(at).map_or(TileType::Grass, |t| t.kind),
             walls: self.map.city_at(at).map_or(0, |c| c.walls),
-            attackers: self.combatants(&attacking, at, false),
-            defenders: self.combatants(&defending, at, true),
+            siege: self.siege_of(&attacking),
+            attackers: self.combatants(&attacking, at, false, 0),
+            defenders: self.combatants(&defending, at, true, self.siege_of(&attacking)),
             trace: battle.trace.clone(),
             won: battle.attackers_won,
         });
@@ -1461,12 +1508,12 @@ impl Game {
 
     /// The units of `ids` in a battle on `at`, as the battle sees them (the
     /// order of `fighters`).
-    fn combatants(&self, ids: &[UnitId], at: Hex, defending: bool) -> Vec<Combatant> {
+    fn combatants(&self, ids: &[UnitId], at: Hex, defending: bool, siege: u32) -> Vec<Combatant> {
         let units = self.map.units();
         ids.iter()
             .filter_map(|id| units.get(*id))
             .map(|unit| {
-                let (power, led, ground, walls) = self.strength_parts(unit, at, defending, ids);
+                let parts = self.strength_parts(unit, at, defending, ids, siege);
                 Combatant {
                     unit: unit.id(),
                     side: unit.side(),
@@ -1479,11 +1526,12 @@ impl Game {
                         .to_string(),
                     commander: self.map.is_commander(unit.id()),
                     strength: unit.strength,
-                    growth: power.saturating_sub(unit.strength),
-                    led,
-                    ground,
-                    walls,
-                    quarters: self.battle_strength(unit, at, defending, ids),
+                    growth: parts.own.saturating_sub(unit.strength),
+                    led: parts.led,
+                    ground: parts.ground,
+                    home: parts.home,
+                    walls: parts.walls,
+                    quarters: parts.quarters(),
                 }
             })
             .collect()

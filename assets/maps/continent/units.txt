@@ -4,27 +4,41 @@
 # terrain that is left out cannot be entered. "road" and "bridge" are a step
 # along a road, over land and over water.
 #
-# A unit's upkeep each turn is half its price (the owner, 2026-11-20).
+# A unit's upkeep each turn is half its price, rounded up (the owner,
+# 2026-11-20).
 
+# The cheapest to raise: a levy, for a garrison.
 unit militia
   name     Militia
   image    units/militia.png
   strength 2
   moves    10
   upkeep   2
-  price    4
+  price    3
   enter    grass 2, forest 3, hill 4, swamp 5, desert 3
   enter    city 1, road 1, bridge 1
 
-# Between militia and wardens.
+# Faster and stronger than militia, as quick to raise.
 unit lightinfantry
   name     Light Infantry
   image    units/lightinfantry.png
   strength 3
-  moves    10
+  moves    12
   upkeep   3
   price    6
   enter    grass 2, forest 3, hill 4, swamp 5, desert 3
+  enter    city 1, road 1, bridge 1
+
+# On walls, theirs or another's: they fight 1 the stronger in a city.
+unit archers
+  name     Archers
+  image    units/archers.png
+  strength 3
+  moves    10
+  upkeep   3
+  price    6
+  bonus    city 1
+  enter    grass 2, forest 2, hill 3, swamp 5, desert 3
   enter    city 1, road 1, bridge 1
 
 unit wardens
@@ -43,19 +57,46 @@ unit heavyinfantry
   image    units/heavyinfantry.png
   strength 6
   moves    8
-  upkeep   7
-  price    14
+  upkeep   6
+  price    12
   enter    grass 2, forest 4, hill 4, swamp 6, desert 4
   enter    city 1, road 1, bridge 1
 
-unit archers
-  name     Archers
-  image    units/archers.png
+# At home in the woods and the marshes: quick there, and stronger.
+unit rangers
+  name     Rangers
+  image    units/rangers.png
   strength 3
-  moves    10
-  upkeep   3
-  price    6
-  enter    grass 2, forest 2, hill 3, swamp 5, desert 3
+  moves    12
+  upkeep   4
+  price    8
+  bonus    forest 2, swamp 1
+  enter    grass 2, forest 2, hill 3, swamp 3, desert 3
+  enter    city 1, road 1, bridge 1
+
+# At home in the high country: the only ones on foot who cross mountains
+# (slowly), and stronger in the hills and the mountains.
+unit highlanders
+  name     Highlanders
+  image    units/highlanders.png
+  strength 4
+  moves    8
+  upkeep   4
+  price    8
+  bonus    hill 1, mountain 2
+  enter    grass 2, forest 3, hill 2, mountain 5, swamp 5, desert 3
+  enter    city 1, road 1, bridge 1
+
+# Weak and slow, but the walls of a city its stack attacks count 1 less.
+unit siegeengine
+  name     Siege Engine
+  image    units/siegeengine.png
+  strength 2
+  moves    6
+  upkeep   6
+  price    12
+  siege    1
+  enter    grass 2, forest 5, hill 5, desert 4
   enter    city 1, road 1, bridge 1
 
 # Horse: fast on open ground and on roads, slow in rough country, and no good
@@ -75,8 +116,8 @@ unit cavalry
   image    units/cavalry.png
   strength 6
   moves    16
-  upkeep   8
-  price    16
+  upkeep   7
+  price    14
   enter    grass 2, forest 5, hill 5, desert 3
   enter    city 1, road 1, bridge 1
 

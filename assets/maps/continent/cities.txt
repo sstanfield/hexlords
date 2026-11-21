@@ -14,12 +14,13 @@ city 13 7
   side     red
   walls    2
   produce  militia 1
-  produce  lightinfantry 2
-  produce  archers 2
-  produce  lightcavalry 3
+  produce  lightinfantry 1
+  produce  archers 1
+  produce  lightcavalry 2
+  produce  siegeengine 2
   produce  captain 4
-  produce  warship 4
-  produce  transport 3
+  produce  warship 3
+  produce  transport 2
   garrison militia 2
   garrison lightcavalry
   garrison captain
@@ -30,11 +31,12 @@ city 19 42
   side     green
   walls    2
   produce  militia 1
-  produce  lightinfantry 2
+  produce  lightinfantry 1
+  produce  archers 1
   produce  wardens 2
-  produce  archers 2
+  produce  rangers 2
   produce  captain 4
-  produce  hawkriders 3
+  produce  hawkriders 2
   garrison wardens
   garrison archers 2
   garrison captain
@@ -45,14 +47,14 @@ city 35 17
   side     yellow
   walls    2
   produce  militia 1
-  produce  lightinfantry 2
+  produce  lightinfantry 1
   produce  wardens 2
-  produce  warship 4
-  produce  transport 3
+  produce  warship 3
+  produce  transport 2
   # A horse town: its light cavalry costs less than elsewhere, and it has
   # the heavy too.
-  produce  lightcavalry 3 6
-  produce  cavalry 4
+  produce  lightcavalry 2 6
+  produce  cavalry 3
   produce  captain 4
   garrison militia
   garrison wardens
@@ -65,12 +67,13 @@ city 38 48
   side     blue
   walls    2
   produce  militia 1
-  produce  lightinfantry 2
-  produce  archers 2
-  produce  lightcavalry 3
+  produce  lightinfantry 1
+  produce  archers 1
+  produce  lightcavalry 2
+  produce  heavyinfantry 2
   produce  captain 4
-  produce  warship 4
-  produce  transport 3
+  produce  warship 3
+  produce  transport 2
   garrison archers
   garrison lightcavalry 2
   garrison captain
@@ -80,25 +83,27 @@ city 11 23
   income   20
   walls    1
   produce  militia 1
-  produce  archers 3
-  produce  transport 3
+  produce  archers 1
+  produce  transport 2
   garrison militia
 
 city 17 29
   name     Dunmarrow
   income   20
   walls    1
-  produce  militia 2
-  produce  wardens 3
-  produce  hawkriders 3
+  produce  militia 1
+  produce  wardens 2
+  produce  highlanders 2
+  produce  hawkriders 2
   garrison militia
 
 city 22 11
   name     Fenwyke
   income   16
   walls    1
-  produce  militia 2
-  produce  warship 4
+  produce  militia 1
+  produce  rangers 2
+  produce  warship 3
   garrison militia
 
 city 25 32
@@ -107,9 +112,9 @@ city 25 32
   walls    3
   trains   veteran
   produce  wardens 2
-  produce  heavyinfantry 4
-  produce  lightcavalry 4
-  produce  wyverns 4
+  produce  heavyinfantry 2
+  produce  lightcavalry 2
+  produce  wyverns 3
   garrison lightcavalry
 
 city 31 25
@@ -117,5 +122,6 @@ city 31 25
   income   20
   walls    1
   produce  militia 1
-  produce  lightcavalry 4
+  produce  lightcavalry 2
+  produce  siegeengine 2
   garrison militia

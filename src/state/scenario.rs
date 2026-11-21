@@ -170,10 +170,12 @@ pub fn parse_units(text: &str) -> Result<Vec<UnitKind>, ScenarioError> {
             commander: 0,
             travel: Travel::Land,
             carries: 0,
+            bonus: Vec::new(),
+            siege: 0,
         };
         let mut seen: Vec<&str> = Vec::new();
         for (line, key, value) in record.fields {
-            if key != "enter" && seen.contains(&key) {
+            if key != "enter" && key != "bonus" && seen.contains(&key) {
                 return error(file, line, format!("\"{key}\" is given twice for {id}"));
             }
             seen.push(key);
@@ -197,6 +199,24 @@ pub fn parse_units(text: &str) -> Result<Vec<UnitKind>, ScenarioError> {
                 "upkeep" => kind.upkeep = number(file, line, "upkeep", value, 0)?,
                 "price" => kind.price = number(file, line, "price", value, 0)?,
                 "commander" => kind.commander = number(file, line, "commander", value, 1)?,
+                "siege" => kind.siege = number(file, line, "siege", value, 1)?,
+                "bonus" => {
+                    for part in value.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+                        let mut words = part.split_whitespace();
+                        let (Some(word), Some(points), None) = (words.next(), words.next(), words.next()) else {
+                            return error(file, line, format!("expected \"<ground> <points>\", found \"{part}\""));
+                        };
+                        if !crate::state::units::BONUS_GROUNDS.contains(&word) {
+                            let words = crate::state::units::BONUS_GROUNDS.join(", ");
+                            return error(file, line, format!("\"{word}\" is not one of {words}"));
+                        }
+                        if kind.bonus.iter().any(|(g, _)| g == word) {
+                            return error(file, line, format!("{word} is given twice for {id}"));
+                        }
+                        let points = number(file, line, &format!("the bonus on {word}"), points, 1)?;
+                        kind.bonus.push((word.to_string(), points));
+                    }
+                }
                 "travels" => match Travel::named(value) {
                     Some(travel) => kind.travel = travel,
                     None => return error(file, line, format!("travels is land, sea or air, not \"{value}\"")),
@@ -231,7 +251,7 @@ pub fn parse_units(text: &str) -> Result<Vec<UnitKind>, ScenarioError> {
                         line,
                         format!(
                             "\"{key}\" is not one of name, image, strength, moves, upkeep, price, enter, commander, \
-                             travels, carries"
+                             travels, carries, bonus, siege"
                         ),
                     );
                 }
@@ -676,7 +696,7 @@ city 12 14
             (
                 "unit a\nspeed 3\n",
                 "units.txt line 2: \"speed\" is not one of name, image, strength, moves, upkeep, price, enter, \
-                 commander, travels, carries",
+                 commander, travels, carries, bonus, siege",
             ),
             ("unit a\nmoves 3\ntravels boat\n", "units.txt line 3: travels is land, sea or air, not \"boat\""),
             (
@@ -703,6 +723,12 @@ city 12 14
             ("unit a\nenter grass\n", "units.txt line 2: expected \"<terrain> <points>\", found \"grass\""),
             ("unit a\nenter grass 0\n", "units.txt line 2: the points to enter grass must be at least 1"),
             ("unit a\nenter grass 2, grass 3\n", "units.txt line 2: grass is given twice for a"),
+            (
+                "unit a\nbonus woods 1\n",
+                "units.txt line 2: \"woods\" is not one of grass, forest, swamp, desert, hill, mountain, water, city",
+            ),
+            ("unit a\nbonus forest 1\nbonus forest 2\n", "units.txt line 3: forest is given twice for a"),
+            ("unit a\nsiege 0\n", "units.txt line 2: siege must be at least 1"),
             (
                 "unit a\nimage ../../secret.png\n",
                 "units.txt line 2: an image is a path inside an asset directory, not \"../../secret.png\"",

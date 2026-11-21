@@ -110,6 +110,15 @@ fn side_line(fight: &Fight, defending: bool) -> String {
     if let (Some(leader), true) = (leader, led > 0) {
         parts.push(format!("led by a {} (+{led} each)", leader.name));
     }
+    // Those at home on this ground: how many, and by how much.
+    let home: Vec<u32> = units.iter().map(|u| u.home).filter(|h| *h > 0).collect();
+    if let Some(most) = home.iter().max() {
+        let who = if home.len() == units.len() { "all".to_string() } else { home.len().to_string() };
+        parts.push(format!("{who} at home here (+{most})"));
+    }
+    if !defending && fight.siege > 0 {
+        parts.push(format!("breaking walls (-{})", fight.siege));
+    }
     if defending {
         let ground = units.first().map_or(0, |u| u.ground);
         if ground > 0 {

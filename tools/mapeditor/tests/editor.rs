@@ -808,7 +808,7 @@ fn the_format_pages_units_and_cities_are_read_as_it_says() {
 fn the_example_continent_is_a_whole_map() {
     let report = mapeditor::check::check_path(&assets().join("maps/continent"), Some(&assets())).unwrap();
     assert_eq!((report.rows, report.cols), (46, 72));
-    assert_eq!((report.units.len(), report.cities.len()), (12, 9));
+    assert_eq!((report.units.len(), report.cities.len()), (15, 9));
     assert!(report.units.iter().any(|u| u.contains("commander 1")), "a captain: {:?}", report.units);
     assert!(report.units.iter().any(|u| u.contains("travels sea, carries 6")), "a transport: {:?}", report.units);
     assert!(report.units.iter().any(|u| u.contains("travels air")), "a flyer: {:?}", report.units);

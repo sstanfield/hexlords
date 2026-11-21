@@ -446,3 +446,54 @@ fn a_side_that_lost_its_commander_builds_another() {
     let city = game.map.city_at(REDHOLD).unwrap();
     assert_eq!(hexgame::info::progress_short(&game.map, city), "Captain: they wait for room");
 }
+
+/// A kind at home on some ground fights the stronger there (`bonus`),
+/// attacking or defending; a siege engine breaks walls for its stack
+/// (`siege`): the defenders' walls count that much less.
+#[test]
+fn a_kind_at_home_fights_the_stronger_and_siege_engines_break_walls() {
+    let mut rows = vec!["g".repeat(20); 20];
+    rows[5] = "gggggcggfcgggggggggg".to_string();
+    let terrain = format!("20\n20\n{}\n", rows.join("\n"));
+    let units = "unit rangers\nname Rangers\nstrength 3\nmoves 12\nbonus forest 1, city 2\nenter grass 2, forest 2, city 1\n\
+                 unit ram\nname Ram\nstrength 1\nmoves 12\nsiege 2\nenter grass 2, city 1\n\
+                 unit levy\nname Levy\nstrength 1\nmoves 12\nenter grass 2, forest 2, city 1\n";
+    let cities = "city 5 5\nname Redhold\nside red\ngarrison rangers\ngarrison ram\n\
+                  city 5 9\nname Bluemoor\nside blue\nwalls 6\ngarrison levy\n";
+    let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+    let mut game = Game::from_scenario(Scenario { map, assets: None, warnings });
+    let red = at(&game, REDHOLD);
+    let (rangers, ram) = (red[0], red[1]);
+    let levy = at(&game, BLUEMOOR)[0];
+    let strength = |game: &Game, id: UnitId, at: Hex, defending: bool| {
+        let unit = game.map.units().get(id).unwrap();
+        game.battle_strength(unit, at, defending, &[id])
+    };
+    // In the forest the rangers are 1 stronger, attacking or defending; on
+    // grass, not; in a city, 2.
+    let forest = Hex::new(5, 8);
+    assert_eq!(game.map.tile(forest).unwrap().kind, TileType::Forest);
+    assert_eq!(strength(&game, rangers, forest, false), 4 * 4);
+    assert_eq!(strength(&game, rangers, forest, true), 4 * (4 + 1), "and the forest's own 1 for a defender");
+    assert_eq!(strength(&game, rangers, Hex::new(5, 7), false), 4 * 3);
+    assert_eq!(strength(&game, rangers, BLUEMOOR, false), 4 * 5);
+    // Behind walls 6 the levy is 3 stronger; against a stack with the ram, 1.
+    assert_eq!(strength(&game, levy, BLUEMOOR, true), 4 * (1 + 3));
+    assert_eq!(game.siege_of(&[rangers, ram]), 2);
+    let parts = |siege| {
+        let unit = game.map.units().get(levy).unwrap();
+        game.strength_parts(unit, BLUEMOOR, true, &[levy], siege).quarters()
+    };
+    assert_eq!((parts(0), parts(2), parts(5)), (4 * 4, 4 * 2, 4), "never below nothing");
+    // The battle counts it: with no chance, the rangers alone (5 in a city)
+    // beat the levy (4); and the fight keeps what the siege broke.
+    let mut s = Setup::solo(&game.map, Some(Side::Red), "passive");
+    s.combat.chance = 0;
+    game = game.with_setup(s);
+    let forecast = game.battle_forecast(&[rangers, ram], BLUEMOOR).unwrap();
+    assert_eq!(forecast.odds, 100);
+    game.apply(Order::Move { units: vec![rangers, ram], to: BLUEMOOR }).unwrap();
+    let record = game.history().iter().rposition(|r| matches!(r.event, Event::Battle { .. })).unwrap();
+    let fight = game.fight(record).unwrap();
+    assert_eq!((fight.siege, fight.defenders[0].walls, fight.attackers[0].home), (2, 4, 2));
+}

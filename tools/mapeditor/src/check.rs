@@ -85,6 +85,12 @@ pub fn check_path(path: &Path, assets: Option<&Path>) -> Result<Report, String> 
     let map = &whole.map;
     for kind in map.units().kinds() {
         let mut leads = if kind.commander > 0 { format!(", commander {}", kind.commander) } else { String::new() };
+        for (ground, n) in &kind.bonus {
+            leads.push_str(&format!(", +{n} on {ground}"));
+        }
+        if kind.siege > 0 {
+            leads.push_str(&format!(", siege {}", kind.siege));
+        }
         match kind.travel {
             hexgame::state::Travel::Sea => leads.push_str(&format!(", travels sea, carries {}", kind.carries)),
             hexgame::state::Travel::Air => leads.push_str(", travels air"),

@@ -232,10 +232,22 @@ fn production_score(prod: &UnitProd, game: &Game, style: &Style) -> f64 {
 const FLIGHT: f64 = 2.5;
 
 /// Of these units, as many as attack together (a hex's worth: the strongest
-/// [`MAX_STACK`] and a commander), the strongest first.
-fn strongest_stack(game: &Game, mut units: Vec<UnitId>) -> Vec<UnitId> {
+/// [`MAX_STACK`] and a commander), the strongest first; against a city with
+/// walls, its best siege engine first of all.
+fn strongest_stack(game: &Game, mut units: Vec<UnitId>, target: Hex) -> Vec<UnitId> {
     let map = &game.map;
-    units.sort_by_key(|id| std::cmp::Reverse(map.units().get(*id).map_or(0, |u| u.power())));
+    let walled = map.city_at(target).is_some_and(|c| c.walls > 0);
+    let siege = |id: &UnitId| {
+        let unit = map.units().get(*id);
+        if walled { unit.and_then(|u| map.units().kind_of(u)).map_or(0, |k| k.siege) } else { 0 }
+    };
+    let power = |id: &UnitId| map.units().get(*id).map_or(0, |u| u.power());
+    units.sort_by_key(|id| (std::cmp::Reverse(siege(id)), std::cmp::Reverse(power(id))));
+    // One siege engine is enough: the others go by their strength.
+    if units.first().is_some_and(|id| siege(id) > 0) {
+        let rest = &mut units[1..];
+        rest.sort_by_key(|id| std::cmp::Reverse(power(id)));
+    }
     let (mut soldiers, mut leader) = (0, false);
     units.retain(|id| {
         if map.is_commander(*id) {
@@ -492,7 +504,7 @@ impl Planner {
         for (target, _) in &targets {
             let able: Vec<UnitId> = free.iter().filter(|u| reaches(u.id(), *target)).map(|u| u.id()).collect();
             let more = able.len();
-            let able = strongest_stack(game, able);
+            let able = strongest_stack(game, able, *target);
             if able.is_empty() {
                 continue;
             }
@@ -776,6 +788,25 @@ impl Planner {
                 })
                 .map(|(i, _)| i)
         };
+        // Late, a siege engine for the walls, where one can be built and
+        // kept, if it has none and is building none.
+        if late {
+            let breaks =
+                |p: &UnitProd| units.kind_named(&p.basename).and_then(|k| units.kind(k)).is_some_and(|k| k.siege > 0);
+            let has = units.of_side(side).any(|u| units.kind_of(u).is_some_and(|k| k.siege > 0))
+                || own().any(|c| c.production().is_some_and(&breaks));
+            let at = own().filter(|c| c.building.is_none()).find_map(|c| {
+                let i = c.units.iter().position(|p| {
+                    breaks(p)
+                        && i64::from(p.upkeep) <= spare
+                        && gold + net * i64::from(p.time.max(1)) >= i64::from(p.cost)
+                })?;
+                Some((c.id, i))
+            });
+            if let (false, Some((city, i))) = (has, at) {
+                return Some(Order::Build { city, what: Some(i) });
+            }
+        }
         let idle = own().filter(|c| c.building.is_none()).find_map(|c| choose(c).map(|i| (c.id, i)));
         if let Some((city, i)) = idle {
             return Some(Order::Build { city, what: Some(i) });

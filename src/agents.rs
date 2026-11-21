@@ -494,7 +494,8 @@ pub fn describe(game: &Game, side: Side) -> String {
         let prices: Vec<String> =
             kind.cost.prices().iter().filter(|(_, p)| *p > 0).map(|(w, p)| format!("{w} {p}")).collect();
         out.push_str(&format!(
-            "kind {} strength {} moves {} upkeep {} price {} commander {} travels {} carries {} enter {}\n",
+            "kind {} strength {} moves {} upkeep {} price {} commander {} travels {} carries {} siege {} bonus {} \
+             enter {}\n",
             kind.id,
             kind.strength,
             kind.moves,
@@ -503,6 +504,12 @@ pub fn describe(game: &Game, side: Side) -> String {
             kind.commander,
             kind.travel.word(),
             kind.carries,
+            kind.siege,
+            if kind.bonus.is_empty() {
+                "none".to_string()
+            } else {
+                kind.bonus.iter().map(|(g, n)| format!("{g}:{n}")).collect::<Vec<_>>().join(",")
+            },
             prices.join(" ")
         ));
     }

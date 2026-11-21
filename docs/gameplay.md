@@ -156,8 +156,12 @@ and the rules use integers, not floats.
      a point a level: behind walls 6, a couple of cheap units were a meat
      grinder); every unit of a stack with a commander is as much stronger
      as the commander says (`commander 1`). The attackers get no ground and
-     no walls. (A battle's strengths are in quarter points,
-     `combat::QUARTER`.)
+     no walls. A kind can be at home on some ground (`bonus forest 1`, or
+     in a city: the owner's word 2026-11-21, gaps to fill), and fights that
+     much stronger in a battle there, attacking or defending; a siege engine
+     (`siege 2`) makes the walls of a city its stack attacks count that much
+     less (`Game::siege_of`; never below nothing). (A battle's strengths are
+     in quarter points, `combat::QUARTER`.)
    - **The odds** before an attack (`Game::battle_odds`) are 200 battles
      fought with a chance of their own, so asking does not change the game;
      the line under the map shows them ("attack: 82% likely to win").

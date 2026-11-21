@@ -163,9 +163,9 @@ terrain
 72
 wwwwwwww...                      (the map file's rows: docs/map-format.md; `?`: never seen)
 end terrain
-kind lightcavalry strength 3 moves 20 upkeep 4 price 8 commander 0 travels land carries 0 enter grass 2 forest 5 city 1 road 1 bridge 1
-kind captain strength 3 moves 14 upkeep 10 price 20 commander 1 travels land carries 0 enter grass 2 forest 3 city 1 road 1 bridge 1
-kind transport strength 1 moves 12 upkeep 5 price 10 commander 0 travels sea carries 6 enter water 2 city 2
+kind lightcavalry strength 3 moves 20 upkeep 4 price 8 commander 0 travels land carries 0 siege 0 bonus none enter grass 2 forest 5 city 1 road 1 bridge 1
+kind captain strength 3 moves 14 upkeep 10 price 20 commander 1 travels land carries 0 siege 0 bonus none enter grass 2 forest 3 city 1 road 1 bridge 1
+kind transport strength 1 moves 12 upkeep 5 price 10 commander 0 travels sea carries 6 siege 0 bonus none enter water 2 city 2
 city 13 7 red walls 2 income 20 builds 2 progress 1 name Brindlewick
 can 13 7 0 militia 1 4
 can 13 7 1 archers 2 6
@@ -187,7 +187,9 @@ end
   letter per hex; a capital is a road), but `?` for a hex never seen (total
   fog of war).
 - `kind`: each kind of unit: its numbers, whether it is a commander (the
-  bonus it gives its stack, 0 if it is not one), how it travels (`land`,
+  bonus it gives its stack, 0 if it is not one), the walls it breaks as a
+  siege engine (`siege`, 0 if none), where it fights the stronger (`bonus
+  forest:1,city:1`, or `none`), how it travels (`land`,
   `sea`: a ship, carrying as many land units as it says; `air`: a flyer),
   and what each terrain costs it to enter (`docs/gameplay.md`, "Ships and
   flyers", says how they go).

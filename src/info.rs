@@ -402,6 +402,7 @@ pub fn unit_details(map: &Map, unit: &Unit) -> Vec<String> {
     );
     let mut leads = None;
     let mut travel = None;
+    let mut knack = None;
     if let Some(kind) = map.units().kind_of(unit) {
         numbers.push_str(&format!("   Price {}", kind.price));
         let command = crate::state::command_bonus(kind.commander, unit.level);
@@ -409,9 +410,11 @@ pub fn unit_details(map: &Map, unit: &Unit) -> Vec<String> {
             leads = Some(format!("Commands: +{command} to its stack; fights last"));
         }
         travel = travel_line(kind);
+        knack = knack_line(kind);
     }
     lines.push(numbers);
     lines.extend(leads);
+    lines.extend(knack);
     lines.extend(travel);
     lines.extend(growth_line(unit));
     if unit.defending {
@@ -469,10 +472,34 @@ pub fn production_details(map: &Map, prod: &UnitProd, trains: u8) -> Vec<String>
         if kind.commander > 0 {
             lines.push(format!("Commands: +{} to its stack; fights last", kind.commander));
         }
+        lines.extend(knack_line(kind));
         lines.extend(travel_line(kind));
         lines.extend(enters(&kind.cost, 4));
     }
     lines
+}
+
+/// What a kind fights the better for, in a line: "Fights +1 in forest;
+/// breaks 1 of the walls it attacks". `None` for one with nothing.
+pub fn knack_line(kind: &crate::state::UnitKind) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+    if !kind.bonus.is_empty() {
+        let grounds: Vec<String> = kind
+            .bonus
+            .iter()
+            .map(|(g, n)| if g == "city" { format!("+{n} in a city") } else { format!("+{n} on {g}") })
+            .collect();
+        parts.push(format!("Fights {}", grounds.join(", ")));
+    }
+    if kind.siege > 0 {
+        parts.push(format!("breaks {} of the walls it attacks", kind.siege));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let line = parts.join("; ");
+    let mut chars = line.chars();
+    chars.next().map(|first| first.to_uppercase().chain(chars).collect())
 }
 
 /// What a ship or a flyer does that others do not, in a line: "A ship:
