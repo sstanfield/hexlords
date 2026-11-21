@@ -56,7 +56,8 @@ Built (2026-11-19):
 - **orders that last** (below, "Easy to play"): a stack sent somewhere far
   goes there over turns, a city sends what it builds where its holder
   says, a stack can be put aside for the turn, and a list of tasks says
-  what is left to do;
+  what is left to do; a stack patrols waypoints, or is handed to the
+  computer to maraud;
 - **what a side sees**: the other sides' stacks only as banners with their
   size, their cities only from outside; and **fog of war**, set with the
   game (below, 9).
@@ -535,18 +536,64 @@ thing to happen. Ideas to try, as the rules grow:
   window's buttons for what it builds and where the units go are about the
   item chosen (the new one, after a +); the sidebar's are about the item it
   builds now.
-- **Patrols** (planned, the owner's word 2026-11-21): a stack goes round
-  waypoints (on land the side has seen), turn after turn: round again if
-  the last joins the first, else back the way it came. It says whether it
-  attacks, and at what odds at least, so that a scout in the fog keeps out
-  of fights and a strong stack takes on what it can beat. It keeps excess
-  troops useful, and eyes open in the fog.
-- **Marauders** (planned, the owner's word 2026-11-21): a stack handed to
-  the computer (a planner's ways, or an agent of its own for one stack)
-  until its player takes it back: it roams, hunts other sides' units and
-  takes their cities. After each battle it is a task that needs orders
-  (still marauding if ignored), so that its player sees whether it is too
-  hurt to go on.
+- **Patrols** (built, the owner's word 2026-11-21: excess troops kept
+  useful, and eyes open in the fog): P, or the Units menu's Patrol
+  (`Order::Patrol`), then the waypoints, from where the stack stands, as
+  Go to picks its stops: Shift+click each (outlined in gold, each checked
+  as it is picked, `Game::check_waypoints`: a way over the land the side
+  knows, and no city but its own) and a plain click the last; one plain
+  click: between here and there. The last on the stack's own hex (the
+  first again): round and round; else back and forth along them
+  (`state::Patrol`). A small window then asks whether it attacks: never (a
+  scout keeps out of fights), or at 90, 75, 60 or 50 in a hundred or
+  better (the choice made last is its first button). It takes this turn's
+  part at once, and goes on at the start of each of its side's turns,
+  after the marches (`Game::patrols`): as far as the slowest of it gets,
+  on from a waypoint at once with what movement is left (a short patrol
+  may go round more than once a turn), never into another side's units it
+  sees; with no way on it stops short, waits for orders, and tries again
+  next turn. If it attacks: before it steps on, and where its step ends,
+  of the other sides' stacks (not nobody's) it sees and can reach now,
+  the one it is likeliest to beat, if the odds (`Game::battle_odds`) are
+  its least or better; once a turn at most (an attack spends its
+  movement); in a city too, which it takes if it wins. One met unseen in
+  the fog is a battle there, as for any move. A patrol needs nobody to see
+  to it: Next stack passes it by, the tasks list it with the rest
+  ("patrolling 3 waypoints, attacks at 75% or better"); a click on it
+  selects all of it, and the map outlines its waypoints. Any other order
+  for it ends the patrol (as a move ends a Go to; Undo gives it back where
+  it takes back a move), and a patrol that has gone no more than a leg
+  can be taken back.
+- **Marauders** (built, the owner's word 2026-11-21): U, or the Units
+  menu's Maraud (`Order::Maraud`), hands the selected stack to the
+  computer until its player calls it back (U again) or gives it another
+  order. Marauding is not a rule: the rules keep the flag, and the
+  computer (`marauder`) gives the stack ordinary orders, at once with what
+  movement it has, and at the start of each of its side's turns before its
+  player plays (the screen leads a person's, hotseat too; an agent's turn
+  leads the computer's sides' and a program's). It is shown the side's
+  view, no more, and leads the stack in the bold planner's ways, scoped to
+  it: it strikes the other sides' stacks it sees and can reach at the bold
+  odds or better, and the cities it can reach that are empty or held by
+  few enough (a city first); else it goes toward the city most worth the
+  trouble that it could take (one in the fog, to look), or a stack it
+  could beat; else, under total fog, to see more; else it waits near the
+  nearest city not its side's. It goes as one stack, to a step every unit
+  of it can reach, as far as the slowest gets. Its moves are `Order::Roam`:
+  a move that keeps the stack marauding (a person's move ends it, so the
+  two differ in the order). Its player sets no odds for it: the bold
+  ones.
+- **After a battle** (patrols and marauders alike, the owner's word
+  2026-11-21: "to make sure the user still wants that, or it may be too
+  damaged to continue"): a stack on either that fought, attacking, or
+  attacked and holding (`Unit::fought`), waits for its player's word: it
+  needs orders (tier 1: "fought on patrol: D lets it go on"), Next stack
+  goes to it, End turn counts it. Done lets it go on, at once if it can;
+  another order ends its patrol or its marauding; left alone, it goes on
+  next turn. One attacked in another side's turn does not go on at the
+  start of its own: its player sees it first. A battle one fights on its
+  player's word (the patrol's window, U, D) is told as the player's own;
+  those at the start of a turn are in the log, which opens.
 - **Provinces** (shelved, the owner's word 2026-11-21): a group of cities
   handed to the computer under the player's general orders (a share of
   their taxes, units sent to the front). Shelved: multiplayer is meant to

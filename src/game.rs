@@ -18,6 +18,8 @@ use crate::state::{
     path_with, reach_with, step_cost, step_toward_by, way_over_land,
 };
 
+mod patrol;
+
 /// The agent that passes its turns: the computer's, when nothing else is said.
 pub const PASSIVE: &str = "passive";
 
@@ -127,6 +129,13 @@ pub enum StackState {
     Defending,
     /// It can go nowhere more this turn.
     Spent,
+    /// It goes round waypoints (`Order::Patrol`), turn after turn.
+    Patrolling,
+    /// The computer leads it (`Order::Maraud`).
+    Marauding,
+    /// It fought on patrol, or marauding: it waits for its player's word
+    /// (Done: it goes on, at once if it can; left alone, the next turn).
+    Fought,
 }
 
 /// How a city stands this turn.
@@ -145,14 +154,15 @@ pub enum CityState {
 
 impl Task {
     /// How pressing it is: 1, what has had no orders (stacks that wait, or
-    /// whose way is blocked, and cities that build nothing); 2, what is held
+    /// whose way is blocked, or that fought on patrol or marauding and wait
+    /// for their player's word, and cities that build nothing); 2, what is held
     /// up (cities whose work waits for the gold or for room); 3, the rest,
     /// with the stacks its player is done with this turn: put aside, or
     /// moved (a stack moved and stopped has had its orders, moves left or
     /// not).
     pub fn tier(&self) -> u8 {
         match self {
-            Task::Stack { state: StackState::Waiting | StackState::Stalled, .. } => 1,
+            Task::Stack { state: StackState::Waiting | StackState::Stalled | StackState::Fought, .. } => 1,
             Task::City { state: CityState::Idle, .. } => 1,
             Task::City { state: CityState::Waiting, .. } => 2,
             _ => 3,
@@ -172,7 +182,8 @@ pub struct Ghost {
 }
 
 /// What a unit is doing about a standing order, for an undo: its route,
-/// whether it has stalled, has moved this turn, defends, was put aside.
+/// whether it has stalled, has moved this turn, defends, was put aside; its
+/// patrol, whether it marauds, whether it fought on either.
 #[derive(Clone, Debug)]
 struct MarchState {
     route: Vec<Hex>,
@@ -181,6 +192,9 @@ struct MarchState {
     moved: bool,
     defending: bool,
     done: bool,
+    patrol: Option<crate::state::Patrol>,
+    marauding: bool,
+    fought: bool,
 }
 
 impl MarchState {
@@ -192,12 +206,16 @@ impl MarchState {
             moved: unit.moved,
             defending: unit.defending,
             done: unit.done,
+            patrol: unit.patrol.clone(),
+            marauding: unit.marauding,
+            fought: unit.fought,
         }
     }
 
     fn restore(self, unit: &mut Unit) {
         (unit.route, unit.bound, unit.stalled, unit.moved, unit.defending, unit.done) =
             (self.route, self.bound, self.stalled, self.moved, self.defending, self.done);
+        (unit.patrol, unit.marauding, unit.fought) = (self.patrol, self.marauding, self.fought);
     }
 }
 
@@ -666,10 +684,10 @@ impl Game {
         }
         let (round, mark) = (self.round, self.history.len());
         // Being done with units changes nothing to take back: the order
-        // before can still be.
-        let keeps = matches!(order, Order::Done { .. } | Order::Defend { .. });
+        // before can still be (unless it sent a patrol on: `Order::Done`).
+        let keeps = matches!(order, Order::Done { .. } | Order::Defend { .. } | Order::Maraud { .. });
         let done = self.carry_out(side, order);
-        if keeps && done.is_ok() {
+        if keeps && done.as_ref().is_ok_and(|events| events.is_empty()) {
             self.undo = last;
             return done;
         }
@@ -801,6 +819,7 @@ impl Game {
                 for id in &units {
                     if let Some(unit) = self.map.unit_mut(*id) {
                         (unit.route, unit.bound, unit.stalled, unit.defending) = (route.clone(), bound, false, false);
+                        unit.stand_down();
                     }
                 }
                 // This turn's step, as the march would, a stack (the units of a
@@ -841,6 +860,7 @@ impl Game {
                         unit.defending = on;
                         if on {
                             (unit.route, unit.bound, unit.stalled) = (Vec::new(), None, false);
+                            unit.stand_down();
                         }
                     }
                 }
@@ -850,12 +870,15 @@ impl Game {
                 for id in &units {
                     self.own_unit(side, *id)?;
                 }
+                // (A patrol that fought and waited for its player's word goes
+                // on at once.)
+                let events = self.carry_on(side, &units);
                 for id in &units {
                     if let Some(unit) = self.map.unit_mut(*id) {
                         unit.done = true;
                     }
                 }
-                Ok(Vec::new())
+                Ok(events)
             }
             Order::Rally { city, to } => {
                 match &to {
@@ -879,6 +902,9 @@ impl Game {
             }
             Order::Queue { city, items, end } => self.set_queue(side, city, items, end),
             Order::RallyPoint { n, point } => self.set_rally_point(side, n, point),
+            Order::Patrol { units, waypoints, attack } => self.patrol(side, &units, &waypoints, attack),
+            Order::Maraud { units, on } => self.maraud(side, &units, on),
+            Order::Roam { units, to } => self.roam(side, &units, to),
         }
     }
 
@@ -1268,6 +1294,7 @@ impl Game {
             if let Some(unit) = self.map.unit_mut(*id) {
                 (unit.moved, unit.stalled, unit.defending) = (true, false, false);
                 (unit.route, unit.bound) = (Vec::new(), None);
+                unit.stand_down();
             }
         }
         if let Some((side, at)) = self.emerging.take() {
@@ -1318,6 +1345,7 @@ impl Game {
             if let Some(unit) = self.map.unit_mut(*unit) {
                 unit.moved = true;
                 (unit.route, unit.bound, unit.stalled) = (Vec::new(), None, false);
+                unit.stand_down();
             }
         }
         self.undo = None;
@@ -1874,6 +1902,10 @@ impl Game {
         for unit in &fallen {
             self.map.kill_unit(*unit);
         }
+        // Those who held, on patrol or marauding, need their player's word.
+        if !battle.attackers_won {
+            self.alarm(at);
+        }
         // Those who lived through it won it: experience, a point more if the
         // odds were against them; and, if no commander led them and it was a
         // hard fight, maybe a captain from their ranks.
@@ -2009,6 +2041,8 @@ impl Game {
         if let Some(trail) = self.trail.get_mut(ending.index()) {
             trail.clear();
         }
+        // A patrol that fought and was left alone goes on next turn.
+        self.stand_easy(ending);
         if self.order.is_empty() {
             self.round += 1;
             return Vec::new();
@@ -2036,6 +2070,7 @@ impl Game {
             self.map.reset_move_points(side);
             events.extend(self.pay_day(side));
             events.extend(self.marches(side));
+            events.extend(self.patrols(side));
         }
         events
     }
@@ -2559,6 +2594,7 @@ impl Game {
             } else if let Some(unit) = view.map.unit_mut(id) {
                 (unit.stalled, unit.moved, unit.done) = (false, false, false);
                 (unit.route, unit.bound) = (Vec::new(), None);
+                unit.stand_down();
                 unit.movement = unit.base_move_points;
             }
         }
@@ -2806,8 +2842,9 @@ impl Game {
             .copied()
             .filter(|id| units.get(*id).is_some_and(|u| !u.defending && !u.done && !u.moved))
             .collect();
-        // (At sea, all of them: the ships carry who has no points left.)
-        let stack = if self.map.open_water(hex) {
+        // (At sea, all of them: the ships carry who has no points left. On
+        // patrol or marauding, all of them too: they go as one.)
+        let stack = if self.map.open_water(hex) || patrol::together(&self.map, &own) {
             own
         } else if !waiting.is_empty() {
             waiting
@@ -2848,18 +2885,21 @@ impl Game {
     /// The hexes of `side`'s stacks that wait for orders, in reading order:
     /// one of its units can still go somewhere, its player is not done with
     /// it (nor has moved it this turn: a stack moved and stopped has had its
-    /// orders), and it is on no standing order (or one that stalled).
+    /// orders), and it is on no standing order (or one that stalled), nor on
+    /// patrol or marauding (unless it fought, or its patrol stalled).
     pub fn waiting_stacks(&self, side: Side) -> Vec<Hex> {
         let map = &self.map;
         let can_go = |hex: &Hex| {
             map.units_at(*hex).iter().filter_map(|id| map.units().get(*id)).any(|u| {
                 u.side() == side
-                    && u.movement > 0
-                    && !u.done
-                    && !u.moved
-                    && !u.defending
-                    && (u.route.is_empty() || u.stalled)
-                    && compute_range(map, u).reachable().next().is_some()
+                    && (patrol::needs_word(u)
+                        || u.movement > 0
+                            && !u.done
+                            && !u.moved
+                            && !u.defending
+                            && !u.on_duty()
+                            && (u.route.is_empty() || u.stalled)
+                            && compute_range(map, u).reachable().next().is_some())
             })
         };
         self.stacks_of(side).into_iter().filter(can_go).collect()
@@ -2880,10 +2920,13 @@ impl Game {
                     .filter_map(|id| map.units().get(*id))
                     .filter(|u| u.side() == side)
                     .collect();
-                let can_go =
-                    |u: &&Unit| u.movement > 0 && !u.defending && compute_range(map, u).reachable().next().is_some();
+                let can_go = |u: &&Unit| {
+                    u.movement > 0 && !u.defending && !u.on_duty() && compute_range(map, u).reachable().next().is_some()
+                };
                 let free: Vec<&Unit> = units.iter().copied().filter(can_go).collect();
-                let state = if free.iter().any(|u| !u.route.is_empty() && u.stalled) {
+                let state = if let Some(alarm) = patrol::alarm_state(&units) {
+                    alarm
+                } else if free.iter().any(|u| !u.route.is_empty() && u.stalled) {
                     StackState::Stalled
                 } else if free.iter().any(|u| !u.moved && !u.done && u.route.is_empty()) {
                     StackState::Waiting
@@ -2891,6 +2934,8 @@ impl Game {
                     StackState::MovesLeft
                 } else if free.iter().any(|u| u.done) {
                     StackState::Done
+                } else if let Some(duty) = patrol::duty_state(&units) {
+                    duty
                 } else if units.iter().any(|u| !u.route.is_empty()) {
                     StackState::Marching
                 } else if units.iter().any(|u| u.defending) {

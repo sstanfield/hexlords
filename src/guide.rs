@@ -486,6 +486,29 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                         .to_string(),
                 ),
                 (
+                    "Patrol",
+                    "P: the selected stack goes round waypoints, turn after turn. Shift+click each waypoint \
+                     on land you have seen, then click the last: back and forth along them, or round and round \
+                     if the last is the stack's own hex. Then say whether it attacks: never (a scout keeps out \
+                     of fights), or the stacks it sees and can reach at the odds you pick or better, once a \
+                     turn at most. It goes on from a waypoint at once, and at the start of each of your turns."
+                        .to_string(),
+                ),
+                (
+                    "Maraud",
+                    "U: the computer leads the selected stack, at once and at the start of each of your \
+                     turns: it hunts the stacks it can beat, takes the cities it can, and looks for more. U \
+                     again calls it back."
+                        .to_string(),
+                ),
+                (
+                    "After a battle",
+                    "A stack on patrol or marauding that fights (or is attacked) waits for your word: it needs \
+                     orders, and N goes to it. D lets it go on (at once, if it waited since your turn began); \
+                     any other order ends its patrol or its marauding; left alone, it goes on next turn."
+                        .to_string(),
+                ),
+                (
                     "Tasks",
                     "What you have left to do this turn: stacks with no orders and cities that build \
                            nothing first, then cities held up, then the rest. A stack you moved, or put \

@@ -299,7 +299,7 @@ fn threat(game: &Game, side: Side, hex: Hex, sight: &Sight) -> f64 {
 /// decided on its own odds): a move of those of them that can get there.
 /// Worked out on what it sees, not left to the game (a way through the fog
 /// that is shut shows itself as it goes).
-fn advance(
+pub(crate) fn advance(
     game: &Game,
     (side, sight): (Side, &Sight),
     (ids, lead): (&[UnitId], &Unit),

@@ -87,14 +87,16 @@ pub struct TurnReport {
     pub refused: Vec<(Order, String)>,
 }
 
-/// A whole turn of the side whose turn it is, played by `agent`: its orders,
-/// then the end of its turn. The agent is shown the game as its side knows
-/// it (`Game::view_for`), worked out anew for each order; the orders are
-/// carried out in the game itself, where something it could not see may be
-/// in the way (it hears of a refusal: `Agent::refused`).
+/// A whole turn of the side whose turn it is, played by `agent`: the
+/// computer leads its marauding stacks (`marauder::maraud`), then the agent
+/// gives its orders, then the turn ends. The agent is shown the game as its
+/// side knows it (`Game::view_for`), worked out anew for each order; the
+/// orders are carried out in the game itself, where something it could not
+/// see may be in the way (it hears of a refusal: `Agent::refused`).
 pub fn play_turn(game: &mut Game, agent: &mut dyn Agent) -> TurnReport {
     let side = game.player();
-    let mut report = TurnReport::default();
+    // Its marauding stacks first (`marauder`), whoever plays the side.
+    let mut report = crate::marauder::maraud(game, side);
     for _ in 0..MAX_ORDERS {
         if game.winner().is_some() || game.player() != side {
             return report;
@@ -608,7 +610,10 @@ fn queue_item(game: &Game, word: &str) -> Result<QueueItem, String> {
 /// `queue <row> <col> <item> [<item> ...] [repeat <from> [<times>]]` (an
 /// item `<what>x<count>[@<where>]`, where `defend`, `point<n>`,
 /// `point<n>+bless` or `<row>.<col>[,<row>.<col> ...]`; or
-/// `queue <row> <col> none`), `walls <row> <col>`, `undo`, `end`. `None`
+/// `queue <row> <col> none`), `walls <row> <col>`, `undo`, `end`;
+/// `patrol <units> <row> <col> <row> <col> [<row> <col> ...] [attack <percent>]`
+/// (waypoints in order), `maraud <units>`, `unmaraud <units>`,
+/// `roam <units> <row> <col>`. `None`
 /// for an empty line or a comment (`#`).
 pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
     let words: Vec<&str> = line.split_whitespace().collect();
@@ -705,9 +710,25 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
         ["point", n, row, col, "defend"] => {
             Order::RallyPoint { n: point(n)?, point: Some(RallyPoint { at: hex(row, col)?, defend: true }) }
         }
+        ["patrol", u, ref rest @ ..] if !rest.is_empty() => {
+            let (places, attack) = match rest {
+                [places @ .., "attack", odds] => {
+                    (places, Some(odds.parse::<u32>().map_err(|_| format!("\"{odds}\" is not odds in percent"))?))
+                }
+                places => (places, None),
+            };
+            if places.is_empty() || places.len() % 2 != 0 {
+                return Err("a patrol's waypoints are rows and columns in pairs".to_string());
+            }
+            let waypoints = places.chunks(2).map(|w| hex(w[0], w[1])).collect::<Result<_, _>>()?;
+            Order::Patrol { units: units(u)?, waypoints, attack }
+        }
+        ["maraud", u] => Order::Maraud { units: units(u)?, on: true },
+        ["unmaraud", u] => Order::Maraud { units: units(u)?, on: false },
+        ["roam", u, row, col] => Order::Roam { units: units(u)?, to: hex(row, col)? },
         _ => {
             return Err(
-                "not an order (move, toward, goto, done, defend, undefend, bless, disband, build, rally, queue, point, walls, undo, end)".to_string()
+                "not an order (move, toward, goto, done, defend, undefend, bless, disband, build, rally, queue, point, walls, undo, end, patrol, maraud, unmaraud, roam)".to_string()
             );
         }
     }))

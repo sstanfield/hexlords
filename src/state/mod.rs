@@ -8,6 +8,7 @@ pub mod combat;
 pub mod hex;
 pub mod map;
 pub mod movement;
+pub mod patrol;
 pub mod rng;
 pub mod scenario;
 pub mod terrain;
@@ -22,6 +23,7 @@ pub use movement::{
     ATTACK_COST, MoveRange, Passage, attack_or_step, compute_range, hostile, passage, path_with, reach_with, step_cost,
     step_toward, step_toward_by, step_toward_with, way_over_land,
 };
+pub use patrol::Patrol;
 pub use rng::Rng;
 pub use scenario::{Scenario, ScenarioError};
 pub use terrain::{MoveCost, TileType};

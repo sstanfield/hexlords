@@ -207,5 +207,13 @@ pub fn order_line(game: &Game, order: &Order) -> String {
             format!("point {n} {} {}{}", p.at.row, p.at.col, if p.defend { " defend" } else { "" })
         }
         Order::EndTurn => "end".to_string(),
+        Order::Patrol { units, waypoints, attack } => {
+            let places: Vec<String> = waypoints.iter().map(|h| format!("{} {}", h.row, h.col)).collect();
+            let attack = attack.map_or(String::new(), |odds| format!(" attack {odds}"));
+            format!("patrol {} {}{attack}", names(units), places.join(" "))
+        }
+        Order::Maraud { units, on: true } => format!("maraud {}", names(units)),
+        Order::Maraud { units, on: false } => format!("unmaraud {}", names(units)),
+        Order::Roam { units, to } => format!("roam {} {} {}", names(units), to.row, to.col),
     }
 }

@@ -79,6 +79,26 @@ pub enum Order {
     Undo,
     /// The side has done all it means to this turn.
     EndTurn,
+    /// Units on one hex patrol `waypoints` (on land the side has seen), turn
+    /// after turn: the first of them first, round again after the last if it
+    /// is the first again, else back the way they came. They go as far as
+    /// the slowest gets this turn, and on at the start of each of their
+    /// side's turns, on at once from a waypoint with what movement is left.
+    /// With `attack` (in percent) they attack the other sides' stacks they
+    /// see and can reach, at those odds or better, once a turn at most; else
+    /// never. A battle (theirs, or one they are attacked in) and they need
+    /// their player's word: `Done` lets them go on; another order for them
+    /// ends the patrol.
+    Patrol { units: Vec<UnitId>, waypoints: Vec<Hex>, attack: Option<u32> },
+    /// The computer leads these units (`on`): it roams, hunts the other
+    /// sides' units and takes their cities (`marauder`), until their player
+    /// calls them back (`!on`) or gives them another order. After a battle
+    /// they need their player's word, as on patrol.
+    Maraud { units: Vec<UnitId>, on: bool },
+    /// Marauding units go to a hex all of them can reach this turn (as
+    /// `Move`; into another side's units, a battle), and maraud on: the
+    /// computer's moves for them.
+    Roam { units: Vec<UnitId>, to: Hex },
 }
 
 /// What happened.
