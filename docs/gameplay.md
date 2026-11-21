@@ -149,15 +149,15 @@ and the rules use integers, not floats.
        dear ones behind. Many weak units beat one strong one here, where in
        lines they lose one by one.
    - **Bonuses**, in either system: a defender is 1 stronger on hills and
-     in forests, 2 on mountains, and three quarters of a point for each
-     level of its city's walls (a battle's strengths are in quarter points,
-     `combat::QUARTER`); every unit of a stack with a commander is as much
-     stronger as the commander says (`commander 1`). The attackers get no
-     ground and no walls. With chance 5, eight good units take a city held
-     by one behind walls 1 nearly always, the strongest neutral city on the
-     continent (two wardens behind walls 3) about half the time, a side's
-     capital with its captain four times in five; equal stacks in the field
-     are even.
+     in forests, 2 on mountains, and in a city by its walls
+     (`combat::walls_bonus`, the owner's table of 2026-11-20): nothing
+     behind walls 0, 1 behind 1 or 2, 2 behind 3 to 5, 3 behind 6 (every
+     city of our maps starts with walls 1 at least; before, three quarters of
+     a point a level: behind walls 6, a couple of cheap units were a meat
+     grinder); every unit of a stack with a commander is as much stronger
+     as the commander says (`commander 1`). The attackers get no ground and
+     no walls. (A battle's strengths are in quarter points,
+     `combat::QUARTER`.)
    - **The odds** before an attack (`Game::battle_odds`) are 200 battles
      fought with a chance of their own, so asking does not change the game;
      the line under the map shows them ("attack: 82% likely to win").
@@ -166,7 +166,13 @@ and the rules use integers, not floats.
      seed always gives the same battle.
 5. **Cities change hands.** A city is taken by moving into it when no enemy
    stands in it (after a battle, or empty). A neutral city has a small
-   garrison of its own.
+   garrison of its own (a generated map's: one of the weakest it builds).
+   **Walls** (built, the owner's rules 2026-11-20): a city that is taken
+   loses a level of its walls; its holder can raise them a level at a time
+   (`Order::Walls`, the button in the city's window), once a turn, up to 6
+   (`WALLS_CAP`), paid at once: 25 gold for each level it raises them to
+   (to 3, 75; to 6, 150: `wall_price`). The log says when walls fall and
+   when they are raised.
 6. **Gold** (built). Each side has a treasury (`--gold`, or the new game
    screen: 50 unless set). At the start of each of its turns (from the
    second round): its cities' taxes come in (a city's `income`, 10 unless
@@ -179,7 +185,12 @@ and the rules use integers, not floats.
    nothing, the unit's `price`. (The unit's price is also what it would
    cost in a city that is given a new kind to build, later.) The sidebar
    shows the treasury, its taxes and its upkeep; the log says who left
-   unpaid. Still to try: gold from a city taken, a tax rate to set.
+   unpaid. A unit's upkeep is half its price in the game's own units (the
+   owner, 2026-11-20). A side can **disband** its units (`Order::Disband`;
+   X, or Disband in the Units menu, which asks first): they are gone, and
+   their upkeep with them, to make room for better ones; a ship at sea goes
+   only with those it carries, or with ships enough left to carry them.
+   Still to try: gold from a city taken, a tax rate to set.
 7. **Commanders**, in the first version of the rules (decided), even if
    they do little at first. Built: a kind of unit is a commander (the
    `commander <n>` key in `units.txt`, the bonus it gives); a hex holds one

@@ -11,7 +11,7 @@ use crate::game::{CITY_SIGHT, Game, HARD_ODDS, UNIT_SIGHT, emerge_chance};
 use crate::help::HelpSection;
 use crate::info;
 use crate::setup::{Fog, TurnOrder};
-use crate::state::combat::{HITS, MAX_CHANCE, System, WALL_QUARTERS};
+use crate::state::combat::{HITS, MAX_CHANCE, System, walls_bonus};
 use crate::state::{Blessing, LEVEL_EXPERIENCE, MAX_STACK, Travel};
 
 /// How long a line of a topic's words is, at most, in characters.
@@ -101,12 +101,12 @@ fn battles(game: &Game) -> Vec<HelpSection> {
             twice_wins(c)
         ),
     };
-    let walls = match WALL_QUARTERS {
-        1 => "a quarter of a point".to_string(),
-        2 => "half a point".to_string(),
-        3 => "three quarters of a point".to_string(),
-        q => format!("{q} quarters of a point"),
-    };
+    let walls = format!(
+        "{} behind walls 1 or 2, {} behind 3 to 5, {} behind 6 (walls 0: nothing)",
+        walls_bonus(1),
+        walls_bonus(3),
+        walls_bonus(6)
+    );
     vec![
         section("In this game", &[("How", system), ("Chance", chance)]),
         section(
@@ -125,7 +125,7 @@ fn battles(game: &Game) -> Vec<HelpSection> {
                         .to_string(),
                 ),
                 ("The ground", "A defender is a point stronger on hills and in forests, two on mountains.".to_string()),
-                ("Walls", format!("A defender in a city is {walls} stronger for each level of its walls.")),
+                ("Walls", format!("A defender in a city is stronger: {walls}.")),
                 ("Attacking", "Attackers get neither the ground nor walls.".to_string()),
             ],
         ),

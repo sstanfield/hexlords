@@ -25,6 +25,7 @@ pub const CITY_CLOSE_ID: &str = "city_close";
 /// Where its new units go: a hex to pick on the map, or nowhere (they stay).
 pub const CITY_RALLY_ID: &str = "city_rally";
 pub const CITY_NO_RALLY_ID: &str = "city_no_rally";
+pub const CITY_WALLS_ID: &str = "city_walls";
 /// The list of cities, its rows (`city_row_0` ...) and its buttons.
 pub const LIST_WINDOW_ID: &str = "cities_window";
 pub const LIST_DETAILS_ID: &str = "cities_details";
@@ -77,6 +78,8 @@ pub enum CityOrder {
     PickRally(CityId),
     /// The city's new units stay in it.
     NoRally(CityId),
+    /// Raise the city's walls a level (`Order::Walls`).
+    RaiseWalls(CityId),
 }
 
 /// A line of text, with what it says now (so that it is set only on a change).
@@ -397,10 +400,14 @@ impl CityView {
     }
 }
 
-/// A city's window: its view, and a button that closes it.
+/// A city's window: its view, a button that raises its walls (its
+/// holder's, if that is the player), and one that closes it.
 pub struct CityWindow {
     parts: WindowParts,
     view: CityView,
+    walls: WidgetId,
+    /// What the walls' button says, and whether it is pressable.
+    walls_state: (String, bool, bool),
 }
 
 impl CityWindow {
@@ -429,11 +436,44 @@ impl CityWindow {
         };
         let space = dp(ui, SPACING_DP);
         build::gap(ui, parts.content, space);
+        let walls = build::button(ui, parts.content, CITY_WALLS_ID, "");
+        ui.set_visibility(walls, Visibility::Gone);
+        build::gap(ui, parts.content, space);
         build::button(ui, parts.content, CITY_CLOSE_ID, "Close");
-        let mut window = CityWindow { parts, view };
+        let mut window = CityWindow { parts, view, walls, walls_state: (String::new(), false, false) };
         window.view.fill(ui, map, player);
         build::place(ui, parts, area, align);
         Some(window)
+    }
+
+    /// Say what raising the walls costs, if the player holds the city:
+    /// `price` is the game's answer (`Game::walls_price`), the price or why
+    /// not. At the cap, it says so; else it gives the price and can be
+    /// pressed only if the game would raise them.
+    pub fn set_walls(&mut self, ui: &mut Ui, map: &Map, player: Side, price: Result<u32, String>) {
+        let Some(city) = map.cities().get(self.view.city) else { return };
+        let shown = city.side == player && city.side != Side::Grey && self.view.known == info::Known::All;
+        let text = if city.walls >= crate::state::WALLS_CAP {
+            "The walls are as high as walls go".to_string()
+        } else if price.as_ref().is_err_and(|why| why.contains("this turn")) {
+            "The walls were raised this turn".to_string()
+        } else {
+            format!("Raise the walls to {}: {} gold", city.walls + 1, crate::state::wall_price(city.walls))
+        };
+        let state = (text, shown, price.is_ok());
+        if state == self.walls_state {
+            return;
+        }
+        ui.set_text(self.walls, &state.0);
+        ui.set_visibility(self.walls, if state.1 { Visibility::Visible } else { Visibility::Gone });
+        ui.set_disabled(self.walls, !state.2);
+        self.walls_state = state;
+        build::refit(ui, self.parts);
+    }
+
+    /// What the walls' button says, if it shows, and whether it can be pressed.
+    pub fn walls(&self) -> Option<(&str, bool)> {
+        self.walls_state.1.then_some((self.walls_state.0.as_str(), self.walls_state.2))
     }
 
     /// The city it is about.
@@ -475,6 +515,9 @@ impl CityWindow {
     /// What a click on one of its buttons asks for (its close button is the
     /// caller's to handle).
     pub fn click(&self, id: TbId) -> Option<CityOrder> {
+        if id == TbId::new(CITY_WALLS_ID) {
+            return Some(CityOrder::RaiseWalls(self.view.city));
+        }
         self.view.click(id)
     }
 }

@@ -29,7 +29,7 @@
 use crate::agents::Agent;
 use crate::game::{Game, Sight};
 use crate::orders::Order;
-use crate::state::combat::System;
+use crate::state::combat::{System, walls_bonus};
 use crate::state::{CityId, Hex, MAX_STACK, Side, TileType, Travel, Unit, UnitId, UnitProd, compute_range, hostile};
 
 /// What makes one style of play another.
@@ -103,6 +103,8 @@ pub struct Planner {
     /// How many steps each unit has taken this turn to see more: a few, while
     /// it has the moves (the edge of what it knows is near).
     explored: Vec<(UnitId, u32)>,
+    /// How many units it sent home this turn (to make room for better).
+    disbanded: usize,
 }
 
 impl Planner {
@@ -119,6 +121,7 @@ impl Planner {
             scouted: Vec::new(),
             scout: None,
             explored: Vec::new(),
+            disbanded: 0,
         }
     }
 
@@ -143,6 +146,18 @@ const SCOUT_SPREAD: u32 = 4;
 const SCOUT_TRIES: usize = 6;
 /// How many steps a turn a stack takes to see more, at the most.
 const SCOUT_STEPS: u32 = 3;
+/// Late in the game (the owner, 2026-11-20: "late game should have a lot of
+/// quality stacks, not just junk units"): with this many soldiers (two
+/// stacks' worth, more than it fields at once), it builds the strongest it
+/// can keep; and, a few a turn, it sends home its weakest to make room for
+/// one at least `DISBAND_GAP` the stronger.
+const LATE_SOLDIERS: usize = 2 * MAX_STACK;
+const DISBAND_GAP: u32 = 3;
+const MAX_DISBANDS: usize = 4;
+/// A threatened city it cannot hold with those in it raises its walls, up to
+/// this, where a level makes its defenders stronger (`walls_bonus`), if its
+/// treasury has twice the price.
+const WALLS_GOAL: u32 = 3;
 
 /// How much a unit is worth in battle under the rules in effect, against
 /// one of strength 1: in lines a unit fights its duels alone, and its odds go
@@ -338,6 +353,7 @@ impl Planner {
             self.pilgrims.clear();
             self.scouted.clear();
             self.explored.clear();
+            self.disbanded = 0;
             self.blocked.retain(|(_, until)| game.turn() <= *until);
             // Where the armies gather: its commander, else its biggest stack
             // out of its cities.
@@ -373,6 +389,28 @@ impl Planner {
             self.threats = Some(((game.turn(), side), threats));
         }
         let threats = self.threats.as_ref().map(|(_, t)| t.clone()).unwrap_or_default();
+        // A threatened city, held by too few, behind low walls: it raises
+        // them, if the treasury is well off (walls are dear).
+        for (id, danger) in &threats {
+            let stronger = |c: &&crate::state::City| walls_bonus(c.walls + 1) > walls_bonus(c.walls);
+            let Some(city) = map.cities().get(*id).filter(|c| c.walls < WALLS_GOAL).filter(stronger) else {
+                continue;
+            };
+            let held: f64 = map
+                .units_at(city.pos)
+                .iter()
+                .filter_map(|u| map.units().get(*u))
+                .map(|u| worth(u.power() + walls_bonus(city.walls), game))
+                .sum();
+            let danger = danger * f64::from(daring(&style, game).2) / 100.0;
+            if danger > 0.0 && held < danger {
+                if let Ok(price) = game.walls_price(side, city.id) {
+                    if game.gold(side) >= 2 * price {
+                        return Order::Walls { city: city.id };
+                    }
+                }
+            }
+        }
         let capital = capital(game, side);
         let mut staying: Vec<UnitId> = Vec::new();
         let mut short: Vec<Hex> = Vec::new();
@@ -393,7 +431,7 @@ impl Planner {
                 if count >= keep && held >= danger {
                     break;
                 }
-                held += worth(unit.power() + city.walls, game);
+                held += worth(unit.power() + walls_bonus(city.walls), game);
                 count += 1;
                 staying.push(unit.id());
             }
@@ -455,9 +493,13 @@ impl Planner {
             if able.is_empty() {
                 continue;
             }
-            let odds = game.battle_odds(&able, *target).unwrap_or(100);
+            let forecast = game.battle_forecast(&able, *target);
+            let odds = forecast.map_or(100, |f| f.odds);
             let (dare, wear, _) = daring(&style, game);
-            if odds >= dare || (more > able.len() && odds >= wear) || crate::agents::siege(game, side, *target, odds) {
+            if odds >= dare
+                || (more > able.len() && odds >= wear)
+                || crate::agents::siege(game, side, *target, forecast)
+            {
                 self.done.extend(able.iter().copied());
                 return Order::Move { units: able, to: *target };
             }
@@ -669,21 +711,65 @@ impl Planner {
                 return Some(Order::Build { city, what: Some(i) });
             }
         }
-        // An idle city builds what is worth most, of what it can keep and pay
-        // for by the time it is done; one that builds a commander it no longer
-        // needs builds something else.
+        // Late (see `LATE_SOLDIERS`), it makes room for the strongest an idle
+        // city could build, were there upkeep for it (or for what its cities
+        // build now, when it cannot keep that): it sends home its weakest,
+        // not the last in a city, nor aboard a ship.
         let gold = i64::from(game.gold(side));
         let net = i64::from(game.income(side)) - i64::from(game.upkeep(side));
+        let soldiers: Vec<&Unit> =
+            units.of_side(side).filter(|u| map.contains(u.pos()) && !map.is_commander(u.id())).collect();
+        let late = soldiers.len() >= LATE_SOLDIERS;
+        if late && self.disbanded < MAX_DISBANDS {
+            let could = |p: &&UnitProd| {
+                !leads(p)
+                    && !ship(p)
+                    && gold + (net.max(0) + i64::from(p.upkeep)) * i64::from(p.time.max(1)) >= i64::from(p.cost)
+            };
+            let wish = own()
+                .filter(|c| c.building.is_none())
+                .flat_map(|c| c.units.iter())
+                .filter(could)
+                .max_by_key(|p| (p.strength, std::cmp::Reverse(p.upkeep)))
+                .filter(|p| i64::from(p.upkeep) > spare)
+                .or_else(|| own().filter_map(|c| c.production()).filter(|_| spare < 0).max_by_key(|p| p.strength));
+            let alone = |u: &Unit| {
+                map.city_at(u.pos()).is_some() && map.units_at(u.pos()).iter().filter(|id| id.side == side).count() <= 1
+            };
+            let at_sea = |u: &Unit| map.tile(u.pos()).is_some_and(|t| t.kind == TileType::Water);
+            let junk = wish.and_then(|p| {
+                soldiers
+                    .iter()
+                    .filter(|u| u.power() + DISBAND_GAP <= p.strength && !alone(u) && !at_sea(u))
+                    .filter(|u| units.kind_of(u).is_some_and(|k| k.travel != Travel::Sea))
+                    .min_by_key(|u| (u.power(), std::cmp::Reverse(u.upkeep), u.id().index))
+            });
+            if let Some(unit) = junk {
+                self.disbanded += 1;
+                return Some(Order::Disband { units: vec![unit.id()] });
+            }
+        }
+        // An idle city builds what is worth most, of what it can keep and pay
+        // for by the time it is done (late, the strongest of it); one that
+        // builds a commander it no longer needs builds something else.
+        let side_best =
+            own().flat_map(|c| c.units.iter()).filter(|p| !leads(p) && !ship(p)).map(|p| p.strength).max().unwrap_or(0);
         let choose = |city: &crate::state::City| -> Option<usize> {
             let affordable = |p: &UnitProd| {
                 i64::from(p.upkeep) <= spare && gold + net * i64::from(p.time.max(1)) >= i64::from(p.cost)
             };
+            let score = |p: &UnitProd| production_score(p, game, &self.style);
+            // Late, nothing it would send home for the best its cities build:
+            // a city that builds only that waits (one built militia while
+            // another sent militia home for knights, again and again).
+            let worth_keeping = |p: &UnitProd| !late || p.strength + DISBAND_GAP > side_best;
             city.units
                 .iter()
                 .enumerate()
-                .filter(|(_, p)| !leads(p) && !ship(p) && affordable(p))
+                .filter(|(_, p)| !leads(p) && !ship(p) && affordable(p) && worth_keeping(p))
                 .max_by(|(_, a), (_, b)| {
-                    production_score(a, game, &self.style).total_cmp(&production_score(b, game, &self.style))
+                    let first = if late { a.strength.cmp(&b.strength) } else { std::cmp::Ordering::Equal };
+                    first.then(score(a).total_cmp(&score(b)))
                 })
                 .map(|(i, _)| i)
         };
@@ -723,9 +809,9 @@ impl Planner {
                 sight.ghost_at(city.pos).map_or(2, |g| g.count as i64)
             };
             let value = 20 + i64::from(city.income) * 3 + if city.side == Side::Grey { 0 } else { 10 };
-            let trouble = i64::from(here.distance(city.pos)) + 3 * (defenders + i64::from(city.walls))
-                - 2 * size as i64
-                + if self.style.name == BOLD.name { -i64::from(city.walls) * 2 } else { 0 };
+            let walls = i64::from(2 * walls_bonus(city.walls));
+            let trouble = i64::from(here.distance(city.pos)) + 3 * (defenders + walls) - 2 * size as i64
+                + if self.style.name == BOLD.name { -walls * 2 } else { 0 };
             let score = value * 100 / (10 + trouble.max(0));
             if best.is_none_or(|(s, _)| score > s) && game.known_step_toward(lead, city.pos, &room, sight).is_some() {
                 best = Some((score, city.pos));

@@ -187,7 +187,7 @@ fn a_city_hard_to_come_at_is_worth_more() {
                 assert_eq!(tier, 2, "seed {seed}: {} at sea or in the air is remote", c.name);
             }
             assert_eq!(c.trains, 1 + tier, "seed {seed}: {}", c.name);
-            assert_eq!(c.income, 4 + 2 * c.walls + 4 * u32::from(tier), "seed {seed}: {}", c.name);
+            assert_eq!(c.income, 8 + 4 * c.walls + 8 * u32::from(tier), "seed {seed}: {}", c.name);
             if tier > 0 {
                 assert!(
                     c.produce.iter().any(|(id, _)| *id == strongest.id),
@@ -277,4 +277,17 @@ fn a_neutral_holds_one_of_its_weakest_and_a_capital_builds_the_strongest() {
             assert_eq!(foot(id).unwrap().strength, weakest, "seed {seed}: {}", city.name);
         }
     }
+}
+
+/// Every city starts with walls 1 at least, whatever the walls' mix says.
+#[test]
+fn every_generated_city_starts_with_walls() {
+    let mut cfg = config(2, "small");
+    cfg.set("walls", "0:90 2:10").unwrap();
+    let made = generate(&cfg, UNITS, "units.txt").unwrap();
+    assert!(
+        made.state.cities.iter().all(|c| c.walls >= 1),
+        "{:?}",
+        made.state.cities.iter().map(|c| c.walls).collect::<Vec<_>>()
+    );
 }

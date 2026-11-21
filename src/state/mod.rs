@@ -13,7 +13,7 @@ pub mod scenario;
 pub mod terrain;
 pub mod units;
 
-pub use cities::{Cities, City, CityId, UnitProd};
+pub use cities::{Cities, City, CityId, UnitProd, WALL_PRICE, WALLS_CAP, wall_price};
 pub use hex::{Direction, Hex, HexSide};
 pub use map::{MAX_COLS, MAX_ROWS, MAX_STACK, MIN_COLS, MIN_ROWS, Map, MapError, PlaceError, Tile};
 pub use movement::{

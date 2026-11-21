@@ -292,6 +292,10 @@ fn the_fallen_are_counted_and_captains_named() {
     let mut game = game("garrison soldiers 4\n", "garrison levy 2\ngarrison captain\n", |s| s.combat.chance = 0);
     let name = game.map.units().get(at(&game, BLUEMOOR)[2]).unwrap().title();
     let red = at(&game, REDHOLD);
+    // Veterans (4), against levies of 1 led by the captain (2).
+    for id in &red {
+        game.map.unit_mut(*id).unwrap().level = 2;
+    }
     game.apply(Order::Move { units: red, to: BLUEMOOR }).unwrap();
     let record = game.history().iter().find(|r| matches!(r.event, Event::Battle { .. })).unwrap();
     let lines = info::record_lines(&game.map, record, Side::Red);

@@ -51,14 +51,26 @@ impl System {
     }
 }
 
-/// What a battle's strengths are counted in: quarters of a point, so that a
-/// city's walls can count three quarters of a point a level.
+/// What a battle's strengths are counted in: quarters of a point.
 pub const QUARTER: u32 = 4;
-pub const WALL_QUARTERS: u32 = 3;
+
+/// How much stronger a city's walls make its defenders, in points: walls 0,
+/// nothing; 1 to 2, 1; 3 to 5, 2; 6 and more, 3 (the owner, 2026-11-20:
+/// cities help defenders, but do not turn a couple of cheap units into a
+/// meat grinder; before, three quarters of a point a level, 4.5 behind
+/// walls 6).
+pub fn walls_bonus(walls: u32) -> u32 {
+    match walls {
+        0 => 0,
+        1..=2 => 1,
+        3..=5 => 2,
+        _ => 3,
+    }
+}
 
 /// How much stronger the ground makes those who defend on it, in points:
 /// hills and forests a little, mountains more. (A city's walls count
-/// besides, [`WALL_QUARTERS`] a level.)
+/// besides, [`walls_bonus`].)
 pub fn ground_bonus(kind: TileType) -> u32 {
     match kind {
         TileType::Forest | TileType::Hill => 1,
@@ -224,10 +236,35 @@ fn strength(attackers: &[Fighter], defenders: &[Fighter], chance: u8, rng: &mut 
 /// fought with a chance of their own (seeded by `seed`): what a player is
 /// told before an attack. The game's own chance is not touched.
 pub fn odds(attackers: &[Fighter], defenders: &[Fighter], rules: &Rules, seed: u64, runs: u32) -> u32 {
+    forecast(attackers, defenders, rules, seed, runs).odds
+}
+
+/// What a battle is likely to come to, over `runs` tries with a chance of
+/// its own: the attackers' odds of winning, in percent, and how many of the
+/// defenders and of the attackers die, on the whole.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Forecast {
+    pub odds: u32,
+    pub kills: f64,
+    pub losses: f64,
+}
+
+pub fn forecast(attackers: &[Fighter], defenders: &[Fighter], rules: &Rules, seed: u64, runs: u32) -> Forecast {
     let runs = runs.max(1);
     let mut rng = Rng::new(seed);
-    let won = (0..runs).filter(|_| fight(attackers, defenders, rules, &mut rng).attackers_won).count() as u32;
-    (won * 100 + runs / 2) / runs
+    let (mut won, mut kills, mut losses) = (0u32, 0usize, 0usize);
+    for _ in 0..runs {
+        let battle = fight(attackers, defenders, rules, &mut rng);
+        won += u32::from(battle.attackers_won);
+        let fell = |side: &[Fighter]| battle.dead.iter().filter(|d| side.iter().any(|f| f.unit == **d)).count();
+        kills += fell(defenders);
+        losses += fell(attackers);
+    }
+    Forecast {
+        odds: (won * 100 + runs / 2) / runs,
+        kills: kills as f64 / f64::from(runs),
+        losses: losses as f64 / f64::from(runs),
+    }
 }
 
 #[cfg(test)]

@@ -110,6 +110,7 @@ pub const COMPUTER_TURN_MS: u64 = 400;
 pub const LOG_ID: &str = "log";
 pub const GO_TO_ID: &str = "go_to";
 pub const BLESS_ID: &str = "seek_blessing";
+pub const DISBAND_ID: &str = "disband";
 pub const DONE_ID: &str = "done";
 pub const TASKS_ID: &str = "tasks";
 pub const MY_CITIES_ID: &str = "my_cities";
@@ -253,7 +254,7 @@ fn help_section() -> Vec<HelpSection> {
             &[
                 ("N,  or  Next", "Select the next stack that can still move (Shift+N: the one before)"),
                 ("G,  or  Go to", "Then click a hex: the selected units go there, over as many turns as it takes"),
-                ("D,  or  Done;  B", "Put the selected units aside for this turn; B: on a temple, seek its blessing"),
+                ("D,  B,  X", "Put the selected units aside this turn; B: seek a temple's blessing; X: disband them"),
             ],
         ),
         HelpSection::new(
@@ -334,6 +335,8 @@ pub struct Session {
     /// A temple's window: whether the stack there seeks its blessing, and
     /// what came of it.
     temple: Option<TempleWindow>,
+    /// The window that asks before the selected units are disbanded.
+    disband: Option<crate::disband_window::DisbandWindow>,
     tasks_of: Option<(u64, Side)>,
     /// The log, while it is open.
     log: Option<LogWindow>,
@@ -449,6 +452,7 @@ impl Session {
 
             tasks: None,
             temple: None,
+            disband: None,
             tasks_of: None,
             log: None,
             seen: Vec::new(),
@@ -1127,6 +1131,8 @@ impl Session {
             if !window.is_open(ui) || !window.refresh(ui, &game.map, (actor, known)) {
                 window.close(ui);
                 self.city_window = None;
+            } else {
+                window.set_walls(ui, &game.map, actor, walls_price(game, actor, window.city()));
             }
         }
         if let Some(list) = &mut self.city_list {
@@ -1149,6 +1155,9 @@ impl Session {
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
         let known = game.map.cities().get(id).map_or(info::Known::All, |c| info::Known::of(c, seer, &self.sight));
         self.city_window = CityWindow::open(ui, root, &game.map, id, (actor, known), &icons, (area, CITY_ALIGN));
+        if let Some(window) = &mut self.city_window {
+            window.set_walls(ui, &game.map, actor, walls_price(game, actor, id));
+        }
     }
 
     /// The icons of what a city can build, in its holder's colors.
@@ -1259,6 +1268,7 @@ impl Session {
             self.city_list.as_ref().and_then(|w| open(w.window())),
             self.tasks.as_ref().and_then(|w| open(w.window())),
             self.temple.as_ref().and_then(|w| open(w.window())),
+            self.disband.as_ref().and_then(|w| open(w.window())),
         ];
         // The one on top: the last of them among the root window's children.
         let order = ui.children(root).to_vec();
@@ -1274,6 +1284,7 @@ impl Session {
             Some(4) => self.city_list.take().map(|w| w.close(ui)).is_some(),
             Some(5) => self.tasks.take().map(|w| w.close(ui)).is_some(),
             Some(6) => self.temple.take().map(|w| w.close(ui)).is_some(),
+            Some(7) => self.disband.take().map(|w| w.close(ui)).is_some(),
             _ => false,
         }
     }
@@ -1289,6 +1300,9 @@ impl Session {
             CityOrder::PickRally(id) => self.picking = Some(Pick::Rally(id)),
             CityOrder::NoRally(id) => {
                 let _ = self.screen.game.apply(Order::Rally { city: id, to: None });
+            }
+            CityOrder::RaiseWalls(id) => {
+                let _ = self.screen.game.apply(Order::Walls { city: id });
             }
             CityOrder::GoTo(id) => {
                 if let Some(pos) = self.screen.game.map.cities().get(id).map(|city| city.pos) {
@@ -1476,6 +1490,46 @@ impl Session {
             TempleWindow::tell(&mut self.screen.ui, (root, area), &self.screen.game.map, (at, &units), &events);
         self.temple = Some(window);
         self.screen.settle();
+    }
+
+    /// X, or Disband: ask whether the selected units (the person's) go home
+    /// for good.
+    pub fn ask_disband(&mut self) {
+        if self.covered() || !self.persons_turn() {
+            return;
+        }
+        let game = &self.screen.game;
+        let units: Vec<UnitId> = game
+            .selection()
+            .iter()
+            .copied()
+            .filter(|id| game.map.units().get(*id).is_some_and(|u| u.side() == game.player()))
+            .collect();
+        if units.is_empty() {
+            return;
+        }
+        if let Some(old) = self.disband.take() {
+            old.close(&mut self.screen.ui);
+        }
+        let (root, area) = (self.screen.root_window(), self.window_area());
+        let window =
+            crate::disband_window::DisbandWindow::ask(&mut self.screen.ui, (root, area), &self.screen.game.map, &units);
+        self.disband = Some(window);
+        self.screen.settle();
+    }
+
+    /// The units the window asked about go home for good.
+    fn disband_units(&mut self) {
+        let Some(ask) = self.disband.take() else { return };
+        let units = ask.units.clone();
+        ask.close(&mut self.screen.ui);
+        let _ = self.screen.game.apply(Order::Disband { units });
+        self.screen.settle();
+    }
+
+    /// The disband window, while it is open.
+    pub fn disband(&self) -> Option<&crate::disband_window::DisbandWindow> {
+        self.disband.as_ref().filter(|w| w.is_open(&self.screen.ui))
     }
 
     /// The temple's window, while it is open.
@@ -1840,6 +1894,7 @@ impl Session {
                 .item(GO_TO_ID, "Go to...", "G", own)
                 .item(DONE_ID, "Done for this turn", "D", own)
                 .item(BLESS_ID, "Seek a blessing", "B", temple)
+                .item(DISBAND_ID, "Disband...", "X", own)
                 .item(DESELECT_ID, "Drop the selection", "Esc", units.is_some())
         } else if id == TbId::new(MENU_CITIES_ID) {
             Menu::new(MENU_CITIES_ID)
@@ -2006,6 +2061,15 @@ impl Session {
                 RootCommand::Click(id) if id == TbId::new(GO_TO_ID) => self.start_go_to(),
                 RootCommand::Click(id) if id == TbId::new(DONE_ID) => self.done_with_stack(),
                 RootCommand::Click(id) if id == TbId::new(BLESS_ID) => self.seek_blessing(),
+                RootCommand::Click(id) if id == TbId::new(DISBAND_ID) => self.ask_disband(),
+                RootCommand::Click(id) if id == TbId::new(crate::disband_window::DISBAND_YES_ID) => {
+                    self.disband_units();
+                }
+                RootCommand::Click(id) if id == TbId::new(crate::disband_window::DISBAND_NO_ID) => {
+                    if let Some(window) = self.disband.take() {
+                        window.close(&mut self.screen.ui);
+                    }
+                }
                 RootCommand::Click(id) if id == TbId::new(temple_window::TEMPLE_BLESS_ID) => self.bless_stack(),
                 RootCommand::Click(id)
                     if id == TbId::new(temple_window::TEMPLE_NOT_NOW_ID)
@@ -2041,6 +2105,7 @@ impl Session {
                         'g' | 'G' => self.start_go_to(),
                         'd' | 'D' => self.done_with_stack(),
                         'b' | 'B' => self.seek_blessing(),
+                        'x' | 'X' => self.ask_disband(),
                         't' | 'T' => self.toggle_tasks(),
                         'm' | 'M' => self.toggle_list(true),
                         'a' | 'A' => self.toggle_list(false),
@@ -2159,4 +2224,13 @@ impl Scene for Session {
 fn title(word: &str) -> String {
     let mut chars = word.chars();
     chars.next().map_or(String::new(), |c| c.to_uppercase().chain(chars).collect())
+}
+
+/// What raising a city's walls costs `actor` now, or why not: only in its
+/// own turn.
+fn walls_price(game: &Game, actor: Side, city: CityId) -> Result<u32, String> {
+    if game.player() != actor {
+        return Err("it is not its turn".to_string());
+    }
+    game.walls_price(actor, city)
 }

@@ -62,13 +62,13 @@ fn the_game_keeps_a_battles_fight_for_a_few_rounds() {
     let fight = game.fight(record).expect("kept").clone();
     assert_eq!((fight.attacker, fight.defender, fight.at, fight.walls), (Side::Red, Side::Blue, BLUEMOOR, 1));
     // Who fought with what: the soldiers 3 and the captain's 1, in quarter
-    // points; the captain itself 2; the levies 1 and the walls' 3/4.
+    // points; the captain itself 2; the levies 1 and the walls' 1.
     let soldiers = &fight.attackers[0];
     assert_eq!((soldiers.strength, soldiers.led, soldiers.ground, soldiers.walls, soldiers.quarters), (3, 1, 0, 0, 16));
     let captain = fight.attackers.iter().find(|u| u.commander).unwrap();
     assert_eq!((captain.led, captain.quarters), (0, 8));
     let levy = &fight.defenders[0];
-    assert_eq!((levy.strength, levy.walls, levy.quarters, levy.name.as_str()), (1, 3, 7, "Levy"));
+    assert_eq!((levy.strength, levy.walls, levy.quarters, levy.name.as_str()), (1, 4, 8, "Levy"));
     // Its trace kills the dead the battle reported.
     let Event::Battle { dead, attackers_lost, defenders_lost, .. } = &game.history()[record].event else { panic!() };
     let hits = |attacker: bool| fight.trace.iter().filter(|b| b.hit_attacker == attacker).count() as u32;
@@ -116,13 +116,13 @@ fn an_attack_is_played_out_in_the_battles_window() {
     for line in [
         "Red attacks blue at Bluemoor",
         "Red: 4 units, led by a Captain (+1 each)",
-        "Blue: 2 units, behind walls 1 (+\u{be})",
+        "Blue: 2 units, behind walls 1 (+1)",
         "Ready...",
     ] {
         assert!(text.iter().any(|t| t == line), "{line} is not in {text:?}");
     }
     assert!(text.iter().filter(|t| *t == "Soldiers").count() == 3 && text.iter().filter(|t| *t == "Levy").count() == 2);
-    assert!(text.iter().any(|t| t == "3 +1") && text.iter().any(|t| t == "1 +\u{be}"), "{text:?}");
+    assert!(text.iter().any(|t| t == "3 +1") && text.iter().any(|t| t == "1 +1"), "{text:?}");
     // The frames play it: nothing for a moment, then an exchange at a time.
     s.frame(0);
     s.frame(300);

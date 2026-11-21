@@ -34,6 +34,7 @@ pub mod agents;
 pub mod app;
 pub mod battle_window;
 pub mod city_windows;
+pub mod disband_window;
 pub mod game;
 pub mod gui;
 pub mod guide;

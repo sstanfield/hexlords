@@ -81,12 +81,13 @@ pub fn record_lines(map: &Map, record: &Record, side: Side) -> Vec<String> {
             let theirs: Vec<&Fallen> = dead.iter().filter(|f| f.side != side).collect();
             vec![first, format!("You lost {}; they lost {}.", counted(&ours), counted(&theirs))]
         }
-        Event::Taken { city, from, by } if *by == side || *from == side => {
+        Event::Taken { city, from, by, walls } if *by == side || *from == side => {
             let name = map.cities().get(*city).map_or("a city".to_string(), |c| c.name.clone());
+            let fell = walls.map_or(String::new(), |w| format!(" Its walls fell to {w}."));
             if *by == side {
-                vec![format!("You took {name} from {}.", who(*from))]
+                vec![format!("You took {name} from {}.{fell}", who(*from))]
             } else {
-                vec![format!("{} took {name} from you.", sentence(side_name(*by)))]
+                vec![format!("{} took {name} from you.{fell}", sentence(side_name(*by)))]
             }
         }
         Event::Promoted { side: whose, name, level, commander, .. } if *whose == side => {

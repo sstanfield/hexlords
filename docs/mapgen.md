@@ -263,7 +263,7 @@ with an error that says so.
      a capital's with a grand ending), its holder (a capital's side, in the
      order black, white, red, green, blue, orange, yellow, purple), walls
      (a capital the highest of `walls`; a neutral drawn from it, one more by
-     the water or in the hills), taxes (a capital 20, a neutral 4 and twice
+     the water or in the hills; 1 at least), taxes (a capital 40, a neutral 8 and four times
      its walls), what it builds (from the template by role: a capital its
      two cheapest, its fastest, its strongest and its commander; a city in the hills its
      two strongest; the others the cheapest and one more; a port the
@@ -276,9 +276,9 @@ with an error that says so.
      across the sea or a lake left out; land no walker reaches it from
      counted as 6 turns). At 1.9 or more (hills, forest, a river, a range
      to go round; about one city in ten) it is hard: its units start
-     veterans, it pays 4 more a turn, it builds the template's strongest
+     veterans, it pays 8 more a turn, it builds the template's strongest
      unit on foot, and one in four builds a flyer too. At 2.8 or more, and
-     every city at sea or in the air, it is remote: elites, 8 more, a flyer
+     every city at sea or in the air, it is remote: elites, 16 more, a flyer
      one in two.
 
 Fairness, by level (`fairness`); travel by the cheapest way, a river

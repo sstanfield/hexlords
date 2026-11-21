@@ -1235,8 +1235,10 @@ fn records(g: &Gen, cfg: &Config, (places, air): (&Places, &[Hex]), kinds: &[Uni
         let t = &g.terrain;
         let hills = t.neighbours(hex).filter(|n| *t.get(*n) == TileType::Hill).count();
         let by_water = t.neighbours(hex).any(|n| *t.get(n) == TileType::Water);
+        // At least 1: every city starts with walls (the owner, 2026-11-20).
         let walls =
-            if capital { top_walls } else { (draw_walls(rng) + u32::from(by_water || hills >= 2)).min(top_walls) };
+            if capital { top_walls } else { (draw_walls(rng) + u32::from(by_water || hills >= 2)).min(top_walls) }
+                .max(1);
         let mut produce: Vec<(String, u32)> = Vec::new();
         let mut add = |k: Option<&&UnitKind>| {
             if let Some(k) = k {
@@ -1303,7 +1305,8 @@ fn records(g: &Gen, cfg: &Config, (places, air): (&Places, &[Hex]), kinds: &[Uni
             reach,
             name,
             walls,
-            income: if capital { 20 } else { 4 + 2 * walls },
+            // Taxes to keep an army on, with upkeep at half a unit's price.
+            income: if capital { 40 } else { 8 + 4 * walls },
             produce,
             garrison,
             trains: 1,
@@ -1369,7 +1372,7 @@ pub fn worth(g: &mut Gen, cfg: &Config, kinds: &[UnitKind]) {
             continue;
         }
         c.trains = 1 + tier;
-        c.income += 4 * u32::from(tier);
+        c.income += 8 * u32::from(tier);
         let odds = if tier == 2 { 2 } else { 4 };
         let more = [strongest, flyer.filter(|_| rng.below(odds) == 0)];
         for k in more.into_iter().flatten() {

@@ -67,13 +67,15 @@ enum Undo {
         units: Vec<(UnitId, Hex, u32)>,
         to: Hex,
         stacks: Vec<(Hex, Vec<UnitId>)>,
-        taken: Option<(CityId, Side, Option<usize>, u32)>,
+        taken: Option<(CityId, Side, Option<usize>, u32, u32)>,
         /// Where each was going, given back: its standing order, whether it
         /// had stalled, whether it had moved this turn.
         goals: Vec<(UnitId, MarchState)>,
     },
     /// A city was set to build something else: what it was building, how far.
     Built { city: CityId, building: Option<usize>, progress: u32 },
+    /// A city's walls were raised a level, for `price`.
+    Walls { city: CityId, price: u32 },
 }
 
 /// Something a side has left to do, or to look at, this turn (`Game::tasks`).
@@ -398,6 +400,8 @@ pub struct Game {
     /// seen.
     held: Vec<Vec<(Hex, Side, u32)>>,
     explored: Vec<Vec<bool>>,
+    /// The cities whose walls were raised this turn (once a turn each).
+    raised: Vec<CityId>,
     /// The sides that are out, in the order they went.
     out: Vec<Side>,
     winner: Option<Side>,
@@ -430,6 +434,7 @@ impl Game {
             current: 0,
             round: 1,
             rng,
+            raised: Vec::new(),
             out: Vec::new(),
             trail: vec![Vec::new(); NUM_SIDES + 1],
             memory: vec![Vec::new(); NUM_SIDES + 1],
@@ -671,6 +676,21 @@ impl Game {
             }
             Order::EndTurn => Ok(self.next_turn()),
             Order::Bless { units } => self.bless(side, &units),
+            Order::Walls { city } => {
+                let price = self.walls_price(side, city)?;
+                let walls = match self.map.city_mut(city) {
+                    Some(c) => {
+                        c.walls += 1;
+                        c.walls
+                    }
+                    None => return Err("there is no such city".to_string()),
+                };
+                self.treasury[side.index()] -= price;
+                self.raised.push(city);
+                self.undo = Some(Undo::Walls { city, price });
+                Ok(vec![Event::WallsRaised { city, side, walls, price }])
+            }
+            Order::Disband { units } => self.disband(side, &units),
             Order::Undo => Err("there is nothing to undo".to_string()),
             Order::GoTo { units, to } => {
                 if !self.map.contains(to) {
@@ -887,9 +907,9 @@ impl Game {
                         return Err("the units are not where the order left them".to_string());
                     }
                 }
-                if let Some((city, holder, building, progress)) = taken {
+                if let Some((city, holder, building, progress, walls)) = taken {
                     if let Some(c) = self.map.city_mut(city) {
-                        (c.side, c.building, c.progress) = (holder, building, progress);
+                        (c.side, c.building, c.progress, c.walls) = (holder, building, progress, walls);
                     }
                 }
                 for (id, from, movement) in &units {
@@ -918,6 +938,18 @@ impl Game {
                 if let Some(c) = self.map.city_mut(city) {
                     (c.building, c.progress) = (building, progress);
                 }
+            }
+            Undo::Walls { city, price } => {
+                let holder = self.map.cities().get(city).map(|c| c.side);
+                if holder != Some(side) {
+                    return Err("the city is not the side's".to_string());
+                }
+                if let Some(c) = self.map.city_mut(city) {
+                    c.walls = c.walls.saturating_sub(1);
+                }
+                self.raised.retain(|c| *c != city);
+                let gold = &mut self.treasury[side.index()];
+                *gold = gold.saturating_add(price);
             }
         }
         // What it did never happened.
@@ -1016,7 +1048,7 @@ impl Game {
             let cities = game.map.cities().iter().filter(|c| c.side != side).map(|c| c.pos);
             units.chain(cities).filter(|h| now.sees(*h) && !sight.sees(*h)).collect()
         };
-        let city_before = self.map.city_at(to).map(|c| (c.id, c.side, c.building, c.progress));
+        let city_before = self.map.city_at(to).map(|c| (c.id, c.side, c.building, c.progress, c.walls));
         let mut stacks: Vec<(Hex, Vec<UnitId>)> = Vec::new();
         for (_, from, _) in &before {
             if !stacks.iter().any(|(hex, _)| hex == from) {
@@ -1141,6 +1173,74 @@ impl Game {
         Ok(events)
     }
 
+    /// What raising the walls of `city` a level costs `side` now, or why it
+    /// cannot (`Order::Walls`): it is not its city, they are as high as walls
+    /// go, it raised them this turn, or it has not the gold.
+    pub fn walls_price(&self, side: Side, city: CityId) -> Result<u32, String> {
+        let c = self.map.cities().get(city).ok_or("there is no such city")?;
+        if c.side != side {
+            return Err(format!("only {} raises its walls", side_name(c.side)));
+        }
+        if c.walls >= crate::state::WALLS_CAP {
+            return Err("its walls are as high as walls go".to_string());
+        }
+        if self.raised.contains(&city) {
+            return Err("its walls were raised this turn".to_string());
+        }
+        let price = crate::state::wall_price(c.walls);
+        if self.gold(side) < price {
+            return Err(format!("that takes {price} gold"));
+        }
+        Ok(price)
+    }
+
+    /// Units of `side`'s go home for good (`Order::Disband`). A ship on the
+    /// water goes only if what is left there can still carry the land units
+    /// aboard.
+    fn disband(&mut self, side: Side, ids: &[UnitId]) -> Result<Vec<Event>, String> {
+        if ids.is_empty() {
+            return Err("no units".to_string());
+        }
+        let mut hexes: Vec<Hex> = Vec::new();
+        for id in ids {
+            let at = self.own_unit(side, *id)?.pos();
+            if !hexes.contains(&at) {
+                hexes.push(at);
+            }
+        }
+        for at in &hexes {
+            let water = self.map.tile(*at).is_some_and(|t| t.kind == TileType::Water);
+            if !water || self.map.city_at(*at).is_some() {
+                continue;
+            }
+            let units = self.map.units();
+            let staying = self.map.units_at(*at).iter().filter(|id| !ids.contains(id)).filter_map(|id| units.get(*id));
+            let (mut room, mut aboard) = (0usize, 0usize);
+            for unit in staying {
+                match units.kind_of(unit).map(|k| (k.travel, k.carries)) {
+                    Some((Travel::Sea, carries)) => room += carries as usize,
+                    Some((Travel::Land, _)) if !self.map.is_commander(unit.id()) => aboard += 1,
+                    _ => {}
+                }
+            }
+            if aboard > room {
+                return Err("those aboard would drown: the ship cannot go without them".to_string());
+            }
+        }
+        let mut names = Vec::new();
+        for id in ids {
+            if let Some(unit) = self.map.kill_unit(*id) {
+                names.push(unit.title());
+            }
+        }
+        self.undo = None;
+        self.selected.retain(|id| !ids.contains(id));
+        if self.selected.is_empty() {
+            self.deselect();
+        }
+        Ok(vec![Event::Disbanded { side, names }])
+    }
+
     /// A unit pays for a move.
     fn pay(&mut self, id: UnitId, cost: u32) {
         if let Some(unit) = self.map.unit_mut(id) {
@@ -1184,7 +1284,7 @@ impl Game {
             return (unit.power(), led, 0, 0);
         }
         let ground = self.map.tile(at).map_or(0, |t| combat::ground_bonus(t.kind));
-        let walls = self.map.city_at(at).map_or(0, |c| c.walls).saturating_mul(combat::WALL_QUARTERS);
+        let walls = self.map.city_at(at).map_or(0, |c| combat::walls_bonus(c.walls) * combat::QUARTER);
         (unit.power(), led, ground, walls)
     }
 
@@ -1229,12 +1329,18 @@ impl Game {
     /// a chance of their own, so the game's is not touched, and the same
     /// question in the same turn gets the same answer.
     pub fn battle_odds(&self, attackers: &[UnitId], at: Hex) -> Option<u32> {
+        self.battle_forecast(attackers, at).map(|f| f.odds)
+    }
+
+    /// What an attack by `attackers` on `at` is likely to come to: the odds
+    /// (as `battle_odds`), and how many die on each side on the whole.
+    pub fn battle_forecast(&self, attackers: &[UnitId], at: Hex) -> Option<combat::Forecast> {
         let (a, d) = self.fighters(attackers, at);
         if d.is_empty() || a.is_empty() {
             return None;
         }
         let seed = (u64::from(self.round) << 32) ^ (u64::from(at.row) << 16) ^ u64::from(at.col);
-        Some(combat::odds(&a, &d, &self.setup.combat, seed, 200))
+        Some(combat::forecast(&a, &d, &self.setup.combat, seed, 200))
     }
 
     /// `side`'s units attack whoever is on `at`: they fight with the game's
@@ -1366,12 +1472,18 @@ impl Game {
     /// `by` takes a city from `from`: it starts its work over, and a side
     /// that has lost its last city is out.
     fn take(&mut self, city: CityId, from: Side, by: Side) -> Vec<Event> {
+        let mut walls = None;
         if let Some(c) = self.map.city_mut(city) {
             // Where its old holder sent its new units is not the new one's.
             (c.side, c.rally) = (by, None);
+            // Its walls fall a level (the owner's rule, 2026-11-20).
+            if c.walls > 0 {
+                c.walls -= 1;
+                walls = Some(c.walls);
+            }
         }
         self.map.set_production(city, None);
-        let mut events = vec![Event::Taken { city, from, by }];
+        let mut events = vec![Event::Taken { city, from, by, walls }];
         if from != Side::Grey && !self.map.cities().iter().any(|c| c.side == from) {
             events.extend(self.put_out(from));
         }
@@ -1433,6 +1545,7 @@ impl Game {
         }
         let side = self.player();
         let round = self.round;
+        self.raised.clear();
         self.fights.retain(|(_, fought, _)| fought + REPLAY_ROUNDS > round);
         let mut events = vec![Event::Began { side, round: self.round }];
         if self.round > 1 {

@@ -82,18 +82,29 @@ pub fn event_line(game: &Game, event: &Event) -> String {
         Event::Moved { unit, from, to, cost } => {
             format!("{} moves from {from} to {to} for {cost}", agents::unit_name(*unit))
         }
-        Event::Taken { city: id, from, by } => {
+        Event::Taken { city: id, from, by, walls } => {
             let from = if *from == Side::Grey { "nobody" } else { side_name(*from) };
-            format!("{} takes {} from {from}", side_name(*by), city(*id))
+            let fell = walls.map_or(String::new(), |w| format!("; its walls fall to {w}"));
+            format!("{} takes {} from {from}{fell}", side_name(*by), city(*id))
         }
+        Event::WallsRaised { city: id, side, walls, price } => {
+            format!("{} raises the walls of {} to {walls} for {price}", side_name(*side), city(*id))
+        }
+        Event::Disbanded { side, names } => format!("{} disbands {}", side_name(*side), names.join(", ")),
         Event::Built { city: id, unit } => format!("{} builds {}", city(*id), agents::unit_name(*unit)),
         Event::Began { side, round } => format!("round {round}: {}'s turn", side_name(*side)),
-        Event::Battle { at, attacker, defender, attackers, defenders, attackers_lost, defenders_lost, won, .. } => {
+        Event::Battle { at, attacker, defender, attackers, defenders, attackers_lost, defenders_lost, won, dead } => {
             let (a, d) = (side_name(*attacker), side_name(*defender));
             let winner = if *won { a } else { d };
+            // A captain who falls is named: "; red's Captain Aldric falls".
+            let fell: String = dead
+                .iter()
+                .filter(|f| f.person)
+                .map(|f| format!("; {}'s {} falls", side_name(f.side), f.name))
+                .collect();
             format!(
                 "{a} attacks {d} at {at}, {attackers} against {defenders}: {a} loses {attackers_lost}, \
-                 {d} {defenders_lost}; {winner} wins"
+                 {d} {defenders_lost}; {winner} wins{fell}"
             )
         }
         Event::Undone => "the last order is taken back".to_string(),
@@ -134,6 +145,11 @@ pub fn order_line(game: &Game, order: &Order) -> String {
         Order::GoTo { units, to } => format!("goto {} {} {}", names(units), to.row, to.col),
         Order::Done { units } => format!("done {}", names(units)),
         Order::Bless { units } => format!("bless {}", names(units)),
+        Order::Disband { units } => format!("disband {}", names(units)),
+        Order::Walls { city } => {
+            let at = game.map.cities().get(*city).map_or((0, 0), |c| (c.pos.row, c.pos.col));
+            format!("walls {} {}", at.0, at.1)
+        }
         Order::Rally { city, to } => {
             let at = game.map.cities().get(*city).map_or((0, 0), |c| (c.pos.row, c.pos.col));
             match to {

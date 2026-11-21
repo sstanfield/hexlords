@@ -234,13 +234,13 @@ fn under_total_fog_it_goes_to_see_and_finds_what_to_take() {
 
 #[test]
 fn a_stack_it_saw_near_its_city_keeps_its_defenders_home() {
-    // Six militia in Redhold; three blue riders, seen four hexes off (or
+    // Six militia in Redhold; six blue riders, seen four hexes off (or
     // never seen), go east into the fog on blue's turn. Red's next turn:
     let stayed = |seen: bool| {
         let mut game = game("garrison militia 6\n", |s| s.fog = Fog::On);
         let riders = game.map.units().kind_named("riders").unwrap();
         let start = if seen { Hex::new(5, 8) } else { Hex::new(5, 12) };
-        let blue: Vec<UnitId> = (0..3)
+        let blue: Vec<UnitId> = (0..6)
             .map(|_| {
                 let unit = game.map.new_unit_of(Side::Blue, riders).unwrap();
                 game.map.place_unit(unit, start).unwrap();

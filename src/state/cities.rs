@@ -56,6 +56,18 @@ impl City {
 /// What a city brings in a turn unless its map says otherwise.
 pub const DEFAULT_INCOME: u32 = 10;
 
+/// The owner's rules (2026-11-20): a city's holder raises its walls a level
+/// at a time (`Order::Walls`), once a turn, up to `WALLS_CAP`; a level costs
+/// `WALL_PRICE` for each level it raises them to (to 3, 75 gold: nearly two
+/// turns of a capital's taxes). A city that is taken loses a level.
+pub const WALLS_CAP: u32 = 6;
+pub const WALL_PRICE: u32 = 25;
+
+/// What it costs to raise walls of `walls` a level.
+pub fn wall_price(walls: u32) -> u32 {
+    WALL_PRICE.saturating_mul(walls.saturating_add(1))
+}
+
 /// Every city on the map.
 #[derive(Clone, Debug, Default)]
 pub struct Cities {

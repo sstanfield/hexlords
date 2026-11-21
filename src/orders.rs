@@ -31,6 +31,13 @@ pub enum Order {
     /// Where a city sends the units it builds (they go there as `GoTo`), or
     /// nowhere.
     Rally { city: CityId, to: Option<Hex> },
+    /// Raise a city's walls a level, paid at once (`state::wall_price`):
+    /// once a turn, up to `state::WALLS_CAP`.
+    Walls { city: CityId },
+    /// Send units home for good: they are gone, and their upkeep with them
+    /// (to make room for better ones). A ship at sea goes only with those it
+    /// carries, or with ships enough left to carry them.
+    Disband { units: Vec<UnitId> },
     /// Take back the side's last order this turn, if it had no chance in it
     /// (a move that was no battle and put nobody out, a city's work set).
     Undo,
@@ -111,10 +118,24 @@ pub enum Event {
         to: Hex,
     },
     /// A side's unit went into another's (or nobody's) city with nobody in it.
+    /// Its walls fall a level: `walls`, what is left of them, if they fell.
     Taken {
         city: CityId,
         from: Side,
         by: Side,
+        walls: Option<u32>,
+    },
+    /// A city's holder raised its walls a level, to `walls`, for `price`.
+    WallsRaised {
+        city: CityId,
+        side: Side,
+        walls: u32,
+        price: u32,
+    },
+    /// A side sent units home (`Order::Disband`): what they were called.
+    Disbanded {
+        side: Side,
+        names: Vec<String>,
     },
     /// A unit of `side`'s left it, unpaid: its treasury could not pay all
     /// the upkeep. (It is gone; this is its name.)

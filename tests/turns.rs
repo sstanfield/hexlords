@@ -129,7 +129,7 @@ fn taking_the_last_city_puts_a_side_out_and_the_last_side_wins() {
         events = game.apply(Order::Toward { units: vec![id], to: NOBODYS }).unwrap();
     }
     let waste = game.map.city_at(NOBODYS).unwrap().id;
-    assert!(events.contains(&Event::Taken { city: waste, from: Side::Grey, by: Side::Red }), "{events:?}");
+    assert!(events.contains(&Event::Taken { city: waste, from: Side::Grey, by: Side::Red, walls: None }), "{events:?}");
     assert_eq!(game.map.city_at(NOBODYS).unwrap().side, Side::Red);
     assert!(game.out().is_empty());
     // Blue's only city: blue is out, and its units go with it.
@@ -148,7 +148,7 @@ fn taking_the_last_city_puts_a_side_out_and_the_last_side_wins() {
         }
         game.end_turn();
     }
-    assert!(events.contains(&Event::Taken { city: bluemoor, from: Side::Blue, by: Side::Red }));
+    assert!(events.contains(&Event::Taken { city: bluemoor, from: Side::Blue, by: Side::Red, walls: None }));
     assert!(events.contains(&Event::Out { side: Side::Blue }));
     assert_eq!(game.out(), [Side::Blue]);
     assert!(game.map.units().get(blue_unit).is_none(), "blue's units went with it");

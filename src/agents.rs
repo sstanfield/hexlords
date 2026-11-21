@@ -297,8 +297,12 @@ impl Agent for Simple {
             }
             // Likely to win; or with more than a stack to send, likely
             // enough to wear the defenders down for the next.
-            let odds = game.battle_odds(&able, *target).unwrap_or(100);
-            if odds >= Simple::DARE || (more > able.len() && odds >= Simple::WEAR) || siege(game, side, *target, odds) {
+            let forecast = game.battle_forecast(&able, *target);
+            let odds = forecast.map_or(100, |f| f.odds);
+            if odds >= Simple::DARE
+                || (more > able.len() && odds >= Simple::WEAR)
+                || siege(game, side, *target, forecast)
+            {
                 self.done.extend(able.iter().copied());
                 return Order::Move { units: able, to: *target };
             }
@@ -425,18 +429,20 @@ pub fn blessing(game: &Game, side: Side, pilgrims: &mut Vec<UnitId>) -> Option<O
     None
 }
 
-/// The least odds, in percent, a siege's wave goes at: below them a stack
-/// dies and kills nobody (8 against 1 elite behind walls, in the
-/// simulations), and the side waits for stronger units.
+/// A siege's wave goes at odds of `SIEGE_ODDS` percent or more, or if it is
+/// likely to kill `SIEGE_KILLS` defenders: a wave that dies and kills
+/// nobody (8 against 1 elite behind walls, in the simulations) only makes
+/// the defenders rise in level, and the side waits for stronger units.
 pub const SIEGE_ODDS: u32 = 5;
+pub const SIEGE_KILLS: f64 = 1.0;
 
 /// True if `side` so outnumbers the holder of the city at `target` (three
-/// times its units and its cities) that it takes the city in waves, at any
-/// odds of `SIEGE_ODDS` or more: a losing attack still kills defenders, and
-/// a last city held by a full stack behind high walls would else never
-/// fall. (`odds`: the wave's, `Game::battle_odds`.)
-pub fn siege(game: &Game, side: Side, target: Hex, odds: u32) -> bool {
-    if odds < SIEGE_ODDS {
+/// times its units and its cities) that it takes the city in waves, each
+/// likely enough to win or to kill defenders (see `SIEGE_ODDS`): a last
+/// city held by a full stack behind high walls would else never fall.
+/// (`forecast`: the wave's, `Game::battle_forecast`.)
+pub fn siege(game: &Game, side: Side, target: Hex, forecast: Option<crate::state::combat::Forecast>) -> bool {
+    if forecast.is_none_or(|f| f.odds < SIEGE_ODDS && f.kills < SIEGE_KILLS) {
         return false;
     }
     let map = &game.map;
@@ -574,6 +580,10 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
         ["goto", u, row, col] => Order::GoTo { units: units(u)?, to: hex(row, col)? },
         ["done", u] => Order::Done { units: units(u)? },
         ["bless", u] => Order::Bless { units: units(u)? },
+        ["disband", u] => Order::Disband { units: units(u)? },
+        ["walls", row, col] => {
+            Order::Walls { city: game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id }
+        }
         ["rally", row, col, "none"] => {
             Order::Rally { city: game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id, to: None }
         }
@@ -581,6 +591,10 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
             let city = game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id;
             Order::Rally { city, to: Some(hex(to_row, to_col)?) }
         }
-        _ => return Err("not an order (move, toward, goto, done, bless, build, rally, undo, end)".to_string()),
+        _ => {
+            return Err(
+                "not an order (move, toward, goto, done, bless, disband, build, rally, walls, undo, end)".to_string()
+            );
+        }
     }))
 }

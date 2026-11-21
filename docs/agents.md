@@ -25,8 +25,9 @@ red wins in round 23.
 
 `--log` prints everything that happened on the way, a line each (`round 3:
 green's turn`, `red.4.0 moves from (5, 5) to (10, 4) for 12`, `red attacks
-blue at (22, 11), 5 against 2: red loses 1, blue 2; red wins`, `red takes
-Fenwyke from blue`, `blue is out`), and the orders the game refused, with
+blue at (22, 11), 5 against 2: red loses 1, blue 2; red wins; blue's Captain
+Aldric falls`, `red takes Fenwyke from blue; its walls fall to 1`, `blue is
+out`), and the orders the game refused, with
 why. One seed and one set of agents always make the same game: the rules
 take their chance from the game's own generator (`state::rng`), never from
 anywhere else.
@@ -48,7 +49,7 @@ done
 | Name | What it does |
 |---|---|
 | `passive` | Ends every turn at once |
-| `simple` | Builds a commander where it can when its side has none; takes a stack to a temple it can reach this turn that has not blessed some of its units, and seeks the blessing there (`bless`); sets each idle city to build what gives the most strength for its turns, of what its taxes can keep (after its units' upkeep and that of what its cities are already building), and stops the dearest work when they cannot; keeps two units in each of its cities; attacks a city that is not its own, or another side's stack near its free units, with the strongest stack's worth of the free units that can reach it this turn, when the odds are at least 60 in 100 (or 15, when more than a stack can reach it: the first wave; or, a siege, 5, when its side has three times the units and cities of the city's holder); else sends each stack's free units together toward the nearest such city, where they wait for the others |
+| `simple` | Builds a commander where it can when its side has none; takes a stack to a temple it can reach this turn that has not blessed some of its units, and seeks the blessing there (`bless`); sets each idle city to build what gives the most strength for its turns, of what its taxes can keep (after its units' upkeep and that of what its cities are already building), and stops the dearest work when they cannot; keeps two units in each of its cities; attacks a city that is not its own, or another side's stack near its free units, with the strongest stack's worth of the free units that can reach it this turn, when the odds are at least 60 in 100 (or 15, when more than a stack can reach it: the first wave; or, a siege, when its side has three times the units and cities of the city's holder, 5, or likely to kill a defender); else sends each stack's free units together toward the nearest such city, where they wait for the others |
 | `steady` | The computer's player unless another is chosen (`src/planner.rs`, below): armies around a commander, cities defended as they are threatened, attacks at fair odds |
 | `bold` | The planner, fast and many: grabs the empty and weak cities first, attacks at lower odds |
 | `careful` | The planner, slow and sure: answers threats with more defenders, big armies, high odds |
@@ -70,7 +71,11 @@ how much of a threat it answers, how big an army it gathers, what its
 cities' work weighs). Each turn, order by order, it:
 
 1. keeps its treasury in hand: what its cities build is what it can keep
-   and pay for, and what is worth most under the rules of this game
+   and pay for, and what is worth most under the rules of this game; late
+   (with two stacks' worth of soldiers, more than it fields at once) the
+   strongest it can keep, and it disbands its weakest, up to four a turn,
+   to make room for one three points the stronger (the owner: late in the
+   game, quality stacks, not junk)
    (`planner::worth`: in lines a unit's worth goes as its strength to the
    power the chance gives, so with little chance it builds strong units and
    with much it builds many; in strength against strength, strengths add
@@ -79,12 +84,15 @@ cities' work weighs). Each turn, order by order, it:
    a whole turn's moves, roads and all) keeps defenders for the threat,
    weighed by worth too, and free units near it come in; its capital keeps
    one more;
-3. strikes where the game's own odds (`Game::battle_odds`, with the rules
-   in them) are good enough for its style, waves at walls when more than a
-   stack can follow, lays siege (waves at 5 in 100 or better) to the cities
-   of a side it outnumbers three times in units and cities (a last city
-   held by a full stack behind high walls fell to nobody before), and
-   takes on stacks in the field near its cities and units;
+3. strikes where the game's own odds (`Game::battle_forecast`, with the
+   rules in them) are good enough for its style, waves at walls when more
+   than a stack can follow, lays siege to the cities of a side it
+   outnumbers three times in units and cities (waves at 5 in 100 or better,
+   or likely to kill a defender: a last city held by a full stack behind
+   high walls fell to nobody before, and a wave that kills nobody only
+   raises the defenders' levels), and takes on stacks in the field near its
+   cities and units; a threatened city it holds with too few, behind walls
+   under 4, raises them when its treasury has twice the price;
 4. gathers the rest around its commander (where it stood at the turn's
    start), sends small stacks to the army or keeps them home until there is
    a force, stops at temples on the way that have not blessed some of the
@@ -155,13 +163,13 @@ terrain
 72
 wwwwwwww...                      (the map file's rows: docs/map-format.md; `?`: never seen)
 end terrain
-kind riders strength 4 moves 18 upkeep 3 price 10 commander 0 travels land carries 0 enter grass 2 forest 5 city 1 road 1 bridge 1
-kind captain strength 3 moves 14 upkeep 4 price 20 commander 1 travels land carries 0 enter grass 2 forest 3 city 1 road 1 bridge 1
-kind transport strength 1 moves 12 upkeep 2 price 10 commander 0 travels sea carries 6 enter water 2 city 2
+kind lightcavalry strength 3 moves 20 upkeep 4 price 8 commander 0 travels land carries 0 enter grass 2 forest 5 city 1 road 1 bridge 1
+kind captain strength 3 moves 14 upkeep 10 price 20 commander 1 travels land carries 0 enter grass 2 forest 3 city 1 road 1 bridge 1
+kind transport strength 1 moves 12 upkeep 5 price 10 commander 0 travels sea carries 6 enter water 2 city 2
 city 13 7 red walls 2 income 20 builds 2 progress 1 name Brindlewick
 can 13 7 0 militia 1 4
 can 13 7 1 archers 2 6
-can 13 7 2 riders 3 10
+can 13 7 2 lightcavalry 3 8
 city 19 42 green walls 2 income 20 builds none progress 0 name Eskerfall
 unit red.0.0 red 13 7 militia strength 2 moves 10/10 level 1
 unit green.3.0 green 19 42 archers strength 3 moves 12/12 level 2
@@ -203,7 +211,9 @@ A line each, in the order they are to be carried out:
 | `goto <units> <row> <col>` | A standing order: go to that hex over as many turns as it takes. This turn's part is taken at once (as `toward`), the rest at the start of each of the side's turns, before the program is asked; it never attacks: a step into another side's units stops it (it keeps the order, and tries again next turn). A `move` or `toward` of the same units ends it |
 | `done <units>` | Put the units aside for this turn (Next stack and the player's tasks pass them by); it changes nothing else |
 | `bless <units>` | Units on a temple seek its blessing: each the temple has not blessed yet is blessed (chance says how) and its movement is spent for the turn; one it blessed before keeps its movement |
+| `disband <units>` | Send units home for good: they are gone, and their upkeep with them (a ship at sea only with those it carries, or with ships enough left to carry them) |
 | `build <row> <col> <index or none>` | Set what a city of its side builds |
+| `walls <row> <col>` | Raise the walls of a city of its side a level, paid at once: once a turn, up to 6, 25 gold for each level it raises them to |
 | `rally <row> <col> <row> <col>`, `rally <row> <col> none` | Where a city of its side sends what it builds (with a standing order, as `goto`), or nowhere: it stays in the city |
 | `undo` | Take back the order before, if it can be (not a battle, nor one that put a side out) |
 | `end` | The turn is over (the end of the output says so too) |

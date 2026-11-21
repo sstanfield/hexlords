@@ -106,8 +106,8 @@ fn an_attack_that_loses_dies_and_the_defenders_hold() {
 
 #[test]
 fn the_ground_and_the_walls_make_defenders_stronger() {
-    // Strengths in a battle are in quarters of a point: walls count three
-    // quarters a level.
+    // Strengths in a battle are in quarters of a point; walls 1 or 2 count
+    // a point, 3 to 5 two (`walls_bonus`).
     let mut game = game("garrison soldiers\n", "walls 2\ngarrison levy\n", |_| {});
     let levy = at(&game, BLUEMOOR)[0];
     let soldiers = at(&game, REDHOLD)[0];
@@ -115,8 +115,8 @@ fn the_ground_and_the_walls_make_defenders_stronger() {
         let unit = game.map.units().get(id).unwrap();
         game.battle_strength(unit, unit.pos(), defending, &[id])
     };
-    // In its city behind walls 2: 1 and 1 1/2. Who attacks has no walls.
-    assert_eq!(strength(&game, levy, true), 4 + 6);
+    // In its city behind walls 2: 1 and 1. Who attacks has no walls.
+    assert_eq!(strength(&game, levy, true), 4 + 4);
     assert_eq!(strength(&game, levy, false), 4);
     // Out on the ground: hills and forests 1, mountains 2, grass nothing.
     for (kind, bonus) in [(TileType::Grass, 0), (TileType::Hill, 1), (TileType::Forest, 1), (TileType::Mountain, 2)] {
@@ -124,8 +124,8 @@ fn the_ground_and_the_walls_make_defenders_stronger() {
         let unit = game.map.units().get(soldiers).unwrap();
         assert_eq!(game.battle_strength(unit, Hex::new(5, 7), true, &[soldiers]), 4 * (3 + bonus), "{kind:?}");
     }
-    // With no chance the stronger wins: 3 beats the levy's 2 1/2 behind
-    // walls 2, and loses to its 3 1/4 behind walls 3.
+    // With no chance the stronger wins: 3 beats the levy's 2 behind walls
+    // 2, and loses to its 3 behind walls 3 (a tie is the defender's).
     let events = game.apply(Order::Move { units: vec![soldiers], to: BLUEMOOR }).unwrap();
     assert_eq!(battle(&events), (1, 1, 0, 1, true));
     let mut walled = self::game("garrison soldiers\n", "walls 3\ngarrison levy\n", |_| {});
@@ -144,12 +144,14 @@ fn a_commander_leads_its_stack_fights_last_and_has_a_place_of_its_own() {
         game.battle_strength(unit, BLUEMOOR, true, &blue)
     };
     // Every other unit of its stack is 1 stronger; not the captain itself.
-    // (In quarters of a point.)
+    // (In quarters of a point; walls 0 count nothing.)
     assert_eq!((strength(levy), strength(soldiers), strength(captain)), (8, 16, 8));
     assert!(game.map.is_commander(captain) && !game.map.is_commander(levy));
-    // In lines the captain stands last: red's 3 beats the levy (2), then
-    // loses to the soldiers (4), and the captain never fights.
+    // In lines the captain stands last: red's veteran 4 beats the levy (2),
+    // then loses to the soldiers (4: a tie is the defender's), and the
+    // captain never fights.
     let red = at(&game, REDHOLD);
+    game.map.unit_mut(red[0]).unwrap().level = 2;
     let events = game.apply(Order::Move { units: red, to: BLUEMOOR }).unwrap();
     assert_eq!(battle(&events), (1, 3, 1, 1, false));
     assert_eq!(at(&game, BLUEMOOR), [captain, soldiers]);
