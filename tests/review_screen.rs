@@ -222,7 +222,8 @@ fn a_city_order_refused_says_why() {
     s.frame(0);
     press_widget(&mut s, &format!("{PANEL_PREFIX}{}", point_id(1)));
     assert_eq!(s.screen.game.map.city_at(REDHOLD).unwrap().sends, Sends::Stay);
-    assert_eq!(s.unit_line(), "The city cannot do that: nothing Redhold builds can get there.");
+    let says = s.refusal().expect("a window says so");
+    assert_eq!(says[..2], ["The city cannot do that.", "Nothing Redhold builds can get there."]);
 }
 
 /// With fog of war, a click beyond reach whose way runs into another

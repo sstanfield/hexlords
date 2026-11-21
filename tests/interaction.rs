@@ -93,7 +93,11 @@ fn clicking_beyond_reach_sends_them_there_or_says_why_not() {
     click(&mut s, p);
     assert_eq!(s.screen.game.map.cursor, Hex::new(51, 51), "the click still moves the cursor");
     assert_eq!(s.screen.game.selected(), Some(cav));
-    assert_eq!(s.unit_line(), "They cannot go there: Test Cav cannot get there.");
+    // A window says the order was refused, and why.
+    assert_eq!(
+        s.refusal(),
+        Some(vec!["They cannot go there.".to_string(), "Test Cav cannot get there.".to_string(), "OK".to_string()])
+    );
     assert_eq!(s.screen.game.map.units_at(START), [cav]);
     // Grass too far for a turn: it goes there, over the turns (Go to), as
     // far as it gets this turn; nothing stays selected.

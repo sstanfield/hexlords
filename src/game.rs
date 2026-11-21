@@ -2927,12 +2927,16 @@ impl Game {
             };
         };
         let units = self.selected.clone();
-        let done = self.apply(Order::Move { units, to: hex });
+        let done = self.apply(Order::Move { units: units.clone(), to: hex });
         self.deselect();
         match done {
             Ok(events) if events.iter().any(|e| matches!(e, Event::Battle { .. })) => SelectOutcome::Fought(events),
             Ok(events) => SelectOutcome::Moved { unit: first, cost, events },
-            Err(_) => SelectOutcome::Deselected, // a full stack, for one
+            // (A full stack, for one.) They stay selected, and it says why.
+            Err(why) => {
+                self.select(units);
+                SelectOutcome::Refused(why)
+            }
         }
     }
 
@@ -3316,9 +3320,10 @@ mod tests {
         }
         // A click on the side's other stack, in reach: a move onto it, to
         // join it (the screen asks first whether to take it instead):
-        // refused, it is full.
+        // refused, it is full; the cavalry stays selected.
         game.select_hex(START);
-        assert_eq!(game.select_hex(target), SelectOutcome::Deselected);
+        assert_eq!(game.select_hex(target), SelectOutcome::Refused("there is no room there".to_string()));
+        assert_eq!(game.selected(), Some(cav));
         assert!(game.map.units_at(target).len() == guards.len(), "nobody joined");
         assert!(!game.can_undo(), "nothing happened");
         assert_eq!(game.map.units().get(cav).unwrap().movement, 20);

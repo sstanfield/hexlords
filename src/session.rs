@@ -131,6 +131,10 @@ pub const MISSION_ASK_ID: &str = "mission_ask";
 pub const MISSION_GO_ID: &str = "mission_go";
 pub const MISSION_TAKE_ID: &str = "mission_take";
 pub const MISSION_KEEP_ID: &str = "mission_keep";
+/// The window that says an order a click gave was refused, and why; its
+/// button.
+pub const REFUSED_ID: &str = "refused";
+pub const REFUSED_OK_ID: &str = "refused_ok";
 /// The Units menu's Rally points (`rally_window`).
 pub const RALLY_POINTS_ID: &str = "rally_points";
 /// The Units menu's Patrol (`patrol_window`) and Maraud.
@@ -388,6 +392,12 @@ pub struct Session {
     mission_ask: Option<(WindowParts, Hex, Vec<UnitId>)>,
     mission_takes: bool,
     overriding: bool,
+    /// (A stop on the way refused, for the words of `refuse_pick`.)
+    refused_stop: bool,
+    /// The window that says an order was refused, and why, while it is open
+    /// (the owner's word, 2026-11-21: a click that leads to a refused order
+    /// says so in a window).
+    refusal: Option<WindowParts>,
     /// The item of a city's queue whose units the pick sends, if it is one;
     /// and the city's window that made way for the pick, with its item.
     rally_item: Option<usize>,
@@ -562,6 +572,8 @@ impl Session {
             mission_ask: None,
             mission_takes: false,
             overriding: false,
+            refused_stop: false,
+            refusal: None,
             reopen: None,
             refused: None,
 
@@ -842,6 +854,7 @@ impl Session {
         // question about units (they may be gone, or another side's turn).
         (self.picking, self.refused, self.reopen, self.notice) = (None, None, None, None);
         self.close_mission_ask();
+        self.close_refusal();
         if let Some(window) = self.disband.take() {
             window.close(&mut self.screen.ui);
         }
@@ -1635,6 +1648,7 @@ impl Session {
             self.rally_window.as_ref().and_then(|w| open(w.window())),
             self.patrol_window.as_ref().and_then(|w| open(w.window())),
             self.mission_ask.as_ref().and_then(|(w, _, _)| open(w.window)),
+            self.refusal.as_ref().and_then(|w| open(w.window)),
         ];
         // The one on top: the last of them among the root window's children.
         let order = ui.children(root).to_vec();
@@ -1659,6 +1673,7 @@ impl Session {
                 true
             }
             Some(12) => self.mission_ask.take().map(|(w, _, _)| build::close(ui, w.window)).is_some(),
+            Some(13) => self.refusal.take().map(|w| build::close(ui, w.window)).is_some(),
             _ => false,
         }
     }
@@ -1692,7 +1707,7 @@ impl Session {
         match order {
             CityOrder::SetProduction(id, what) => {
                 // An order: only the city's holder, if that is the player.
-                let _ = self.screen.game.apply(Order::Build { city: id, what });
+                self.city_order(Order::Build { city: id, what });
             }
             CityOrder::Details(id) => self.open_city(id),
             CityOrder::PickRally(id) => {
@@ -1794,7 +1809,7 @@ impl Session {
                 }
             }
             CityOrder::RaiseWalls(id) => {
-                let _ = self.screen.game.apply(Order::Walls { city: id });
+                self.city_order(Order::Walls { city: id });
             }
             CityOrder::GoTo(id) => {
                 if let Some(pos) = self.screen.game.map.cities().get(id).map(|city| city.pos) {
@@ -1804,6 +1819,58 @@ impl Session {
                 }
             }
         }
+    }
+
+    /// A window says the order the person gave was refused (`what`: what
+    /// was not done) and why; OK, Enter, Esc or the next click on the map
+    /// closes it. A pick under way goes on.
+    fn refuse(&mut self, what: &str, why: &str) {
+        self.close_refusal();
+        let (root, area) = (self.screen.root_window(), self.window_area());
+        let ui = &mut self.screen.ui;
+        let parts = build::window(ui, root, REFUSED_ID, "Not done");
+        build::heading(ui, parts.content, &format!("{what}."));
+        build::text(ui, parts.content, &format!("{}.", title(why)));
+        let space = ui.dimension_converter().dp_to_px(SPACING_DP * 2);
+        build::gap(ui, parts.content, space);
+        build::primary_button(ui, parts.content, REFUSED_OK_ID, "OK");
+        // (At the bottom of the map, over the line under the stack: out of
+        // the way of the next click, a pick going on.)
+        build::place(ui, parts, area, (0.5, 1.0));
+        self.refusal = Some(parts);
+        self.screen.settle();
+    }
+
+    /// A pick refused (`why`): the prompt says so, and so does a window
+    /// (what it was a pick for); the pick goes on.
+    fn refuse_pick(&mut self, why: String) {
+        let what = match self.picking {
+            Some(Pick::GoTo) if self.refused_stop => "They cannot go by way of there",
+            Some(Pick::GoTo) => "They cannot go there",
+            Some(Pick::Rally(_)) => "The city's new units cannot go there",
+            Some(Pick::RallyPoint(_)) => "The rally point cannot go there",
+            Some(Pick::Patrol) => "They cannot patrol there",
+            None => "Not done",
+        };
+        self.refuse(what, &why);
+        self.refused = Some(why);
+    }
+
+    /// Close the window that said an order was refused, if it is open.
+    fn close_refusal(&mut self) {
+        if let Some(parts) = self.refusal.take() {
+            build::close(&mut self.screen.ui, parts.window);
+        }
+    }
+
+    /// What the window that says an order was refused says, while it is
+    /// open.
+    pub fn refusal(&self) -> Option<Vec<String>> {
+        let parts = self.refusal.as_ref().filter(|p| build::is_open(&self.screen.ui, p.window))?;
+        let ui = &self.screen.ui;
+        // (Its lines and its button, in order.)
+        let lines = ui.children(parts.content).iter().filter_map(|id| ui.text(*id)).filter(|t| !t.is_empty());
+        Some(lines.map(str::to_string).collect())
     }
 
     /// True if what is selected is what the screen chose by itself (and the
@@ -1978,7 +2045,7 @@ impl Session {
     /// stack says why.
     fn city_order(&mut self, order: Order) {
         if let Err(why) = self.screen.game.apply(order) {
-            self.notice = Some(format!("The city cannot do that: {why}."));
+            self.refuse("The city cannot do that", &why);
         }
     }
 
@@ -2166,7 +2233,7 @@ impl Session {
                 }
             }
             SelectOutcome::Refused(why) => {
-                self.notice = Some(format!("They cannot go there: {why}."));
+                self.refuse("They cannot go there", &why);
                 let game = &self.screen.game;
                 self.shown = game.selected().and_then(|id| game.map.units().get(id)).map_or(hex, |u| u.pos());
             }
@@ -2638,8 +2705,8 @@ impl Session {
         let patrol = match checked {
             Ok(patrol) => patrol,
             Err(why) => {
-                self.refused = Some(why);
                 self.picking = Some(Pick::Patrol);
+                self.refuse_pick(why);
                 return;
             }
         };
@@ -2685,7 +2752,7 @@ impl Session {
                     self.after_move(at);
                 }
             }
-            Err(why) => self.notice = Some(format!("They cannot patrol there: {why}.")),
+            Err(why) => self.refuse("They cannot patrol there", &why),
         }
     }
 
@@ -2708,7 +2775,11 @@ impl Session {
         let units = game.selection().to_vec();
         let on = !units.iter().all(|id| game.map.units().get(*id).is_some_and(|u| u.marauding));
         let here = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos());
-        if units.is_empty() || self.screen.game.apply(Order::Maraud { units: units.clone(), on }).is_err() {
+        if units.is_empty() {
+            return;
+        }
+        if let Err(why) = self.screen.game.apply(Order::Maraud { units: units.clone(), on }) {
+            self.refuse(if on { "They cannot maraud" } else { "They cannot be called back" }, &why);
             return;
         }
         if !on {
@@ -2751,7 +2822,11 @@ impl Session {
         let game = &self.screen.game;
         let units = game.selection().to_vec();
         let on = !units.iter().all(|id| game.map.units().get(*id).is_some_and(|u| u.defending));
-        if units.is_empty() || self.screen.game.apply(Order::Defend { units, on }).is_err() {
+        if units.is_empty() {
+            return;
+        }
+        if let Err(why) = self.screen.game.apply(Order::Defend { units, on }) {
+            self.refuse(if on { "They cannot defend here" } else { "They cannot stand down" }, &why);
             return;
         }
         if !on {
@@ -2823,8 +2898,8 @@ impl Session {
                     }
                     // Refused: say why, and pick again.
                     Err(why) => {
-                        self.refused = Some(why);
                         self.picking = Some(Pick::GoTo);
+                        self.refuse_pick(why);
                     }
                 }
             }
@@ -2839,8 +2914,8 @@ impl Session {
                         }
                     }
                     Err(why) => {
-                        self.refused = Some(why);
                         self.picking = Some(pick);
+                        self.refuse_pick(why);
                     }
                 }
             }
@@ -2873,8 +2948,8 @@ impl Session {
                     }
                     // Refused: say why, and pick again.
                     Err(why) => {
-                        self.refused = Some(why);
                         self.picking = Some(pick);
+                        self.refuse_pick(why);
                     }
                 }
             }
@@ -2906,7 +2981,11 @@ impl Session {
                 self.stops.push(hex);
                 self.refused = None;
             }
-            Err(why) => self.refused = Some(why),
+            Err(why) => {
+                self.refused_stop = true;
+                self.refuse_pick(why);
+                self.refused_stop = false;
+            }
         }
     }
 
@@ -3007,12 +3086,16 @@ impl Session {
                 self.picking = Some(Pick::RallyPoint(n));
             }
             RallyClick::Remove(n) if self.can_act() => {
-                let _ = self.screen.game.apply(Order::RallyPoint { n, point: None });
+                if let Err(why) = self.screen.game.apply(Order::RallyPoint { n, point: None }) {
+                    self.refuse("The rally point cannot be taken away", &why);
+                }
             }
             RallyClick::Defend(n, defend) if self.can_act() => {
                 if let Some(point) = self.screen.game.rally_point(side, n) {
                     let point = Some(RallyPoint { defend, ..point });
-                    let _ = self.screen.game.apply(Order::RallyPoint { n, point });
+                    if let Err(why) = self.screen.game.apply(Order::RallyPoint { n, point }) {
+                        self.refuse("The rally point cannot be changed", &why);
+                    }
                 }
             }
             _ => {}
@@ -3211,6 +3294,16 @@ impl Session {
             }
             // Esc closes the help if it is open, else the window on top, and
             // with none open it drops the selection.
+            // A window that says an order was refused: Esc or Enter closes it
+            // (a pick under way goes on), and a click on the map too.
+            let refusing = self.refusal.as_ref().is_some_and(|p| build::is_open(&self.screen.ui, p.window));
+            if refusing && matches!(command, MapCommand::Key(MapKey::Esc | MapKey::Enter)) {
+                self.close_refusal();
+                continue;
+            }
+            if refusing && matches!(command, MapCommand::Click(..)) {
+                self.close_refusal();
+            }
             if command == MapCommand::Key(MapKey::Esc) && !self.screen.help_open() {
                 let picked = self.picking.take().is_some();
                 if picked {
@@ -3289,6 +3382,7 @@ impl Session {
                     }
                 }
                 RootCommand::Click(id) if id == TbId::new(END_KEEP_ID) => self.close_end_ask(),
+                RootCommand::Click(id) if id == TbId::new(REFUSED_OK_ID) => self.close_refusal(),
                 RootCommand::Click(id) if id == TbId::new(MISSION_GO_ID) => self.mission_go(),
                 RootCommand::Click(id) if id == TbId::new(MISSION_TAKE_ID) => self.mission_take(),
                 RootCommand::Click(id) if id == TbId::new(MISSION_KEEP_ID) => self.close_mission_ask(),
