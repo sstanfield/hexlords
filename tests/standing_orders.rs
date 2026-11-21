@@ -120,6 +120,15 @@ fn a_march_stops_short_of_another_sides_units_and_waits_for_orders() {
         hexgame::info::place(&game.map, unit_at)
     );
     assert!(lines[0].starts_with(&line) && lines[0].ends_with("It waits for orders."), "{lines:?}");
+    // Done puts it aside for the turn, stopped or not: it no longer needs
+    // orders (the owner: "Done does not take a stack out of the orders
+    // queue").
+    game.apply(Order::Done { units: red.clone() }).unwrap();
+    let task = |game: &Game| {
+        game.tasks(Side::Red).into_iter().find(|t| matches!(t, Task::Stack { at, .. } if *at == unit_at)).unwrap()
+    };
+    assert_eq!(task(&game), Task::Stack { at: unit_at, units: 1, state: StackState::Done });
+    assert_eq!(task(&game).tier(), 3);
     // Left to itself, it goes on when the way is free.
     game.map.kill_unit(blue);
     round(&mut game);

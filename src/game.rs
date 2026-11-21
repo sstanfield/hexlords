@@ -2926,7 +2926,8 @@ impl Game {
                 let free: Vec<&Unit> = units.iter().copied().filter(can_go).collect();
                 let state = if let Some(alarm) = patrol::alarm_state(&units) {
                     alarm
-                } else if free.iter().any(|u| !u.route.is_empty() && u.stalled) {
+                } else if free.iter().any(|u| !u.route.is_empty() && u.stalled && !u.done) {
+                    // (One its player put aside is done with, stopped or not.)
                     StackState::Stalled
                 } else if free.iter().any(|u| !u.moved && !u.done && u.route.is_empty()) {
                     StackState::Waiting
