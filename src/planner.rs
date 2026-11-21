@@ -307,9 +307,12 @@ pub(crate) fn advance(
     blocked: &dyn Fn(Hex) -> bool,
 ) -> Option<Order> {
     let map = &game.map;
+    // Room for all of them there: a stack's worth, and one commander.
     let room = |hex: Hex| {
         let there = map.units_at(hex);
-        !blocked(hex) && (there.iter().all(|id| ids.contains(id)) || there.len() + ids.len() <= MAX_STACK)
+        let leaders = there.iter().chain(ids).filter(|id| map.is_commander(**id)).count();
+        let fits = there.len() + ids.len() - leaders <= MAX_STACK && leaders <= 1;
+        !blocked(hex) && (there.iter().all(|id| ids.contains(id)) || fits)
     };
     let (step, _) = game.known_step_toward(lead, to, &room, sight)?;
     if step == lead.pos() || hostile(map, side, step) {
@@ -885,5 +888,36 @@ impl Planner {
             return stacks.into_iter().find(|h| game.known_step_toward(lead, *h, &room, sight).is_some());
         }
         best.map(|(_, h)| h)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::scenario::{self, Scenario};
+
+    /// The bug hunt (2026-11-21): the planner sent a stack with a captain
+    /// onto a hex with another captain, which the game refuses (one
+    /// commander to a hex); its most common refusal.
+    #[test]
+    fn a_stack_with_a_commander_is_not_sent_onto_another_commander() {
+        let terrain = format!("20\n20\n{}\n", vec!["g".repeat(20); 20].join("\n"));
+        let units = "unit soldiers\nname Soldiers\nstrength 3\nmoves 12\nenter grass 2\n\
+                     unit captain\nname Captain\nstrength 2\nmoves 12\ncommander 1\nenter grass 2\n";
+        let (map, warnings) = scenario::parse(&terrain, Some(units), None).unwrap();
+        let mut game = Game::from_scenario(Scenario { map, assets: None, warnings });
+        let put = |game: &mut Game, kind: &str, hex: Hex| {
+            let kind = game.map.units().kind_named(kind).unwrap();
+            let id = game.map.new_unit_of(Side::Red, kind).unwrap();
+            game.map.place_unit(id, hex).unwrap();
+            id
+        };
+        let (from, there) = (Hex::new(5, 5), Hex::new(5, 7));
+        let stack = [put(&mut game, "captain", from), put(&mut game, "soldiers", from)];
+        put(&mut game, "captain", there);
+        let sight = game.sight(Side::Red);
+        let lead = game.map.units().get(stack[1]).unwrap().clone();
+        let order = advance(&game, (Side::Red, &sight), (&stack, &lead), there, &|_| false);
+        assert!(!matches!(order, Some(Order::Move { to, .. }) if to == there), "{order:?}");
     }
 }

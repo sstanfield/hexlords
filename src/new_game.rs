@@ -573,14 +573,18 @@ impl NewGame {
                         fresh.sea_cities = fresh.sea_cities || cfg.sea_cities;
                         fresh.fly_cities = cfg.fly_cities;
                         *cfg = fresh;
+                        // (A colour for each side, as many as the screen's.)
+                        let _ = cfg.set("sides", &cfg.sides.to_string());
                     }
                 } else if more(SIZE_LESS_ID) || more(SIZE_MORE_ID) {
                     let i = step(size_index(cfg), SIZES.len(), more(SIZE_MORE_ID));
                     cfg.size = Some(MapSize::Named(SIZES[i].0));
-                } else if more(SIDES_LESS_ID) {
-                    cfg.sides = cfg.sides.saturating_sub(1).max(2);
-                } else if more(SIDES_MORE_ID) {
-                    cfg.sides = (cfg.sides + 1).min(8);
+                } else if more(SIDES_LESS_ID) || more(SIDES_MORE_ID) {
+                    // Through `Config::set`, which gives each side a colour
+                    // (the preset's are four: a fifth side's map crashed).
+                    let n =
+                        if more(SIDES_MORE_ID) { (cfg.sides + 1).min(8) } else { cfg.sides.saturating_sub(1).max(2) };
+                    let _ = cfg.set("sides", &n.to_string());
                 } else if more(CITIES_LESS_ID) || more(CITIES_MORE_ID) {
                     let i = step(density_index(cfg), DENSITIES.len(), more(CITIES_MORE_ID));
                     cfg.density = Some(DENSITIES[i].1);

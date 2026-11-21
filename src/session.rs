@@ -402,7 +402,7 @@ pub struct Session {
     /// minimap showed of it then: who holds each city it knows of, how much
     /// land it knows (its picture is drawn again when that changes).
     sight: Sight,
-    sight_of: Option<(u64, u32, Side)>,
+    sight_of: Option<(u64, u32, Side, Side)>,
     minimap_of: (Vec<Option<Side>>, Option<usize>),
     /// When the computer last played a turn, in ms (it plays one at a time,
     /// [`COMPUTER_TURN_MS`] apart, so that the log can be followed).
@@ -821,7 +821,7 @@ impl Session {
     fn turn_passed(&mut self) {
         // Nothing picked, nothing said, carries over to another turn; nor a
         // question about units (they may be gone, or another side's turn).
-        (self.picking, self.refused, self.confirm, self.reopen) = (None, None, None, None);
+        (self.picking, self.refused, self.confirm, self.reopen, self.notice) = (None, None, None, None, None);
         if let Some(window) = self.disband.take() {
             window.close(&mut self.screen.ui);
         }
@@ -1067,7 +1067,7 @@ impl Session {
     /// it changed (the cities' holders, the land seen).
     fn see(&mut self) {
         let game = &self.screen.game;
-        let key = (game.map.revision(), game.turn(), self.seer());
+        let key = (game.map.revision(), game.turn(), self.seer(), game.player());
         if self.sight_of == Some(key) {
             return;
         }
@@ -1435,6 +1435,17 @@ impl Session {
         if self.rally_window.as_ref().is_some_and(|w| !w.is_open(&self.screen.ui)) {
             self.rally_window = None;
         }
+        // The disband window asks about units that are all there still, and
+        // the player's (one fell in a battle: the question is over).
+        let gone = self.disband.as_ref().is_some_and(|w| {
+            let game = &self.screen.game;
+            w.units.iter().any(|id| game.map.units().get(*id).is_none_or(|u| u.side() != game.player()))
+        });
+        if gone {
+            if let Some(window) = self.disband.take() {
+                window.close(&mut self.screen.ui);
+            }
+        }
         // The patrol's window shut by its title bar's button: let go, as
         // Never mind does (the stack is selected again).
         if self.patrol_window.as_ref().is_some_and(|w| !w.is_open(&self.screen.ui)) {
@@ -1647,6 +1658,15 @@ impl Session {
 
     /// Do what a window asked.
     fn obey(&mut self, order: CityOrder) {
+        // Only looking, but in the person's turn: an order starts it, if
+        // it has not been started.
+        let looks = matches!(order, CityOrder::Details(_) | CityOrder::GoTo(_) | CityOrder::Chose(_));
+        if !looks {
+            if !self.can_act() {
+                return;
+            }
+            self.order_given();
+        }
         match order {
             CityOrder::SetProduction(id, what) => {
                 // An order: only the city's holder, if that is the player.
@@ -1764,12 +1784,25 @@ impl Session {
         }
     }
 
+    /// The person gave an order: their turn starts, if it has not (their log
+    /// was open between turns): "so does any order".
+    fn order_given(&mut self) {
+        if self.between && self.persons_turn() {
+            self.start_turn_with(false);
+        }
+    }
+
     /// The pick under way, if any, is over (another stack or city is gone
     /// to): its stops are forgotten, and a window that made way for it is
     /// not coming back.
     fn drop_pick(&mut self) {
         (self.picking, self.refused, self.rally_item, self.reopen) = (None, None, None, None);
         self.stops.clear();
+        // (And the patrol's window: the person has gone on to something
+        // else.)
+        if let Some(window) = self.patrol_window.take() {
+            window.close(&mut self.screen.ui);
+        }
     }
 
     /// The city's window makes way for the map while a hex is picked for
@@ -2093,6 +2126,7 @@ impl Session {
     /// window then says what each was given.
     fn bless_stack(&mut self) {
         let Some(ask) = self.temple.take() else { return };
+        self.order_given();
         let (at, units) = (ask.at, ask.units.clone());
         ask.close(&mut self.screen.ui);
         let (root, area) = (self.screen.root_window(), self.window_area());
@@ -2154,6 +2188,7 @@ impl Session {
     /// is over. If the game refuses, the window says why, and asks again.)
     fn disband_units(&mut self) {
         let Some(ask) = self.disband.take() else { return };
+        self.order_given();
         let asked = ask.units.clone();
         ask.close(&mut self.screen.ui);
         self.picking = None;
@@ -2341,6 +2376,7 @@ impl Session {
         if self.covered() || self.screen.game.apply(Order::Undo).is_err() {
             return;
         }
+        self.order_given();
         let game = &mut self.screen.game;
         if let Some(pos) = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos()) {
             game.set_cursor(pos);
@@ -2481,6 +2517,8 @@ impl Session {
         if !self.can_act() {
             return;
         }
+        self.drop_pick();
+        self.order_given();
         self.patrol_odds = attack;
         let before = self.screen.game.history().len();
         match self.screen.game.apply(Order::Patrol { units: units.clone(), waypoints, attack }) {
@@ -2515,6 +2553,7 @@ impl Session {
         if !self.can_act() {
             return;
         }
+        self.order_given();
         let game = &self.screen.game;
         let units = game.selection().to_vec();
         let on = !units.iter().all(|id| game.map.units().get(*id).is_some_and(|u| u.marauding));
@@ -2558,6 +2597,7 @@ impl Session {
         if !self.can_act() {
             return;
         }
+        self.order_given();
         let game = &self.screen.game;
         let units = game.selection().to_vec();
         let on = !units.iter().all(|id| game.map.units().get(*id).is_some_and(|u| u.defending));
@@ -2579,6 +2619,7 @@ impl Session {
         if !self.can_act() {
             return;
         }
+        self.order_given();
         let units = self.screen.game.selection().to_vec();
         let before = self.screen.game.history().len();
         // A marauder that fought goes on (as a patrol does, by the rules).
@@ -2796,6 +2837,9 @@ impl Session {
 
     /// Do what a click in the rally points' window asked.
     fn rally_click(&mut self, click: RallyClick) {
+        if !matches!(click, RallyClick::Look(_)) && self.can_act() {
+            self.order_given();
+        }
         let side = self.screen.game.player();
         match click {
             RallyClick::Look(n) => {
@@ -3028,7 +3072,7 @@ impl Session {
             }
             self.screen.navigate(command);
             // While the patrol's window asks, Enter is its Patrol.
-            if command == MapCommand::Key(MapKey::Enter) {
+            if command == MapCommand::Key(MapKey::Enter) && self.picking.is_none() {
                 if let Some(odds) = self.patrol_window().map(|w| w.chosen()) {
                     self.patrol_chosen(odds);
                     continue;

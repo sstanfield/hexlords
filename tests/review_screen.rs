@@ -32,6 +32,7 @@ fn game(fog: Fog) -> Game {
     let mut rows = vec!["g".repeat(30); 30];
     rows[5] = format!("{}c{}c{}", "g".repeat(5), "g".repeat(19), "g".repeat(4));
     rows[20] = format!("{}w{}", "g".repeat(20), "g".repeat(9));
+    rows[22] = format!("{}m{}", "g".repeat(22), "g".repeat(7));
     let terrain = format!("30\n30\n{}\n", rows.join("\n"));
     let units = "unit soldiers\nname Soldiers\nstrength 3\nmoves 12\nenter grass 2, city 1\n\
                  unit riders\nname Riders\nstrength 3\nmoves 20\nenter grass 2, city 1\n\
@@ -211,7 +212,10 @@ fn the_item_chosen_stays_chosen_when_one_before_it_goes() {
 #[test]
 fn a_city_order_refused_says_why() {
     let mut game = game(Fog::Off);
-    game.apply(Order::RallyPoint { n: 1, point: Some(RallyPoint { at: LAKE, defend: false }) }).unwrap();
+    // A point on a mountain: land, but nothing Redhold builds goes there.
+    let peak = Hex::new(22, 22);
+    assert_eq!(game.map.tile(peak).unwrap().kind, TileType::Mountain);
+    game.apply(Order::RallyPoint { n: 1, point: Some(RallyPoint { at: peak, defend: false }) }).unwrap();
     let mut s = session(game, Options::manual());
     click_hex(&mut s, REDHOLD);
     press(&mut s, SpecialKey::Esc);

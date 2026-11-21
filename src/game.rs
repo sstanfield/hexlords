@@ -1588,8 +1588,15 @@ impl Game {
             if !self.map.contains(p.at) {
                 return Err(format!("{} is not on the map", p.at));
             }
-            if !self.sight(side).knows(p.at) {
+            let sight = self.sight(side);
+            if !sight.knows(p.at) {
                 return Err(UNSEEN.to_string());
+            }
+            if self.map.tile(p.at).is_some_and(|t| t.kind == TileType::Water) && self.map.city_at(p.at).is_none() {
+                return Err("a rally point goes on land".to_string());
+            }
+            if self.map.city_at(p.at).is_some_and(|c| sight.holder(c) != side) {
+                return Err("a rally point goes in no city but its side's".to_string());
             }
         }
         let units: Vec<UnitId> =
@@ -2683,7 +2690,7 @@ impl Game {
             if !seen {
                 view.map.kill_unit(id);
             } else if let Some(unit) = view.map.unit_mut(id) {
-                (unit.stalled, unit.moved, unit.done) = (false, false, false);
+                (unit.stalled, unit.moved, unit.done, unit.defending) = (false, false, false, false);
                 (unit.route, unit.bound) = (Vec::new(), None);
                 unit.stand_down();
                 unit.movement = unit.base_move_points;

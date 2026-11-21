@@ -131,7 +131,9 @@ pub fn play_turn(game: &mut Game, agent: &mut dyn Agent) -> TurnReport {
 /// computer plays alone goes on a round at a time).
 pub fn play_computers(game: &mut Game, agents: &mut Agents) -> TurnReport {
     let mut report = TurnReport::default();
-    for _ in 0..game.order().len() {
+    // (A turn each of the sides still in: those out have none.)
+    let sides = game.order().iter().filter(|s| !game.out().contains(s)).count();
+    for _ in 0..sides {
         if game.winner().is_some() {
             break;
         }

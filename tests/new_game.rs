@@ -307,3 +307,34 @@ fn a_random_map_is_set_made_shown_and_played() {
     let session = shell.session().expect("the game");
     assert_eq!(session.screen.game.map.cities().iter().filter(|c| c.side != Side::Grey).count(), 3);
 }
+
+/// The bug hunt (2026-11-21): a random map of more sides than its preset's
+/// four crashed (the screen changed the sides, not their colours). Five
+/// sides, then another preset, and the map is made, a colour each.
+#[test]
+fn a_random_map_of_more_sides_than_its_preset_is_made() {
+    fn push(shell: &mut Shell, name: &str) {
+        let id = shell.screen().ui.find(shell.screen().ui.root(), TbId::new(name)).unwrap_or_else(|| panic!("{name}"));
+        shell.screen_mut().ui.scroll_into_view_recursive(id);
+        shell.screen_mut().settle();
+        let r = shell.screen().area(id);
+        let p = Point::new(r.x + r.w / 2, r.y + r.h / 2);
+        let ui = &mut shell.screen_mut().ui;
+        ui.pointer_move(p, turbo_ferret::Modifiers::NONE);
+        ui.pointer_down(p, 1, turbo_ferret::Modifiers::NONE);
+        ui.pointer_up(p, turbo_ferret::Modifiers::NONE);
+        shell.pump();
+    }
+    let mut shell = Shell::new_game(&assets(), Size::new(1024, 768), 96, None).unwrap();
+    push(&mut shell, hexgame::new_game::RANDOM_ID);
+    push(&mut shell, hexgame::new_game::SIDES_MORE_ID);
+    let colours = |shell: &mut Shell| {
+        let random = shell.new_game_screen().unwrap().random().unwrap();
+        (random.config.sides, random.config.colours.len())
+    };
+    assert_eq!(colours(&mut shell), (5, 5));
+    push(&mut shell, hexgame::new_game::PRESET_MORE_ID);
+    assert_eq!(colours(&mut shell), (5, 5), "another preset keeps the sides and their colours");
+    push(&mut shell, hexgame::new_game::MAKE_ID);
+    assert!(shell.new_game_screen().unwrap().problem().is_none());
+}
