@@ -87,14 +87,16 @@ pub struct TurnReport {
     pub refused: Vec<(Order, String)>,
 }
 
-/// A whole turn of the side whose turn it is, played by `agent`: its orders,
-/// then the end of its turn. The agent is shown the game as its side knows
-/// it (`Game::view_for`), worked out anew for each order; the orders are
-/// carried out in the game itself, where something it could not see may be
-/// in the way (it hears of a refusal: `Agent::refused`).
+/// A whole turn of the side whose turn it is, played by `agent`: the
+/// computer leads its marauding stacks (`marauder::maraud`), then the agent
+/// gives its orders, then the turn ends. The agent is shown the game as its
+/// side knows it (`Game::view_for`), worked out anew for each order; the
+/// orders are carried out in the game itself, where something it could not
+/// see may be in the way (it hears of a refusal: `Agent::refused`).
 pub fn play_turn(game: &mut Game, agent: &mut dyn Agent) -> TurnReport {
     let side = game.player();
-    let mut report = TurnReport::default();
+    // Its marauding stacks first (`marauder`), whoever plays the side.
+    let mut report = crate::marauder::maraud(game, side);
     for _ in 0..MAX_ORDERS {
         if game.winner().is_some() || game.player() != side {
             return report;
