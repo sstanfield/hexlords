@@ -70,6 +70,16 @@ fn stack(ui: &mut Ui, parent: WidgetId, axis: Axis, spacing: i32) -> WidgetId {
     ui.add(parent, layout)
 }
 
+/// A layout of widgets side by side, from the left, `spacing` pixels apart,
+/// their tops in a line (columns side by side).
+pub fn top_row(ui: &mut Ui, parent: WidgetId, spacing: i32) -> WidgetId {
+    let mut layout = Layout::new(Axis::X);
+    layout.position = LayoutPosition::LeftTop;
+    layout.distribution_position = LayoutDistributionPosition::LeftTop;
+    layout.spacing = Some(spacing);
+    ui.add(parent, layout)
+}
+
 /// A line of text, from the left.
 pub fn text(ui: &mut Ui, parent: WidgetId, text: &str) -> WidgetId {
     let mut field = TextField::new(text);

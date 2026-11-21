@@ -3,7 +3,7 @@
 //! clicks become orders, an agent makes them, and (later) a saved game and a
 //! network game are made of them (`docs/gameplay.md`).
 
-use crate::state::{Blessing, CityId, Hex, Sends, Side, UnitId};
+use crate::state::{Blessing, CityId, Hex, QueueEnd, QueueItem, Sends, Side, UnitId};
 
 /// How many rally points a side has: 0 to 9.
 pub const RALLY_POINTS: usize = 10;
@@ -28,8 +28,15 @@ pub enum Order {
     /// Move units together as far as the slowest gets this turn on its
     /// cheapest way toward a hex, near or far.
     Toward { units: Vec<UnitId>, to: Hex },
-    /// Set what a city builds: an index into what it can build, or nothing.
+    /// Set what a city builds, one after another, for ever: an index into
+    /// what it can build; or nothing, on purpose (it is no task that needs
+    /// orders). Its queue, if it had one, is gone.
     Build { city: CityId, what: Option<usize> },
+    /// Set a city's production queue: its items in turn (each so many of a
+    /// kind, sent somewhere), and what it does after the last. It goes on
+    /// from the item it was building, if that is still there; an empty list
+    /// takes the queue away (what it builds now it builds for ever).
+    Queue { city: CityId, items: Vec<QueueItem>, end: QueueEnd },
     /// Send units to a hex, near or far, by way of the stops `via` in order
     /// (none: straight there): they go as far as the slowest gets this turn,
     /// and on at the start of each of their side's turns until they are

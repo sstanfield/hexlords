@@ -516,14 +516,25 @@ thing to happen. Ideas to try, as the rules grow:
   something happens in the turn (an enemy comes in sight, it is attacked,
   a city it passes is empty): attack, stop, go round, carry on; with a
   default for each, so that most stacks never need one.
-- **A production queue** (planned, the owner's word 2026-11-21): a city
-  builds a list, each item with how many and where they go (`Sends`: keep,
-  defend, a route, a rally point with or without a blessing on the way):
-  "3 Light Infantry, defending; Hawk Riders to rally point 0 by a temple;
-  Cavalry to rally point 1". The last item can repeat the list (or its
-  last few items), forever or so many times, or stop. A city whose queue
-  ran out is a task that needs orders, unless its player said it is to
-  build nothing (late in a game, a city left alone on purpose).
+- **A production queue** (built, the owner's word 2026-11-21): a city
+  builds a list (`City::queue`, `Order::Queue`, eight items at most), each
+  item so many of a kind and where they go (`Sends`: keep, defend, a route,
+  a rally point with or without a blessing on the way): "3 Light Infantry,
+  defending; Hawk Riders to rally point 0 by a temple; Cavalry to rally
+  point 1". After the last item it stops, or goes back to an item and on
+  again, for ever or so many times (`QueueEnd`). A city whose queue ran
+  out builds nothing and is a task that needs orders; Nothing (`Order::Build`
+  with nothing) is building nothing on purpose (`City::resting`), and is
+  no task (late in a game, a city left alone). Build takes the queue away
+  (Undo gives it back). A queue changed goes on from the item it was
+  building if that is still there. The city's window has two columns: what
+  it can build (a + beside each adds one to the queue) and all about the
+  one under the pointer; the queue (an item a row, the one building marked,
+  one more, one less, out; Then: Stop, or Repeat from the chosen one, and
+  how many times) and where the units go. While it has a queue, the
+  window's buttons for what it builds and where the units go are about the
+  item chosen (the new one, after a +); the sidebar's are about the item it
+  builds now.
 - **Patrols** (planned, the owner's word 2026-11-21): a stack goes round
   waypoints (on land the side has seen), turn after turn: round again if
   the last joins the first, else back the way it came. It says whether it

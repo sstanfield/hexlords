@@ -17,7 +17,7 @@ use crate::game::Game;
 use crate::orders::{Event, Order, RALLY_POINTS, RallyPoint};
 use crate::setup::Controller;
 use crate::state::scenario::{side_name, side_named};
-use crate::state::{Hex, MAX_STACK, Sends, Side, UnitId};
+use crate::state::{Hex, MAX_STACK, QueueEnd, QueueItem, Sends, Side, UnitId};
 
 /// What a side's agent is asked for.
 pub trait Agent {
@@ -570,15 +570,46 @@ pub fn describe(game: &Game, side: Side) -> String {
     out
 }
 
+/// An item of a city's queue in a word: `<what>x<count>[@<where>]`.
+fn queue_item(game: &Game, word: &str) -> Result<QueueItem, String> {
+    let bad = || format!("\"{word}\" is not an item (<what>x<count>[@<where>])");
+    let (what, to) = word.split_once('@').map_or((word, None), |(w, t)| (w, Some(t)));
+    let (what, count) = what.split_once('x').ok_or_else(bad)?;
+    let (what, count) = (what.parse().map_err(|_| bad())?, count.parse().map_err(|_| bad())?);
+    let sends = match to {
+        None | Some("stay") => Sends::Stay,
+        Some("defend") => Sends::Defend,
+        Some(point) if point.starts_with("point") => {
+            let (n, bless) = point["point".len()..]
+                .split_once('+')
+                .map_or((&point["point".len()..], false), |(n, b)| (n, b == "bless"));
+            let n = n.parse::<u8>().ok().filter(|n| usize::from(*n) < RALLY_POINTS).ok_or_else(bad)?;
+            Sends::Point { n, bless }
+        }
+        Some(route) => {
+            let hex = |w: &str| -> Option<Hex> {
+                let (row, col) = w.split_once('.')?;
+                Some(Hex::new(row.parse().ok()?, col.parse().ok()?)).filter(|h| game.map.contains(*h))
+            };
+            Sends::Route(route.split(',').map(hex).collect::<Option<Vec<Hex>>>().ok_or_else(bad)?)
+        }
+    };
+    Ok(QueueItem { what, count, sends })
+}
+
 /// An order in a line of text (`docs/agents.md`): `move <units> <row> <col>`,
 /// `toward <units> <row> <col>` (units: names with commas between),
 /// `goto <units> <row> <col> [<row> <col> ...]` (stops in order, the last
 /// where they end), `done <units>`, `defend <units>`, `undefend <units>`,
 /// `bless <units>`, `disband <units>`, `build <row> <col> <index or none>`,
 /// `rally <row> <col> <row> <col> [<row> <col> ...]` (or `none`, `defend`,
-/// `point <n> [bless]`), `point <n> <row> <col> [defend]` (or `point <n>
-/// none`), `walls <row> <col>`, `undo`, `end`. `None` for an empty line or a
-/// comment (`#`).
+/// `point <n> [bless]`), `point <n> <row> <col> [defend]` (or
+/// `point <n> none`),
+/// `queue <row> <col> <item> [<item> ...] [repeat <from> [<times>]]` (an
+/// item `<what>x<count>[@<where>]`, where `defend`, `point<n>`,
+/// `point<n>+bless` or `<row>.<col>[,<row>.<col> ...]`; or
+/// `queue <row> <col> none`), `walls <row> <col>`, `undo`, `end`. `None`
+/// for an empty line or a comment (`#`).
 pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
     let words: Vec<&str> = line.split_whitespace().collect();
     let hex = |row: &str, col: &str| -> Result<Hex, String> {
@@ -646,6 +677,27 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
             };
             Order::Rally { city, to }
         }
+        ["queue", row, col, "none"] => {
+            let city = game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id;
+            Order::Queue { city, items: Vec::new(), end: QueueEnd::Stop }
+        }
+        ["queue", row, col, ref rest @ ..] if !rest.is_empty() => {
+            let city = game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id;
+            let (items, end) = match rest.iter().position(|w| *w == "repeat") {
+                Some(i) => {
+                    let number = |w: &str| w.parse::<usize>().map_err(|_| format!("\"{w}\" is not a number"));
+                    let end = match &rest[i + 1..] {
+                        [from] => QueueEnd::Repeat { from: number(from)?, times: None },
+                        [from, times] => QueueEnd::Repeat { from: number(from)?, times: Some(number(times)? as u32) },
+                        _ => return Err("repeat <from> [<times>]".to_string()),
+                    };
+                    (&rest[..i], end)
+                }
+                None => (rest, QueueEnd::Stop),
+            };
+            let items = items.iter().map(|w| queue_item(game, w)).collect::<Result<Vec<_>, _>>()?;
+            Order::Queue { city, items, end }
+        }
         ["point", n, "none"] => Order::RallyPoint { n: point(n)?, point: None },
         ["point", n, row, col] => {
             Order::RallyPoint { n: point(n)?, point: Some(RallyPoint { at: hex(row, col)?, defend: false }) }
@@ -655,7 +707,7 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
         }
         _ => {
             return Err(
-                "not an order (move, toward, goto, done, defend, undefend, bless, disband, build, rally, point, walls, undo, end)".to_string()
+                "not an order (move, toward, goto, done, defend, undefend, bless, disband, build, rally, queue, point, walls, undo, end)".to_string()
             );
         }
     }))

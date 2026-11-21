@@ -8,7 +8,7 @@
 use crate::game::{CityState, Game, Ghost, Sight, StackState, Task, describe_terrain};
 use crate::orders::{Event, Fallen, Record};
 use crate::state::scenario::side_name;
-use crate::state::{City, Hex, Map, MoveCost, Sends, Side, TileType, Travel, Unit, UnitProd};
+use crate::state::{City, Hex, Map, MoveCost, QueueEnd, Sends, Side, TileType, Travel, Unit, UnitProd};
 
 /// The line about the hex under the cursor: the turn, the hex's terrain and
 /// road, its city's name, how many units stand there, and, if the selected
@@ -579,10 +579,58 @@ pub fn travel_line(kind: &crate::state::UnitKind) -> Option<String> {
 pub fn progress_line(map: &Map, city: &City) -> String {
     match city.production() {
         Some(prod) if city.progress >= prod.time => {
-            format!("{} done: {}", kind_name(map, prod), waits(map, city, prod))
+            format!("{} done: {}{}", kind_name(map, prod), waits(map, city, prod), queue_short(city))
         }
-        Some(prod) => format!("Building {}, {} of {} done", kind_name(map, prod), city.progress, turns(prod.time)),
+        Some(prod) => format!(
+            "Building {}, {} of {} done{}",
+            kind_name(map, prod),
+            city.progress,
+            turns(prod.time),
+            queue_short(city)
+        ),
+        None if city.resting => "Building nothing, as you said".to_string(),
         None => "Building nothing".to_string(),
+    }
+}
+
+/// Where a city is in its queue, if it has one, after what it builds: " (2
+/// of 3; item 1 of 4)".
+pub fn queue_short(city: &City) -> String {
+    let queue = &city.queue;
+    let Some(item) = queue.current() else { return String::new() };
+    format!(" ({} of {}; item {} of {})", queue.made + 1, item.count, queue.at + 1, queue.items.len())
+}
+
+/// An item of a city's queue in a line, short: "3 Light Infantry: defend",
+/// "1 Riders: to point 0, blessed" (by a temple on the way), "2 Militia: to
+/// 5, 20" (a row and a column).
+pub fn queue_item_line(map: &Map, city: &City, i: usize) -> String {
+    let Some(item) = city.queue.items.get(i) else { return String::new() };
+    let name = city.units.get(item.what).map_or("?", |prod| kind_name(map, prod));
+    let to = match &item.sends {
+        Sends::Stay => "stay".to_string(),
+        Sends::Defend => "defend".to_string(),
+        Sends::Route(route) => match route.split_last() {
+            Some((end, [])) => format!("to {}, {}", end.row, end.col),
+            Some((end, stops)) => format!("to {}, {} by {} stops", end.row, end.col, stops.len()),
+            None => "nowhere".to_string(),
+        },
+        Sends::Point { n, bless: false } => format!("to point {n}"),
+        Sends::Point { n, bless: true } => format!("to point {n}, blessed"),
+    };
+    format!("{} {name}: {to}", item.count)
+}
+
+/// What a city's queue does after its last item, in a line.
+pub fn queue_end_line(city: &City) -> String {
+    match city.queue.end {
+        QueueEnd::Stop => "Then it stops, and waits for orders.".to_string(),
+        QueueEnd::Repeat { from, times: None } => format!("Then again from item {}, for ever.", from + 1),
+        QueueEnd::Repeat { from, times: Some(t) } => {
+            let left = t.saturating_sub(city.queue.rounds);
+            let times = if left == 1 { "once more".to_string() } else { format!("{left} times more") };
+            format!("Then again from item {}, {times}; then it stops.", from + 1)
+        }
     }
 }
 
@@ -591,7 +639,18 @@ pub fn progress_line(map: &Map, city: &City) -> String {
 pub fn progress_short(map: &Map, city: &City) -> String {
     match city.production() {
         Some(prod) if city.progress >= prod.time => format!("{}: {}", kind_name(map, prod), waits(map, city, prod)),
-        Some(prod) => format!("Building {}, {}/{}", kind_name(map, prod), city.progress, prod.time),
+        Some(prod) if city.queue.is_empty() => {
+            format!("Building {}, {}/{}", kind_name(map, prod), city.progress, prod.time)
+        }
+        Some(prod) => format!(
+            "{} {}/{}, item {}/{}",
+            kind_name(map, prod),
+            city.progress,
+            prod.time,
+            city.queue.at + 1,
+            city.queue.items.len()
+        ),
+        None if city.resting => "Building nothing, on purpose".to_string(),
         None => "Building nothing".to_string(),
     }
 }
@@ -699,8 +758,9 @@ pub fn task_line(game: &Game, task: &Task) -> String {
                     format!("{} done, {}", kind_name(map, prod), waits(map, city, prod))
                 }
                 (CityState::Building, Some(prod)) => {
-                    format!("building {}, {}/{}", kind_name(map, prod), city.progress, prod.time)
+                    format!("building {}, {}/{}{}", kind_name(map, prod), city.progress, prod.time, queue_short(city))
                 }
+                (CityState::Resting, _) => "builds nothing, as you said".to_string(),
                 _ => "builds nothing".to_string(),
             };
             match city.sends {

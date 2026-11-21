@@ -13,9 +13,9 @@ use crate::state::combat::{self, Fighter};
 use crate::state::scenario::{self, Scenario, side_name};
 use crate::state::{ATTACK_COST, Blessing};
 use crate::state::{
-    City, CityId, Direction, Hex, MAX_STACK, Map, MoveCost, MoveCostId, MoveRange, NUM_SIDES, Passage, Rng, Sends,
-    Side, TileType, Travel, Unit, UnitId, compute_range, hostile, passage, path_with, reach_with, step_cost,
-    step_toward_by, way_over_land,
+    City, CityId, Direction, Hex, MAX_QUEUE, MAX_STACK, Map, MoveCost, MoveCostId, MoveRange, NUM_SIDES, Passage,
+    Queue, QueueEnd, QueueItem, Rng, Sends, Side, TileType, Travel, Unit, UnitId, compute_range, hostile, passage,
+    path_with, reach_with, step_cost, step_toward_by, way_over_land,
 };
 
 /// The agent that passes its turns: the computer's, when nothing else is said.
@@ -79,8 +79,9 @@ enum Undo {
         /// had stalled, whether it had moved this turn.
         goals: Vec<(UnitId, MarchState)>,
     },
-    /// A city was set to build something else: what it was building, how far.
-    Built { city: CityId, building: Option<usize>, progress: u32 },
+    /// A city was set to build something else: what it was building, how
+    /// far, its queue and whether it rested.
+    Built { city: CityId, building: Option<usize>, progress: u32, queue: Box<Queue>, resting: bool },
     /// A city's walls were raised a level, for `price`.
     Walls { city: CityId, price: u32 },
     /// Units were given a standing order and have not gone anywhere yet:
@@ -131,8 +132,11 @@ pub enum StackState {
 /// How a city stands this turn.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CityState {
-    /// It builds nothing.
+    /// It builds nothing, and its holder has not said that is what it wants
+    /// (a city taken, a queue that ran out).
     Idle,
+    /// It builds nothing, as its holder said (`Order::Build` with nothing).
+    Resting,
     /// What it builds is done and waits: for the gold, or for room.
     Waiting,
     /// It is building.
@@ -750,11 +754,15 @@ impl Game {
                 if holder != side {
                     return Err(format!("only {} sets what it builds", side_name(holder)));
                 }
-                let (building, progress) = self.map.cities().get(city).map_or((None, 0), |c| (c.building, c.progress));
+                let c = self.map.cities().get(city).ok_or("there is no such city")?;
+                let (building, progress, queue, resting) = (c.building, c.progress, c.queue.clone(), c.resting);
                 if !self.map.set_production(city, what) {
                     return Err("it cannot build that".to_string());
                 }
-                self.undo = Some(Undo::Built { city, building, progress });
+                if let Some(c) = self.map.city_mut(city) {
+                    (c.queue, c.resting) = (Queue::default(), what.is_none());
+                }
+                self.undo = Some(Undo::Built { city, building, progress, queue: Box::new(queue), resting });
                 Ok(Vec::new())
             }
             Order::EndTurn => Ok(self.next_turn()),
@@ -860,10 +868,16 @@ impl Game {
                     }
                 }
                 if let Some(c) = self.map.city_mut(city) {
+                    // (With a queue, the item it builds now.)
+                    let at = c.queue.at;
+                    if let Some(item) = c.queue.items.get_mut(at) {
+                        item.sends = to.clone();
+                    }
                     c.sends = to;
                 }
                 Ok(Vec::new())
             }
+            Order::Queue { city, items, end } => self.set_queue(side, city, items, end),
             Order::RallyPoint { n, point } => self.set_rally_point(side, n, point),
         }
     }
@@ -1074,13 +1088,13 @@ impl Game {
                 }
                 self.select(ids);
             }
-            Undo::Built { city, building, progress } => {
+            Undo::Built { city, building, progress, queue, resting } => {
                 let holder = self.map.cities().get(city).map(|c| c.side);
                 if holder != Some(side) {
                     return Err("the city is not the side's".to_string());
                 }
                 if let Some(c) = self.map.city_mut(city) {
-                    (c.building, c.progress) = (building, progress);
+                    (c.building, c.progress, c.queue, c.resting) = (building, progress, *queue, resting);
                 }
             }
             Undo::Walls { city, price } => {
@@ -1400,6 +1414,58 @@ impl Game {
             return Err(format!("nothing {} builds can get there", c.name));
         }
         Ok(())
+    }
+
+    /// Set `city`'s queue for `side` (`Order::Queue`): every item one it
+    /// can build, at least one of it, sent somewhere it can send its units;
+    /// it goes on from the item it was building if that is still there.
+    fn set_queue(
+        &mut self,
+        side: Side,
+        city: CityId,
+        items: Vec<QueueItem>,
+        end: QueueEnd,
+    ) -> Result<Vec<Event>, String> {
+        self.check_rally(side, city, &[])?;
+        let kinds = self.map.cities().get(city).map_or(0, |c| c.units.len());
+        if items.len() > MAX_QUEUE {
+            return Err(format!("a queue holds {MAX_QUEUE} items at most"));
+        }
+        for item in &items {
+            if item.what >= kinds {
+                return Err("it cannot build that".to_string());
+            }
+            if item.count == 0 {
+                return Err("an item is one unit at least".to_string());
+            }
+            match &item.sends {
+                Sends::Stay | Sends::Defend => {}
+                Sends::Route(route) if route.is_empty() => return Err("a route to nowhere".to_string()),
+                Sends::Route(route) => self.check_rally(side, city, route)?,
+                Sends::Point { n, .. } => {
+                    let point = self.rally_point(side, *n).ok_or(format!("rally point {n} is not set"))?;
+                    self.check_rally(side, city, &[point.at])?;
+                }
+            }
+        }
+        if let QueueEnd::Repeat { from, .. } = end {
+            if from >= items.len() {
+                return Err("it cannot repeat from an item it does not have".to_string());
+            }
+        }
+        let Some(c) = self.map.city_mut(city) else { return Err("there is no such city".to_string()) };
+        if items.is_empty() {
+            c.queue = Queue::default();
+            return Ok(Vec::new());
+        }
+        // On from the item it was building, if that is still there.
+        let old = &c.queue;
+        let same = old.current().is_some_and(|item| items.get(old.at).is_some_and(|new| new.what == item.what));
+        let (at, made, rounds) = if same { (old.at, old.made, old.rounds) } else { (0, 0, 0) };
+        let made = made.min(items[at].count - 1);
+        c.queue = Queue { items, end, at, made, rounds };
+        c.follow_queue();
+        Ok(Vec::new())
     }
 
     /// `side`'s rally point `n`, if it is set.
@@ -1890,9 +1956,10 @@ impl Game {
     fn take(&mut self, city: CityId, from: Side, by: Side) -> Vec<Event> {
         let mut walls = None;
         if let Some(c) = self.map.city_mut(city) {
-            // Where its old holder sent its new units is not the new one's.
+            // Where its old holder sent its new units, and its queue, are not
+            // the new one's.
             c.side = by;
-            c.sends = Sends::Stay;
+            (c.sends, c.queue, c.resting) = (Sends::Stay, Queue::default(), false);
             // Its walls fall a level (the owner's rule, 2026-11-20).
             if c.walls > 0 {
                 c.walls -= 1;
@@ -1999,8 +2066,11 @@ impl Game {
                 self.map.units().get(unit).and_then(|u| self.map.city_at(u.pos())).map(|c| (c.id, c.sends.clone()));
             if let Some((city, sends)) = city {
                 events.push(Event::Built { city, unit });
-                // Its city sends it on.
+                // Its city sends it on, and its queue goes on.
                 self.send_new(side, unit, &sends);
+                if let Some(c) = self.map.city_mut(city) {
+                    c.built_one();
+                }
             }
         }
         self.name_commanders();
@@ -2505,7 +2575,7 @@ impl Game {
         for (id, holder, known, walls) in cities {
             if let Some(city) = view.map.city_mut(id) {
                 (city.building, city.progress) = (None, 0);
-                city.sends = Sends::Stay;
+                (city.sends, city.queue, city.resting) = (Sends::Stay, Queue::default(), false);
                 city.units.clear();
                 city.side = holder;
                 // In the fog: its walls as they were when it was seen.
@@ -2833,6 +2903,7 @@ impl Game {
             .collect();
         for city in map.cities().iter().filter(|c| c.side == side && side != Side::Grey) {
             let state = match city.production() {
+                None if city.resting => CityState::Resting,
                 None => CityState::Idle,
                 Some(prod) if city.progress >= prod.time.max(1) => CityState::Waiting,
                 Some(_) => CityState::Building,

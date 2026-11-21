@@ -10,7 +10,7 @@ use crate::game::Game;
 use crate::orders::{Event, Order};
 use crate::setup::Controller;
 use crate::state::scenario::side_name;
-use crate::state::{Sends, Side};
+use crate::state::{QueueEnd, Sends, Side};
 
 /// How a game without a window ended.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -173,6 +173,34 @@ pub fn order_line(game: &Game, order: &Order) -> String {
                 Sends::Point { n, bless: true } => format!("point {n} bless"),
             };
             format!("rally {} {} {to}", at.0, at.1)
+        }
+        Order::Queue { city, items, end } => {
+            let at = game.map.cities().get(*city).map_or((0, 0), |c| (c.pos.row, c.pos.col));
+            if items.is_empty() {
+                return format!("queue {} {} none", at.0, at.1);
+            }
+            let mut words = vec![format!("queue {} {}", at.0, at.1)];
+            for item in items {
+                let to = match &item.sends {
+                    Sends::Stay => String::new(),
+                    Sends::Defend => "@defend".to_string(),
+                    Sends::Point { n, bless: false } => format!("@point{n}"),
+                    Sends::Point { n, bless: true } => format!("@point{n}+bless"),
+                    Sends::Route(route) => {
+                        format!(
+                            "@{}",
+                            route.iter().map(|h| format!("{}.{}", h.row, h.col)).collect::<Vec<_>>().join(",")
+                        )
+                    }
+                };
+                words.push(format!("{}x{}{to}", item.what, item.count));
+            }
+            match end {
+                QueueEnd::Stop => {}
+                QueueEnd::Repeat { from, times: None } => words.push(format!("repeat {from}")),
+                QueueEnd::Repeat { from, times: Some(t) } => words.push(format!("repeat {from} {t}")),
+            }
+            words.join(" ")
         }
         Order::RallyPoint { n, point: None } => format!("point {n} none"),
         Order::RallyPoint { n, point: Some(p) } => {

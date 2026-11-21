@@ -457,6 +457,14 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                 ),
                 ("Done", "Puts the selected units aside for this turn: Next stack passes them by.".to_string()),
                 (
+                    "A queue",
+                    "In a city's window, + beside a kind adds it to the city's queue: so many of it, sent \
+                     somewhere (click an item to choose it, then set what it builds and where its units go). \
+                     After the last item it stops, or repeats from the chosen item, for ever or so many \
+                     times. A city whose queue ran out needs orders; Nothing means nothing, on purpose."
+                        .to_string(),
+                ),
+                (
                     "Rally points",
                     "R: up to ten places where units gather into armies, each a numbered flag on the map. \
                      A city sends its new units to one with its button (with a temple's blessing on the way, \

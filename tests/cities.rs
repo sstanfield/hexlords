@@ -299,7 +299,9 @@ fn the_windows_fit_the_map_and_take_the_wheel_from_it() {
         choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
         push(&mut s, LIST_DETAILS_ID);
         let (list, city, map) = (frame(&s, LIST_WINDOW_ID), frame(&s, CITY_WINDOW_ID), s.screen.map_rect());
-        assert!(list.right() <= city.x, "{w}x{h}: {list:?} {city:?}");
+        // (The city's window, with its queue, is too wide to stand beside
+        // the list in a 1024 wide window: it is on the right, over it.)
+        assert!(list.x < city.x && list.right() < city.right(), "{w}x{h}: {list:?} {city:?}");
         assert!(list.x >= map.x && city.right() <= map.right(), "{w}x{h}: {list:?} {city:?} {map:?}");
         // The wheel over a window is the window's, not the map's.
         let over = Point::new(list.x + list.w / 2, list.y + list.h / 2);

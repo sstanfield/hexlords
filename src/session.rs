@@ -43,7 +43,7 @@ use crate::render::{AssetDirs, coin_icon, unit_icon};
 use crate::screen::{FULLSCREEN_ID, HELP_KEYS_ID, MapScreen, QUIT_ID, Scene, ZOOM_IN_ID, ZOOM_OUT_ID};
 use crate::setup::Controller;
 use crate::state::scenario::side_name;
-use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Sends, Side, UnitId};
+use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_QUEUE, MAX_STACK, QueueEnd, QueueItem, Sends, Side, UnitId};
 use crate::tasks_window::{self, TasksWindow};
 use crate::temple_window::{self, TempleWindow};
 
@@ -356,6 +356,10 @@ pub struct Session {
     picking: Option<Pick>,
     /// The stops picked so far on the way (Shift+click), in order.
     stops: Vec<Hex>,
+    /// The item of a city's queue whose units the pick sends, if it is one;
+    /// and the city's window that made way for the pick, with its item.
+    rally_item: Option<usize>,
+    reopen: Option<(CityId, Option<usize>)>,
     /// Why the last pick was refused, said until the next one.
     refused: Option<String>,
 
@@ -515,6 +519,8 @@ impl Session {
             done: find(&screen, DONE_ID)?,
             picking: None,
             stops: Vec::new(),
+            rally_item: None,
+            reopen: None,
             refused: None,
 
             tasks: None,
@@ -1566,9 +1572,76 @@ impl Session {
             }
             CityOrder::Details(id) => self.open_city(id),
             CityOrder::PickRally(id) => {
-                (self.picking, self.refused) = (Some(Pick::Rally(id)), None);
+                (self.picking, self.refused, self.rally_item) = (Some(Pick::Rally(id)), None, None);
                 self.stops.clear();
+                self.make_way(id);
             }
+            CityOrder::ItemPick(id, i) => {
+                (self.picking, self.refused, self.rally_item) = (Some(Pick::Rally(id)), None, Some(i));
+                self.stops.clear();
+                self.make_way(id);
+            }
+            CityOrder::Chose(_) => {}
+            CityOrder::QueueAdd(id, what) => {
+                let Some(c) = self.screen.game.map.cities().get(id) else { return };
+                // Its units go where the last item's went (or, the first, where
+                // the city's went).
+                let sends = c.queue.items.last().map_or(c.sends.clone(), |item| item.sends.clone());
+                let at = c.queue.items.len();
+                if at < MAX_QUEUE {
+                    self.edit_queue(id, |items, _| items.push(QueueItem { what, count: 1, sends }));
+                    if let Some(window) = &mut self.city_window {
+                        window.choose_item(at);
+                    }
+                }
+            }
+            CityOrder::QueueCount(id, i, up) => self.edit_queue(id, |items, _| {
+                if let Some(item) = items.get_mut(i) {
+                    item.count = if up { item.count + 1 } else { item.count.saturating_sub(1).max(1) };
+                }
+            }),
+            CityOrder::QueueRemove(id, i) => self.edit_queue(id, |items, _| {
+                if i < items.len() {
+                    items.remove(i);
+                }
+            }),
+            CityOrder::QueueStop(id) => self.edit_queue(id, |_, end| *end = QueueEnd::Stop),
+            CityOrder::QueueRepeat(id, from) => self.edit_queue(id, |_, end| {
+                let times = match *end {
+                    QueueEnd::Repeat { times, .. } => times,
+                    QueueEnd::Stop => None,
+                };
+                *end = QueueEnd::Repeat { from, times };
+            }),
+            CityOrder::QueueTimes(id, up) => self.edit_queue(id, |_, end| {
+                if let QueueEnd::Repeat { from, times } = *end {
+                    // For ever, then once, twice ...: up goes along, down back.
+                    let times = match (times, up) {
+                        (None, true) => Some(1),
+                        (Some(n), true) => Some(n + 1),
+                        (Some(1) | None, false) => None,
+                        (Some(n), false) => Some(n - 1),
+                    };
+                    *end = QueueEnd::Repeat { from, times };
+                }
+            }),
+            CityOrder::ItemKind(id, i, what) => self.edit_queue(id, |items, _| {
+                if let Some(item) = items.get_mut(i) {
+                    item.what = what;
+                }
+            }),
+            CityOrder::ItemStay(id, i) => self.item_sends(id, i, |_| Sends::Stay),
+            CityOrder::ItemDefend(id, i) => self.item_sends(id, i, |_| Sends::Defend),
+            CityOrder::ItemPoint(id, i, n) => {
+                self.item_sends(id, i, |old| Sends::Point {
+                    n,
+                    bless: matches!(old, Sends::Point { bless: true, .. }),
+                });
+            }
+            CityOrder::ItemBless(id, i) => self.item_sends(id, i, |old| match old {
+                Sends::Point { n, bless } => Sends::Point { n: *n, bless: !bless },
+                other => other.clone(),
+            }),
             CityOrder::NoRally(id) => {
                 let _ = self.screen.game.apply(Order::Rally { city: id, to: Sends::Stay });
             }
@@ -1605,6 +1678,50 @@ impl Session {
         }
     }
 
+    /// The city's window makes way for the map while a hex is picked for
+    /// its units (it is back after the pick: `come_back`).
+    fn make_way(&mut self, city: CityId) {
+        if let Some(window) = self.city_window.take_if(|w| w.city() == city) {
+            self.reopen = Some((city, window.item()));
+            window.close(&mut self.screen.ui);
+        }
+    }
+
+    /// The city's window that made way for a pick is back, its item chosen.
+    fn come_back(&mut self) {
+        let Some((city, item)) = self.reopen.take() else { return };
+        self.open_city(city);
+        if let (Some(window), Some(i)) = (&mut self.city_window, item) {
+            window.choose_item(i);
+        }
+    }
+
+    /// Change `city`'s queue as `edit` says (its items, what it does after
+    /// the last), and give the order. A repeat from an item that is gone
+    /// repeats from the last; with no items, there is no queue.
+    fn edit_queue(&mut self, city: CityId, edit: impl FnOnce(&mut Vec<QueueItem>, &mut QueueEnd)) {
+        let Some(c) = self.screen.game.map.cities().get(city) else { return };
+        let (mut items, mut end) = (c.queue.items.clone(), c.queue.end);
+        edit(&mut items, &mut end);
+        if let QueueEnd::Repeat { from, times } = end {
+            end = match items.len() {
+                0 => QueueEnd::Stop,
+                n => QueueEnd::Repeat { from: from.min(n - 1), times },
+            };
+        }
+        let _ = self.screen.game.apply(Order::Queue { city, items, end });
+    }
+
+    /// Where the units of `city`'s queue's `i`th item go: what `to` makes
+    /// of where they went.
+    fn item_sends(&mut self, city: CityId, i: usize, to: impl FnOnce(&Sends) -> Sends) {
+        self.edit_queue(city, |items, _| {
+            if let Some(item) = items.get_mut(i) {
+                item.sends = to(&item.sends);
+            }
+        });
+    }
+
     /// A click on a button of a window about cities, or on one that opens
     /// one. False if it was none of those.
     fn window_click(&mut self, id: TbId) -> bool {
@@ -1628,11 +1745,11 @@ impl Session {
             }
             return true;
         }
-        if let Some(order) = self.city_window.as_ref().and_then(|w| w.click(id)) {
+        if let Some(order) = self.city_window.as_mut().and_then(|w| w.click(id)) {
             self.obey(order);
             return true;
         }
-        if let Some(order) = self.city_panel.as_ref().and_then(|p| p.click(id)) {
+        if let Some(order) = self.city_panel.as_mut().and_then(|p| p.click(id)) {
             self.obey(order);
             return true;
         }
@@ -2269,8 +2386,25 @@ impl Session {
                     Some(n) if self.stops.is_empty() => Sends::Point { n, bless: false },
                     _ => Sends::Route(self.stops.iter().copied().chain([hex]).collect()),
                 };
-                match self.screen.game.apply(Order::Rally { city, to }) {
-                    Ok(_) => self.stops.clear(),
+                // (For an item of its queue, if a window chose one.)
+                let item = self
+                    .rally_item
+                    .filter(|i| self.screen.game.map.cities().get(city).is_some_and(|c| *i < c.queue.items.len()));
+                let order = match item {
+                    Some(i) => {
+                        let c = self.screen.game.map.cities().get(city);
+                        let (mut items, end) =
+                            c.map_or((Vec::new(), QueueEnd::Stop), |c| (c.queue.items.clone(), c.queue.end));
+                        items[i].sends = to;
+                        Order::Queue { city, items, end }
+                    }
+                    None => Order::Rally { city, to },
+                };
+                match self.screen.game.apply(order) {
+                    Ok(_) => {
+                        self.stops.clear();
+                        self.come_back();
+                    }
                     // Refused: say why, and pick again.
                     Err(why) => {
                         self.refused = Some(why);
@@ -2605,12 +2739,14 @@ impl Session {
             }
             // Esc closes the help if it is open, else the window on top, and
             // with none open it drops the selection.
-            if command == MapCommand::Key(MapKey::Esc)
-                && !self.screen.help_open()
-                && self.picking.take().is_none()
-                && !self.close_top_window()
-            {
-                self.screen.game.deselect();
+            if command == MapCommand::Key(MapKey::Esc) && !self.screen.help_open() {
+                let picked = self.picking.take().is_some();
+                if picked {
+                    // (A window that made way for the pick is back.)
+                    self.come_back();
+                } else if !self.close_top_window() {
+                    self.screen.game.deselect();
+                }
             }
             self.screen.navigate(command);
             // A click, or Enter at the cursor, chooses a hex (or picks it).

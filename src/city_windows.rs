@@ -16,7 +16,7 @@ use crate::info;
 use crate::orders::RALLY_POINTS;
 use crate::render::minimap_image;
 use crate::state::scenario::side_name;
-use crate::state::{CityId, Map, Sends, Side};
+use crate::state::{CityId, MAX_QUEUE, Map, QueueEnd, Sends, Side};
 
 /// A city's window, its buttons for what it builds (`build_0` ... and
 /// nothing), and its close button.
@@ -35,6 +35,32 @@ pub const CITY_BLESS_ID: &str = "city_bless";
 pub fn point_id(n: usize) -> String {
     format!("city_point_{n}")
 }
+
+/// The queue (the window's alone): the button beside the `i`th kind it can
+/// build that adds one to the queue; the `i`th item's buttons (choose it,
+/// one less, one more, take it out); what it does after the last (stop,
+/// repeat from the chosen item, how many times).
+pub fn queue_add_id(i: usize) -> String {
+    format!("queue_add_{i}")
+}
+pub fn queue_item_id(i: usize) -> String {
+    format!("queue_item_{i}")
+}
+pub fn queue_less_id(i: usize) -> String {
+    format!("queue_less_{i}")
+}
+pub fn queue_more_id(i: usize) -> String {
+    format!("queue_more_{i}")
+}
+pub fn queue_remove_id(i: usize) -> String {
+    format!("queue_remove_{i}")
+}
+pub const QUEUE_STOP_ID: &str = "queue_stop";
+pub const QUEUE_REPEAT_ID: &str = "queue_repeat";
+pub const QUEUE_FEWER_ID: &str = "queue_fewer";
+pub const QUEUE_MORE_TIMES_ID: &str = "queue_more_times";
+/// The width of an item of the queue, in dp.
+const QUEUE_ITEM_DP: i32 = 330;
 pub const CITY_WALLS_ID: &str = "city_walls";
 /// The list of cities, its rows (`city_row_0` ...) and its buttons.
 pub const LIST_WINDOW_ID: &str = "cities_window";
@@ -95,6 +121,29 @@ pub enum CityOrder {
     /// The city's new units, sent to a rally point, seek a blessing on the
     /// way, or no longer.
     ToggleBless(CityId),
+    /// An item of the queue was chosen in the window (the window keeps it):
+    /// what it builds and where its units go are set from then on (the
+    /// `Item` orders).
+    Chose(CityId),
+    /// Add one of the `what`th kind it can build to the end of its queue.
+    QueueAdd(CityId, usize),
+    /// The `i`th item: one more of it, or one less (`up`), or out.
+    QueueCount(CityId, usize, bool),
+    QueueRemove(CityId, usize),
+    /// After the last item: stop; repeat from the `i`th; once more or once
+    /// less (`up`; fewer than once is for ever).
+    QueueStop(CityId),
+    QueueRepeat(CityId, usize),
+    QueueTimes(CityId, bool),
+    /// The `i`th item builds the `what`th kind instead.
+    ItemKind(CityId, usize, usize),
+    /// Where the `i`th item's units go: they stay, they defend the city, to
+    /// rally point `n`, a blessing on the way or not, a hex to pick.
+    ItemStay(CityId, usize),
+    ItemDefend(CityId, usize),
+    ItemPoint(CityId, usize, u8),
+    ItemBless(CityId, usize),
+    ItemPick(CityId, usize),
     /// Raise the city's walls a level (`Order::Walls`).
     RaiseWalls(CityId),
 }
@@ -169,6 +218,20 @@ pub struct CityView {
     points: [bool; RALLY_POINTS],
     bless: WidgetId,
     bless_row: WidgetId,
+    /// The queue (the window's alone): its heading and what it says when
+    /// empty; a row for each item (its row, choose it, less, more, out);
+    /// what it does after the last (its row, Stop, Repeat from here; the
+    /// line that says it, once less, once more); the item chosen.
+    queue_hint: Option<Text>,
+    queue_rows: Vec<(WidgetId, Text, [WidgetId; 3])>,
+    queue_end: Option<(WidgetId, [WidgetId; 2])>,
+    queue_times: Option<(WidgetId, Text)>,
+    chosen: Option<usize>,
+    /// The item its buttons are about now (the one chosen, or the one it
+    /// builds), while it has a queue: the window's alone.
+    about: Option<usize>,
+    /// The buttons that add one to the queue.
+    adds: Vec<WidgetId>,
     /// What its holder alone knows (what it builds, where its units go):
     /// shown or not, as much as the one looking knows (`info::Known`).
     private: Vec<WidgetId>,
@@ -199,16 +262,31 @@ impl CityView {
         let garrison = Text::new(build::text(ui, content, ""));
         let space = dp(ui, SPACING_DP);
         build::gap(ui, content, space);
+        // In the window two columns: what it can build, and all about the
+        // one under the pointer; its queue, and where its units go.
+        let (left, right) = if compact {
+            (content, content)
+        } else {
+            let columns = build::top_row(ui, content, space * 2);
+            (build::column(ui, columns, 0), build::column(ui, columns, 0))
+        };
+        let content = left;
         let heading = build::heading(ui, content, if compact { "Builds" } else { "What it builds" });
         let options = build::column(ui, content, dp(ui, 2));
         let group = TbId::new(&pid("production"));
         let mut builds = vec![(build::button(ui, options, &pid(BUILD_NOTHING_ID), "Nothing"), None)];
         let icon_size = dp(ui, OPTION_ICON_DP);
+        let mut adds = Vec::new();
         for (i, prod) in city.units.iter().enumerate() {
-            // The unit's icon, its name, strength and moves.
+            // The unit's icon, its name, strength and moves; in the window, a
+            // button beside it that adds one to the queue.
             let id = pid(&build_id(i));
-            if ui.inflate(options, &option_resource(&id)).is_err() {
+            let line = if compact { options } else { build::row(ui, options, dp(ui, 2)) };
+            if ui.inflate(line, &option_resource(&id)).is_err() {
                 continue;
+            }
+            if !compact {
+                adds.push(build::button(ui, line, &queue_add_id(i), "+"));
             }
             let found = |ui: &Ui, name: &str| ui.find(options, TbId::new(name));
             let (Some(button), Some(icon), Some(text)) =
@@ -252,6 +330,41 @@ impl CityView {
                 }
             }
         }
+        let content = right;
+        // The queue.
+        let (mut queue_hint, mut queue_rows, mut queue_end, mut queue_times) = (None, Vec::new(), None, None);
+        let mut queue_widgets = Vec::new();
+        if !compact {
+            queue_widgets.push(build::heading(ui, content, "Queue"));
+            let hint = build::text(ui, content, "");
+            queue_hint = Some(Text::new(hint));
+            let rows = build::column(ui, content, dp(ui, 2));
+            queue_widgets.push(rows);
+            for i in 0..MAX_QUEUE {
+                let row = build::row(ui, rows, dp(ui, 2));
+                let item = build::button(ui, row, &queue_item_id(i), "");
+                build::text_from_left(ui, item);
+                build::set_width(ui, item, dp(ui, QUEUE_ITEM_DP));
+                let less = build::button(ui, row, &queue_less_id(i), "-");
+                let more = build::button(ui, row, &queue_more_id(i), "+");
+                let out = build::button(ui, row, &queue_remove_id(i), "\u{d7}");
+                ui.set_visibility(row, Visibility::Gone);
+                queue_rows.push((row, Text::new(item), [less, more, out]));
+            }
+            let end = build::row(ui, content, dp(ui, 2));
+            build::text(ui, end, "Then:");
+            let stop = build::button(ui, end, QUEUE_STOP_ID, "Stop");
+            let repeat = build::button(ui, end, QUEUE_REPEAT_ID, "Repeat from the chosen one");
+            ui.set_visibility(end, Visibility::Gone);
+            queue_end = Some((end, [stop, repeat]));
+            let times = build::row(ui, content, dp(ui, 2));
+            let words = Text::new(build::text(ui, times, ""));
+            build::button(ui, times, QUEUE_FEWER_ID, "-");
+            build::button(ui, times, QUEUE_MORE_TIMES_ID, "+");
+            ui.set_visibility(times, Visibility::Gone);
+            queue_times = Some((times, words));
+            queue_widgets.push(hint);
+        }
         build::gap(ui, content, dp(ui, 4));
         let progress = Text::new(build::text(ui, content, ""));
         // Where its new units go.
@@ -287,6 +400,7 @@ impl CityView {
             .into_iter()
             .chain(rally_to.iter().map(|t| t.widget))
             .chain(details.iter().map(|d: &Text| d.widget))
+            .chain(queue_widgets)
             .collect();
         Some(CityView {
             prefix,
@@ -306,6 +420,13 @@ impl CityView {
             points: [false; RALLY_POINTS],
             bless,
             bless_row,
+            queue_hint,
+            queue_rows,
+            queue_end,
+            queue_times,
+            chosen: None,
+            about: None,
+            adds,
             private,
             known,
             builds,
@@ -398,8 +519,75 @@ impl CityView {
         for (i, line) in self.details.iter_mut().enumerate() {
             changed |= line.set(ui, details.get(i).map_or("", String::as_str));
         }
+        // The queue (the window's): an item a row, the one it builds marked,
+        // the one chosen pressed; what it does after the last.
+        let queue = &city.queue;
+        let about = if self.compact || queue.is_empty() {
+            None
+        } else {
+            Some(self.chosen.filter(|i| *i < queue.items.len()).unwrap_or(queue.at))
+        };
+        self.about = about;
+        if let Some(hint) = &mut self.queue_hint {
+            // (Once there is a queue, its items say enough.)
+            let words = if queue.is_empty() { "None: + beside a kind starts one." } else { "" };
+            changed |= hint.set(ui, words);
+            let visibility = if all && queue.is_empty() { Visibility::Visible } else { Visibility::Gone };
+            if ui.node(hint.widget).is_some_and(|n| n.visibility() != visibility) {
+                ui.set_visibility(hint.widget, visibility);
+                changed = true;
+            }
+        }
+        for (i, (row, text, buttons)) in self.queue_rows.iter_mut().enumerate() {
+            let item = queue.items.get(i);
+            let visibility = if all && item.is_some() { Visibility::Visible } else { Visibility::Gone };
+            if ui.node(*row).is_some_and(|n| n.visibility() != visibility) {
+                ui.set_visibility(*row, visibility);
+                changed = true;
+            }
+            let Some(item) = item else { continue };
+            let now = if i == queue.at { format!("  (now {}/{})", queue.made + 1, item.count) } else { String::new() };
+            changed |= text.set(ui, &format!("{}. {}{now}", i + 1, info::queue_item_line(map, city, i)));
+            set_pressed(ui, text.widget, about == Some(i));
+            for button in std::iter::once(&text.widget).chain(buttons.iter()) {
+                if ui.node(*button).is_some_and(|n| n.is_disabled() == mine) {
+                    ui.set_disabled(*button, !mine);
+                }
+            }
+        }
+        if let Some((row, [stop, repeat])) = self.queue_end {
+            let visibility = if all && !queue.is_empty() { Visibility::Visible } else { Visibility::Gone };
+            if ui.node(row).is_some_and(|n| n.visibility() != visibility) {
+                ui.set_visibility(row, visibility);
+                changed = true;
+            }
+            set_pressed(ui, stop, queue.end == QueueEnd::Stop);
+            set_pressed(ui, repeat, queue.end != QueueEnd::Stop);
+        }
+        if let Some((row, words)) = &mut self.queue_times {
+            let repeats = matches!(queue.end, QueueEnd::Repeat { .. });
+            let visibility = if all && !queue.is_empty() { Visibility::Visible } else { Visibility::Gone };
+            if ui.node(*row).is_some_and(|n| n.visibility() != visibility) {
+                ui.set_visibility(*row, visibility);
+                changed = true;
+            }
+            let line = if queue.is_empty() { String::new() } else { info::queue_end_line(city) };
+            changed |= words.set(ui, &line);
+            for button in ui.children(*row).to_vec().into_iter().skip(1) {
+                if ui.node(button).is_some_and(|n| n.is_disabled() == (mine && repeats)) {
+                    ui.set_disabled(button, !(mine && repeats));
+                }
+            }
+        }
+        for button in &self.adds {
+            if ui.node(*button).is_some_and(|n| n.is_disabled() == mine) {
+                ui.set_disabled(*button, !mine);
+            }
+        }
+        // Where the units go: the chosen item's, or the city's.
+        let sends = about.and_then(|i| queue.items.get(i)).map_or(&city.sends, |item| &item.sends);
         // (In the sidebar, where they end, and how many stops before.)
-        let (rally, rally_to) = match (&city.sends, self.compact) {
+        let (rally, rally_to) = match (sends, self.compact) {
             (Sends::Route(route), true) => {
                 let stops = match route.len().saturating_sub(1) {
                     0 => String::new(),
@@ -415,7 +603,10 @@ impl CityView {
             }
             (Sends::Stay, true) => ("New units stay here".to_string(), String::new()),
             (Sends::Defend, true) => ("New units defend it".to_string(), String::new()),
-            (sends, false) => (format!("New units {}.", info::sends_words(map, sends)), String::new()),
+            (sends, false) => match about {
+                Some(i) => (format!("Item {}'s units {}.", i + 1, info::sends_words(map, sends)), String::new()),
+                None => (format!("New units {}.", info::sends_words(map, sends)), String::new()),
+            },
         };
         changed |= self.rally.set(ui, &rally);
         if let Some(line) = &mut self.rally_to {
@@ -433,9 +624,9 @@ impl CityView {
         }
         // Keep and Defend are pressed while they are what it does; so is
         // the rally point its units go to.
-        set_pressed(ui, self.rally_buttons[1], city.sends == Sends::Stay);
-        set_pressed(ui, self.rally_buttons[2], city.sends == Sends::Defend);
-        let to_point = match city.sends {
+        set_pressed(ui, self.rally_buttons[1], *sends == Sends::Stay);
+        set_pressed(ui, self.rally_buttons[2], *sends == Sends::Defend);
+        let to_point = match *sends {
             Sends::Point { n, bless } => Some((usize::from(n), bless)),
             _ => None,
         };
@@ -460,8 +651,10 @@ impl CityView {
             ui.set_visibility(self.note.widget, visibility);
             changed = true;
         }
+        // The kind the chosen item builds is pressed; or what it builds.
+        let kind = about.and_then(|i| queue.items.get(i)).map_or(city.building, |item| Some(item.what));
         for (button, what) in &self.builds {
-            set_pressed(ui, *button, city.building == *what);
+            set_pressed(ui, *button, kind == *what);
             if ui.node(*button).is_some_and(|n| n.is_disabled() == mine) {
                 ui.set_disabled(*button, !mine);
             }
@@ -469,29 +662,66 @@ impl CityView {
         changed
     }
 
-    /// What a click on one of its buttons asks for.
-    fn click(&self, id: TbId) -> Option<CityOrder> {
+    /// What a click on one of its buttons asks for. While it has a queue,
+    /// the window's buttons for what it builds and where its units go are
+    /// about the item chosen.
+    fn click(&mut self, id: TbId) -> Option<CityOrder> {
         let is = |name: &str| id == TbId::new(&format!("{}{name}", self.prefix));
+        let (city, about) = (self.city, self.about);
         if is(CITY_RALLY_ID) {
-            return Some(CityOrder::PickRally(self.city));
+            return Some(about.map_or(CityOrder::PickRally(city), |i| CityOrder::ItemPick(city, i)));
         }
         if is(CITY_NO_RALLY_ID) {
-            return Some(CityOrder::NoRally(self.city));
+            return Some(about.map_or(CityOrder::NoRally(city), |i| CityOrder::ItemStay(city, i)));
         }
         if is(CITY_DEFEND_ID) {
-            return Some(CityOrder::DefendNew(self.city));
+            return Some(about.map_or(CityOrder::DefendNew(city), |i| CityOrder::ItemDefend(city, i)));
         }
         if is(CITY_BLESS_ID) {
-            return Some(CityOrder::ToggleBless(self.city));
+            return Some(about.map_or(CityOrder::ToggleBless(city), |i| CityOrder::ItemBless(city, i)));
         }
         if let Some(n) = (0..RALLY_POINTS).find(|n| is(&point_id(*n))) {
-            return Some(CityOrder::ToPoint(self.city, n as u8));
+            let n = n as u8;
+            return Some(about.map_or(CityOrder::ToPoint(city, n), |i| CityOrder::ItemPoint(city, i, n)));
         }
         if is(BUILD_NOTHING_ID) {
-            return Some(CityOrder::SetProduction(self.city, None));
+            return Some(CityOrder::SetProduction(city, None));
         }
-        let what = (0..self.builds.len()).find(|i| is(&build_id(*i)))?;
-        Some(CityOrder::SetProduction(self.city, Some(what)))
+        if let Some(what) = (0..self.builds.len()).find(|i| is(&build_id(*i))) {
+            return Some(
+                about.map_or(CityOrder::SetProduction(city, Some(what)), |i| CityOrder::ItemKind(city, i, what)),
+            );
+        }
+        if self.compact {
+            return None;
+        }
+        let row = |f: fn(usize) -> String| (0..MAX_QUEUE).find(|i| id == TbId::new(&f(*i)));
+        if let Some(what) = (0..self.adds.len()).find(|i| id == TbId::new(&queue_add_id(*i))) {
+            return Some(CityOrder::QueueAdd(city, what));
+        }
+        if let Some(i) = row(queue_item_id) {
+            self.chosen = Some(i);
+            return Some(CityOrder::Chose(city));
+        }
+        if let Some(i) = row(queue_less_id) {
+            return Some(CityOrder::QueueCount(city, i, false));
+        }
+        if let Some(i) = row(queue_more_id) {
+            return Some(CityOrder::QueueCount(city, i, true));
+        }
+        if let Some(i) = row(queue_remove_id) {
+            return Some(CityOrder::QueueRemove(city, i));
+        }
+        if id == TbId::new(QUEUE_STOP_ID) {
+            return Some(CityOrder::QueueStop(city));
+        }
+        if id == TbId::new(QUEUE_REPEAT_ID) {
+            return Some(CityOrder::QueueRepeat(city, about.unwrap_or(0)));
+        }
+        if id == TbId::new(QUEUE_FEWER_ID) || id == TbId::new(QUEUE_MORE_TIMES_ID) {
+            return Some(CityOrder::QueueTimes(city, id == TbId::new(QUEUE_MORE_TIMES_ID)));
+        }
+        None
     }
 }
 
@@ -568,6 +798,17 @@ impl CityWindow {
         build::refit(ui, self.parts);
     }
 
+    /// Choose the `i`th item of the queue (what it builds and where its
+    /// units go are set for it).
+    pub fn choose_item(&mut self, i: usize) {
+        self.view.chosen = Some(i);
+    }
+
+    /// The item of the queue its buttons are about, if it has a queue.
+    pub fn item(&self) -> Option<usize> {
+        self.view.about
+    }
+
     /// What the walls' button says, if it shows, and whether it can be pressed.
     pub fn walls(&self) -> Option<(&str, bool)> {
         self.walls_state.1.then_some((self.walls_state.0.as_str(), self.walls_state.2))
@@ -617,7 +858,7 @@ impl CityWindow {
 
     /// What a click on one of its buttons asks for (its close button is the
     /// caller's to handle).
-    pub fn click(&self, id: TbId) -> Option<CityOrder> {
+    pub fn click(&mut self, id: TbId) -> Option<CityOrder> {
         if id == TbId::new(CITY_WALLS_ID) {
             return Some(CityOrder::RaiseWalls(self.view.city));
         }
@@ -693,7 +934,7 @@ impl CityPanel {
     }
 
     /// What a click on one of its buttons asks for.
-    pub fn click(&self, id: TbId) -> Option<CityOrder> {
+    pub fn click(&mut self, id: TbId) -> Option<CityOrder> {
         if id == TbId::new(PANEL_OPEN_ID) {
             return Some(CityOrder::Details(self.view.city));
         }

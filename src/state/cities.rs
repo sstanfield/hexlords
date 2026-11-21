@@ -38,6 +38,55 @@ pub enum Sends {
     Point { n: u8, bless: bool },
 }
 
+/// The most items a city's queue holds.
+pub const MAX_QUEUE: usize = 8;
+
+/// An item of a city's queue (`City::queue`, `Order::Queue`): what it
+/// builds (an index into `City::units`), how many (one at least), and where
+/// they go.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QueueItem {
+    pub what: usize,
+    pub count: u32,
+    pub sends: Sends,
+}
+
+/// What a city's queue does once its last item is built.
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum QueueEnd {
+    /// It stops: the city builds nothing, and waits for orders.
+    #[default]
+    Stop,
+    /// It goes back to the item `from` (0 is the first) and on from there,
+    /// `times` times (`None`: for ever), and then stops.
+    Repeat { from: usize, times: Option<u32> },
+}
+
+/// A city's production queue: what it builds, in turn. Empty: none (the
+/// city builds what `City::building` says, one after another, for ever).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Queue {
+    pub items: Vec<QueueItem>,
+    pub end: QueueEnd,
+    /// The item being built, and how many of it are out already.
+    pub at: usize,
+    pub made: u32,
+    /// How many times it has gone back (`QueueEnd::Repeat`).
+    pub rounds: u32,
+}
+
+impl Queue {
+    /// True if there is no queue.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// The item being built, if there is a queue.
+    pub fn current(&self) -> Option<&QueueItem> {
+        self.items.get(self.at)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct City {
     pub id: CityId,
@@ -54,8 +103,14 @@ pub struct City {
     /// them (a veteran, 2; elite, 3).
     pub trains: u8,
     /// Where the units it builds go (`Order::Rally`): they stay in it (at
-    /// first), or defend it, or go somewhere.
+    /// first), or defend it, or go somewhere. With a queue, the item's.
     pub sends: Sends,
+    /// Its production queue (`Order::Queue`): while it has one, `building`
+    /// and `sends` are its item's.
+    pub queue: Queue,
+    /// Its holder said it is to build nothing (it is no task that needs
+    /// orders while it does not).
+    pub resting: bool,
     /// What it is building: an index into `units`, or nothing. Set it with
     /// `Map::set_production`.
     pub building: Option<usize>,
@@ -67,6 +122,43 @@ impl City {
     /// What it is building, if anything.
     pub fn production(&self) -> Option<&UnitProd> {
         self.building.and_then(|i| self.units.get(i))
+    }
+
+    /// A unit of what it builds is out: its queue, if it has one, goes on
+    /// (the next of the item, the next item, back to where it repeats from,
+    /// or, at its end, nothing, and the city waits for orders).
+    pub fn built_one(&mut self) {
+        let Some(count) = self.queue.current().map(|item| item.count) else { return };
+        self.queue.made += 1;
+        if self.queue.made < count {
+            return;
+        }
+        self.queue.made = 0;
+        self.queue.at += 1;
+        if self.queue.at >= self.queue.items.len() {
+            match self.queue.end {
+                QueueEnd::Repeat { from, times } if times.is_none_or(|t| self.queue.rounds < t) => {
+                    self.queue.rounds += 1;
+                    self.queue.at = from.min(self.queue.items.len() - 1);
+                }
+                _ => {
+                    self.queue = Queue::default();
+                    (self.building, self.progress, self.resting) = (None, 0, false);
+                    return;
+                }
+            }
+        }
+        self.follow_queue();
+    }
+
+    /// Its work and where its units go are its queue's item's.
+    pub fn follow_queue(&mut self) {
+        let Some(item) = self.queue.current().cloned() else { return };
+        if self.building != Some(item.what) {
+            (self.building, self.progress) = (Some(item.what), 0);
+        }
+        self.sends = item.sends;
+        self.resting = false;
     }
 }
 
@@ -109,6 +201,8 @@ impl Cities {
             income: DEFAULT_INCOME,
             trains: 1,
             sends: Sends::Stay,
+            queue: Queue::default(),
+            resting: false,
             building: None,
             progress: 0,
         };

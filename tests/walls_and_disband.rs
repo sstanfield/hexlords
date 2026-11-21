@@ -201,7 +201,8 @@ fn the_city_window_raises_the_walls() {
     s.frame(0);
     assert_eq!(walls(&s.screen.game, REDHOLD), 3);
     assert_eq!(s.city_window().unwrap().walls(), Some(("The walls were raised this turn", false)));
-    // Another side's city: no button.
+    // Another side's city: no button (the window shut first: it is wide).
+    common::press(&mut s, turbo_ferret::SpecialKey::Esc);
     click_hex(&mut s, BLUEMOOR);
     type_char(&mut s, 'o');
     s.frame(0);
