@@ -11,7 +11,7 @@ use hexgame::agents::parse_order;
 use hexgame::game::{Game, StackState, Task};
 use hexgame::headless::order_line;
 use hexgame::orders::{Event, Order};
-use hexgame::patrol_window::{PATROL_CANCEL_ID, choice_id};
+use hexgame::patrol_window::{PATROL_CANCEL_ID, PATROL_OK_ID, choice_id};
 use hexgame::screen::Scene;
 use hexgame::session::{MENU_UNITS_ID, PATROL_ID, Pick, Session};
 use hexgame::setup::{Fog, Setup};
@@ -402,7 +402,12 @@ fn p_then_shift_click_the_waypoints_click_the_last_and_say_how_it_fights() {
     let window = s.patrol_window().expect("it asks");
     assert_eq!(window.waypoints, [WEST, MIDDLE, EAST, WEST]);
     assert!(red.iter().all(|id| unit(&s.screen.game, *id).patrol.is_none()), "not before it is told");
+    // A choice is pressed (never attack, at first); Patrol gives the order.
+    assert_eq!(window.chosen(), None);
     push_widget(&mut s, &choice_id(2));
+    assert_eq!(s.patrol_window().map(|w| w.chosen()), Some(Some(75)), "chosen, not yet ordered");
+    assert!(red.iter().all(|id| unit(&s.screen.game, *id).patrol.is_none()));
+    push_widget(&mut s, PATROL_OK_ID);
     assert!(s.patrol_window().is_none());
     let patrol = unit(&s.screen.game, red[0]).patrol.clone().expect("patrolling");
     assert_eq!((patrol.attack, patrol.round, patrol.stops.len()), (Some(75), true, 3));
@@ -474,4 +479,58 @@ fn after_a_battle_next_goes_to_the_patrol_and_d_lets_it_go_on() {
     type_char(&mut s, 'd');
     assert!(red.iter().all(|id| !unit(&s.screen.game, *id).fought && unit(&s.screen.game, *id).patrol.is_some()));
     assert!(s.screen.game.waiting_stacks(Side::Red).is_empty());
+}
+
+/// The owner: "patrol was not working ... it seems like it was in goto mode".
+/// While the window asks how the patrol fights, the stack is not selected: a
+/// click or Enter on the map gives it no order; Enter is the window's
+/// primary choice.
+#[test]
+fn while_the_window_asks_the_map_gives_no_order_and_enter_chooses() {
+    let mut game = game();
+    let red = put(&mut game, Side::Red, "soldiers", WEST, 2);
+    let mut s = session(game);
+    click_hex(&mut s, WEST);
+    type_char(&mut s, 'p');
+    click_hex(&mut s, EAST);
+    assert!(s.patrol_window().is_some());
+    assert_eq!(s.screen.game.selected(), None, "nothing selected while it asks");
+    assert_eq!(s.outlined(), [WEST, EAST], "the map outlines its waypoints");
+    // A click on the map far off (beside the window): no move, no Go to;
+    // the window still asks.
+    let map = s.screen.map_rect();
+    click(&mut s, turbo_ferret::Point::new(map.x + 20, map.y + map.h - 20));
+    assert!(red.iter().all(|id| pos(&s.screen.game, *id) == WEST && unit(&s.screen.game, *id).route.is_empty()));
+    assert!(s.patrol_window().is_some());
+    // Enter at the cursor: the window's primary choice, not a move there.
+    s.screen.game.set_cursor(SOUTH);
+    press(&mut s, SpecialKey::Enter);
+    assert!(s.patrol_window().is_none());
+    assert!(red.iter().all(|id| unit(&s.screen.game, *id).goto().is_none()));
+    assert!(red.iter().all(|id| unit(&s.screen.game, *id).patrol.is_some()), "patrolling");
+}
+
+/// A stack on patrol, selected to look at it, is not sent elsewhere by a
+/// stray click: a click that would end its patrol asks for a second there.
+#[test]
+fn a_stray_click_does_not_end_a_patrol() {
+    let mut game = game();
+    let red = put(&mut game, Side::Red, "soldiers", WEST, 2);
+    let mut s = session(game);
+    click_hex(&mut s, WEST);
+    type_char(&mut s, 'p');
+    click_hex(&mut s, EAST);
+    push_widget(&mut s, &choice_id(0));
+    push_widget(&mut s, PATROL_OK_ID);
+    let at = pos(&s.screen.game, red[0]);
+    click_hex(&mut s, at);
+    assert_eq!(s.screen.game.selection().len(), 2, "selected, all of it");
+    // A hex beyond its reach: no Go to; the line says how.
+    click_hex(&mut s, SOUTH);
+    assert!(red.iter().all(|id| unit(&s.screen.game, *id).patrol.is_some()), "still patrolling");
+    assert!(s.unit_line().starts_with("It is on patrol: click there again"), "{}", s.unit_line());
+    // There again: it goes there, and patrols no more.
+    click_hex(&mut s, SOUTH);
+    assert!(red.iter().all(|id| unit(&s.screen.game, *id).patrol.is_none()));
+    assert_eq!(unit(&s.screen.game, red[0]).goto(), Some(SOUTH));
 }

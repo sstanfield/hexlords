@@ -546,7 +546,13 @@ thing to happen. Ideas to try, as the rules grow:
   first again): round and round; else back and forth along them
   (`state::Patrol`). A small window then asks whether it attacks: never (a
   scout keeps out of fights), or at 90, 75, 60 or 50 in a hundred or
-  better (the choice made last is its first button). It takes this turn's
+  better (the choice made last is pressed at first); Patrol (or Enter)
+  gives the order (the owner's word 2026-11-21: the window wants an OK).
+  While it asks the stack is not selected, so that a click or Enter on the
+  map gives it no order; Never mind (or Esc) selects it again. A stack on
+  patrol or marauding that is selected is not sent elsewhere by one stray
+  click: a click that would give it an order (and so end its duty) says
+  so, and a second click on the same hex sends it. It takes this turn's
   part at once, and goes on at the start of each of its side's turns,
   after the marches (`Game::patrols`): as far as the slowest of it gets,
   on from a waypoint at once with what movement is left (a short patrol

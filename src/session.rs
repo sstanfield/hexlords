@@ -38,7 +38,7 @@ use crate::info;
 use crate::log_window::{self, LogWindow};
 use crate::options_window::{self, Options, OptionsWindow};
 use crate::orders::{Event, Order, RallyPoint};
-use crate::patrol_window::{self, PatrolWindow};
+use crate::patrol_window::{self, PatrolClick, PatrolWindow};
 use crate::rally_window::{self, RallyClick, RallyWindow};
 use crate::render::{AssetDirs, coin_icon, unit_icon};
 use crate::screen::{FULLSCREEN_ID, HELP_KEYS_ID, MapScreen, QUIT_ID, Scene, ZOOM_IN_ID, ZOOM_OUT_ID};
@@ -366,6 +366,9 @@ pub struct Session {
     picking: Option<Pick>,
     /// The stops picked so far on the way (Shift+click), in order.
     stops: Vec<Hex>,
+    /// A hex clicked once while a stack on patrol or marauding was selected:
+    /// a second click there sends it (`choose`).
+    confirm: Option<Hex>,
     /// The item of a city's queue whose units the pick sends, if it is one;
     /// and the city's window that made way for the pick, with its item.
     rally_item: Option<usize>,
@@ -536,6 +539,7 @@ impl Session {
             picking: None,
             stops: Vec::new(),
             rally_item: None,
+            confirm: None,
             reopen: None,
             refused: None,
 
@@ -799,7 +803,7 @@ impl Session {
     fn turn_passed(&mut self) {
         // Nothing picked, nothing said, carries over to another turn; nor a
         // question about units (they may be gone, or another side's turn).
-        (self.picking, self.refused) = (None, None);
+        (self.picking, self.refused, self.confirm) = (None, None, None);
         if let Some(window) = self.disband.take() {
             window.close(&mut self.screen.ui);
         }
@@ -1596,8 +1600,26 @@ impl Session {
             Some(8) => self.options_window.take().map(|w| w.close(ui)).is_some(),
             Some(9) => self.end_ask.take().map(|w| build::close(ui, w.window)).is_some(),
             Some(10) => self.rally_window.take().map(|w| w.close(ui)).is_some(),
-            Some(11) => self.patrol_window.take().map(|w| w.close(ui)).is_some(),
+            Some(11) => {
+                self.let_patrol_go();
+                true
+            }
             _ => false,
+        }
+    }
+
+    /// The patrol's window is let go (Never mind, Esc): its units are
+    /// selected again, as they were before it asked.
+    fn let_patrol_go(&mut self) {
+        let Some(window) = self.patrol_window.take() else { return };
+        let units = window.units.clone();
+        window.close(&mut self.screen.ui);
+        let game = &mut self.screen.game;
+        if units.iter().all(|id| game.map.units().get(*id).is_some_and(|u| u.side() == game.player())) {
+            game.deselect();
+            for id in units {
+                game.toggle_unit(id);
+            }
         }
     }
 
@@ -1879,6 +1901,28 @@ impl Session {
         if self.between {
             self.start_turn();
         }
+        // A stack on patrol or marauding is not sent elsewhere by a stray
+        // click: a click that would give it an order (and so end its duty)
+        // asks for a second on the same hex.
+        let game = &self.screen.game;
+        let selection = game.selection();
+        let units = || selection.iter().filter_map(|id| game.map.units().get(*id));
+        let here = units().next().map(|u| u.pos());
+        if let (true, Some(here)) = (units().any(|u| u.on_duty()), here) {
+            let side = game.player();
+            let theirs =
+                |id: &UnitId| !selection.contains(id) && game.map.units().get(*id).is_some_and(|u| u.side() == side);
+            let other_stack = game.map.units_at(hex).iter().any(theirs);
+            let orders = hex != here && (game.can_move_to(hex) || !other_stack);
+            if orders && self.confirm != Some(hex) {
+                let duty = if units().any(|u| u.marauding) { "marauding" } else { "on patrol" };
+                self.notice =
+                    Some(format!("It is {duty}: click there again to send it there instead, which ends that."));
+                self.confirm = Some(hex);
+                return;
+            }
+        }
+        self.confirm = None;
         let before = self.screen.game.history().len();
         let sent = self.screen.game.selection().to_vec();
         let outcome = self.screen.game.select_hex(hex);
@@ -2371,6 +2415,10 @@ impl Session {
         let picked = (units.as_slice(), waypoints.as_slice());
         let window = PatrolWindow::ask(&mut self.screen.ui, (root, area), picked, &patrol, self.patrol_odds);
         self.patrol_window = Some(window);
+        // While it asks, nothing is selected: a click or Enter on the map
+        // gives the stack no order (it keeps its units, and the map outlines
+        // its waypoints).
+        self.screen.game.deselect();
         self.screen.settle();
     }
 
@@ -2927,6 +2975,13 @@ impl Session {
                 }
             }
             self.screen.navigate(command);
+            // While the patrol's window asks, Enter is its Patrol.
+            if command == MapCommand::Key(MapKey::Enter) {
+                if let Some(odds) = self.patrol_window().map(|w| w.chosen()) {
+                    self.patrol_chosen(odds);
+                    continue;
+                }
+            }
             // A click, or Enter at the cursor, chooses a hex (or picks it).
             // C++: MapWidget::OnEvent
             // With Shift, while picking, a stop on the way.
@@ -3031,13 +3086,10 @@ impl Session {
                 }
                 RootCommand::Click(id) if id == TbId::new(PATROL_ID) => self.start_patrol(),
                 RootCommand::Click(id) if id == TbId::new(MARAUD_ID) => self.toggle_maraud(),
-                RootCommand::Click(id) if id == TbId::new(patrol_window::PATROL_CANCEL_ID) => {
-                    if let Some(window) = self.patrol_window.take() {
-                        window.close(&mut self.screen.ui);
-                    }
-                }
-                RootCommand::Click(id) if self.patrol_window.as_ref().and_then(|w| w.click(id)).is_some() => {
-                    if let Some(odds) = self.patrol_window.as_ref().and_then(|w| w.click(id)) {
+                RootCommand::Click(id) if id == TbId::new(patrol_window::PATROL_CANCEL_ID) => self.let_patrol_go(),
+                RootCommand::Click(id) if self.patrol_window.as_ref().is_some_and(|w| w.owns(id)) => {
+                    let click = self.patrol_window.as_mut().and_then(|w| w.click(&mut self.screen.ui, id));
+                    if let Some(PatrolClick::Ok(odds)) = click {
                         self.patrol_chosen(odds);
                     }
                 }
@@ -3212,6 +3264,9 @@ impl Scene for Session {
     }
 
     fn outlined(&self) -> &[Hex] {
+        if let Some(window) = self.patrol_window() {
+            return &window.waypoints;
+        }
         if self.picking.is_some() {
             return &self.stops;
         }
