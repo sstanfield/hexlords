@@ -169,10 +169,10 @@ fn two_battles_in_one_order_keep_their_own_fights() {
 }
 
 /// While a patrol is selected, a click on another of the player's stacks in
-/// reach selects it (select_hex) — the guard should not ask for a second
-/// click as if it gave an order.
+/// reach asks whether to join it or take it; taking it leaves the patrol
+/// be.
 #[test]
-fn with_a_patrol_selected_a_click_on_another_own_stack_selects_it_at_once() {
+fn with_a_patrol_selected_a_click_on_another_own_stack_asks_and_can_take_it() {
     let mut game = game();
     let red = put(&mut game, Side::Red, "soldiers", Hex::new(10, 5), 2);
     game.apply(Order::Patrol { units: red.clone(), waypoints: vec![Hex::new(10, 5), Hex::new(10, 11)], attack: None })
@@ -186,10 +186,13 @@ fn with_a_patrol_selected_a_click_on_another_own_stack_selects_it_at_once() {
     click_hex(&mut s, at);
     assert_eq!(s.screen.game.selection().len(), 2);
     assert!(s.screen.game.can_move_to(other_hex));
+    // Join it or take it: the window asks (and says the patrol would end);
+    // Take that stack.
     click_hex(&mut s, other_hex);
-    eprintln!("line: {}", s.unit_line());
-    eprintln!("selection: {:?}", s.screen.game.selection());
-    assert_eq!(s.screen.game.selection(), other.as_slice(), "the other stack should be selected at once");
+    assert!(s.asks_mission());
+    common::push_widget(&mut s, hexgame::session::MISSION_TAKE_ID);
+    assert_eq!(s.screen.game.selection(), other.as_slice(), "the other stack is selected");
+    assert!(red.iter().all(|id| unit(&s.screen.game, *id).patrol.is_some()), "the patrol goes on");
 }
 
 /// A unit sent somewhere (Go to, standing order) waits on a hex with an idle

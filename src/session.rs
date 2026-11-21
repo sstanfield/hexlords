@@ -123,6 +123,14 @@ pub const MY_CITIES_ID: &str = "my_cities";
 pub const CITY_DETAILS_ID: &str = "city_details";
 /// The Game menu's Options (`options_window`).
 pub const OPTIONS_ID: &str = "options";
+/// The window that asks before a click gives new orders to a stack that
+/// has orders of its own, and its buttons.
+/// It asks too when a click on another of the person's stacks could join
+/// it or take it instead (Take: that stack is selected).
+pub const MISSION_ASK_ID: &str = "mission_ask";
+pub const MISSION_GO_ID: &str = "mission_go";
+pub const MISSION_TAKE_ID: &str = "mission_take";
+pub const MISSION_KEEP_ID: &str = "mission_keep";
 /// The Units menu's Rally points (`rally_window`).
 pub const RALLY_POINTS_ID: &str = "rally_points";
 /// The Units menu's Patrol (`patrol_window`) and Maraud.
@@ -370,9 +378,16 @@ pub struct Session {
     picking: Option<Pick>,
     /// The stops picked so far on the way (Shift+click), in order.
     stops: Vec<Hex>,
-    /// A hex clicked once while a stack on patrol or marauding was selected:
-    /// a second click there sends it (`choose`).
-    confirm: Option<(Hex, Vec<UnitId>)>,
+    /// The selection the screen made by itself (the stack that waits for
+    /// orders next), while it is that: a click on another of the person's
+    /// stacks takes that one instead of sending this one onto it.
+    auto_selection: Vec<UnitId>,
+    /// The window that asks before a click gives new orders to a stack with
+    /// orders of its own, or joins another (`ask_mission`): where the click
+    /// sends them, and the units; and the click it lets through.
+    mission_ask: Option<(WindowParts, Hex, Vec<UnitId>)>,
+    mission_takes: bool,
+    overriding: bool,
     /// The item of a city's queue whose units the pick sends, if it is one;
     /// and the city's window that made way for the pick, with its item.
     rally_item: Option<usize>,
@@ -543,7 +558,10 @@ impl Session {
             picking: None,
             stops: Vec::new(),
             rally_item: None,
-            confirm: None,
+            auto_selection: Vec::new(),
+            mission_ask: None,
+            mission_takes: false,
+            overriding: false,
             reopen: None,
             refused: None,
 
@@ -669,6 +687,7 @@ impl Session {
         }
         if !self.screen.game.waiting_stacks(self.screen.game.player()).is_empty() {
             self.next_stack(false);
+            self.auto_selection = self.screen.game.selection().to_vec();
         }
     }
 
@@ -821,7 +840,8 @@ impl Session {
     fn turn_passed(&mut self) {
         // Nothing picked, nothing said, carries over to another turn; nor a
         // question about units (they may be gone, or another side's turn).
-        (self.picking, self.refused, self.confirm, self.reopen, self.notice) = (None, None, None, None, None);
+        (self.picking, self.refused, self.reopen, self.notice) = (None, None, None, None);
+        self.close_mission_ask();
         if let Some(window) = self.disband.take() {
             window.close(&mut self.screen.ui);
         }
@@ -1614,6 +1634,7 @@ impl Session {
             self.end_ask.as_ref().and_then(|w| open(w.window)),
             self.rally_window.as_ref().and_then(|w| open(w.window())),
             self.patrol_window.as_ref().and_then(|w| open(w.window())),
+            self.mission_ask.as_ref().and_then(|(w, _, _)| open(w.window)),
         ];
         // The one on top: the last of them among the root window's children.
         let order = ui.children(root).to_vec();
@@ -1637,6 +1658,7 @@ impl Session {
                 self.let_patrol_go();
                 true
             }
+            Some(12) => self.mission_ask.take().map(|(w, _, _)| build::close(ui, w.window)).is_some(),
             _ => false,
         }
     }
@@ -1784,6 +1806,118 @@ impl Session {
         }
     }
 
+    /// True if what is selected is what the screen chose by itself (and the
+    /// person has not taken it).
+    fn chosen_by_screen(&self) -> bool {
+        let selection = self.screen.game.selection();
+        !selection.is_empty() && selection == self.auto_selection.as_slice()
+    }
+
+    /// Ask before a click sends `units` (the selected stack) to `hex`:
+    /// `mission`, their orders of their own in words, which would end; and
+    /// `join`, if another of the person's stacks is there (its rally point,
+    /// if it is one; whether the screen chose `units`): join it, or take
+    /// that stack instead (the first button is the one the screen's choice
+    /// makes likelier: take it; the person's, join it).
+    fn ask_mission(
+        &mut self,
+        hex: Hex,
+        units: Vec<UnitId>,
+        (mission, join): (Option<&str>, Option<(Option<u8>, bool)>),
+    ) {
+        self.close_mission_ask();
+        let (root, area) = (self.screen.root_window(), self.window_area());
+        let (who, them, their, they_go) = match units.len() {
+            1 => ("This unit is".to_string(), "it", "Its", "it goes"),
+            n => (format!("These {n} units are"), "them", "Their", "they go"),
+        };
+        let place = info::place(&self.screen.game.map, hex);
+        let ui = &mut self.screen.ui;
+        let title = if join.is_some() { "Join, or take that stack?" } else { "New orders?" };
+        let parts = build::window(ui, root, MISSION_ASK_ID, title);
+        let space = ui.dimension_converter().dp_to_px(SPACING_DP * 2);
+        let send = match join {
+            Some((Some(n), _)) => {
+                build::heading(ui, parts.content, &format!("Send {them} to rally point {n}, or take the stack there?"));
+                format!("Send {them} to the point")
+            }
+            Some((None, _)) => {
+                build::heading(ui, parts.content, &format!("Join the stack at {place}, or take that stack?"));
+                "Join it".to_string()
+            }
+            None => format!("Send {them}"),
+        };
+        match (mission, join) {
+            (Some(mission), Some(_)) => {
+                build::text(ui, parts.content, &format!("{who} {mission}: that ends if {they_go}."));
+            }
+            (Some(mission), None) => {
+                build::heading(ui, parts.content, &format!("{who} {mission}."));
+                build::text(ui, parts.content, &format!("Send {them} to {place} instead? {their} orders end."));
+            }
+            (None, _) => {}
+        }
+        build::gap(ui, parts.content, space);
+        let buttons = build::row(ui, parts.content, space);
+        match join {
+            Some((_, true)) => {
+                build::primary_button(ui, buttons, MISSION_TAKE_ID, "Take that stack");
+                build::button(ui, buttons, MISSION_GO_ID, &send);
+                build::button(ui, buttons, MISSION_KEEP_ID, "Never mind");
+                build::text(ui, parts.content, "(Enter takes it; Esc: never mind.)");
+            }
+            Some((_, false)) => {
+                build::primary_button(ui, buttons, MISSION_GO_ID, &send);
+                build::button(ui, buttons, MISSION_TAKE_ID, "Take that stack");
+                build::button(ui, buttons, MISSION_KEEP_ID, "Never mind");
+                build::text(ui, parts.content, &format!("(Enter: {}; Esc: never mind.)", send.to_lowercase()));
+            }
+            None => {
+                build::primary_button(ui, buttons, MISSION_GO_ID, &send);
+                build::button(ui, buttons, MISSION_KEEP_ID, &format!("Keep {} orders", their.to_lowercase()));
+                build::text(ui, parts.content, "(Enter sends; Esc keeps.)");
+            }
+        }
+        build::place(ui, parts, area, (0.5, 0.3));
+        self.mission_ask = Some((parts, hex, units));
+        self.mission_takes = matches!(join, Some((_, true)));
+        self.screen.settle();
+    }
+
+    /// Take the stack on the hex the window asked about, instead of sending
+    /// the selected one there.
+    fn mission_take(&mut self) {
+        let Some((parts, hex, _)) = self.mission_ask.take() else { return };
+        build::close(&mut self.screen.ui, parts.window);
+        self.screen.game.deselect();
+        self.auto_selection.clear();
+        self.choose(hex);
+    }
+
+    /// The window that asked about a stack's orders goes, if it is open.
+    fn close_mission_ask(&mut self) {
+        if let Some((parts, _, _)) = self.mission_ask.take() {
+            build::close(&mut self.screen.ui, parts.window);
+        }
+    }
+
+    /// The person said to send the stack: the click goes through (if the
+    /// stack is still what is selected).
+    fn mission_go(&mut self) {
+        let Some((parts, hex, units)) = self.mission_ask.take() else { return };
+        build::close(&mut self.screen.ui, parts.window);
+        if self.screen.game.selection() == units.as_slice() {
+            self.overriding = true;
+            self.choose(hex);
+            self.overriding = false;
+        }
+    }
+
+    /// True while a window asks before a stack's orders are overridden.
+    pub fn asks_mission(&self) -> bool {
+        self.mission_ask.as_ref().is_some_and(|(parts, _, _)| build::is_open(&self.screen.ui, parts.window))
+    }
+
     /// The person gave an order: their turn starts, if it has not (their log
     /// was open between turns): "so does any order".
     fn order_given(&mut self) {
@@ -1798,11 +1932,12 @@ impl Session {
     fn drop_pick(&mut self) {
         (self.picking, self.refused, self.rally_item, self.reopen) = (None, None, None, None);
         self.stops.clear();
-        // (And the patrol's window: the person has gone on to something
-        // else.)
+        // (And the patrol's window, and one that asks about a stack's
+        // orders: the person has gone on to something else.)
         if let Some(window) = self.patrol_window.take() {
             window.close(&mut self.screen.ui);
         }
+        self.close_mission_ask();
     }
 
     /// The city's window makes way for the map while a hex is picked for
@@ -1977,30 +2112,42 @@ impl Session {
         if self.between {
             self.start_turn_with(false);
         }
-        // A stack on patrol or marauding is not sent elsewhere by a stray
-        // click: a click that would give it an order (and so end its duty)
-        // asks for a second on the same hex.
+        // With a stack selected: a click on another of the person's stacks
+        // it could join (in reach, or at a rally point) asks whether it
+        // joins it or that stack is taken instead (the owner's word,
+        // 2026-11-21: "switching stacks is legit but so is combining them
+        // ... a popup to ask intent"); one beyond reach is taken. Any other
+        // order for a stack with orders of its own (it defends, marches,
+        // patrols, marauds) asks first too ("a popup ... explaining the
+        // units' current mission and asking for permission to override").
+        let by_screen = self.chosen_by_screen();
         let game = &self.screen.game;
-        let selection = game.selection();
-        let units = || selection.iter().filter_map(|id| game.map.units().get(*id));
-        let here = units().next().map(|u| u.pos());
-        if let (true, Some(here)) = (units().any(|u| u.on_duty()), here) {
+        let selection = game.selection().to_vec();
+        let units: Vec<&crate::state::Unit> = selection.iter().filter_map(|id| game.map.units().get(*id)).collect();
+        if let Some(here) = units.first().map(|u| u.pos()) {
             let side = game.player();
             let theirs =
                 |id: &UnitId| !selection.contains(id) && game.map.units().get(*id).is_some_and(|u| u.side() == side);
-            // (Another of the side's stacks there is selected, no order.)
             let other_stack = game.map.units_at(hex).iter().any(theirs);
-            let orders = hex != here && !other_stack;
-            let asked = (hex, selection.to_vec());
-            if orders && self.confirm.as_ref() != Some(&asked) {
-                let duty = if units().any(|u| u.marauding) { "marauding" } else { "on patrol" };
-                self.notice =
-                    Some(format!("It is {duty}: click there again to send it there instead, which ends that."));
-                self.confirm = Some(asked);
+            let to_point = game.rally_target(side, hex);
+            let reach = game.can_move_to(hex) || to_point.is_some();
+            if hex == here {
+                // (The person takes the stack the screen chose.)
+                self.auto_selection.clear();
+            } else if !self.overriding && other_stack && !reach {
+                self.screen.game.deselect();
+            } else if !self.overriding && other_stack {
+                let mission = info::mission(game, &units);
+                self.ask_mission(hex, selection, (mission.as_deref(), Some((to_point, by_screen))));
                 return;
+            } else if !self.overriding {
+                if let Some(mission) = info::mission(game, &units) {
+                    self.ask_mission(hex, selection, (Some(&mission), None));
+                    return;
+                }
             }
         }
-        self.confirm = None;
+        self.close_mission_ask();
         let before = self.screen.game.history().len();
         let sent = self.screen.game.selection().to_vec();
         let outcome = self.screen.game.select_hex(hex);
@@ -2073,6 +2220,7 @@ impl Session {
         if !self.screen.game.waiting_stacks(self.screen.game.player()).is_empty() {
             self.cycled = here.or(self.cycled);
             self.next_stack(false);
+            self.auto_selection = self.screen.game.selection().to_vec();
         }
     }
 
@@ -2391,6 +2539,8 @@ impl Session {
     /// (Shift+N): the one it came from before, back along the way it came.
     pub fn next_stack(&mut self, back: bool) {
         self.drop_pick();
+        // (The person's choice: N.)
+        self.auto_selection.clear();
         let (side, mine) = (self.viewer(), self.persons_turn());
         let game = &self.screen.game;
         let selected = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos());
@@ -3071,6 +3221,16 @@ impl Session {
                 }
             }
             self.screen.navigate(command);
+            // While a window asks about a stack's orders, Enter is its first
+            // button.
+            if command == MapCommand::Key(MapKey::Enter) && self.asks_mission() {
+                if self.mission_takes {
+                    self.mission_take()
+                } else {
+                    self.mission_go()
+                }
+                continue;
+            }
             // While the patrol's window asks, Enter is its Patrol.
             if command == MapCommand::Key(MapKey::Enter) && self.picking.is_none() {
                 if let Some(odds) = self.patrol_window().map(|w| w.chosen()) {
@@ -3129,6 +3289,9 @@ impl Session {
                     }
                 }
                 RootCommand::Click(id) if id == TbId::new(END_KEEP_ID) => self.close_end_ask(),
+                RootCommand::Click(id) if id == TbId::new(MISSION_GO_ID) => self.mission_go(),
+                RootCommand::Click(id) if id == TbId::new(MISSION_TAKE_ID) => self.mission_take(),
+                RootCommand::Click(id) if id == TbId::new(MISSION_KEEP_ID) => self.close_mission_ask(),
                 RootCommand::Click(id) if id == TbId::new(PREV_STACK_ID) => self.next_stack(true),
                 RootCommand::Click(id) if id == TbId::new(PREV_CITY_ID) => self.next_city(true),
                 RootCommand::Click(id) if id == TbId::new(DESELECT_ID) => {

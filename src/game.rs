@@ -856,7 +856,9 @@ impl Game {
                 let route: Vec<Hex> = via.into_iter().chain([to]).collect();
                 self.check_route(side, &units, &route)?;
                 // To a rally point: bound to it.
-                let bound = self.rally_point_at(side, to);
+                // (Not with another side's units on it: a march stops short
+                // of them, and waits for orders.)
+                let bound = self.rally_target(side, to);
                 for id in &units {
                     if let Some(unit) = self.map.unit_mut(*id) {
                         (unit.route, unit.bound, unit.stalled, unit.defending) = (route.clone(), bound, false, false);
@@ -1573,6 +1575,15 @@ impl Game {
     pub fn rally_point_at(&self, side: Side, hex: Hex) -> Option<u8> {
         let points = self.rally_points(side);
         (0..RALLY_POINTS as u8).find(|n| points[usize::from(*n)].is_some_and(|p| p.at == hex))
+    }
+
+    /// Which of `side`'s rally points units sent to `hex` would be bound
+    /// to: the one there, if another side's units or city are not (onto
+    /// those a click is an attack, as anywhere; the owner's report,
+    /// 2026-11-21: "I don't seem to be able to attack an enemy stack at one
+    /// of my rally points").
+    pub fn rally_target(&self, side: Side, hex: Hex) -> Option<u8> {
+        self.rally_point_at(side, hex).filter(|_| !hostile(&self.map, side, hex))
     }
 
     /// Put `side`'s rally point `n` somewhere, move it, or take it away
@@ -2866,8 +2877,7 @@ impl Game {
 
     /// The player chose a hex (a click, or Enter at the cursor).
     ///
-    /// - Units are selected and this is their hex, or one with another of
-    ///   the side's stacks: that stack is selected.
+    /// - Units are selected and this is their hex: they stay selected.
     /// - Units are selected and all of them can reach the hex: they move there
     ///   (`Order::Move`: each pays its cost; into another side's units it is a
     ///   battle; a city may be taken) and are deselected.
@@ -2884,28 +2894,27 @@ impl Game {
     pub fn select_hex(&mut self, hex: Hex) -> SelectOutcome {
         self.refresh();
         let Some(first) = self.selected() else { return self.select_stack(hex) };
-        // Their own hex, or another of the side's stacks: that stack is
-        // selected (the screen selects a stack by itself, so a click on one
-        // is to take it; a stack joins another by Go to).
-        let side = self.player();
-        let ours = |game: &Game| {
-            game.map.units_at(hex).iter().any(|id| game.map.units().get(*id).is_some_and(|u| u.side() == side))
-        };
+        // Their own hex: they stay selected, as they are (some of the stack,
+        // taken by their boxes, stay so).
         if self.map.units().get(first).is_some_and(|u| u.pos() == hex) {
-            // (As it is: some of the stack, taken by their boxes, stay so.)
             return SelectOutcome::Selected(first);
         }
-        if ours(self) {
-            self.deselect();
-            return self.select_stack(hex);
-        }
         // A rally point of the side's: they are sent there (Go to), bound to
-        // it, near or far.
-        let to_point = self.rally_point_at(side, hex).is_some();
+        // it, near or far (beside it, once it is full). In reach: a move
+        // there (onto another of the side's stacks: they join it).
+        let side = self.player();
+        let to_point = self.rally_target(side, hex).is_some();
         let Some(cost) = self.range.as_ref().and_then(|r| r.cost(hex)).filter(|_| !to_point) else {
             let units = self.selected.clone();
             self.deselect();
-            // Beyond their reach: they are sent there, if the side's.
+            // Beyond their reach: another of the side's stacks there is
+            // selected instead; else they are sent there, if the side's.
+            if !to_point {
+                match self.select_stack(hex) {
+                    SelectOutcome::Nothing => {}
+                    selected => return selected,
+                }
+            }
             if !units.iter().all(|id| self.own(*id)) {
                 return SelectOutcome::Deselected;
             }
@@ -3294,7 +3303,7 @@ mod tests {
     }
 
     #[test]
-    fn a_click_on_another_stack_selects_it_and_a_full_one_refuses_a_move() {
+    fn a_click_onto_a_full_stack_of_the_sides_refuses_the_move() {
         let mut game = grassland();
         let &[cav] = game.map.units_at(START) else { panic!() };
         let cost = game.map.units().get(cav).unwrap().move_cost;
@@ -3305,11 +3314,12 @@ mod tests {
             game.map.place_unit(id, target).unwrap();
             guards.push(id);
         }
-        // A click on the side's other stack, in reach: that stack is taken.
+        // A click on the side's other stack, in reach: a move onto it, to
+        // join it (the screen asks first whether to take it instead):
+        // refused, it is full.
         game.select_hex(START);
-        assert_eq!(game.select_hex(target), SelectOutcome::Selected(guards[0]));
-        // A move onto it (as Go to gives): refused, it is full.
-        assert!(game.apply(Order::Move { units: vec![cav], to: target }).is_err());
+        assert_eq!(game.select_hex(target), SelectOutcome::Deselected);
+        assert!(game.map.units_at(target).len() == guards.len(), "nobody joined");
         assert!(!game.can_undo(), "nothing happened");
         assert_eq!(game.map.units().get(cav).unwrap().movement, 20);
         assert_eq!(game.map.units().get(cav).unwrap().pos(), START);

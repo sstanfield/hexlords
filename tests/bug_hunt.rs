@@ -143,9 +143,10 @@ fn an_order_by_key_starts_the_turn() {
 }
 
 /// A stack on patrol is selected; a click on another of the player's
-/// stacks in its reach selects that stack, and says nothing of sending.
+/// stacks in its reach asks whether to join it or take it (it said "click
+/// there again to send it there", and a second click only selected it).
 #[test]
-fn no_patrol_warning_on_a_click_that_only_selects() {
+fn a_click_on_another_stack_with_a_patrol_selected_asks_join_or_take() {
     let mut g = game();
     let kind = g.map.units().kind_named("soldiers").unwrap();
     let other = g.map.new_unit_of(Side::Red, kind).unwrap();
@@ -166,11 +167,10 @@ fn no_patrol_warning_on_a_click_that_only_selects() {
     let pos = s.screen.game.map.units().get(south[0]).unwrap().pos();
     click_hex(&mut s, pos);
     let target = Hex::new(12, 6);
+    // The other stack is in reach: join it, or take it? Take it.
     click_hex(&mut s, target);
-    assert!(
-        !s.unit_line().contains("click there again to send it there"),
-        "a click that would only select another stack is said to send this one"
-    );
+    assert!(s.asks_mission(), "it asks");
+    push_widget(&mut s, hexgame::session::MISSION_TAKE_ID);
     assert_eq!(s.screen.game.selection(), [other], "the other stack is selected");
     assert!(s.screen.game.map.units().get(south[0]).unwrap().patrol.is_some(), "the patrol goes on");
 }

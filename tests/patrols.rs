@@ -518,7 +518,8 @@ fn while_the_window_asks_the_map_gives_no_order_and_enter_chooses() {
 }
 
 /// A stack on patrol, selected to look at it, is not sent elsewhere by a
-/// stray click: a click that would end its patrol asks for a second there.
+/// stray click: a click that would end its patrol asks first, saying what
+/// it is doing.
 #[test]
 fn a_stray_click_does_not_end_a_patrol() {
     let mut game = game();
@@ -532,12 +533,22 @@ fn a_stray_click_does_not_end_a_patrol() {
     let at = pos(&s.screen.game, red[0]);
     click_hex(&mut s, at);
     assert_eq!(s.screen.game.selection().len(), 2, "selected, all of it");
-    // A hex beyond its reach: no Go to; the line says how.
+    // A hex beyond its reach: no Go to; a window asks first. Keep its
+    // orders: it patrols on.
     click_hex(&mut s, SOUTH);
     assert!(red.iter().all(|id| unit(&s.screen.game, *id).patrol.is_some()), "still patrolling");
-    assert!(s.unit_line().starts_with("It is on patrol: click there again"), "{}", s.unit_line());
-    // There again: it goes there, and patrols no more.
+    assert!(s.asks_mission());
+    let says = common::descendants(&s, hexgame::session::MISSION_ASK_ID)
+        .into_iter()
+        .filter_map(|w| s.screen.ui.text(w).map(str::to_string))
+        .collect::<Vec<_>>();
+    assert!(says.iter().any(|t| t.starts_with("These 2 units are patrolling 2 waypoints")), "{says:?}");
+    push_widget(&mut s, hexgame::session::MISSION_KEEP_ID);
+    assert!(!s.asks_mission());
+    assert!(red.iter().all(|id| unit(&s.screen.game, *id).patrol.is_some()));
+    // Again, and Send them: it goes there, and patrols no more.
     click_hex(&mut s, SOUTH);
+    push_widget(&mut s, hexgame::session::MISSION_GO_ID);
     assert!(red.iter().all(|id| unit(&s.screen.game, *id).patrol.is_none()));
     assert_eq!(unit(&s.screen.game, red[0]).goto(), Some(SOUTH));
 }

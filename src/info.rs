@@ -444,6 +444,35 @@ pub fn duty_words(unit: &Unit) -> Option<String> {
     }
 }
 
+/// What a stack on a standing order (`units`, its player's) is doing, in
+/// words after "This unit is" or "These units are": "defending rally point
+/// 0", "on the way to rally point 0 (row 25, column 5)", "patrolling 3
+/// waypoints, ...", "marauding", "defending Redhold". `None` if none of them
+/// is on one.
+pub fn mission(game: &Game, units: &[&Unit]) -> Option<String> {
+    let map = &game.map;
+    if let Some(unit) = units.iter().find(|u| u.on_duty()) {
+        return duty_words(unit).map(|w| w.replace(": the computer leads it", ", led by the computer"));
+    }
+    if let Some(unit) = units.iter().find(|u| !u.route.is_empty()) {
+        let to = route_words_to(map, &unit.route, unit.bound);
+        return Some(if unit.stalled {
+            format!("on the way to {to} (stopped short)")
+        } else {
+            format!("on the way to {to}")
+        });
+    }
+    let unit = units.iter().find(|u| u.defending)?;
+    let at = unit.pos();
+    let point =
+        (0..crate::orders::RALLY_POINTS as u8).find(|n| game.rally_point(unit.side(), *n).is_some_and(|p| p.at == at));
+    Some(match (point, map.city_at(at)) {
+        (Some(n), _) => format!("defending rally point {n}"),
+        (None, Some(city)) => format!("defending {}", city.name),
+        (None, None) => "defending where they stand".to_string(),
+    })
+}
+
 /// The line under the stack about a selected unit (of `count` selected)
 /// that patrols or marauds: what it does, and what the keys do with it.
 pub fn duty_line(map: &Map, unit: &Unit, count: usize) -> String {
