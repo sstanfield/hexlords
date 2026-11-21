@@ -19,8 +19,11 @@ cleanup), the cities (capitals, neutrals, sea and air cities, fairness,
 names, walls, what they build and who stands in them), the temples and
 ruins, the roads (bridges, passes, every city and site meant to be
 reached on foot made so), and the hard checks, retries and scores (`accept
-best N`), with maps of islands. Not built: `symmetry` (below); the game's
-"new random map" window (the plan's G8).
+best N`), with maps of islands; and on the new game screen, "A random
+map" (the plan's G8): its preset, size, sides, cities, temples for each
+side, cities at sea and in the air (greyed out when the units template has
+no ship or no flyer), the seed, then Make the map, shown before the game
+starts. Not built: `symmetry` (below).
 
 ## Commands
 
@@ -117,7 +120,8 @@ archipelago; cities only ships reach; the units template needs a ship).
 | `ports`, `ports_per_side` | `auto`, 1 | cities by water that reaches the sea build the template's ship |
 | `fairness` | `normal` | `off`, `loose`, `normal`, `strict` (below) |
 | `attempts` | 30 | maps made before the fairest is given |
-| `temples`, `ruins` | 0.26 and 0.24 a city | a count, or a rate of the cities; a rate, with fairness on, is rounded to as many for each side (one at least) |
+| `temples_per_side` | 1 | temples for each side, 0 to 4 (the new game screen offers 0, 0.5, 1, 2, 3, 4): none; one shared by two neighbours; one each, ... (the owner, 2026-11-20: "2 per side is probably a lot") |
+| `temples`, `ruins` | none, and 0.24 a city | a count, or a rate of the cities; a rate, with fairness on, is rounded to as many for each side (one at least). `temples`, if given, is used instead of `temples_per_side` |
 | `site_city_gap` | 3 | no site nearer a city |
 | `site_gap` | 5 | no site nearer another |
 | `roads` | `linked` | `none`; `sparse` (about three cities in five on a road, in small networks); `linked` (every city on foot on one network); `dense` (linked, and more loops) |
@@ -295,7 +299,7 @@ crossed:
 | The way from each capital to its nearest temple, longest less shortest, in turns | 3 | 2 | 1 |
 
 7. **Temples and ruins** (`sites.rs`). A temple blesses the units that
-   stop on it, so the sites are shared out evenly, each kind on its own
+   seek it, so the sites are shared out evenly, each kind on its own
    (the owner: "make sure they are distributed fairly (both) since temples
    are a definite boon"). Each capital's cell gets as many of each (what
    does not share out evenly goes to cells by lot); a site stands well
@@ -308,7 +312,11 @@ crossed:
    each side's first city); the rest go where the cities and sites are
    farthest off, out to twice `site_gap`, a little more often in wilder
    country (forest, hills, the water's edge) than on the open grass, and
-   by chance. Their fairness is judged on the map as it ends.
+   by chance. Fewer temples than sides (half one each) are shared: where
+   the capital worst served is nearest one, the capitals' ways to their
+   nearest temples most alike, and all of them shortest (between the
+   cells, often where they meet); "temples in a cell" is then no measure.
+   Their fairness is judged on the map as it ends.
 
 8. **Roads, bridges, passes** (`roads.rs`).
    - **Links**: each city on foot to its 3 nearest by travel (a capital to

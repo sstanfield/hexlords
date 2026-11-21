@@ -2,7 +2,9 @@
 //! order of the turns, and who plays each side of the chosen map (a person or
 //! the computer); the chosen map is shown beside them, to look over, and the
 //! game starts with the button (`Shell`, in `shell.rs`, then hands the window
-//! to a `Session`).
+//! to a `Session`). Or a random map (`mapgen`, the plan's G8): its preset,
+//! size, sides, cities, temples, cities at sea and in the air, and seed, made
+//! with a button and shown before the game starts.
 //!
 //! Not a port: the C++ started its demo at once.
 
@@ -15,6 +17,8 @@ use crate::game::Game;
 use crate::gui::RootCommand;
 use crate::gui::build;
 use crate::help::HelpSection;
+use crate::mapgen::config::{Config, DENSITIES, PRESETS, SIZES, Size as MapSize, TEMPLE_CHOICES};
+use crate::mapgen::reach::{MoveClass, movement_class};
 use crate::screen::{MapScreen, Scene};
 use crate::setup::{Controller, Fog, Mode, Setup, TurnOrder};
 use crate::state::combat::{MAX_CHANCE, System};
@@ -39,6 +43,24 @@ pub const FOG_ON_ID: &str = "fog_on";
 pub const FOG_TOTAL_ID: &str = "fog_total";
 pub const GOLD_LESS_ID: &str = "gold_less";
 pub const GOLD_MORE_ID: &str = "gold_more";
+/// The random map: the entry in the list, and its settings' buttons.
+pub const RANDOM_ID: &str = "map_random";
+pub const PRESET_LESS_ID: &str = "random_preset_less";
+pub const PRESET_MORE_ID: &str = "random_preset_more";
+pub const SIZE_LESS_ID: &str = "random_size_less";
+pub const SIZE_MORE_ID: &str = "random_size_more";
+pub const SIDES_LESS_ID: &str = "random_sides_less";
+pub const SIDES_MORE_ID: &str = "random_sides_more";
+pub const CITIES_LESS_ID: &str = "random_cities_less";
+pub const CITIES_MORE_ID: &str = "random_cities_more";
+pub const TEMPLES_LESS_ID: &str = "random_temples_less";
+pub const TEMPLES_MORE_ID: &str = "random_temples_more";
+pub const SEA_ID: &str = "random_sea";
+pub const AIR_ID: &str = "random_air";
+pub const SEED_ID: &str = "random_seed";
+pub const MAKE_ID: &str = "random_make";
+/// The units template random maps get, relative to the asset directory.
+pub const UNITS_TEMPLATE: &str = "mapgen/units.txt";
 /// How much a press of Gold's - or + changes it, and the most it can be.
 const GOLD_STEP: u32 = 10;
 const MAX_GOLD: u32 = 1000;
@@ -96,10 +118,53 @@ pub struct NewGame {
     setup: Setup,
     /// Where the settings go, and what is in it now.
     settings: WidgetId,
+    settings_scroll: WidgetId,
+    start_button: WidgetId,
     sidebar: WidgetId,
     /// What went wrong with the chosen map, if anything.
     problem: Option<String>,
     start: bool,
+    /// The random map, while it is the one chosen.
+    random: Option<Random>,
+    /// The units template's text, if the assets have it (no random maps
+    /// without it), and whether it has a ship and a flyer.
+    template: Option<(String, bool, bool)>,
+}
+
+/// A random map's settings (a generator's config), and whether one was made
+/// with them (and what it says of itself).
+#[derive(Clone, Debug)]
+pub struct Random {
+    pub config: Config,
+    pub preset: usize,
+    pub made: bool,
+    /// What the hard checks failed (`mapgen::validate`), if the map was made
+    /// all the same: it is less fair than asked.
+    pub failures: Vec<String>,
+}
+
+/// A seed from the clock (each map its own; the rules never look at it).
+fn clock_seed() -> u64 {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+    now.map_or(1, |d| (d.as_nanos() % 1_000_000_007) as u64)
+}
+
+/// The size a config asks for, as an index into `SIZES` (medium if none).
+fn size_index(cfg: &Config) -> usize {
+    match cfg.size {
+        Some(MapSize::Named(name)) => SIZES.iter().position(|(n, _)| *n == name).unwrap_or(2),
+        _ => 2,
+    }
+}
+
+/// The density, as an index into `DENSITIES` (normal if none).
+fn density_index(cfg: &Config) -> usize {
+    cfg.density.and_then(|d| DENSITIES.iter().position(|(_, x)| (*x - d).abs() < 1e-9)).unwrap_or(1)
+}
+
+/// The temples for each side, as an index into `TEMPLE_CHOICES`.
+fn temples_index(cfg: &Config) -> usize {
+    TEMPLE_CHOICES.iter().position(|x| (*x - cfg.temples_per_side).abs() < 1e-9).unwrap_or(2)
 }
 
 impl NewGame {
@@ -114,6 +179,7 @@ impl NewGame {
             "A new game",
             &[
                 ("A map's name", "Choose it: it shows beside the settings"),
+                ("A random map", "Its preset, size, sides, cities, temples, seed: then Make the map"),
                 ("Drag on the map", "Move it"),
                 ("Turns, Rounds", "How to play: one side after the other (rounds are to come)"),
                 ("Order of turns", "The same each round, or drawn anew"),
@@ -129,6 +195,7 @@ impl NewGame {
             screen.ui.find(screen.ui.root(), TbId::new(id)).ok_or(format!("{LAYOUT}: no widget with id {id}"))
         };
         let (settings, sidebar) = (find(&screen, "settings")?, find(&screen, "main_sidebar")?);
+        let (settings_scroll, start_button) = (find(&screen, "settings_scroll")?, find(&screen, START_ID)?);
         let maps = find_maps(assets);
         let pick = chosen
             .and_then(|c| maps.iter().position(|m| m == c))
@@ -139,8 +206,25 @@ impl NewGame {
         // themselves never look at the clock).
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
         setup.seed = now.map_or(1, |d| d.as_nanos() as u64);
-        let mut new_game =
-            NewGame { screen, maps, chosen: None, setup, settings, sidebar, problem: None, start: false };
+        let template = std::fs::read_to_string(assets.join(UNITS_TEMPLATE)).ok().and_then(|text| {
+            let kinds = crate::state::scenario::parse_units(&text).ok()?;
+            let has = |class: MoveClass| kinds.iter().any(|k| movement_class(k) == class);
+            Some((text, has(MoveClass::Naval), has(MoveClass::Flyer)))
+        });
+        let mut new_game = NewGame {
+            screen,
+            maps,
+            chosen: None,
+            setup,
+            settings,
+            settings_scroll,
+            start_button,
+            sidebar,
+            problem: None,
+            start: false,
+            random: None,
+            template,
+        };
         new_game.apply_layout_sizes();
         match pick {
             Some(i) => new_game.choose(i),
@@ -155,9 +239,81 @@ impl NewGame {
         &self.maps
     }
 
-    /// The map chosen, if any.
+    /// The map chosen, if any (a map file: not a random map).
     pub fn chosen(&self) -> Option<&Path> {
         self.chosen.map(|i| self.maps[i].as_path())
+    }
+
+    /// The random map's settings, while it is the one chosen.
+    pub fn random(&self) -> Option<&Random> {
+        self.random.as_ref()
+    }
+
+    /// To change the random map's settings (its seed, say): it is to be
+    /// made again.
+    pub fn random_config_mut(&mut self) -> Option<&mut Config> {
+        if self.random.is_some() {
+            self.unmake();
+        }
+        self.random.as_mut().map(|r| &mut r.config)
+    }
+
+    /// Choose a random map: its settings show (the classic preset at first,
+    /// a seed from the clock); nothing is made until Make the map.
+    pub fn choose_random(&mut self) {
+        self.chosen = None;
+        self.problem = None;
+        if self.random.is_none() {
+            let config = Config { seed: clock_seed(), size: Some(MapSize::Named("medium")), ..Config::default() };
+            self.random = Some(Random { config, preset: 0, made: false, failures: Vec::new() });
+        }
+        if !self.random.as_ref().is_some_and(|r| r.made) {
+            self.screen.set_game(Game::new(Map::new(20, 20, TileType::Water).expect("20 x 20 is a valid map")));
+            self.setup.seats.clear();
+        }
+        self.rebuild();
+    }
+
+    /// Make the random map with its settings, and show it: its sides get
+    /// their seats, as a chosen map's do.
+    pub fn make_random(&mut self) {
+        let (Some(random), Some((units, _, _))) = (self.random.as_mut(), self.template.as_ref()) else { return };
+        match crate::mapgen::generate(&random.config, units, UNITS_TEMPLATE) {
+            Ok(made) => match made.map() {
+                Ok(map) => {
+                    random.made = true;
+                    random.failures = made.failures.clone();
+                    let game = Game::from_scenario(crate::state::Scenario { map, assets: None, warnings: Vec::new() });
+                    self.seat(game);
+                    self.problem = None;
+                }
+                Err(e) => self.problem = Some(e),
+            },
+            Err(e) => self.problem = Some(e),
+        }
+        self.rebuild();
+    }
+
+    /// Show `game`'s map, its sides seated (the first side's a person, the
+    /// others the computer's), the rest of the setup as it was.
+    fn seat(&mut self, game: Game) {
+        let person = game.setup().seats.iter().find(|s| s.controller == Controller::Person).map(|s| s.side);
+        let mut setup = Setup::solo(&game.map, person, COMPUTER);
+        (setup.mode, setup.order, setup.seed) = (self.setup.mode, self.setup.order, self.setup.seed);
+        setup.combat = self.setup.combat;
+        setup.gold = self.setup.gold;
+        setup.fog = self.setup.fog;
+        self.setup = setup;
+        self.screen.set_game(game);
+    }
+
+    /// A random map's setting changed: it is to be made again.
+    fn unmake(&mut self) {
+        if let Some(random) = self.random.as_mut() {
+            random.made = false;
+        }
+        self.screen.set_game(Game::new(Map::new(20, 20, TileType::Water).expect("20 x 20 is a valid map")));
+        self.setup.seats.clear();
     }
 
     /// How the game will be set up.
@@ -180,16 +336,10 @@ impl NewGame {
     pub fn choose(&mut self, i: usize) {
         let Some(path) = self.maps.get(i).cloned() else { return };
         self.chosen = Some(i);
+        self.random = None;
         match Game::load(&path) {
             Ok((game, _)) => {
-                let person = game.setup().seats.iter().find(|s| s.controller == Controller::Person).map(|s| s.side);
-                let mut setup = Setup::solo(&game.map, person, COMPUTER);
-                (setup.mode, setup.order, setup.seed) = (self.setup.mode, self.setup.order, self.setup.seed);
-                setup.combat = self.setup.combat;
-                setup.gold = self.setup.gold;
-                setup.fog = self.setup.fog;
-                self.setup = setup;
-                self.screen.set_game(game);
+                self.seat(game);
                 self.problem = None;
             }
             Err(e) => self.problem = Some(e),
@@ -197,9 +347,11 @@ impl NewGame {
         self.rebuild();
     }
 
-    /// True if the chosen map can be played: it was read, and it has sides.
+    /// True if the chosen map can be played: it was read (or made), and it
+    /// has sides.
     pub fn can_start(&self) -> bool {
-        self.problem.is_none() && self.chosen.is_some() && !self.setup.seats.is_empty()
+        let map = self.chosen.is_some() || self.random.as_ref().is_some_and(|r| r.made);
+        self.problem.is_none() && map && !self.setup.seats.is_empty()
     }
 
     /// True once the game was asked to start, with a map that can be played.
@@ -224,6 +376,11 @@ impl NewGame {
         self.screen.set_map_sizes(Size::new(map_w, h.max(0)), Size::new(side_w, minimap_h));
         let narrow = LayoutParams { min_w: Some(0), max_w: Some(side_w), ..LayoutParams::default() };
         self.screen.ui.set_layout_params(self.sidebar, Some(narrow));
+        // The settings get what the minimap and the start button leave, and
+        // scroll in it.
+        let button_h = self.screen.ui.preferred_size_free(self.start_button).pref.h;
+        let settings_h = (h - minimap_h - button_h - 3 * spacing).max(0);
+        self.screen.ui.set_layout_params(self.settings_scroll, Some(LayoutParams::fixed(side_w, settings_h)));
     }
 
     /// Build the settings again: the maps, the mode, the order, the seats.
@@ -242,9 +399,15 @@ impl NewGame {
         build::heading(ui, c, "Map");
         let scroll = ui.add(c, ScrollContainer::new(ScrollMode::YAuto).with_adapt_content_size(true));
         let side_w = ui.layout_params(self.sidebar).and_then(|lp| lp.max_w).unwrap_or(200);
-        let rows = (self.maps.len().max(1) as i32) * dp(ui, 22);
+        let rows = (self.maps.len() as i32 + 1) * dp(ui, 22);
         ui.set_layout_params(scroll, Some(LayoutParams::fixed(side_w, rows.min(dp(ui, MAPS_DP)))));
         let list = build::column(ui, scroll, 0);
+        let random = build::button(ui, list, RANDOM_ID, "A random map");
+        ui.set_skin(random, TbId::new("ListRow"));
+        build::set_width(ui, random, side_w - dp(ui, 18));
+        build::text_from_left(ui, random);
+        press(ui, random, "maps", self.random.is_some());
+        ui.set_disabled(random, self.template.is_none());
         for (i, path) in self.maps.iter().enumerate() {
             let button = build::button(ui, list, &map_id(i), &map_name(path));
             ui.set_skin(button, TbId::new("ListRow"));
@@ -257,6 +420,44 @@ impl NewGame {
         }
         if let Some(problem) = &self.problem {
             build::text(ui, c, problem);
+        }
+        if let (Some(random), Some((_, ships, flyers))) = (&self.random, &self.template) {
+            let cfg = &random.config;
+            let stepper = |ui: &mut turbo_ferret::Ui, (less, more): (&str, &str), words: &str| {
+                let row = build::row(ui, c, space);
+                build::button(ui, row, less, "-");
+                build::text(ui, row, words);
+                build::button(ui, row, more, "+");
+            };
+            build::gap(ui, c, space);
+            build::heading(ui, c, "A random map");
+            stepper(ui, (PRESET_LESS_ID, PRESET_MORE_ID), &format!("Preset: {}", PRESETS[random.preset].0));
+            stepper(ui, (SIZE_LESS_ID, SIZE_MORE_ID), &format!("Size: {}", SIZES[size_index(cfg)].0));
+            stepper(ui, (SIDES_LESS_ID, SIDES_MORE_ID), &format!("{} sides", cfg.sides));
+            let cities = ["Few cities", "Cities as usual", "Many cities"][density_index(cfg)];
+            stepper(ui, (CITIES_LESS_ID, CITIES_MORE_ID), cities);
+            let temples = match TEMPLE_CHOICES[temples_index(cfg)] {
+                0.0 => "No temples".to_string(),
+                0.5 => "A temple for two sides".to_string(),
+                1.0 => "A temple for each side".to_string(),
+                n => format!("{n} temples for each side"),
+            };
+            stepper(ui, (TEMPLES_LESS_ID, TEMPLES_MORE_ID), &temples);
+            let row = build::row(ui, c, space);
+            let on = |b: bool| if b { "on" } else { "off" };
+            let sea = build::button(ui, row, SEA_ID, &format!("Cities at sea: {}", on(cfg.sea_cities)));
+            ui.set_disabled(sea, !ships);
+            let air = build::button(ui, row, AIR_ID, &format!("In the air: {}", on(cfg.fly_cities)));
+            ui.set_disabled(air, !flyers);
+            let row = build::row(ui, c, space);
+            build::text(ui, row, &format!("Seed {}", cfg.seed));
+            build::button(ui, row, SEED_ID, "New seed");
+            build::button(ui, row, MAKE_ID, if random.made { "Make it again" } else { "Make the map" });
+            if !random.made {
+                build::text(ui, c, "Make the map to see it and play it.");
+            } else if !random.failures.is_empty() {
+                build::text(ui, c, "Less fair than asked: no try made it so.");
+            }
         }
 
         build::gap(ui, c, space);
@@ -353,6 +554,48 @@ impl NewGame {
             let RootCommand::Click(id) = command else { continue };
             if id == TbId::new(START_ID) {
                 self.start = true;
+            } else if id == TbId::new(RANDOM_ID) {
+                self.choose_random();
+            } else if id == TbId::new(MAKE_ID) {
+                self.make_random();
+            } else if let Some(random) = self.random.as_mut().filter(|_| random_setting(id)) {
+                let cfg = &mut random.config;
+                let step = |i: usize, n: usize, more: bool| if more { (i + 1).min(n - 1) } else { i.saturating_sub(1) };
+                let more = |a: &str| id == TbId::new(a);
+                if more(PRESET_LESS_ID) || more(PRESET_MORE_ID) {
+                    random.preset = step(random.preset, PRESETS.len(), more(PRESET_MORE_ID));
+                    // The preset's terrain, with the screen's other settings.
+                    if let Ok(mut fresh) = Config::preset(PRESETS[random.preset].0) {
+                        (fresh.seed, fresh.size, fresh.sides, fresh.density) =
+                            (cfg.seed, cfg.size, cfg.sides, cfg.density);
+                        (fresh.temples_per_side, fresh.temples) = (cfg.temples_per_side, None);
+                        // (The islands preset asks for cities at sea.)
+                        fresh.sea_cities = fresh.sea_cities || cfg.sea_cities;
+                        fresh.fly_cities = cfg.fly_cities;
+                        *cfg = fresh;
+                    }
+                } else if more(SIZE_LESS_ID) || more(SIZE_MORE_ID) {
+                    let i = step(size_index(cfg), SIZES.len(), more(SIZE_MORE_ID));
+                    cfg.size = Some(MapSize::Named(SIZES[i].0));
+                } else if more(SIDES_LESS_ID) {
+                    cfg.sides = cfg.sides.saturating_sub(1).max(2);
+                } else if more(SIDES_MORE_ID) {
+                    cfg.sides = (cfg.sides + 1).min(8);
+                } else if more(CITIES_LESS_ID) || more(CITIES_MORE_ID) {
+                    let i = step(density_index(cfg), DENSITIES.len(), more(CITIES_MORE_ID));
+                    cfg.density = Some(DENSITIES[i].1);
+                } else if more(TEMPLES_LESS_ID) || more(TEMPLES_MORE_ID) {
+                    let i = step(temples_index(cfg), TEMPLE_CHOICES.len(), more(TEMPLES_MORE_ID));
+                    (cfg.temples_per_side, cfg.temples) = (TEMPLE_CHOICES[i], None);
+                } else if more(SEA_ID) {
+                    cfg.sea_cities = !cfg.sea_cities;
+                } else if more(AIR_ID) {
+                    cfg.fly_cities = !cfg.fly_cities;
+                } else if more(SEED_ID) {
+                    cfg.seed = clock_seed();
+                }
+                self.unmake();
+                self.rebuild();
             } else if id == TbId::new(MODE_TURNS_ID) {
                 self.setup.mode = Mode::Turns;
             } else if id == TbId::new(BATTLES_LINES_ID) || id == TbId::new(BATTLES_STRENGTH_ID) {
@@ -411,6 +654,27 @@ impl NewGame {
         }
         self.screen.sync_game();
     }
+}
+
+/// True if `id` is one of the random map's settings (not Make the map).
+fn random_setting(id: TbId) -> bool {
+    [
+        PRESET_LESS_ID,
+        PRESET_MORE_ID,
+        SIZE_LESS_ID,
+        SIZE_MORE_ID,
+        SIDES_LESS_ID,
+        SIDES_MORE_ID,
+        CITIES_LESS_ID,
+        CITIES_MORE_ID,
+        TEMPLES_LESS_ID,
+        TEMPLES_MORE_ID,
+        SEA_ID,
+        AIR_ID,
+        SEED_ID,
+    ]
+    .iter()
+    .any(|a| id == TbId::new(a))
 }
 
 impl Scene for NewGame {

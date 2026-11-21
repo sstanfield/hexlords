@@ -11,7 +11,7 @@ use crate::state::{Hex, Side, TileType};
 use super::Generated;
 use super::check::check;
 use super::reach::{MoveClass, ReachClass, reach};
-use super::sites::count;
+use super::sites::{count, temple_count};
 
 /// What a map fails of the hard checks (nothing if it passes).
 pub fn hard(made: &Generated) -> Vec<String> {
@@ -49,8 +49,10 @@ pub fn hard(made: &Generated) -> Vec<String> {
     if held != usize::from(cfg.sides) {
         out.push(format!("{held} capitals for {} sides", cfg.sides));
     }
-    for (kind, amount, word) in [(TileType::Temple, cfg.temples, "temples"), (TileType::Ruin, cfg.ruins, "ruins")] {
-        let (have, want) = (g.terrain.cells().iter().filter(|t| **t == kind).count(), count(amount, cfg, plan));
+    for (kind, want, word) in
+        [(TileType::Temple, temple_count(cfg, plan), "temples"), (TileType::Ruin, count(cfg.ruins, cfg, plan), "ruins")]
+    {
+        let have = g.terrain.cells().iter().filter(|t| **t == kind).count();
         if have != want {
             out.push(format!("{have} {word}, {want} asked"));
         }

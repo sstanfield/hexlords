@@ -8,7 +8,7 @@
 use hexgame::mapgen::cities::travel;
 use hexgame::mapgen::config::Config;
 use hexgame::mapgen::generate;
-use hexgame::mapgen::sites::count;
+use hexgame::mapgen::sites::{count, temple_count};
 use hexgame::state::{Hex, Side, TileType};
 
 const UNITS: &str = include_str!("../assets/mapgen/units.txt");
@@ -29,7 +29,7 @@ fn sites_are_as_many_as_asked_apart_and_reached() {
         let of = |kind: TileType| t.hexes().filter(|h| *t.get(*h) == kind).collect::<Vec<Hex>>();
         let (temples, ruins) = (of(TileType::Temple), of(TileType::Ruin));
         // As many as asked: a rate, rounded to so many for each side.
-        assert_eq!(temples.len(), count(cfg.temples, &cfg, &made.plan), "seed {seed}");
+        assert_eq!(temples.len(), temple_count(&cfg, &made.plan), "seed {seed}");
         assert_eq!(ruins.len(), count(cfg.ruins, &cfg, &made.plan), "seed {seed}");
         assert_eq!(temples.len() % usize::from(cfg.sides), 0, "seed {seed}");
         assert!(!temples.is_empty() && !ruins.is_empty());
@@ -93,4 +93,42 @@ fn a_count_is_kept_as_asked_and_the_game_reads_the_sites() {
     // A temple in the game blesses (it is the game's temple).
     let stats = hexgame::mapgen::stats::Stats::of(&map);
     assert_eq!((stats.sites.temples, stats.sites.ruins), (7, 0));
+}
+
+/// The owner (2026-11-20): temples per side set with the map, 0 to 4; none
+/// turns them off; half one each puts each between neighbours, shared.
+#[test]
+fn temples_for_each_side_none_shared_or_several() {
+    let temples = |made: &hexgame::mapgen::Generated| {
+        let t = &made.state.terrain;
+        t.hexes().filter(|h| *t.get(*h) == TileType::Temple).collect::<Vec<Hex>>()
+    };
+    for (per_side, seed) in [(0.0, 1), (0.5, 2), (0.5, 3), (2.0, 4), (4.0, 5)] {
+        let mut cfg = config(seed, "medium");
+        cfg.set("temples_per_side", &per_side.to_string()).unwrap();
+        let made = generate(&cfg, UNITS, "units.txt").unwrap();
+        assert!(made.failures.is_empty(), "{per_side} a side, seed {seed}: {:?}", made.failures);
+        let here = temples(&made);
+        assert_eq!(here.len(), (per_side * f64::from(cfg.sides)).round() as usize, "{per_side} a side");
+        let measure = |name: &str| made.state.fairness.iter().any(|f| f.name.starts_with(name));
+        if per_side == 0.0 {
+            assert!(!measure("way to the nearest temple") && !measure("temples in a cell"));
+            continue;
+        }
+        // Each side's nearest temple, within two turns of the others'.
+        let g = &made.state;
+        let capitals: Vec<Hex> = g.cities.iter().filter(|c| c.side != Side::Grey).map(|c| c.hex).collect();
+        let near: Vec<u32> = capitals
+            .iter()
+            .map(|c| {
+                let grid = travel(g, &[*c]).0;
+                here.iter().filter_map(|h| *grid.get(*h)).min().unwrap()
+            })
+            .collect();
+        assert!(near.iter().max().unwrap() - near.iter().min().unwrap() <= 20, "{per_side}: {near:?}");
+        // Shared temples are no cell's own: that measure is for one or more.
+        assert_eq!(measure("temples in a cell"), per_side >= 1.0);
+    }
+    // More than 4 a side is refused.
+    assert!(Config::default().set("temples_per_side", "5").is_err());
 }

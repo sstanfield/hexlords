@@ -48,6 +48,70 @@ pub fn count(amount: Amount, cfg: &Config, plan: &Plan) -> usize {
     }
 }
 
+/// How many temples: `temples` if it is given, else `temples_per_side` for
+/// each side (0.5: one shared by two neighbours).
+pub fn temple_count(cfg: &Config, plan: &Plan) -> usize {
+    match cfg.temples {
+        Some(amount) => count(amount, cfg, plan),
+        None => (cfg.temples_per_side * f64::from(cfg.sides)).round() as usize,
+    }
+}
+
+/// `n` temples (fewer than the sides) of the places `open`, shared between
+/// the capitals (`grids`: their travel): where the capital worst served is
+/// nearest one, the capitals' ways to their nearest temples most alike, and
+/// all of them shortest; `gap` apart. The nearest first, then each moved where that is better.
+fn shared(open: &[Hex], grids: &[Grid<Option<u32>>], n: usize, gap: u32) -> Vec<Hex> {
+    let far = u32::MAX / 4;
+    let cost = |h: Hex, i: usize| grids[i].get(h).unwrap_or(far);
+    // The most travel from a capital to its nearest temple, how far the
+    // others fall short of it, and all of it (so a temple that cannot make
+    // the most less goes where it serves most).
+    let judge = |set: &[Hex]| {
+        let d: Vec<u32> = (0..grids.len()).map(|i| set.iter().map(|h| cost(*h, i)).min().unwrap_or(far)).collect();
+        let (most, least) = (*d.iter().max().unwrap_or(&far), *d.iter().min().unwrap_or(&far));
+        (most, most - least, d.iter().map(|x| u64::from(*x)).sum::<u64>())
+    };
+    let apart = |set: &[Hex], h: Hex, skip: Option<usize>| {
+        set.iter().enumerate().all(|(i, s)| Some(i) == skip || s.distance(h) >= gap)
+    };
+    let mut set: Vec<Hex> = Vec::new();
+    for _ in 0..n {
+        let best = open.iter().copied().filter(|h| apart(&set, *h, None)).min_by_key(|h| {
+            let mut s = set.clone();
+            s.push(*h);
+            (judge(&s), h.row, h.col)
+        });
+        match best {
+            Some(h) => set.push(h),
+            None => break,
+        }
+    }
+    for _ in 0..3 {
+        let mut moved = false;
+        for i in 0..set.len() {
+            let now = judge(&set);
+            let better = open.iter().copied().filter(|h| apart(&set, *h, Some(i))).min_by_key(|h| {
+                let mut s = set.clone();
+                s[i] = *h;
+                (judge(&s), h.row, h.col)
+            });
+            if let Some(h) = better {
+                let mut s = set.clone();
+                s[i] = h;
+                if judge(&s) < now {
+                    set = s;
+                    moved = true;
+                }
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+    set
+}
+
 /// How much a place is liked for a site: a little more in wilder country
 /// (forest, hills, the water's edge, swamp round it) than on the open grass;
 /// the target map's sites have some of each round them.
@@ -91,21 +155,31 @@ pub fn sites(g: &mut Gen, cfg: &Config, plan: &Plan) {
     // Where a site may be: land a walker gets to from the capitals, not a
     // city, off the edge, not on an island, not in an air city's ring, far
     // enough from the cities.
-    let fits = |t: &Grid<TileType>, h: Hex| {
+    let may = |t: &Grid<TileType>, h: Hex| {
         matches!(*t.get(h), TileType::Grass | TileType::Forest | TileType::Hill | TileType::Desert | TileType::Swamp)
             && owner(h).is_some()
             && walked.get(h).is_some()
-            && inside(h)
             && t.edge_distance(h) >= 1
             && !*g.island.get(h)
             && air.iter().all(|a| a.distance(h) > 2)
             && near_city.get(h).is_some_and(|d| d >= cfg.site_city_gap)
     };
+    let fits = |t: &Grid<TileType>, h: Hex| may(t, h) && inside(h);
     // A little chance in where sites go.
     let jitter: Vec<f64> = (0..g.terrain.len()).map(|_| rng.unit()).collect();
     let mut placed: Vec<Hex> = Vec::new();
-    for (kind, amount) in [(TileType::Temple, cfg.temples), (TileType::Ruin, cfg.ruins)] {
-        let n = count(amount, cfg, plan);
+    for (kind, n) in [(TileType::Temple, temple_count(cfg, plan)), (TileType::Ruin, count(cfg.ruins, cfg, plan))] {
+        // Fewer temples than sides: each shared by neighbours.
+        if kind == TileType::Temple && n > 0 && n < sides {
+            let t = g.terrain.clone();
+            let open: Vec<Hex> =
+                t.hexes().filter(|h| may(&t, *h) && placed.iter().all(|s| s.distance(*h) >= cfg.site_gap)).collect();
+            for h in shared(&open, &grids, n, cfg.site_gap) {
+                g.terrain.set(h, kind);
+                placed.push(h);
+            }
+            continue;
+        }
         // So many to each cell; what does not share out evenly, to cells
         // by lot.
         let mut want = vec![n / sides; sides];
@@ -180,14 +254,23 @@ fn fairness(g: &Gen, grids: &[Grid<Option<u32>>], limit: [f64; 3]) -> Vec<Fair> 
         (*n.iter().max().unwrap_or(&0) - *n.iter().min().unwrap_or(&0)) as f64
     };
     let temples: Vec<Hex> = t.hexes().filter(|h| *t.get(*h) == TileType::Temple).collect();
-    let mut out = vec![
-        Fair {
-            name: "temples in a cell (most less fewest)".to_string(),
-            value: spread(TileType::Temple),
-            limit: limit[0],
-        },
-        Fair { name: "ruins in a cell (most less fewest)".to_string(), value: spread(TileType::Ruin), limit: limit[1] },
-    ];
+    let mut out = vec![Fair {
+        name: "ruins in a cell (most less fewest)".to_string(),
+        value: spread(TileType::Ruin),
+        limit: limit[1],
+    }];
+    // (Fewer temples than sides stand between cells, shared: none is a
+    // cell's own.)
+    if temples.len() >= sides {
+        out.insert(
+            0,
+            Fair {
+                name: "temples in a cell (most less fewest)".to_string(),
+                value: spread(TileType::Temple),
+                limit: limit[0],
+            },
+        );
+    }
     if !temples.is_empty() {
         let nearest: Vec<f64> = grids
             .iter()

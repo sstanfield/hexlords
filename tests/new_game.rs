@@ -31,6 +31,9 @@ fn exists(s: &dyn Scene, name: &str) -> bool {
 /// Click the middle of a widget of whatever the shell shows.
 fn push(shell: &mut Shell, name: &str) {
     let id = shell.screen().ui.find(shell.screen().ui.root(), TbId::new(name)).unwrap_or_else(|| panic!("no {name}"));
+    // (The settings scroll: what is below, a person scrolls to first.)
+    shell.screen_mut().ui.scroll_into_view_recursive(id);
+    shell.screen_mut().settle();
     let r = shell.screen().area(id);
     let p = Point::new(r.x + r.w / 2, r.y + r.h / 2);
     let ui = &mut shell.screen_mut().ui;
@@ -258,4 +261,50 @@ fn descendants(s: &Session, name: &str) -> Vec<String> {
         stack.extend(s.screen.ui.children(id).iter().copied());
     }
     out
+}
+
+/// The plan's G8: a random map made on the screen, from its settings (the
+/// preset, size, sides, cities, temples, cities at sea and in the air, the
+/// seed), shown, and played.
+#[test]
+fn a_random_map_is_set_made_shown_and_played() {
+    use hexgame::new_game::{
+        AIR_ID, MAKE_ID, RANDOM_ID, SEA_ID, SIDES_LESS_ID, SIZE_LESS_ID, TEMPLES_LESS_ID, TEMPLES_MORE_ID,
+    };
+    let mut shell = shell();
+    push(&mut shell, RANDOM_ID);
+    let screen = shell.new_game_screen().unwrap();
+    assert!(screen.random().is_some_and(|r| !r.made), "chosen, not made yet");
+    assert!(!screen.can_start(), "nothing to play until it is made");
+    // Its settings: a small map, three sides, half a temple each (a shared
+    // pair... of one, rounded), cities at sea; a seed of our own.
+    push(&mut shell, SIZE_LESS_ID);
+    push(&mut shell, SIZE_LESS_ID);
+    push(&mut shell, SIDES_LESS_ID);
+    push(&mut shell, TEMPLES_LESS_ID);
+    push(&mut shell, SEA_ID);
+    // (The game's units have ships and flyers: both checkboxes can be on.)
+    let disabled = |shell: &Shell, name: &str| {
+        let ui = &shell.screen().ui;
+        ui.find(ui.root(), TbId::new(name)).is_some_and(|id| ui.state(id).contains(turbo_ferret::WidgetState::DISABLED))
+    };
+    assert!(!disabled(&shell, SEA_ID) && !disabled(&shell, AIR_ID));
+    let screen = shell.new_game_screen().unwrap();
+    let cfg = screen.random().unwrap().config.clone();
+    assert_eq!((cfg.sides, cfg.temples_per_side, cfg.sea_cities), (3, 0.5, true));
+    shell.new_game_screen().unwrap().random_config_mut().unwrap().seed = 7;
+    push(&mut shell, MAKE_ID);
+    let screen = shell.new_game_screen().unwrap();
+    assert!(screen.random().is_some_and(|r| r.made) && screen.can_start(), "{:?}", screen.problem());
+    assert_eq!(screen.setup().seats.len(), 3);
+    let rows = shell.screen().game.map.rows();
+    // The same seed makes the same map; a setting changed unmakes it.
+    push(&mut shell, MAKE_ID);
+    assert_eq!(shell.screen().game.map.rows(), rows);
+    push(&mut shell, TEMPLES_MORE_ID);
+    assert!(!shell.new_game_screen().unwrap().can_start());
+    push(&mut shell, MAKE_ID);
+    push(&mut shell, START_ID);
+    let session = shell.session().expect("the game");
+    assert_eq!(session.screen.game.map.cities().iter().filter(|c| c.side != Side::Grey).count(), 3);
 }

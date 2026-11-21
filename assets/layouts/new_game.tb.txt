@@ -8,5 +8,8 @@ TBLayout: id: main_layout, axis: x, distribution: gravity, distribution-position
 	MapWidget: id: main_map, is-focusable: 1
 	TBLayout: id: main_sidebar, axis: y, distribution-position: top, position: left, spacing: 5
 		MiniMapWidget: id: mini_map
-		TBLayout: id: settings, axis: y, distribution-position: top, position: left, spacing: 2
+		# (In a box that scrolls, when the settings are taller than the room
+		# the minimap and the button leave.)
+		TBScrollContainer: id: settings_scroll, scroll-mode: y-auto, adapt-content: 1
+			TBLayout: id: settings, axis: y, distribution-position: top, position: left, spacing: 2
 		TBButton: id: start_game, text: Start the game, is-focusable: 0

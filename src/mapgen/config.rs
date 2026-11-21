@@ -62,6 +62,13 @@ pub enum Symmetry {
     Rotate,
 }
 
+/// The most temples for each side the knob takes.
+pub const MAX_TEMPLES_PER_SIDE: f64 = 4.0;
+
+/// The choices of temples for each side offered on the new game screen:
+/// none, one shared by two neighbours, one each, ... four each.
+pub const TEMPLE_CHOICES: [f64; 6] = [0.0, 0.5, 1.0, 2.0, 3.0, 4.0];
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Accept {
     First,
@@ -145,7 +152,11 @@ pub struct Config {
     /// The walls of the neutral cities: each level and its share, in percent.
     pub walls: Vec<(u32, f64)>,
     /// Per city.
-    pub temples: Amount,
+    /// Temples for each side (0 to 4: none, shared between neighbours,
+    /// one each, ...); or, if `temples` is given, that many (a count, or a
+    /// rate of the cities).
+    pub temples_per_side: f64,
+    pub temples: Option<Amount>,
     pub ruins: Amount,
     pub site_city_gap: u32,
     pub site_gap: u32,
@@ -206,7 +217,8 @@ impl Default for Config {
             coastal_cities: 0.25,
             edge_margin: 2,
             walls: vec![(3, 8.0), (4, 58.0), (5, 18.0), (6, 16.0)],
-            temples: Amount::Rate(0.26),
+            temples_per_side: 1.0,
+            temples: None,
             ruins: Amount::Rate(0.24),
             site_city_gap: 3,
             site_gap: 5,
@@ -424,7 +436,14 @@ impl Config {
                     })
                     .collect::<Result<_, String>>()?;
             }
-            "temples" => self.temples = amount(k, value)?,
+            "temples" => self.temples = Some(amount(k, value)?),
+            "temples_per_side" => {
+                let n = number(k, value)?;
+                if !(0.0..=MAX_TEMPLES_PER_SIDE).contains(&n) {
+                    return Err(format!("{k}: {value} is not 0 to {MAX_TEMPLES_PER_SIDE}"));
+                }
+                self.temples_per_side = n;
+            }
             "ruins" => self.ruins = amount(k, value)?,
             "site_city_gap" => self.site_city_gap = whole(k, value)?,
             "site_gap" => self.site_gap = whole(k, value)?,
@@ -509,7 +528,10 @@ impl Config {
         line("coastal_cities", trim(self.coastal_cities));
         line("edge_margin", self.edge_margin.to_string());
         line("walls", self.walls.iter().map(|(w, s)| format!("{w}:{}", trim(*s))).collect::<Vec<_>>().join(" "));
-        line("temples", amount_text(self.temples, false));
+        line("temples_per_side", trim(self.temples_per_side));
+        if let Some(t) = self.temples {
+            line("temples", amount_text(t, false));
+        }
         line("ruins", amount_text(self.ruins, false));
         line("site_city_gap", self.site_city_gap.to_string());
         line("site_gap", self.site_gap.to_string());
