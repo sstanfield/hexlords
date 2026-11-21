@@ -577,8 +577,10 @@ pub fn describe(game: &Game, side: Side) -> String {
 /// `bless <units>`, `disband <units>`, `build <row> <col> <index or none>`,
 /// `rally <row> <col> <row> <col> [<row> <col> ...]` (or `none`, `defend`,
 /// `point <n> [bless]`), `point <n> <row> <col> [defend]` (or `point <n>
-/// none`), `walls <row> <col>`, `undo`, `end`. `None` for an empty line or a
-/// comment (`#`).
+/// none`), `walls <row> <col>`, `undo`, `end`; `patrol <units> <row> <col>
+/// <row> <col> [<row> <col> ...] [attack <percent>]` (waypoints in order),
+/// `maraud <units>`, `unmaraud <units>`, `roam <units> <row> <col>`. `None`
+/// for an empty line or a comment (`#`).
 pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
     let words: Vec<&str> = line.split_whitespace().collect();
     let hex = |row: &str, col: &str| -> Result<Hex, String> {
@@ -653,9 +655,25 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
         ["point", n, row, col, "defend"] => {
             Order::RallyPoint { n: point(n)?, point: Some(RallyPoint { at: hex(row, col)?, defend: true }) }
         }
+        ["patrol", u, ref rest @ ..] if !rest.is_empty() => {
+            let (places, attack) = match rest {
+                [places @ .., "attack", odds] => {
+                    (places, Some(odds.parse::<u32>().map_err(|_| format!("\"{odds}\" is not odds in percent"))?))
+                }
+                places => (places, None),
+            };
+            if places.is_empty() || places.len() % 2 != 0 {
+                return Err("a patrol's waypoints are rows and columns in pairs".to_string());
+            }
+            let waypoints = places.chunks(2).map(|w| hex(w[0], w[1])).collect::<Result<_, _>>()?;
+            Order::Patrol { units: units(u)?, waypoints, attack }
+        }
+        ["maraud", u] => Order::Maraud { units: units(u)?, on: true },
+        ["unmaraud", u] => Order::Maraud { units: units(u)?, on: false },
+        ["roam", u, row, col] => Order::Roam { units: units(u)?, to: hex(row, col)? },
         _ => {
             return Err(
-                "not an order (move, toward, goto, done, defend, undefend, bless, disband, build, rally, point, walls, undo, end)".to_string()
+                "not an order (move, toward, goto, done, defend, undefend, bless, disband, build, rally, point, walls, undo, end, patrol, maraud, unmaraud, roam)".to_string()
             );
         }
     }))

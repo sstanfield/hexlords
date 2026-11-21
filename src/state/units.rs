@@ -3,6 +3,7 @@
 //! C++: src/state/unit.h, src/state/unit.cpp (Side, MoveCost, Unit, UnitManager)
 
 use super::hex::Hex;
+use super::patrol::Patrol;
 use super::terrain::MoveCost;
 use crate::state::TileType;
 
@@ -175,6 +176,13 @@ pub struct Unit {
     /// It defends where it stands (`Order::Defend`), turn after turn, until
     /// it is sent somewhere: Next stack and the tasks pass it by.
     pub defending: bool,
+    /// It goes round waypoints, turn after turn (`Order::Patrol`); or the
+    /// computer leads it (`Order::Maraud`). Either, until its player gives
+    /// it another order. And whether it fought on either since its player
+    /// last had a word with it: it needs one (`Order::Done` lets it go on).
+    pub patrol: Option<Patrol>,
+    pub marauding: bool,
+    pub fought: bool,
 }
 
 /// The highest level, and the battles won a unit needs for each level above
@@ -247,6 +255,16 @@ impl Unit {
     /// Where its standing order takes it now: the first stop of its route.
     pub fn goto(&self) -> Option<Hex> {
         self.route.first().copied()
+    }
+
+    /// True if it patrols or marauds: it goes on its own, turn after turn.
+    pub fn on_duty(&self) -> bool {
+        self.patrol.is_some() || self.marauding
+    }
+
+    /// It patrols and marauds no more (another order of its player's).
+    pub fn stand_down(&mut self) {
+        (self.patrol, self.marauding, self.fought) = (None, false, false);
     }
 
     /// True if the temple at `at` has blessed it.
@@ -364,6 +382,9 @@ impl Units {
             moved: false,
             done: false,
             defending: false,
+            patrol: None,
+            marauding: false,
+            fought: false,
         });
         id
     }

@@ -8,7 +8,7 @@
 use crate::game::{CityState, Game, Ghost, Sight, StackState, Task, describe_terrain};
 use crate::orders::{Event, Fallen, Record};
 use crate::state::scenario::side_name;
-use crate::state::{City, Hex, Map, MoveCost, Sends, Side, TileType, Travel, Unit, UnitProd};
+use crate::state::{City, Hex, Map, MoveCost, Patrol, Sends, Side, TileType, Travel, Unit, UnitProd};
 
 /// The line about the hex under the cursor: the turn, the hex's terrain and
 /// road, its city's name, how many units stand there, and, if the selected
@@ -417,6 +417,29 @@ pub fn unit_line(map: &Map, unit: &Unit) -> String {
     line
 }
 
+/// A patrol in words: "patrolling 3 waypoints back and forth, never
+/// attacks", "patrolling 4 waypoints round and round, attacks at 65% or
+/// better".
+pub fn patrol_words(patrol: &Patrol) -> String {
+    let way = if patrol.round { "round and round" } else { "back and forth" };
+    let attack = match patrol.attack {
+        None => "never attacks".to_string(),
+        Some(odds) => format!("attacks at {odds}% or better"),
+    };
+    format!("patrolling {} waypoints {way}, {attack}", patrol.stops.len())
+}
+
+/// What a unit on patrol or marauding does, in words ("patrolling 3
+/// waypoints ...", "marauding: the computer leads it"); `None` for one on
+/// neither.
+pub fn duty_words(unit: &Unit) -> Option<String> {
+    match (&unit.patrol, unit.marauding) {
+        (Some(patrol), _) => Some(patrol_words(patrol)),
+        (None, true) => Some("marauding: the computer leads it".to_string()),
+        (None, false) => None,
+    }
+}
+
 /// What each terrain costs to enter, in words, a few to a line: "grass 2,
 /// forest 3". What cannot be entered is left out.
 pub fn enters(cost: &MoveCost, per_line: usize) -> Vec<String> {
@@ -464,6 +487,9 @@ pub fn unit_details(map: &Map, unit: &Unit) -> Vec<String> {
     lines.extend(growth_line(unit));
     if unit.defending {
         lines.push("Defending: it stays here until it is sent somewhere".to_string());
+    }
+    if let Some(duty) = duty_words(unit) {
+        lines.push(format!("{}, until it is given another order", sentence(&duty)));
     }
     match map.units().move_cost(unit.move_cost) {
         Some(cost) => lines.extend(enters(cost, 5)),
@@ -681,14 +707,26 @@ pub fn task_line(game: &Game, task: &Task) -> String {
                 .iter()
                 .find(|u| !u.route.is_empty())
                 .map_or(String::new(), |u| route_words_to(map, &u.route, u.bound));
+            // On patrol, or marauding.
+            let patrol = here.iter().find_map(|u| u.patrol.as_ref());
+            let duty = here.iter().find_map(|u| duty_words(u)).unwrap_or_default();
             let what = match state {
                 StackState::Waiting => "no orders yet".to_string(),
+                StackState::Stalled if goal.is_empty() && patrol.is_some() => {
+                    format!(
+                        "stopped on patrol, on the way to {}",
+                        patrol.map_or(String::new(), |p| place(map, p.target()))
+                    )
+                }
                 StackState::Stalled => format!("stopped on the way to {goal}"),
                 StackState::MovesLeft => "moved, with moves left".to_string(),
                 StackState::Done => "put aside, with moves left".to_string(),
                 StackState::Marching => format!("on the way to {goal}"),
                 StackState::Defending => "defending: stays put".to_string(),
                 StackState::Spent => "no moves left".to_string(),
+                StackState::Patrolling | StackState::Marauding => duty,
+                StackState::Fought if patrol.is_some() => "fought on patrol: D lets it go on".to_string(),
+                StackState::Fought => "fought, marauding: D lets it go on".to_string(),
             };
             format!("{who} {here_words}: {what}")
         }
