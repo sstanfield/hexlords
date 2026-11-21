@@ -59,8 +59,8 @@ touching the rules.
 | `tools/mapeditor/` | The map editor, a workspace member on the game's library: `Editor` (a scene: the sidebar, painting, files), `brush`, `history` (undo), `check` (`--check`) |
 | `src/mapgen/` | The random map generator, pure (`docs/mapgen.md`): `config` (the knobs, the presets, the size), `land`, `relief`, `rivers`, `biomes`, `cleanup`, `cities`, `sites`, `roads` (the stages), `names`, `grid`, `noise`, `rng`, `reach` (movement classes, who gets where), `stats` (what any map measures), `check`, `validate` (the hard checks a generated map must pass), `score`, `preview` (pictures, contact sheets) |
 | `tools/mapgen/` | Its command line, a workspace member on the game's library: `gen`, `batch`, `stats`, `check` |
-| `tools/assetgen/` | The picture generator, a workspace member with no dependencies: `terrain` (a function for each terrain's art), `noise` and `scatter` (what repeats on the hex grid), `tile` (the image, the atlas), `overlay`, `road` and `icons` (the pictures that go over a tile), `preview` (maps drawn without the game), `png` (the writer) |
-| `assets/` | `layouts/main.tb.txt` (the game), `layouts/editor.tb.txt` (the editor), Turbo Badger's default skin and `skin/hexgame.tb.txt` (our changes, loaded on top), `tiles/`, `roads/` and the signs in `units/` (what `assetgen` makes, and nothing else), `units/default_unit.png` (the C++ demo's), `maps/` (`*.map` files and map directories), `mapgen/` (the generator's presets and units template) |
+| `tools/assetgen/` | The picture generator, a workspace member with no dependencies: `terrain` (a function for each terrain's art), `noise` and `scatter` (what repeats on the hex grid), `tile` (the image, the atlas), `overlay`, `road` and `icons` (the pictures that go over a tile), `skin` (the windows' and buttons' pictures), `preview` (maps drawn without the game), `png` (the writer) |
+| `assets/` | `layouts/main.tb.txt` (the game), `layouts/editor.tb.txt` (the editor), Turbo Badger's default skin and `skin/hexgame.tb.txt` (our changes, loaded on top), `tiles/`, `roads/`, the signs in `units/` and the `hg_*.png` of `skin/` (what `assetgen` makes, and nothing else), `units/default_unit.png` (the C++ demo's), `maps/` (`*.map` files and map directories), `mapgen/` (the generator's presets and units template) |
 | `tests/`, `tools/*/tests/` | Headless tests of the layouts, the widgets and the interaction; of the generator against the game |
 | `docs/` | `map-format.md` (the map file, for people and agents who write maps); `tiles.md` (the tiles, for those who draw them); `gameplay.md` (the plan for the rules); `deviations.md`; `screenshots/` |
 | `reference/hexGame/` | The C++ original, for reference. **Read-only, never edit it.** Gitignored: if it is missing, `git clone https://github.com/sstanfield/hexGame reference/hexGame` |
@@ -159,7 +159,7 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
   middle), whatever moved it (a scroll, a zoom, a resize, the cursor), so
   nothing past the edge is shown.
 - **The pictures are generated** (`docs/tiles.md`): `assets/tiles`,
-  `assets/roads` and the signs in `assets/units` hold what
+  `assets/roads`, the signs in `assets/units` and the skin's `hg_*.png` hold what
   `cargo run -p assetgen --release` writes and nothing else, and tests draw
   every picture again to compare. To change the art, change the generator
   (`terrain.rs`, `road.rs`, `icons.rs`) and run it; do not edit a PNG. The

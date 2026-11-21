@@ -22,8 +22,10 @@ use crate::screen::Scene;
 /// The game window's size at start, in logical pixels. C++: main.cpp
 pub const WINDOW_SIZE: (i32, i32) = (1024, 768);
 pub const WINDOW_TITLE: &str = "HEX Game!";
-/// The color behind everything. C++: main.cpp glClearColor
-pub const CLEAR_COLOR: (f32, f32, f32, f32) = (0.5, 0.5, 0.5, 1.0);
+/// The color behind everything: the panels around the map are on it. Dark,
+/// as the windows are (`assets/skin/hexgame.tb.txt`); the C++ demo's was mid
+/// grey (main.cpp glClearColor).
+pub const CLEAR_COLOR: (f32, f32, f32, f32) = (0.15, 0.16, 0.18, 1.0);
 
 /// The part of the command line every window of this project understands.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

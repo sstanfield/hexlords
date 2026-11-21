@@ -24,6 +24,7 @@
 //! - [`overlay`]: pictures that let the tile show through.
 //! - [`road`]: roads and bridges, in the 14 shapes a hex's road can have.
 //! - [`icons`]: the units' pictures.
+//! - [`skin`]: the game's windows and buttons.
 //! - [`preview`]: maps drawn with the tiles, to look at them without the game.
 //!
 //! It began as a prototype outside the repository (a `tiles/assetgen` crate
@@ -41,6 +42,7 @@ pub mod road;
 pub mod scatter;
 pub mod shapes;
 pub mod sides;
+pub mod skin;
 pub mod terrain;
 pub mod tile;
 

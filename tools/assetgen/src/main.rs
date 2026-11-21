@@ -140,6 +140,20 @@ fn run(args: &Args) -> Result<(), String> {
     }
     println!("wrote {} units' signs of {side} x {side} pixels to {}", Icon::ALL.len(), dir.display());
 
+    let dir = args.out.join("skin");
+    make_dir(&dir)?;
+    for plate in &assetgen::skin::PLATES {
+        for scale in assetgen::skin::SCALES {
+            let (n, picture) = plate.picture(scale);
+            write_png(&dir.join(assetgen::skin::file_name(plate, scale)), n, n, &picture)?;
+        }
+    }
+    println!(
+        "wrote {} windows' and buttons' pictures, at 4 sizes each, to {}",
+        assetgen::skin::PLATES.len(),
+        dir.display()
+    );
+
     if let Some(dir) = &args.previews {
         make_dir(dir)?;
         let previews = previews(&features);

@@ -265,3 +265,23 @@ fn a_road_drawn_on_the_games_map_leaves_through_the_sides_the_map_says() {
         assert_eq!(alpha == 255, leaves, "{side:?}: opacity {alpha}");
     }
 }
+
+/// The skin's windows and buttons (`hg_*.png`, at its four sizes) are what
+/// the generator draws, and the game's skin names each of them.
+#[test]
+fn the_games_skin_pictures_are_what_the_generator_makes() {
+    let skin = std::fs::read_to_string(assets().join("skin/hexgame.tb.txt")).unwrap();
+    let mut expected = Vec::new();
+    for plate in &assetgen::skin::PLATES {
+        for scale in assetgen::skin::SCALES {
+            let (n, picture) = plate.picture(scale);
+            let name = assetgen::skin::file_name(plate, scale);
+            same_as_file(&format!("skin/{name}"), n, &picture);
+            expected.push(name);
+        }
+        assert!(skin.contains(&format!("bitmap {}.png", plate.name)), "the skin does not use {}", plate.name);
+    }
+    expected.sort();
+    let ours: Vec<String> = files_in("skin").into_iter().filter(|f| f.starts_with("hg_")).collect();
+    assert_eq!(ours, expected);
+}

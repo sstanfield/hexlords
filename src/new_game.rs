@@ -452,7 +452,7 @@ impl NewGame {
             let row = build::row(ui, c, space);
             build::text(ui, row, &format!("Seed {}", cfg.seed));
             build::button(ui, row, SEED_ID, "New seed");
-            build::button(ui, row, MAKE_ID, if random.made { "Make it again" } else { "Make the map" });
+            build::primary_button(ui, row, MAKE_ID, if random.made { "Make it again" } else { "Make the map" });
             if !random.made {
                 build::text(ui, c, "Make the map to see it and play it.");
             } else if !random.failures.is_empty() {

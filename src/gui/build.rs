@@ -8,7 +8,7 @@
 //! Not a port: the C++ had no windows.
 
 use turbo_ferret::layout::stack::{LayoutDistributionPosition, LayoutPosition};
-use turbo_ferret::widgets::{Button, Layout, ResizeFit, TextAlign, TextField, Window, WindowSettings};
+use turbo_ferret::widgets::{Button, ImageWidget, Layout, ResizeFit, TextAlign, TextField, Window, WindowSettings};
 
 /// A button's text from the left, as in a list, instead of in its middle.
 pub fn text_from_left(ui: &mut Ui, button: WidgetId) {
@@ -23,7 +23,7 @@ pub fn text_from_left(ui: &mut Ui, button: WidgetId) {
         });
     }
 }
-use turbo_ferret::{Axis, Gravity, LayoutParams, Rect, TbId, Ui, WidgetId};
+use turbo_ferret::{Axis, Gravity, ImageHandle, LayoutParams, Rect, TbId, Ui, WidgetId};
 
 /// The skin of a heading: a color of its own (`assets/skin/hexgame.tb.txt`).
 pub const HEADING_SKIN: &str = "Heading";
@@ -90,6 +90,29 @@ pub fn button(ui: &mut Ui, parent: WidgetId, id: &str, label: &str) -> WidgetId 
     ui.set_id(button, TbId::new(id));
     ui.set_focusable(button, false);
     button
+}
+
+/// A button in the skin's `Primary` look (bronze): the one a window means
+/// its player to press.
+pub fn primary_button(ui: &mut Ui, parent: WidgetId, id: &str, label: &str) -> WidgetId {
+    let button = self::button(ui, parent, id, label);
+    ui.set_skin(button, TbId::new(PRIMARY_SKIN));
+    button
+}
+
+/// The skin element of a primary button (`assets/skin/hexgame.tb.txt`).
+pub const PRIMARY_SKIN: &str = "Primary";
+
+/// A line of text with a picture before it (a unit's icon), `size` pixels
+/// square. Returns the text's widget.
+pub fn icon_line(ui: &mut Ui, parent: WidgetId, icon: Option<ImageHandle>, size: i32, text: &str) -> WidgetId {
+    let line = self::row(ui, parent, size / 4);
+    if let Some(icon) = icon {
+        let picture = ui.add(line, ImageWidget::new());
+        ui.set_layout_params(picture, Some(LayoutParams::fixed(size, size)));
+        ui.with_widget::<ImageWidget, _>(picture, |w, cx| w.set_image(cx, icon));
+    }
+    self::text(ui, line, text)
 }
 
 /// Empty room, `px` pixels high.

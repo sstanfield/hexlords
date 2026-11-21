@@ -8,7 +8,7 @@
 //!
 //! Not a port: the C++ had no temples.
 
-use turbo_ferret::{Rect, Ui, WidgetId};
+use turbo_ferret::{ImageHandle, Rect, Ui, WidgetId};
 
 use crate::gui::build::{self, WindowParts};
 use crate::orders::Event;
@@ -19,6 +19,8 @@ pub const TEMPLE_BLESS_ID: &str = "temple_bless";
 pub const TEMPLE_NOT_NOW_ID: &str = "temple_not_now";
 pub const TEMPLE_CLOSE_ID: &str = "temple_close";
 const SPACING_DP: i32 = 8;
+/// A unit's icon beside its line, in dp.
+const ICON_DP: i32 = 26;
 
 /// The units of `side` on `at`, if it is a temple that has not blessed all
 /// of them: the stack that may seek its blessing.
@@ -29,6 +31,14 @@ pub fn seekers(map: &Map, side: Side, at: Hex) -> Option<Vec<UnitId>> {
     let units: Vec<UnitId> = map.units_at(at).iter().copied().filter(|id| id.side == side).collect();
     let unblessed = units.iter().any(|id| map.units().get(*id).is_some_and(|u| !u.blessed_at(at)));
     (unblessed && !units.is_empty()).then_some(units)
+}
+
+/// A line for each unit, its icon before it.
+fn unit_lines(ui: &mut Ui, content: WidgetId, lines: &[String], icons: &[ImageHandle]) {
+    let size = ui.dimension_converter().dp_to_px(ICON_DP);
+    for (i, line) in lines.iter().enumerate() {
+        build::icon_line(ui, content, icons.get(i).cloned(), size, line);
+    }
 }
 
 /// The window: asking, or telling what came of it.
@@ -42,8 +52,15 @@ pub struct TempleWindow {
 }
 
 impl TempleWindow {
-    /// Ask whether the stack `units` on the temple `at` seeks its blessing.
-    pub fn ask(ui: &mut Ui, (root, area): (WidgetId, Rect), map: &Map, at: Hex, units: &[UnitId]) -> TempleWindow {
+    /// Ask whether the stack `units` on the temple `at` seeks its blessing
+    /// (`icons`: theirs, in their order).
+    pub fn ask(
+        ui: &mut Ui,
+        (root, area): (WidgetId, Rect),
+        map: &Map,
+        (at, units): (Hex, &[UnitId]),
+        icons: &[ImageHandle],
+    ) -> TempleWindow {
         let lines: Vec<String> = units
             .iter()
             .filter_map(|id| map.units().get(*id))
@@ -58,12 +75,10 @@ impl TempleWindow {
         build::text(ui, parts.content, "each it blessed before keeps its moves.");
         let space = ui.dimension_converter().dp_to_px(SPACING_DP);
         build::gap(ui, parts.content, space);
-        for line in &lines {
-            build::text(ui, parts.content, line);
-        }
+        unit_lines(ui, parts.content, &lines, icons);
         build::gap(ui, parts.content, space * 2);
         let buttons = build::row(ui, parts.content, space * 2);
-        build::button(ui, buttons, TEMPLE_BLESS_ID, "Seek the blessing");
+        build::primary_button(ui, buttons, TEMPLE_BLESS_ID, "Seek the blessing");
         build::button(ui, buttons, TEMPLE_NOT_NOW_ID, "Not now");
         build::place(ui, parts, area, (0.5, 0.08));
         TempleWindow { parts, at, units: units.to_vec(), lines }
@@ -76,7 +91,7 @@ impl TempleWindow {
         (root, area): (WidgetId, Rect),
         map: &Map,
         (at, units): (Hex, &[UnitId]),
-        events: &[Event],
+        (events, icons): (&[Event], &[ImageHandle]),
     ) -> TempleWindow {
         let lines: Vec<String> = units
             .iter()
@@ -96,11 +111,9 @@ impl TempleWindow {
         build::heading(ui, parts.content, "The temple's blessing");
         let space = ui.dimension_converter().dp_to_px(SPACING_DP);
         build::gap(ui, parts.content, space);
-        for line in &lines {
-            build::text(ui, parts.content, line);
-        }
+        unit_lines(ui, parts.content, &lines, icons);
         build::gap(ui, parts.content, space * 2);
-        build::button(ui, parts.content, TEMPLE_CLOSE_ID, "Close");
+        build::primary_button(ui, parts.content, TEMPLE_CLOSE_ID, "Close");
         build::place(ui, parts, area, (0.5, 0.08));
         TempleWindow { parts, at, units: Vec::new(), lines }
     }

@@ -126,7 +126,8 @@ A unit is drawn as a disc in its side's color, half a hex wide, with the
 picture of its kind on it (`image` in the map's `units.txt`). The game's
 signs are a sword (`militia.png`), a spear (`lightinfantry.png`), a shield
 (`wardens.png`), a helmet with a visor (`heavyinfantry.png`), a bow
-(`archers.png`), a horseshoe (`lightcavalry.png`), a stirrup
+(`archers.png`), a pine (`rangers.png`), two peaks (`highlanders.png`), a
+catapult (`siegeengine.png`), a horseshoe (`lightcavalry.png`), a stirrup
 (`cavalry.png`), a banner (`captain.png`), a
 longship with shields along its side (`warship.png`), a round-bellied cog
 (`transport.png`), a feather (`hawkriders.png`) and a pair of wings
@@ -211,3 +212,18 @@ out, so the art can be judged without a window. The terrain of
 Rivers, and anything that moves on water. The minimap shows no roads. The
 unit picture `assets/units/default_unit.png` is the C++ demo's, drawn for a
 kind of unit that names no picture.
+
+## Windows and buttons
+
+The game's windows, menus, buttons and the box over a unit are drawn with
+pictures the generator makes too (`tools/assetgen/src/skin.rs`), named
+`hg_*.png` in `assets/skin`, each at the skin's four sizes (`hg_window.png`,
+`hg_window@192.png`, `@288`, `@384`), so they are sharp on any screen:
+a window is a dark panel inside a thin bronze line, with round corners and
+a soft shadow; its title bar darker, the title in gold; a button a raised
+plate, sunk and lined in bronze when pressed; and the button a window means
+its player to press (`build::primary_button`, the skin's `Primary`) in
+bronze. `assets/skin/hexgame.tb.txt` says how the skin cuts each into nine
+(the corners stay, the edges and the middle stretch); the rest of the skin
+is Turbo Badger's. To change their look, change `skin.rs` and run the
+generator.

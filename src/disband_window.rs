@@ -5,7 +5,7 @@
 //!
 //! Not a port: the C++ had no upkeep.
 
-use turbo_ferret::{Rect, Ui, WidgetId};
+use turbo_ferret::{ImageHandle, Rect, Ui, WidgetId};
 
 use crate::gui::build::{self, WindowParts};
 use crate::state::{Map, UnitId};
@@ -14,6 +14,8 @@ pub const DISBAND_WINDOW_ID: &str = "disband_window";
 pub const DISBAND_YES_ID: &str = "disband_yes";
 pub const DISBAND_NO_ID: &str = "disband_no";
 const SPACING_DP: i32 = 8;
+/// A unit's icon beside its line, in dp.
+const ICON_DP: i32 = 26;
 
 /// The window, asking about `units`.
 pub struct DisbandWindow {
@@ -24,8 +26,15 @@ pub struct DisbandWindow {
 }
 
 impl DisbandWindow {
-    /// Ask whether `units` go home for good.
-    pub fn ask(ui: &mut Ui, (root, area): (WidgetId, Rect), map: &Map, units: &[UnitId]) -> DisbandWindow {
+    /// Ask whether `units` go home for good (`icons`: theirs, in their
+    /// order).
+    pub fn ask(
+        ui: &mut Ui,
+        (root, area): (WidgetId, Rect),
+        map: &Map,
+        units: &[UnitId],
+        icons: &[ImageHandle],
+    ) -> DisbandWindow {
         let all = map.units();
         let lines: Vec<String> = units
             .iter()
@@ -40,12 +49,13 @@ impl DisbandWindow {
         build::text(ui, parts.content, &format!("{gone}, and {upkeep} gold a turn of upkeep with them."));
         let space = ui.dimension_converter().dp_to_px(SPACING_DP);
         build::gap(ui, parts.content, space);
-        for line in &lines {
-            build::text(ui, parts.content, line);
+        let size = ui.dimension_converter().dp_to_px(ICON_DP);
+        for (i, line) in lines.iter().enumerate() {
+            build::icon_line(ui, parts.content, icons.get(i).cloned(), size, line);
         }
         build::gap(ui, parts.content, space * 2);
         let buttons = build::row(ui, parts.content, space * 2);
-        build::button(ui, buttons, DISBAND_YES_ID, "Disband");
+        build::primary_button(ui, buttons, DISBAND_YES_ID, "Disband");
         build::button(ui, buttons, DISBAND_NO_ID, "Keep them");
         build::place(ui, parts, area, (0.5, 0.08));
         DisbandWindow { parts, units: units.to_vec(), lines }

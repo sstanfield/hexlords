@@ -1,6 +1,63 @@
 # HexGame's changes to the default skin. This file is loaded on top of
-# skin.tb.txt, which stays as Turbo Badger made it.
+# skin.tb.txt, which stays as Turbo Badger made it; what an element sets here
+# replaces what it sets there. The hg_*.png pictures are drawn by
+# `cargo run -p assetgen --release` (tools/assetgen/src/skin.rs), at the
+# skin's four sizes.
 elements
+	# A window: a dark panel inside a bronze line, round corners, a shadow;
+	# its title bar darker, its title in gold.
+	TBWindow
+		bitmap hg_window.png
+		cut 20
+		expand 8
+		padding 12
+	TBWindow.selected
+		bitmap hg_window.png
+		cut 20
+		expand 8
+	TBWindow.mover
+		text-color #d9b866
+		bitmap hg_title.png
+		type StretchBox
+		cut 8
+		expand 0
+		padding 5
+	TBWindow.mover.active
+		text-color #f0cf78
+		bitmap hg_title.png
+		type StretchBox
+		cut 8
+		expand 0
+	# (Turbo Badger's sheen over its title bar: none over ours.)
+	TBWindow.mover.overlay
+		opacity 0
+	# A button: a raised plate; pressed (or the chosen one of a group), sunk
+	# inside a bronze line.
+	TBButton
+		bitmap hg_button.png
+		cut 9
+		expand 1
+	TBButton.pressed
+		bitmap hg_button_pressed.png
+		cut 9
+		expand 1
+	# The button a window means you to press: bronze, its words dark.
+	Primary
+		text-color #1b1c1f
+		bitmap hg_primary.png
+		cut 9
+		expand 1
+		padding 6 12
+		overrides
+			element Primary.pressed
+				state pressed
+	Primary.pressed
+		text-color #1b1c1f
+		bitmap hg_primary_pressed.png
+		cut 9
+		expand 1
+		content-ofs-x 1
+		content-ofs-y 1
 	# The chosen button of a group (a terrain, a tool) says so in color.
 	TBButton.pressed
 		text-color #ffd24a
@@ -8,26 +65,26 @@ elements
 	# so that nine of them fit under the map. The selected unit's is pressed.
 	UnitSlot
 		text-color #fefefe
-		bitmap button.png
-		cut 17
-		expand 7
+		bitmap hg_button.png
+		cut 9
+		expand 1
 		padding 4 4
 		overrides
 			element UnitSlot.pressed
 				state pressed
 	UnitSlot.pressed
 		text-color #ffd24a
-		bitmap button_pressed.png
-		cut 17
-		expand 7
+		bitmap hg_button_pressed.png
+		cut 9
+		expand 1
 		content-ofs-x 1
 		content-ofs-y 1
 	# The box about the unit under the pointer: a window's look, so the map
 	# under it does not show through.
 	UnitTip
-		bitmap window.png
-		cut 16
-		expand 12
+		bitmap hg_window.png
+		cut 20
+		expand 8
 		padding 8 10
 	# The headings in windows (the help's sections, a city's).
 	Heading
@@ -38,9 +95,9 @@ elements
 	# A unit's card in a battle being watched: like a slot; the two that
 	# fight lit; the one hit red; its hits marked in red.
 	BattleCard
-		bitmap button.png
-		cut 17
-		expand 7
+		bitmap hg_button.png
+		cut 9
+		expand 1
 		padding 4 4
 	BattleCard.fighting
 		background-color #6e5a1cff
@@ -96,9 +153,9 @@ elements
 	# A menu, open under its title: a window's look; its items rows of a
 	# list (`ListRow`), the keys for each in a dimmer color.
 	MenuDrop
-		bitmap window.png
-		cut 16
-		expand 12
+		bitmap hg_window.png
+		cut 20
+		expand 8
 		padding 6
 	MenuKeys
 		text-color #a8b0b8
@@ -111,17 +168,17 @@ elements
 	# `clone` reaches only its own file: this one is written out.)
 	SmallButton
 		text-color #fefefe
-		bitmap button.png
-		cut 17
-		expand 7
+		bitmap hg_button.png
+		cut 9
+		expand 1
 		padding 3 10
 		overrides
 			element SmallButton.pressed
 				state pressed
 	SmallButton.pressed
 		text-color #fefefe
-		bitmap button_pressed.png
-		cut 17
-		expand 7
+		bitmap hg_button_pressed.png
+		cut 9
+		expand 1
 		content-ofs-x 1
 		content-ofs-y 1

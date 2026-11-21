@@ -129,6 +129,57 @@ pub fn unit_icon(picture: Option<&Image>, side: Side, level: u8, size: i32) -> I
     Image { size: Size::new(size, size), rgba }
 }
 
+/// `icon` with a small bronze shield in its lower right: the unit defends
+/// (`Order::Defend`). The shield is flat on top and round below, outlined
+/// dark, two fifths of the icon high.
+pub fn defender_badge(mut icon: Image) -> Image {
+    const FILL: [f32; 3] = [0.80, 0.64, 0.32];
+    const LINE: [f32; 3] = [0.12, 0.10, 0.08];
+    let n = icon.size.w.max(0) as usize;
+    let s = n as f32;
+    // In the badge's own units: its middle at (0, 0), 1 its half width.
+    let (cx, cy, half) = (s * 0.78, s * 0.76, s * 0.19);
+    let inside = |x: f32, y: f32, grow: f32| {
+        let (u, v) = ((x - cx) / half, (y - cy) / half);
+        let top = v >= -1.0 - grow && u.abs() <= 1.0 + grow && v <= 0.2;
+        let round = u * u + (v - 0.2) * (v - 0.2) <= (1.0 + grow) * (1.0 + grow) && v > 0.2;
+        top || round
+    };
+    for y in 0..n {
+        for x in 0..n {
+            let mut sum = [0.0f32; 4];
+            for sy in 0..SAMPLES {
+                for sx in 0..SAMPLES {
+                    let px = x as f32 + (sx as f32 + 0.5) / SAMPLES as f32;
+                    let py = y as f32 + (sy as f32 + 0.5) / SAMPLES as f32;
+                    if inside(px, py, 0.0) {
+                        let edge = !inside(px, py, -0.28);
+                        let c = if edge { LINE } else { FILL };
+                        sum = [sum[0] + c[0], sum[1] + c[1], sum[2] + c[2], sum[3] + 1.0];
+                    }
+                }
+            }
+            let count = (SAMPLES * SAMPLES) as f32;
+            let a = sum[3] / count;
+            if a <= 0.0 {
+                continue;
+            }
+            let o = (y * n + x) * 4;
+            let under: [u8; 4] = [icon.rgba[o], icon.rgba[o + 1], icon.rgba[o + 2], icon.rgba[o + 3]];
+            let ua = f32::from(under[3]) / 255.0;
+            let out_a = a + ua * (1.0 - a);
+            for i in 0..3 {
+                let top = sum[i] / sum[3];
+                let bottom = f32::from(under[i]) / 255.0;
+                let v = (top * a + bottom * ua * (1.0 - a)) / out_a.max(1e-6);
+                icon.rgba[o + i] = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+            }
+            icon.rgba[o + 3] = (out_a.clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+    }
+    icon
+}
+
 /// A gold coin, `size` pixels across, for the treasury: a disc of gold with a
 /// darker rim and a lighter face, lit from the top left. Straight-alpha RGBA.
 pub fn coin_icon(size: i32) -> Image {
@@ -207,6 +258,19 @@ mod tests {
         assert_eq!(pixel(&icon, 39, 39)[3], 0);
         // The edge is smoothed: some pixels are partly covered.
         assert!(icon.rgba.chunks(4).any(|p| p[3] > 0 && p[3] < 255));
+    }
+
+    #[test]
+    fn a_defenders_badge_is_a_bronze_shield_in_the_lower_right() {
+        let plain = unit_icon(None, Side::Blue, 1, 40);
+        let marked = defender_badge(plain.clone());
+        assert_eq!(marked.size, plain.size);
+        // In the badge's middle: bronze; in the upper left: the icon as it was.
+        let at = |icon: &Image, x: i32, y: i32| pixel(icon, x, y);
+        let bronze = at(&marked, 31, 31);
+        assert!(bronze[0] > 180 && bronze[1] > 140 && bronze[2] < 120 && bronze[3] == 255, "{bronze:?}");
+        assert_eq!(at(&marked, 10, 10), at(&plain, 10, 10));
+        assert_ne!(marked.rgba, plain.rgba);
     }
 
     #[test]

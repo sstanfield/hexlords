@@ -194,7 +194,9 @@ fn set_visibility(screen: &mut MapScreen, widget: WidgetId, visibility: Visibili
 
 /// The picture a unit is drawn with in a slot: its kind's image and its side.
 /// A unit's icon: its kind's picture, its side, its level (the ring).
-type IconKey = (String, Side, u8);
+/// A unit's icon, by its picture, its side, its level and whether it
+/// defends (a badge).
+type IconKey = (String, Side, u8, bool);
 
 /// A unit's place in the stack: a button with the unit's icon and its numbers.
 struct Slot {
@@ -660,7 +662,7 @@ impl Session {
         let space = ui.dimension_converter().dp_to_px(SPACING_DP * 2);
         build::gap(ui, parts.content, space);
         let buttons = build::row(ui, parts.content, space);
-        build::button(ui, buttons, NEW_GAME_ID, "New game");
+        build::primary_button(ui, buttons, NEW_GAME_ID, "New game");
         build::button(ui, buttons, GAME_OVER_CLOSE_ID, "Look at the map");
         build::place(ui, parts, area, (0.5, 0.4));
         self.game_over = Some(parts);
@@ -847,12 +849,12 @@ impl Session {
     /// The picture the `i`th unit's box shows: the image of the unit's kind
     /// and its side (`None` for an empty box). The leader's: [`Session::leader_icon`].
     pub fn slot_icon(&self, i: usize) -> Option<(&str, Side)> {
-        self.slots.get(i)?.shows.as_ref().map(|(image, side, _)| (image.as_str(), *side))
+        self.slots.get(i)?.shows.as_ref().map(|(image, side, _, _)| (image.as_str(), *side))
     }
 
     /// The picture the leader's box shows, if the stack has one.
     pub fn leader_icon(&self) -> Option<(&str, Side)> {
-        self.leader.shows.as_ref().map(|(image, side, _)| (image.as_str(), *side))
+        self.leader.shows.as_ref().map(|(image, side, _, _)| (image.as_str(), *side))
     }
 
     /// The units in the stack's boxes: its leader's first (`None` if it has
@@ -895,6 +897,22 @@ impl Session {
         self.city.iter().map(|line| line.text.as_str()).filter(|text| !text.is_empty()).collect()
     }
 
+    /// The icons of these units, as the UI shows them (those that are gone
+    /// are left out).
+    fn unit_icons(&mut self, ids: &[UnitId]) -> Vec<ImageHandle> {
+        let keys: Vec<IconKey> = {
+            let units = self.screen.game.map.units();
+            ids.iter()
+                .filter_map(|id| units.get(*id))
+                .map(|u| {
+                    let image = units.kind_of(u).map_or(DEFAULT_UNIT_IMAGE, |k| k.image.as_str()).to_string();
+                    (image, u.side(), u.level, false)
+                })
+                .collect()
+        };
+        keys.iter().map(|k| self.icon(k)).collect()
+    }
+
     /// The icon of a unit whose kind is drawn with `image`, of `side`, for the
     /// UI: drawn the first time it is asked for. A picture that cannot be read
     /// is the default unit's; if that cannot be read either, the disc alone.
@@ -902,11 +920,14 @@ impl Session {
         if let Some(handle) = self.icons.get(key) {
             return handle.clone();
         }
-        let (image, side, level) = key;
+        let (image, side, level, defending) = key;
         let picture = self.assets.image(image).or_else(|_| self.assets.image(DEFAULT_UNIT_IMAGE)).ok();
         let size = self.screen.ui.dimension_converter().dp_to_px(ICON_DP);
-        let icon = unit_icon(picture.as_ref(), *side, *level, size);
-        let name = format!("unit icon {image} {side:?} {level} {size}");
+        let mut icon = unit_icon(picture.as_ref(), *side, *level, size);
+        if *defending {
+            icon = crate::render::unit_icon::defender_badge(icon);
+        }
+        let name = format!("unit icon {image} {side:?} {level} {defending} {size}");
         let handle = self.screen.ui.image_from_pixels(&name, icon.size, &icon.rgba);
         self.icons.insert(key.clone(), handle.clone());
         handle
@@ -927,7 +948,7 @@ impl Session {
             .map(|id| {
                 let unit = map.units().get((*id)?)?;
                 let image = map.units().kind_of(unit).map_or(DEFAULT_UNIT_IMAGE, |kind| kind.image.as_str());
-                Some(((image.to_string(), unit.side(), unit.level), info::unit_numbers(unit)))
+                Some(((image.to_string(), unit.side(), unit.level, unit.defending), info::unit_numbers(unit)))
             })
             .collect();
         let chosen: Vec<bool> = ids.iter().map(|id| id.is_some_and(|id| game.selection().contains(&id))).collect();
@@ -1169,7 +1190,7 @@ impl Session {
                 .iter()
                 .map(|p| {
                     let kind = units.kind_named(&p.basename).and_then(|k| units.kind(k));
-                    (kind.map_or(DEFAULT_UNIT_IMAGE, |k| k.image.as_str()).to_string(), city.side, city.trains)
+                    (kind.map_or(DEFAULT_UNIT_IMAGE, |k| k.image.as_str()).to_string(), city.side, city.trains, false)
                 })
                 .collect()
         });
@@ -1463,7 +1484,8 @@ impl Session {
             old.close(&mut self.screen.ui);
         }
         let (root, area) = (self.screen.root_window(), self.window_area());
-        let window = TempleWindow::ask(&mut self.screen.ui, (root, area), &self.screen.game.map, at, &units);
+        let icons = self.unit_icons(&units);
+        let window = TempleWindow::ask(&mut self.screen.ui, (root, area), &self.screen.game.map, (at, &units), &icons);
         self.temple = Some(window);
         self.screen.settle();
     }
@@ -1487,8 +1509,14 @@ impl Session {
         ask.close(&mut self.screen.ui);
         let Ok(events) = self.screen.game.apply(Order::Bless { units: units.clone() }) else { return };
         let (root, area) = (self.screen.root_window(), self.window_area());
-        let window =
-            TempleWindow::tell(&mut self.screen.ui, (root, area), &self.screen.game.map, (at, &units), &events);
+        let icons = self.unit_icons(&units);
+        let window = TempleWindow::tell(
+            &mut self.screen.ui,
+            (root, area),
+            &self.screen.game.map,
+            (at, &units),
+            (&events, &icons),
+        );
         self.temple = Some(window);
         self.screen.settle();
     }
@@ -1513,8 +1541,14 @@ impl Session {
             old.close(&mut self.screen.ui);
         }
         let (root, area) = (self.screen.root_window(), self.window_area());
-        let window =
-            crate::disband_window::DisbandWindow::ask(&mut self.screen.ui, (root, area), &self.screen.game.map, &units);
+        let icons = self.unit_icons(&units);
+        let window = crate::disband_window::DisbandWindow::ask(
+            &mut self.screen.ui,
+            (root, area),
+            &self.screen.game.map,
+            &units,
+            &icons,
+        );
         self.disband = Some(window);
         self.screen.settle();
     }
@@ -1545,8 +1579,9 @@ impl Session {
         if let Some(old) = self.battle.take() {
             old.close(&mut self.screen.ui);
         }
-        let icons = [&fight.attackers, &fight.defenders]
-            .map(|units| units.iter().map(|u| self.icon(&(u.image.clone(), u.side, u.level))).collect::<Vec<_>>());
+        let icons = [&fight.attackers, &fight.defenders].map(|units| {
+            units.iter().map(|u| self.icon(&(u.image.clone(), u.side, u.level, false))).collect::<Vec<_>>()
+        });
         let game = &self.screen.game;
         let place = game
             .map
