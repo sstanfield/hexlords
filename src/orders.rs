@@ -23,6 +23,11 @@ pub enum Order {
     /// The player is done with these units this turn: they are not offered
     /// again (Next stack) though they have moves left.
     Done { units: Vec<UnitId> },
+    /// Units on a temple seek its blessing: each the temple has not blessed
+    /// yet is blessed (chance says how) and stops there for the turn (its
+    /// movement is spent); one it has blessed already is not, and keeps its
+    /// movement.
+    Bless { units: Vec<UnitId> },
     /// Where a city sends the units it builds (they go there as `GoTo`), or
     /// nowhere.
     Rally { city: CityId, to: Option<Hex> },

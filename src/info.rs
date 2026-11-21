@@ -327,7 +327,7 @@ fn strength_words(unit: &Unit) -> String {
 }
 
 /// What a unit has won and been given: its experience and how far the next
-/// level is, a temple's blessing. None for a unit with neither.
+/// level is, the temples' blessings. None for a unit with neither.
 fn growth_line(unit: &Unit) -> Option<String> {
     let mut parts = Vec::new();
     if unit.experience > 0 || unit.level > 1 {
@@ -337,8 +337,10 @@ fn growth_line(unit: &Unit) -> Option<String> {
             None => format!("Experience {} (the highest level)", unit.experience),
         });
     }
-    if let Some(blessing) = unit.blessing {
-        parts.push(format!("blessed: {}", blessing.words()));
+    if !unit.blessings.is_empty() {
+        let words: Vec<String> = unit.blessings.iter().map(|(_, b)| b.words()).collect();
+        let temples = if words.len() == 1 { "a temple".to_string() } else { format!("{} temples", words.len()) };
+        parts.push(format!("blessed at {temples}: {}", words.join(", ")));
     }
     (!parts.is_empty()).then(|| sentence(&parts.join("; ")))
 }

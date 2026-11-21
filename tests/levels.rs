@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::assets;
+use common::{assets, click, pixel_of, type_char, widget};
 use hexgame::game::{Game, emerge_chance};
 use hexgame::info;
 use hexgame::orders::{Event, Order};
@@ -14,7 +14,8 @@ use hexgame::session::Session;
 use hexgame::setup::Setup;
 use hexgame::state::scenario::{self, Scenario};
 use hexgame::state::{Blessing, Hex, LEVEL_EXPERIENCE, Side, TileType, UnitId, level_for};
-use turbo_ferret::Size;
+use hexgame::temple_window::{TEMPLE_BLESS_ID, TEMPLE_CLOSE_ID};
+use turbo_ferret::{Point, Size};
 
 const REDHOLD: Hex = Hex::new(5, 5);
 const BLUEMOOR: Hex = Hex::new(5, 9);
@@ -77,6 +78,8 @@ fn who_lives_through_a_battle_won_gains_experience() {
     let levy = game.map.units().kind_named("levy").unwrap();
     let blue = game.map.new_unit_of(Side::Blue, levy).unwrap();
     game.map.place_unit(blue, Hex::new(5, 11)).unwrap();
+    // (An attack ends the move: the second is a round later.)
+    next_round(&mut game);
     let events = game.apply(Order::Move { units: red.clone(), to: Hex::new(5, 11) }).unwrap();
     let promoted: Vec<&Event> = events.iter().filter(|e| matches!(e, Event::Promoted { .. })).collect();
     assert_eq!(promoted.len(), 3, "{events:?}");
@@ -128,22 +131,39 @@ fn captains_have_names_and_rise_in_power() {
     );
 }
 
+/// The owner's rules (2026-11-20): going onto a temple blesses nobody; the
+/// stack there seeks the blessing (`Order::Bless`), and each unit the
+/// temple has not blessed is blessed and stops for the turn; one it has
+/// blessed keeps its movement; another temple blesses it again.
 #[test]
-fn a_temple_blesses_who_stops_on_it_once() {
+fn a_temple_blesses_who_seeks_it_once_each_temple() {
     let mut game = game("garrison soldiers 2\n", "", |s| s.seed = 3);
     let red = at(&game, REDHOLD);
     let before: Vec<(u32, u32)> =
         red.iter().map(|id| game.map.units().get(*id).map(|u| (u.power(), u.base_move_points)).unwrap()).collect();
     assert_eq!(game.map.tile(TEMPLE).unwrap().kind, TileType::Temple);
+    // Going there blesses nobody, and leaves them their movement.
     let events = game.apply(Order::Move { units: red.clone(), to: TEMPLE }).unwrap();
-    let blessed: Vec<Blessing> = events
-        .iter()
-        .filter_map(|e| if let Event::Blessed { blessing, .. } = e { Some(*blessing) } else { None })
-        .collect();
-    assert_eq!(blessed.len(), 2, "{events:?}");
+    assert!(!events.iter().any(|e| matches!(e, Event::Blessed { .. })));
+    let left = |game: &Game, id: UnitId| game.map.units().get(id).unwrap().movement;
+    assert!(red.iter().all(|id| left(&game, *id) > 0));
+    // Seeking it, the first alone: blessed by chance, and stopped for the
+    // turn; the other is not, and keeps its movement.
+    let events = game.apply(Order::Bless { units: vec![red[0]] }).unwrap();
+    assert_eq!(events.iter().filter(|e| matches!(e, Event::Blessed { .. })).count(), 1);
+    assert_eq!(left(&game, red[0]), 0, "it stops at the temple for the turn");
+    assert!(left(&game, red[1]) > 0);
+    // The next turn the stack seeks it: the second is blessed and stops; the
+    // first, blessed here already, keeps its movement.
+    next_round(&mut game);
+    let full = left(&game, red[0]);
+    let events = game.apply(Order::Bless { units: red.clone() }).unwrap();
+    assert_eq!(events.iter().filter(|e| matches!(e, Event::Blessed { unit, .. } if *unit == red[1])).count(), 1);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!((left(&game, red[0]), left(&game, red[1])), (full, 0));
     for (i, id) in red.iter().enumerate() {
         let unit = game.map.units().get(*id).unwrap();
-        let gained = match blessed[i] {
+        let gained = match unit.blessings[0].1 {
             Blessing::Strength => (before[i].0 + 1, before[i].1),
             Blessing::Moves => (before[i].0, before[i].1 + 2),
         };
@@ -151,16 +171,57 @@ fn a_temple_blesses_who_stops_on_it_once() {
     }
     // Chance had a say: no undo.
     assert!(!game.can_undo());
-    // Once in a life: back and again, nothing more.
+    // The same temple again, a turn later: nothing, and they keep their
+    // movement.
     next_round(&mut game);
-    game.apply(Order::Move { units: red.clone(), to: Hex::new(7, 6) }).unwrap();
+    let full: Vec<u32> = red.iter().map(|id| left(&game, *id)).collect();
+    assert!(game.apply(Order::Bless { units: red.clone() }).unwrap_err().contains("blessed them all"));
+    assert_eq!(red.iter().map(|id| left(&game, *id)).collect::<Vec<_>>(), full);
+    // Another temple blesses them again.
+    let other = Hex::new(7, 7);
+    game.map.tile_mut(other).unwrap().kind = TileType::Temple;
+    game.apply(Order::Move { units: red.clone(), to: other }).unwrap();
+    let events = game.apply(Order::Bless { units: red.clone() }).unwrap();
+    assert_eq!(events.iter().filter(|e| matches!(e, Event::Blessed { .. })).count(), 2);
+    assert!(red.iter().all(|id| game.map.units().get(*id).unwrap().blessings.len() == 2));
     next_round(&mut game);
-    let events = game.apply(Order::Move { units: red.clone(), to: TEMPLE }).unwrap();
-    assert!(!events.iter().any(|e| matches!(e, Event::Blessed { .. })));
     let record = game.history().iter().find(|r| matches!(r.event, Event::Blessed { .. })).unwrap();
     assert!(
         info::record_lines(&game.map, record, Side::Red)[0].starts_with("Your Soldiers were blessed at a temple: +")
     );
+}
+
+/// The owner's rule (2026-11-20): an attack needs 2 movement points left
+/// beside the enemy, and uses up the attackers' movement for the turn.
+#[test]
+fn an_attack_needs_two_points_left_and_ends_the_move() {
+    let mut game = game("garrison soldiers 2\n", "garrison levy\n", |s| s.seed = 5);
+    let red = at(&game, REDHOLD);
+    // Blue's levy two hexes out, on grass, in reach.
+    let blue = at(&game, BLUEMOOR)[0];
+    let field = Hex::new(5, 7);
+    game.map.move_unit(blue, field).unwrap();
+    game.refresh();
+    let beside = Hex::new(5, 6);
+    for id in &red {
+        game.map.unit_mut(*id).unwrap().movement = 3;
+    }
+    // From beside it with 1 point left: no attack.
+    game.apply(Order::Move { units: red.clone(), to: beside }).unwrap();
+    let left = game.map.units().get(red[0]).unwrap().movement;
+    assert_eq!(left, 1, "grass costs soldiers 2");
+    assert!(game.apply(Order::Move { units: red.clone(), to: field }).is_err());
+    // With 2 left it attacks, and whatever comes of it, the move is over.
+    for id in &red {
+        game.map.unit_mut(*id).unwrap().movement = 2;
+    }
+    let events = game.apply(Order::Move { units: red.clone(), to: field }).unwrap();
+    assert!(events.iter().any(|e| matches!(e, Event::Battle { .. })), "{events:?}");
+    for id in &red {
+        if let Some(unit) = game.map.units().get(*id) {
+            assert_eq!(unit.movement, 0, "an attack uses up the movement");
+        }
+    }
 }
 
 fn next_round(game: &mut Game) {
@@ -243,12 +304,15 @@ fn the_panels_show_a_units_level_and_blessing() {
     let id = at(&game, REDHOLD)[0];
     let unit = game.map.unit_mut(id).unwrap();
     unit.gain(2);
-    unit.bless(Blessing::Strength);
+    unit.bless(TEMPLE, Blessing::Strength);
     let unit = game.map.units().get(id).unwrap().clone();
     assert_eq!(info::unit_numbers(&unit), "5 \u{b7} 12/12");
     assert!(info::unit_line(&game.map, &unit).starts_with("Soldiers (red), veteran: strength 5 (3 +2)"));
     let details = info::unit_details(&game.map, &unit);
-    assert!(details.contains(&"Experience 2 (next level at 5); blessed: +1 strength".to_string()), "{details:?}");
+    assert!(
+        details.contains(&"Experience 2 (next level at 5); blessed at a temple: +1 strength".to_string()),
+        "{details:?}"
+    );
     // On the screen, its slot's icon has a veteran's ring.
     let s = Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
     assert_eq!(s.stack(), ["5 \u{b7} 12/12"]);
@@ -269,4 +333,44 @@ fn the_ring_says_the_level() {
     assert_eq!(edge(2), byte(VETERAN_RING));
     assert_eq!(edge(3), byte(ELITE_RING));
     assert_ne!(edge(1), edge(2));
+}
+
+fn click_hex(s: &mut Session, hex: Hex) {
+    s.screen.view.center_on(hex);
+    let p = pixel_of(s, hex);
+    click(s, p);
+}
+
+fn push(s: &mut Session, name: &str) {
+    let r = s.screen.area(widget(s, name));
+    click(s, Point::new(r.x + r.w / 2, r.y + r.h / 2));
+}
+
+/// The owner (2026-11-20): when a stack goes onto a temple, a box asks the
+/// stack whether it seeks the blessing, and then lists each unit and what it
+/// was given, or that it was blessed there before (and keeps its moves).
+#[test]
+fn a_stack_on_a_temple_is_asked_and_told_what_each_was_given() {
+    let game = game("garrison soldiers 2\n", "", |s| s.seed = 3);
+    let red = at(&game, REDHOLD);
+    let mut s = Session::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
+    click_hex(&mut s, REDHOLD);
+    click_hex(&mut s, TEMPLE);
+    let asks = s.temple().expect("the temple asks");
+    assert!(asks.asks());
+    assert_eq!(asks.lines, ["Soldiers: not yet blessed here", "Soldiers: not yet blessed here"]);
+    push(&mut s, TEMPLE_BLESS_ID);
+    let told = s.temple().expect("it tells");
+    assert!(!told.asks());
+    assert_eq!(told.lines.len(), 2);
+    assert!(told.lines.iter().all(|l| l == "Soldiers: +1 strength" || l == "Soldiers: +2 moves"), "{:?}", told.lines);
+    assert!(red.iter().all(|id| s.screen.game.map.units().get(*id).unwrap().movement == 0));
+    push(&mut s, TEMPLE_CLOSE_ID);
+    assert!(s.temple().is_none());
+    // Blessed there, the stack is not asked again: B does nothing.
+    s.screen.game.end_turn();
+    s.screen.game.end_turn();
+    click_hex(&mut s, TEMPLE);
+    type_char(&mut s, 'b');
+    assert!(s.temple().is_none());
 }

@@ -43,6 +43,7 @@ use crate::setup::Controller;
 use crate::state::scenario::side_name;
 use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Side, UnitId};
 use crate::tasks_window::{self, TasksWindow};
+use crate::temple_window::{self, TempleWindow};
 
 /// The layout, relative to the asset directory.
 pub const LAYOUT: &str = "layouts/main.tb.txt";
@@ -108,6 +109,7 @@ pub const COMPUTER_TURN_MS: u64 = 400;
 /// The button that opens the log (`log_window`).
 pub const LOG_ID: &str = "log";
 pub const GO_TO_ID: &str = "go_to";
+pub const BLESS_ID: &str = "seek_blessing";
 pub const DONE_ID: &str = "done";
 pub const TASKS_ID: &str = "tasks";
 pub const MY_CITIES_ID: &str = "my_cities";
@@ -251,7 +253,7 @@ fn help_section() -> Vec<HelpSection> {
             &[
                 ("N,  or  Next", "Select the next stack that can still move (Shift+N: the one before)"),
                 ("G,  or  Go to", "Then click a hex: the selected units go there, over as many turns as it takes"),
-                ("D,  or  Done", "Put the selected units aside for this turn (Next stack passes them by)"),
+                ("D,  or  Done;  B", "Put the selected units aside for this turn; B: on a temple, seek its blessing"),
             ],
         ),
         HelpSection::new(
@@ -329,6 +331,9 @@ pub struct Session {
     /// The list of tasks, while it is open; and the map's revision and the
     /// side it was last brought up to date for.
     tasks: Option<TasksWindow>,
+    /// A temple's window: whether the stack there seeks its blessing, and
+    /// what came of it.
+    temple: Option<TempleWindow>,
     tasks_of: Option<(u64, Side)>,
     /// The log, while it is open.
     log: Option<LogWindow>,
@@ -443,6 +448,7 @@ impl Session {
             refused: None,
 
             tasks: None,
+            temple: None,
             tasks_of: None,
             log: None,
             seen: Vec::new(),
@@ -700,6 +706,8 @@ impl Session {
         let ui = &mut self.screen.ui;
         let bar_h = ui.preferred_size_free(self.menu_bar).pref.h;
         ui.set_layout_params(self.menu_bar, Some(LayoutParams::fixed(w.max(0), bar_h)));
+        self.screen.set_clear_top(bar_h);
+        let ui = &mut self.screen.ui;
         // The treasury, if there is room for it beside the menus.
         let (titles, treasury) =
             (ui.preferred_size_free(self.menu_titles).pref.w, ui.preferred_size_free(self.treasury_box).pref.w);
@@ -1250,6 +1258,7 @@ impl Session {
             self.city_window.as_ref().and_then(|w| open(w.window())),
             self.city_list.as_ref().and_then(|w| open(w.window())),
             self.tasks.as_ref().and_then(|w| open(w.window())),
+            self.temple.as_ref().and_then(|w| open(w.window())),
         ];
         // The one on top: the last of them among the root window's children.
         let order = ui.children(root).to_vec();
@@ -1264,6 +1273,7 @@ impl Session {
             Some(3) => self.city_window.take().map(|w| w.close(ui)).is_some(),
             Some(4) => self.city_list.take().map(|w| w.close(ui)).is_some(),
             Some(5) => self.tasks.take().map(|w| w.close(ui)).is_some(),
+            Some(6) => self.temple.take().map(|w| w.close(ui)).is_some(),
             _ => false,
         }
     }
@@ -1410,15 +1420,67 @@ impl Session {
             self.start_turn();
         }
         let before = self.screen.game.history().len();
-        if let SelectOutcome::Fought(_) = self.screen.game.select_hex(hex) {
-            // The battle, played out.
-            let history = self.screen.game.history();
-            let battle = (before..history.len()).find(|i| matches!(history[*i].event, Event::Battle { .. }));
-            if let Some(record) = battle {
-                self.open_battle(record);
+        match self.screen.game.select_hex(hex) {
+            SelectOutcome::Fought(_) => {
+                // The battle, played out.
+                let history = self.screen.game.history();
+                let battle = (before..history.len()).find(|i| matches!(history[*i].event, Event::Battle { .. }));
+                if let Some(record) = battle {
+                    self.open_battle(record);
+                }
             }
+            // Onto a temple: does the stack seek its blessing?
+            SelectOutcome::Moved { .. } => self.offer_blessing(hex),
+            _ => {}
         }
         self.shown = hex;
+    }
+
+    /// Ask whether the person's stack on `at` seeks the temple's blessing, if
+    /// it is a temple that has not blessed all of it (`temple_window`).
+    fn offer_blessing(&mut self, at: Hex) {
+        if !self.persons_turn() {
+            return;
+        }
+        let side = self.screen.game.player();
+        let Some(units) = temple_window::seekers(&self.screen.game.map, side, at) else { return };
+        if let Some(old) = self.temple.take() {
+            old.close(&mut self.screen.ui);
+        }
+        let (root, area) = (self.screen.root_window(), self.window_area());
+        let window = TempleWindow::ask(&mut self.screen.ui, (root, area), &self.screen.game.map, at, &units);
+        self.temple = Some(window);
+        self.screen.settle();
+    }
+
+    /// B, or Seek a blessing: the selected stack (or, with none, the stack
+    /// on the hex shown) asks.
+    pub fn seek_blessing(&mut self) {
+        if self.covered() || !self.persons_turn() {
+            return;
+        }
+        let game = &self.screen.game;
+        let at = game.selected().and_then(|id| game.map.units().get(id)).map_or(self.shown, |u| u.pos());
+        self.offer_blessing(at);
+    }
+
+    /// The stack the temple's window asked about seeks the blessing; the
+    /// window then says what each was given.
+    fn bless_stack(&mut self) {
+        let Some(ask) = self.temple.take() else { return };
+        let (at, units) = (ask.at, ask.units.clone());
+        ask.close(&mut self.screen.ui);
+        let Ok(events) = self.screen.game.apply(Order::Bless { units: units.clone() }) else { return };
+        let (root, area) = (self.screen.root_window(), self.window_area());
+        let window =
+            TempleWindow::tell(&mut self.screen.ui, (root, area), &self.screen.game.map, (at, &units), &events);
+        self.temple = Some(window);
+        self.screen.settle();
+    }
+
+    /// The temple's window, while it is open.
+    pub fn temple(&self) -> Option<&TempleWindow> {
+        self.temple.as_ref().filter(|t| t.is_open(&self.screen.ui))
     }
 
     /// Watch the battle of the history's record `record`, from the start, if
@@ -1760,6 +1822,7 @@ impl Session {
         let turn = self.persons_turn() && game.winner().is_none() && !self.covered();
         let units = game.selected().and_then(|id| game.map.units().get(id));
         let own = turn && units.is_some_and(|u| u.side() == game.player());
+        let temple = own && units.is_some_and(|u| temple_window::seekers(&game.map, game.player(), u.pos()).is_some());
         let city = game.map.city_at(self.shown).is_some_and(|c| self.sight.knows(c.pos));
         let people = self.people_in_play();
         let menu = if id == TbId::new(MENU_GAME_ID) {
@@ -1776,6 +1839,7 @@ impl Session {
                 .separator()
                 .item(GO_TO_ID, "Go to...", "G", own)
                 .item(DONE_ID, "Done for this turn", "D", own)
+                .item(BLESS_ID, "Seek a blessing", "B", temple)
                 .item(DESELECT_ID, "Drop the selection", "Esc", units.is_some())
         } else if id == TbId::new(MENU_CITIES_ID) {
             Menu::new(MENU_CITIES_ID)
@@ -1941,6 +2005,16 @@ impl Session {
                 RootCommand::Click(id) if id == TbId::new(LOG_ID) => self.toggle_log(),
                 RootCommand::Click(id) if id == TbId::new(GO_TO_ID) => self.start_go_to(),
                 RootCommand::Click(id) if id == TbId::new(DONE_ID) => self.done_with_stack(),
+                RootCommand::Click(id) if id == TbId::new(BLESS_ID) => self.seek_blessing(),
+                RootCommand::Click(id) if id == TbId::new(temple_window::TEMPLE_BLESS_ID) => self.bless_stack(),
+                RootCommand::Click(id)
+                    if id == TbId::new(temple_window::TEMPLE_NOT_NOW_ID)
+                        || id == TbId::new(temple_window::TEMPLE_CLOSE_ID) =>
+                {
+                    if let Some(temple) = self.temple.take() {
+                        temple.close(&mut self.screen.ui);
+                    }
+                }
                 RootCommand::Click(id) if id == TbId::new(TASKS_ID) => self.toggle_tasks(),
                 RootCommand::Click(id) if id == TbId::new(tasks_window::TASKS_CLOSE_ID) => {
                     if let Some(tasks) = self.tasks.take() {
@@ -1966,6 +2040,7 @@ impl Session {
                         'l' | 'L' => self.toggle_log(),
                         'g' | 'G' => self.start_go_to(),
                         'd' | 'D' => self.done_with_stack(),
+                        'b' | 'B' => self.seek_blessing(),
                         't' | 'T' => self.toggle_tasks(),
                         'm' | 'M' => self.toggle_list(true),
                         'a' | 'A' => self.toggle_list(false),

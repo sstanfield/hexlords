@@ -29,10 +29,13 @@ fn f1_opens_the_help_and_closes_it_again() {
     assert!(!s.screen.help_open() && help_window(&s).is_none());
     assert!(f1(&mut s), "F1 is the window's key");
     assert!(s.screen.help_open());
-    // In the middle of the window, inside it.
+    // In the middle of the window under the menu bar (the Help menu stays
+    // at hand), inside it.
     let r = help_window(&s).expect("the help window");
-    assert!(r.x > 0 && r.y > 0 && r.right() < 1024 && r.bottom() < 768, "{r:?}");
-    assert!((r.x + r.w / 2 - 512).abs() <= 1 && (r.y + r.h / 2 - 384).abs() <= 1, "{r:?}");
+    let bar = s.screen.area(widget(&s, "menu_bar")).bottom();
+    assert!(r.x > 0 && r.y >= bar && r.right() < 1024 && r.bottom() < 768, "{r:?} under {bar}");
+    assert!((r.x + r.w / 2 - 512).abs() <= 1, "{r:?}");
+    assert!(((r.y - bar) - (768 - r.bottom())).abs() <= 2, "{r:?} under {bar}");
     // The keyboard stays with the map: the arrows still move the cursor.
     assert_eq!(s.screen.ui.focused(), Some(s.screen.map_widget()));
     let cursor = s.screen.game.map.cursor;

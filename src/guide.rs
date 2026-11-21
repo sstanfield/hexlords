@@ -114,8 +114,8 @@ fn battles(game: &Game) -> Vec<HelpSection> {
             &[
                 (
                     "Its own",
-                    "Its kind's strength, a point for each level above the first, and a temple's \
-                             blessing."
+                    "Its kind's strength, a point for each level above the first, and the temples' \
+                             blessings."
                         .to_string(),
                 ),
                 (
@@ -202,14 +202,17 @@ fn movement(game: &Game) -> Vec<HelpSection> {
             ),
             (
                 "Others",
-                "Another side's units cannot be gone through: moving into them is an attack. Another \
+                "Another side's units cannot be gone through: moving into them is an attack, which \
+                        needs 2 moves left beside them and ends the attackers' moves for the turn. Another \
                         side's city, or nobody's, ends a move; an empty one is taken."
                     .to_string(),
             ),
             (
                 "Temples",
                 format!(
-                    "A unit that stops on a temple is blessed, once: {} or {} a turn.",
+                    "A stack on a temple may seek its blessing (asked when it goes there; B): each unit \
+                     the temple has not blessed is blessed, {} or {} a turn, and stops there for the turn. \
+                     Each temple blesses a unit once; another temple blesses it again.",
                     Blessing::Strength.words(),
                     Blessing::Moves.words()
                 ),
@@ -338,7 +341,8 @@ fn units(_game: &Game) -> Vec<HelpSection> {
                 (
                     "Blessings",
                     format!(
-                        "Stopping on a temple blesses a unit, once in its life: {} or {} a turn.",
+                        "A temple blesses each unit once, if its stack seeks it there (B): {} or {} a turn; \
+                         it stops there for the turn. Each temple blesses it again.",
                         Blessing::Strength.words(),
                         Blessing::Moves.words()
                     ),

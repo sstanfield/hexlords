@@ -133,8 +133,9 @@ pub struct Unit {
     pub experience: u32,
     /// Its own name, if it has one (a captain).
     pub given_name: Option<String>,
-    /// What a temple gave it, once.
-    pub blessing: Option<Blessing>,
+    /// What the temples gave it: each temple's place, and what it gave. A
+    /// unit is blessed once at each temple (`Unit::bless`).
+    pub blessings: Vec<(Hex, Blessing)>,
     /// A standing order: where it goes, a turn at a time (`Order::GoTo`);
     /// and whether its last step was stopped (it waits for its player).
     pub goto: Option<Hex>,
@@ -162,8 +163,8 @@ pub fn level_for(experience: u32) -> u8 {
     1 + LEVEL_EXPERIENCE.iter().filter(|need| experience >= **need).count() as u8
 }
 
-/// What a temple gives a unit, once: a point of strength, or two of
-/// movement a turn.
+/// What a temple gives a unit, once at each temple: a point of strength, or
+/// two of movement a turn.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Blessing {
     Strength,
@@ -203,11 +204,18 @@ impl Unit {
     }
 
     /// The strength it fights with, before its stack and the ground and the
-    /// walls: its own, a point for each level above the first, and a
-    /// temple's blessing.
+    /// walls: its own, a point for each level above the first, and the
+    /// temples' blessings of strength.
     pub fn power(&self) -> u32 {
-        let blessed = if self.blessing == Some(Blessing::Strength) { Blessing::STRENGTH } else { 0 };
-        self.strength.saturating_add(u32::from(self.level.saturating_sub(1))).saturating_add(blessed)
+        let blessed = self.blessings.iter().filter(|(_, b)| *b == Blessing::Strength).count() as u32;
+        self.strength
+            .saturating_add(u32::from(self.level.saturating_sub(1)))
+            .saturating_add(blessed.saturating_mul(Blessing::STRENGTH))
+    }
+
+    /// True if the temple at `at` has blessed it.
+    pub fn blessed_at(&self, at: Hex) -> bool {
+        self.blessings.iter().any(|(h, _)| *h == at)
     }
 
     /// What it is called: its own name with its kind's ("Captain Aldric"),
@@ -240,12 +248,13 @@ impl Unit {
         }
     }
 
-    /// Bless it (a temple): false if it has been blessed already.
-    pub fn bless(&mut self, blessing: Blessing) -> bool {
-        if self.blessing.is_some() {
+    /// Bless it at the temple at `at`: false if that temple has blessed it
+    /// already (another temple may).
+    pub fn bless(&mut self, at: Hex, blessing: Blessing) -> bool {
+        if self.blessed_at(at) {
             return false;
         }
-        self.blessing = Some(blessing);
+        self.blessings.push((at, blessing));
         if blessing == Blessing::Moves {
             self.base_move_points = self.base_move_points.saturating_add(Blessing::MOVES);
             self.movement = self.movement.saturating_add(Blessing::MOVES);
@@ -312,7 +321,7 @@ impl Units {
             level: 1,
             experience: 0,
             given_name: None,
-            blessing: None,
+            blessings: Vec::new(),
             goto: None,
             stalled: false,
             moved: false,

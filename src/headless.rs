@@ -133,6 +133,7 @@ pub fn order_line(game: &Game, order: &Order) -> String {
         Order::Undo => "undo".to_string(),
         Order::GoTo { units, to } => format!("goto {} {} {}", names(units), to.row, to.col),
         Order::Done { units } => format!("done {}", names(units)),
+        Order::Bless { units } => format!("bless {}", names(units)),
         Order::Rally { city, to } => {
             let at = game.map.cities().get(*city).map_or((0, 0), |c| (c.pos.row, c.pos.col));
             match to {

@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 
 use crate::orders::{Event, Fallen, Order, Record};
 use crate::setup::{Controller, Fog, Setup, TurnOrder, WhenOut};
-use crate::state::Blessing;
 use crate::state::combat::{self, Fighter};
 use crate::state::scenario::{self, Scenario, side_name};
+use crate::state::{ATTACK_COST, Blessing};
 use crate::state::{
     City, CityId, Direction, Hex, MAX_STACK, Map, MoveCost, MoveCostId, MoveRange, NUM_SIDES, Passage, Rng, Side,
     TileType, Travel, Unit, UnitId, compute_range, hostile, passage, path_with, reach_with, step_cost, step_toward_by,
@@ -670,6 +670,7 @@ impl Game {
                 Ok(Vec::new())
             }
             Order::EndTurn => Ok(self.next_turn()),
+            Order::Bless { units } => self.bless(side, &units),
             Order::Undo => Err("there is nothing to undo".to_string()),
             Order::GoTo { units, to } => {
                 if !self.map.contains(to) {
@@ -1037,8 +1038,9 @@ impl Game {
             events.append(&mut self.promoted);
             if !won {
                 self.undo = None;
-                for (id, _, cost) in &going {
-                    self.pay(*id, *cost);
+                // An attack uses up the attackers' movement for the turn.
+                for (id, _, _) in &going {
+                    self.pay(*id, u32::MAX);
                 }
                 // Who rode the ships that sank goes down with them.
                 let origins: Vec<Hex> = before.iter().map(|(_, from, _)| *from).collect();
@@ -1059,7 +1061,8 @@ impl Game {
                 events.push(Event::Moved { unit: id, from, to, cost });
                 arrived.push(id);
             }
-            self.pay(id, cost);
+            // (An attack uses up the attackers' movement for the turn.)
+            self.pay(id, if battled { u32::MAX } else { cost });
         }
         // After a battle at sea, who has no ship left to ride goes down.
         if battled {
@@ -1078,18 +1081,6 @@ impl Game {
         if let Some((side, at)) = self.emerging.take() {
             events.extend(self.emerge(side, at));
         }
-        // A temple blesses who stops on it, once in a unit's life: chance
-        // says how.
-        let mut blessed = false;
-        if self.map.tile(to).is_some_and(|t| t.kind == TileType::Temple) {
-            for id in arrived {
-                let blessing = if self.rng.below(2) == 0 { Blessing::Strength } else { Blessing::Moves };
-                let Some(unit) = self.map.unit_mut(id).filter(|u| u.blessing.is_none()) else { continue };
-                unit.bless(blessing);
-                events.push(Event::Blessed { unit: id, side: unit.side(), name: unit.title(), blessing });
-                blessed = true;
-            }
-        }
         self.selected.retain(|id| !ids.contains(id));
         if self.selected.is_empty() {
             self.deselect();
@@ -1099,15 +1090,53 @@ impl Game {
             events.extend(self.take(city, holder, side));
             taken = city_before;
         }
-        // A move can be taken back unless it was a battle, put a side out, or
-        // a temple's blessing came of it (chance had a say); nor, with fog of
-        // war, if it showed what was not seen before (another side's units,
-        // who holds a city, land never seen): what was seen cannot be unseen.
+        // A move can be taken back unless it was a battle or put a side out;
+        // nor, with fog of war, if it showed what was not seen before
+        // (another side's units, who holds a city, land never seen): what
+        // was seen cannot be unseen.
         let final_ = events.iter().any(|e| matches!(e, Event::Battle { .. } | Event::Out { .. } | Event::Won { .. }));
         let explored = self.sight(side).known_count() != sight.known_count();
         let showed = self.setup.fog.on() && (explored || !revealing(self).is_empty());
-        if !final_ && !blessed && !showed {
+        if !final_ && !showed {
             self.undo = Some(Undo::Moved { units: before, to, stacks, taken, goals });
+        }
+        Ok(events)
+    }
+
+    /// Units of `side` on a temple seek its blessing: each it has not blessed
+    /// is blessed (chance says how: `Blessing`) and stops for the turn; one
+    /// it has blessed keeps its movement. Chance had a say: no undo.
+    fn bless(&mut self, side: Side, ids: &[UnitId]) -> Result<Vec<Event>, String> {
+        let first = self.own_unit(side, *ids.first().ok_or("no units")?)?.pos();
+        for id in ids {
+            if self.own_unit(side, *id)?.pos() != first {
+                return Err("the units are not all on one hex".to_string());
+            }
+        }
+        if !self.map.tile(first).is_some_and(|t| t.kind == TileType::Temple) {
+            return Err("they are not on a temple".to_string());
+        }
+        let mut events = Vec::new();
+        for id in ids {
+            if self.map.units().get(*id).is_none_or(|u| u.blessed_at(first)) {
+                continue;
+            }
+            let blessing = if self.rng.below(2) == 0 { Blessing::Strength } else { Blessing::Moves };
+            if let Some(unit) = self.map.unit_mut(*id) {
+                unit.bless(first, blessing);
+                // It stops at the temple for the turn.
+                unit.movement = 0;
+                (unit.moved, unit.goto, unit.stalled) = (true, None, false);
+                events.push(Event::Blessed { unit: *id, side: unit.side(), name: unit.title(), blessing });
+            }
+        }
+        if events.is_empty() {
+            return Err("this temple has blessed them all already".to_string());
+        }
+        self.undo = None;
+        self.selected.retain(|id| !ids.contains(id));
+        if self.selected.is_empty() {
+            self.deselect();
         }
         Ok(events)
     }
@@ -1562,8 +1591,16 @@ impl Game {
             let port = self.map.city_at(hex).is_none_or(|c| c.side == side);
             if travel == Travel::Sea && !port { Passage::Blocked } else { self.known_passage(side, hex, sight) }
         };
+        // Into another side's units it sees: an attack, which costs what it
+        // costs (`ATTACK_COST`) on any ground it could go onto.
         let steps = move |from: Hex, to: Hex| {
-            if aboard(to) { Some(costs.city.max(1)) } else { step_cost(&self.map, costs, from, to) }
+            if aboard(to) {
+                Some(costs.city.max(1))
+            } else if hostile(&self.map, side, to) && sight.sees(to) {
+                step_cost(&self.map, costs, from, to).map(|_| ATTACK_COST)
+            } else {
+                step_cost(&self.map, costs, from, to)
+            }
         };
         (pass, steps)
     }

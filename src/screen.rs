@@ -88,6 +88,9 @@ pub struct MapScreen {
     help_sections: Vec<HelpSection>,
     /// The help window, while it is open, and its title.
     help: Option<WidgetId>,
+    /// The band along the top the help window keeps clear of (a scene's menu
+    /// bar: the help's own menu stays at hand), in pixels.
+    clear_top: i32,
     help_title: String,
 }
 
@@ -177,6 +180,7 @@ impl MapScreen {
             panned: false,
             help_sections: Vec::new(),
             help: None,
+            clear_top: 0,
             help_title: String::new(),
         })
     }
@@ -228,6 +232,12 @@ impl MapScreen {
         self.help.filter(|id| self.ui.node(*id).is_some()).map(|_| self.help_title.as_str())
     }
 
+    /// Keep the help window clear of a band `px` tall along the top (the
+    /// scene's menu bar).
+    pub fn set_clear_top(&mut self, px: i32) {
+        self.clear_top = px.max(0);
+    }
+
     /// The help window with every key.
     fn open_help(&mut self) {
         let sections = help::sections(&self.help_sections);
@@ -266,8 +276,10 @@ impl MapScreen {
         for key in keys {
             build::set_width(ui, key, width);
         }
-        let everywhere = Rect::from_size(ui.rect(self.root_window).size());
-        build::place(ui, parts, everywhere, (0.5, 0.5));
+        // In the middle of what is under the menu bar, if the scene has one.
+        let size = ui.rect(self.root_window).size();
+        let under = Rect::new(0, self.clear_top, size.w, (size.h - self.clear_top).max(0));
+        build::place(ui, parts, under, (0.5, 0.5));
         self.help = Some(parts.window);
         self.help_title = title.to_string();
     }

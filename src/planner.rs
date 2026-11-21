@@ -93,6 +93,8 @@ pub struct Planner {
     blocked: Vec<(Hex, u32)>,
     /// The orders refused this turn.
     refusals: usize,
+    /// Units it sent to a temple this turn: they seek its blessing there.
+    pilgrims: Vec<UnitId>,
     /// Where its stacks went to see more of the map this turn (total fog);
     /// and the unit that goes on seeing more while there is land it has not
     /// seen, its scout.
@@ -113,6 +115,7 @@ impl Planner {
             hub: None,
             blocked: Vec::new(),
             refusals: 0,
+            pilgrims: Vec::new(),
             scouted: Vec::new(),
             scout: None,
             explored: Vec::new(),
@@ -332,6 +335,7 @@ impl Planner {
             self.turn = Some((game.turn(), side));
             self.done.clear();
             self.refusals = 0;
+            self.pilgrims.clear();
             self.scouted.clear();
             self.explored.clear();
             self.blocked.retain(|(_, until)| game.turn() <= *until);
@@ -345,6 +349,9 @@ impl Planner {
                     .max_by_key(|u| (map.units_at(u.pos()).len(), u.pos().row, u.pos().col))
                     .map(|u| u.pos())
             });
+        }
+        if let Some(order) = crate::agents::blessing(game, side, &mut self.pilgrims) {
+            return order;
         }
         if let Some(order) = self.economy(game, side) {
             return order;
@@ -450,7 +457,7 @@ impl Planner {
             }
             let odds = game.battle_odds(&able, *target).unwrap_or(100);
             let (dare, wear, _) = daring(&style, game);
-            if odds >= dare || (more > able.len() && odds >= wear) {
+            if odds >= dare || (more > able.len() && odds >= wear) || crate::agents::siege(game, side, *target) {
                 self.done.extend(able.iter().copied());
                 return Order::Move { units: able, to: *target };
             }
@@ -492,20 +499,22 @@ impl Planner {
             let ids: Vec<UnitId> = stack.iter().map(|u| u.id()).collect();
             self.done.extend(ids.iter().copied());
             let all_reach = |hex: Hex| ids.iter().all(|id| reaches(*id, hex));
-            // A temple this turn, while some of them are not blessed.
-            if stack.iter().any(|u| u.blessing.is_none()) {
-                let room = |t: Hex| {
-                    let there = map.units_at(t);
-                    there.iter().filter_map(|id| map.units().get(*id)).all(|u| u.side() == side)
-                        && there.len() + ids.len() <= MAX_STACK
-                };
-                if let Some(temple) = temples
-                    .iter()
-                    .copied()
-                    .find(|t| *t != here && all_reach(*t) && room(*t) && !self.is_blocked(*t, game))
-                {
-                    return Order::Move { units: ids, to: temple };
-                }
+            // A temple this turn that has not blessed some of them: they go,
+            // and seek its blessing.
+            let room = |t: Hex| {
+                let there = map.units_at(t);
+                there.iter().filter_map(|id| map.units().get(*id)).all(|u| u.side() == side)
+                    && there.len() + ids.len() <= MAX_STACK
+            };
+            if let Some(temple) = temples.iter().copied().find(|t| {
+                *t != here
+                    && stack.iter().any(|u| !u.blessed_at(*t))
+                    && all_reach(*t)
+                    && room(*t)
+                    && !self.is_blocked(*t, game)
+            }) {
+                self.pilgrims.extend(ids.iter().copied());
+                return Order::Move { units: ids, to: temple };
             }
             let lead = stack.iter().copied().min_by_key(|u| u.movement).unwrap_or(unit);
             if lost {

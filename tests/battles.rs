@@ -77,8 +77,9 @@ fn an_attack_that_wins_goes_in_and_takes_the_city() {
     assert_eq!(at(&game, BLUEMOOR), red, "the winners went in");
     assert!(events.iter().any(|e| matches!(e, Event::Taken { from: Side::Blue, by: Side::Red, .. })));
     assert_eq!(game.map.city_at(BLUEMOOR).unwrap().side, Side::Red);
-    // Each paid for the way: three steps of grass and the city.
-    assert!(red.iter().all(|id| game.map.units().get(*id).unwrap().movement == 5));
+    // The attack used up their movement for the turn (the owner's rule,
+    // 2026-11-20).
+    assert!(red.iter().all(|id| game.map.units().get(*id).unwrap().movement == 0));
     assert!(game.winner().is_none(), "blue has a city yet");
 }
 

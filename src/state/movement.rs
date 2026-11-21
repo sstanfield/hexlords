@@ -65,7 +65,7 @@ pub fn compute_range(map: &Map, unit: &Unit) -> MoveRange {
     match map.units().move_cost(unit.move_cost) {
         Some(costs) => {
             let side = unit.side();
-            let steps = |from: Hex, to: Hex| step_cost(map, costs, from, to);
+            let steps = |from: Hex, to: Hex| attack_or_step(map, side, costs, from, to);
             reach_with(map, unit.pos(), &steps, unit.movement, &|hex| passage(map, side, hex))
         }
         None => MoveRange {
@@ -74,6 +74,19 @@ pub fn compute_range(map: &Map, unit: &Unit) -> MoveRange {
             cost: vec![None; usize::from(map.rows()) * usize::from(map.cols())],
         },
     }
+}
+
+/// What an attack costs: the movement points a unit must have left beside
+/// the units it attacks (the owner's rule, 2026-11-20). The attack then uses
+/// up the rest of its movement for the turn (`Game::move_units`).
+pub const ATTACK_COST: u16 = 2;
+
+/// What a step from `from` into `to` costs a unit of `side` paying `costs`:
+/// into another side's units (an attack), `ATTACK_COST`, if it could go
+/// onto that ground at all; else [`step_cost`].
+pub fn attack_or_step(map: &Map, side: Side, costs: &MoveCost, from: Hex, to: Hex) -> Option<u16> {
+    let step = step_cost(map, costs, from, to)?;
+    Some(if hostile(map, side, to) { ATTACK_COST } else { step })
 }
 
 /// What a hex is to a unit that would move into it.

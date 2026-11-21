@@ -158,6 +158,8 @@ pub struct Simple {
     /// order this turn.
     turn: Option<(u32, Side)>,
     done: Vec<UnitId>,
+    /// Units it sent to a temple this turn: they seek its blessing there.
+    pilgrims: Vec<UnitId>,
     /// How many steps each unit has taken this turn to see more (total fog
     /// of war): a few, while it has the moves.
     explored: Vec<(UnitId, u32)>,
@@ -197,6 +199,10 @@ impl Agent for Simple {
             self.turn = Some((game.turn(), side));
             self.done.clear();
             self.explored.clear();
+            self.pilgrims.clear();
+        }
+        if let Some(order) = blessing(game, side, &mut self.pilgrims) {
+            return order;
         }
         let map = &game.map;
         // What its taxes leave after the upkeep of its units and of one more
@@ -292,7 +298,7 @@ impl Agent for Simple {
             // Likely to win; or with more than a stack to send, likely
             // enough to wear the defenders down for the next.
             let odds = game.battle_odds(&able, *target).unwrap_or(100);
-            if odds >= Simple::DARE || (more > able.len() && odds >= Simple::WEAR) {
+            if odds >= Simple::DARE || (more > able.len() && odds >= Simple::WEAR) || siege(game, side, *target) {
                 self.done.extend(able.iter().copied());
                 return Order::Move { units: able, to: *target };
             }
@@ -313,16 +319,14 @@ impl Agent for Simple {
             let stack: Vec<&crate::state::Unit> = free.iter().copied().filter(|u| u.pos() == here).collect();
             let ids: Vec<UnitId> = stack.iter().map(|u| u.id()).collect();
             self.done.extend(ids.iter().copied());
-            // A temple all of them can get to this turn, while some of them
-            // have not been blessed: there first.
-            if stack.iter().any(|u| u.blessing.is_none()) {
-                let reach =
-                    |hex: Hex| ids.iter().all(|id| ranges.iter().any(|(u, r)| u == id && r.cost(hex).is_some()));
-                if let Some(temple) =
-                    temples.iter().copied().find(|t| *t != here && reach(*t) && map.has_room(*t, ids[0]))
-                {
-                    return Order::Move { units: ids, to: temple };
-                }
+            // A temple all of them can get to this turn, that has not blessed
+            // some of them: there first, and they seek its blessing.
+            let reach = |hex: Hex| ids.iter().all(|id| ranges.iter().any(|(u, r)| u == id && r.cost(hex).is_some()));
+            if let Some(temple) = temples.iter().copied().find(|t| {
+                *t != here && stack.iter().any(|u| !u.blessed_at(*t)) && reach(*t) && map.has_room(*t, ids[0])
+            }) {
+                self.pilgrims.extend(ids.iter().copied());
+                return Order::Move { units: ids, to: temple };
             }
             let lead = stack.iter().copied().min_by_key(|u| u.movement).unwrap_or(unit);
             let mut near = targets.clone();
@@ -402,6 +406,39 @@ impl Agent for Program {
 
 /// A unit's name in the text: its side, its slot and the slot's generation,
 /// `red.3.0`.
+/// The blessing a stack sent to a temple seeks on getting there (an agent's
+/// `pilgrims`, emptied as it goes): those on a temple that has not blessed
+/// them all.
+pub fn blessing(game: &Game, side: Side, pilgrims: &mut Vec<UnitId>) -> Option<Order> {
+    let map = &game.map;
+    while let Some(first) = pilgrims.first().copied() {
+        let at = map.units().get(first).filter(|u| u.side() == side).map(|u| u.pos());
+        let here: Vec<UnitId> =
+            pilgrims.iter().copied().filter(|id| map.units().get(*id).is_some_and(|u| Some(u.pos()) == at)).collect();
+        pilgrims.retain(|id| !here.contains(id) && *id != first);
+        let Some(at) = at else { continue };
+        let temple = map.tile(at).is_some_and(|t| t.kind == crate::state::TileType::Temple);
+        if temple && here.iter().any(|id| map.units().get(*id).is_some_and(|u| !u.blessed_at(at))) {
+            return Some(Order::Bless { units: here });
+        }
+    }
+    None
+}
+
+/// True if `side` so outnumbers the holder of the city at `target` (three
+/// times its units and its cities) that it takes the city in waves, whatever
+/// the odds of each: a losing attack still kills defenders, and a last city
+/// held by a full stack behind high walls would else never fall.
+pub fn siege(game: &Game, side: Side, target: Hex) -> bool {
+    let map = &game.map;
+    let Some(holder) = map.city_at(target).map(|c| c.side).filter(|s| *s != side && *s != Side::Grey) else {
+        return false;
+    };
+    let units = |s: Side| map.units().of_side(s).count();
+    let cities = |s: Side| map.cities().iter().filter(|c| c.side == s).count();
+    units(side) >= 3 * units(holder).max(1) && cities(side) >= 3 * cities(holder).max(1)
+}
+
 pub fn unit_name(id: UnitId) -> String {
     format!("{}.{}.{}", side_name(id.side), id.index, id.generation)
 }
@@ -527,6 +564,7 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
         }
         ["goto", u, row, col] => Order::GoTo { units: units(u)?, to: hex(row, col)? },
         ["done", u] => Order::Done { units: units(u)? },
+        ["bless", u] => Order::Bless { units: units(u)? },
         ["rally", row, col, "none"] => {
             Order::Rally { city: game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id, to: None }
         }
@@ -534,6 +572,6 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
             let city = game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id;
             Order::Rally { city, to: Some(hex(to_row, to_col)?) }
         }
-        _ => return Err("not an order (move, toward, goto, done, build, rally, undo, end)".to_string()),
+        _ => return Err("not an order (move, toward, goto, done, bless, build, rally, undo, end)".to_string()),
     }))
 }

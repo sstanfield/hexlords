@@ -204,10 +204,15 @@ and the rules use integers, not floats.
    - **Training**: a city whose record says `trains veteran` (or `elite`)
      makes its units at that level (the continent's Gorsehaven trains
      veterans).
-   - **Blessings**: a unit that stops on a temple is blessed, once in its
-     life: +1 strength or +2 moves a turn, chance says which. A move that
-     brings a blessing cannot be undone. (The continent has a temple near
-     each side's first city.)
+   - **Blessings** (the owner's rules, 2026-11-20): a stack on a temple
+     seeks its blessing (`Order::Bless`; a person is asked, for the whole
+     stack, when it goes onto one, or presses B): each unit the temple has
+     not blessed is blessed, +1 strength or +2 moves a turn (chance says
+     which), and its movement is spent: it stops there for the turn. One
+     the temple has blessed keeps its movement. Each temple blesses a unit
+     once; each other temple blesses it again, and the blessings add up.
+     Going onto a temple blesses nobody. A blessing cannot be undone. (The
+     continent has a temple near each side's first city.)
    - **Captains from the ranks** (the owner's word, 2026-11-19): when a
      stack with no commander wins a battle, a captain of the map's first
      kind of commander may rise among its survivors, named, with no moves
@@ -305,7 +310,10 @@ and the rules use integers, not floats.
 - A side's turn begins with its cities' work and its gold: income, upkeep,
   production. (Built for production.)
 - Moving into an enemy stack or city is an attack: the battle is fought then
-  and there, and shown.
+  and there, and shown. An attack needs 2 movement points left beside the
+  units attacked (the step into them costs 2, `ATTACK_COST`, on any ground
+  the attackers could go onto), and it uses up the attackers' movement for
+  the turn, won or lost (the owner's rules, 2026-11-20). (Built.)
 - Hotseat: between two people's turns a screen hides the map until the next
   one says they are there. (Built.)
 
