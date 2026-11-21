@@ -298,9 +298,17 @@ fn push_banner(
     push_shape(list, view, center, variant, &cloth(0.0), [r, g, b, alpha]);
 }
 
-/// The colors of a flag (a rally point): its cloth, and its number.
-pub const FLAG_CLOTH: [f32; 4] = [0.98, 0.86, 0.36, 1.0];
-pub const FLAG_NUMBER: [f32; 4] = [0.12, 0.09, 0.05, 1.0];
+/// The colors of a flag's number (a rally point's): dark on a light cloth,
+/// light on a dark one. The cloth is the side's color (`side_color`; the
+/// owner's word, 2026-11-21: "in your side's color").
+pub const FLAG_NUMBER_DARK: [f32; 4] = [0.12, 0.09, 0.05, 1.0];
+pub const FLAG_NUMBER_LIGHT: [f32; 4] = [0.97, 0.95, 0.90, 1.0];
+
+/// The number's color on a cloth of `color`: dark on a light one.
+fn flag_number(color: [f32; 3]) -> [f32; 4] {
+    let [r, g, b] = color;
+    if 0.299 * r + 0.587 * g + 0.114 * b > 0.55 { FLAG_NUMBER_DARK } else { FLAG_NUMBER_LIGHT }
+}
 
 /// Which of a digit's seven bars are lit: top, top right, bottom right,
 /// bottom, bottom left, top left, middle.
@@ -319,7 +327,14 @@ const DIGIT_BARS: [[bool; 7]; 10] = [
 
 /// A rally point's flag, in the top left of its hex: a pole, and a cloth
 /// with its number on it in bars, outlined dark.
-fn push_flag(list: &mut MeshList<FlatVertex>, view: &MapView, center: [f32; 2], variant: HexVariant, n: u8) {
+fn push_flag(
+    list: &mut MeshList<FlatVertex>,
+    view: &MapView,
+    (center, variant): ([f32; 2], HexVariant),
+    n: u8,
+    color: [f32; 3],
+) {
+    let [r, g, b] = color;
     let a = HEX_HEIGHT_ADJUST;
     let rect = |x0: f32, x1: f32, y0: f32, y1: f32| [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
     let (grow, gy) = (0.04, 0.04 / a);
@@ -329,7 +344,7 @@ fn push_flag(list: &mut MeshList<FlatVertex>, view: &MapView, center: [f32; 2], 
         push_shape(list, view, center, variant, &rect(x0 - grow, x1 + grow, y0 - gy, y1 + gy), RING_COLOR);
     }
     push_shape(list, view, center, variant, &rect(pole.0, pole.1, pole.2, pole.3), [0.85, 0.80, 0.68, 1.0]);
-    push_shape(list, view, center, variant, &rect(cloth.0, cloth.1, cloth.2, cloth.3), FLAG_CLOTH);
+    push_shape(list, view, center, variant, &rect(cloth.0, cloth.1, cloth.2, cloth.3), [r, g, b, 1.0]);
     // The number, in seven bars.
     let (x0, x1, y0, y1) = (-0.30, -0.02, 0.38, 0.84);
     let (tx, ty) = (0.07, 0.07 / a);
@@ -346,7 +361,7 @@ fn push_flag(list: &mut MeshList<FlatVertex>, view: &MapView, center: [f32; 2], 
     let lit = DIGIT_BARS[usize::from(n % 10)];
     for (bar, on) in bars.iter().zip(lit) {
         if on {
-            push_shape(list, view, center, variant, bar, FLAG_NUMBER);
+            push_shape(list, view, center, variant, bar, flag_number(color));
         }
     }
 }
@@ -488,9 +503,11 @@ impl MapGeometry {
                 self.units[layer].1.push(&sign, &HEX_INDICES);
             }
 
-            // The rally points' flags, over the units.
+            // The rally points' flags, over the units, in the viewer's color
+            // (whose they are; grey with nobody's).
+            let flag_color = side_color(marks.viewer.unwrap_or(Side::Grey));
             for (_, n) in marks.flags.iter().filter(|(at, _)| *at == hex) {
-                push_flag(&mut self.signs, view, visible.center, variant, *n);
+                push_flag(&mut self.signs, view, (visible.center, variant), *n, flag_color);
             }
 
             if (marks.marked)(hex) {
@@ -931,6 +948,30 @@ mod tests {
         // The cursor's border wins.
         assert_eq!(border_at(Hex::new(50, 52)), [1.0, 0.0, 0.0, thick]);
         assert_eq!(border_at(Hex::new(50, 53)), [0.0, 0.0, 0.0, thin]);
+    }
+
+    #[test]
+    fn a_rally_points_flag_is_in_its_sides_color() {
+        let game = crate::game::grassland();
+        let view = view_at(START);
+        let flags = [(Hex::new(50, 52), 3)];
+        let count = |viewer: Option<Side>, color: [f32; 4]| {
+            let marks = Marks { flags: &flags, viewer, ..Marks::plain(RANGE_OVERLAY, &|_| false, None) };
+            let mut g = MapGeometry::new();
+            g.build(&game.map, &view, &marks);
+            g.signs().meshes().iter().flat_map(|m| &m.vertices).filter(|v| v.color == color).count()
+        };
+        let cloth = |side: Side| {
+            let [r, g, b] = side_color(side);
+            [r, g, b, 1.0]
+        };
+        // Red's flag: a red cloth, a light number on it.
+        assert!(count(Some(Side::Red), cloth(Side::Red)) > 0);
+        assert!(count(Some(Side::Red), FLAG_NUMBER_LIGHT) > 0);
+        assert_eq!(count(Some(Side::Red), cloth(Side::Yellow)), 0, "not yellow");
+        // Yellow's: a dark number on its light cloth. Nobody's: grey.
+        assert!(count(Some(Side::Yellow), FLAG_NUMBER_DARK) > 0);
+        assert!(count(None, cloth(Side::Grey)) > 0);
     }
 
     #[test]

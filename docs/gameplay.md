@@ -416,8 +416,8 @@ thing to happen. Ideas to try, as the rules grow:
   fun): each side has ten, 0 to 9 (`Game::rally_points`,
   `Order::RallyPoint`), its own (another side's view has none of them),
   placed on land it has seen (not open water, nor a city not its own): R, or the Units menu's Rally points, places,
-  moves, looks at and removes them; a numbered flag shows each on the
-  map. Units sent to one (by Go to onto its flag, or by a city) are bound
+  moves, looks at and removes them; a numbered flag in the side's colour
+  shows each on the map. Units sent to one (by Go to onto its flag, or by a city) are bound
   to it (`Unit::bound`): if it moves they go to its new place; if it is
   removed they stop and wait for orders, and the cities that sent their
   units there keep them. Once it is full (`MAX_STACK`), those that come
