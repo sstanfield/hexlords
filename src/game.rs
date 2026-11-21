@@ -150,7 +150,8 @@ pub enum CityState {
 
 impl Task {
     /// How pressing it is: 1, what has had no orders (stacks that wait, or
-    /// whose way is blocked, and cities that build nothing); 2, what is held
+    /// whose way is blocked, or that fought on patrol or marauding and wait
+    /// for their player's word, and cities that build nothing); 2, what is held
     /// up (cities whose work waits for the gold or for room); 3, the rest,
     /// with the stacks its player is done with this turn: put aside, or
     /// moved (a stack moved and stopped has had its orders, moves left or
