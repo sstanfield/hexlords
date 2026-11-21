@@ -265,8 +265,17 @@ fn the_city_window_makes_a_queue_item_by_item() {
     assert_eq!(queue(&s).items, [item(0, 2, Sends::Defend), item(1, 1, point.clone()), item(1, 1, point)]);
     // Repeat from the second: choose it, then Repeat; twice, then for ever.
     press(&mut s, &queue_item_id(1));
+    let says = |s: &Session| -> Vec<String> {
+        common::descendants(s, hexgame::city_windows::CITY_WINDOW_ID)
+            .into_iter()
+            .filter_map(|w| s.screen.ui.text(w).map(str::to_string))
+            .collect()
+    };
+    assert!(says(&s).contains(&"Repeat from item 2".to_string()), "the button says which");
     press(&mut s, QUEUE_REPEAT_ID);
     assert_eq!(queue(&s).end, QueueEnd::Repeat { from: 1, times: None });
+    // A line over the second item says it repeats from there.
+    assert!(says(&s).contains(&"Repeats from here, for ever:".to_string()), "{:?}", says(&s));
     press(&mut s, QUEUE_MORE_TIMES_ID);
     press(&mut s, QUEUE_MORE_TIMES_ID);
     assert_eq!(queue(&s).end, QueueEnd::Repeat { from: 1, times: Some(2) });

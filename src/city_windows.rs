@@ -223,7 +223,7 @@ pub struct CityView {
     /// what it does after the last (its row, Stop, Repeat from here; the
     /// line that says it, once less, once more); the item chosen.
     queue_hint: Option<Text>,
-    queue_rows: Vec<(WidgetId, Text, [WidgetId; 3])>,
+    queue_rows: Vec<(WidgetId, Text, [WidgetId; 3], Text)>,
     queue_end: Option<(WidgetId, [WidgetId; 2])>,
     queue_times: Option<(WidgetId, Text)>,
     chosen: Option<usize>,
@@ -341,6 +341,10 @@ impl CityView {
             let rows = build::column(ui, content, dp(ui, 2));
             queue_widgets.push(rows);
             for i in 0..MAX_QUEUE {
+                // Over the item it goes back to, a line that says so (the
+                // owner: "very easy to repeat from the wrong point").
+                let mark = build::heading(ui, rows, "");
+                ui.set_visibility(mark, Visibility::Gone);
                 let row = build::row(ui, rows, dp(ui, 2));
                 let item = build::button(ui, row, &queue_item_id(i), "");
                 build::text_from_left(ui, item);
@@ -349,12 +353,12 @@ impl CityView {
                 let more = build::button(ui, row, &queue_more_id(i), "+");
                 let out = build::button(ui, row, &queue_remove_id(i), "\u{d7}");
                 ui.set_visibility(row, Visibility::Gone);
-                queue_rows.push((row, Text::new(item), [less, more, out]));
+                queue_rows.push((row, Text::new(item), [less, more, out], Text::new(mark)));
             }
             let end = build::row(ui, content, dp(ui, 2));
             build::text(ui, end, "Then:");
             let stop = build::button(ui, end, QUEUE_STOP_ID, "Stop");
-            let repeat = build::button(ui, end, QUEUE_REPEAT_ID, "Repeat from the chosen one");
+            let repeat = build::button(ui, end, QUEUE_REPEAT_ID, "Repeat from item 1");
             ui.set_visibility(end, Visibility::Gone);
             queue_end = Some((end, [stop, repeat]));
             let times = build::row(ui, content, dp(ui, 2));
@@ -538,11 +542,33 @@ impl CityView {
                 changed = true;
             }
         }
-        for (i, (row, text, buttons)) in self.queue_rows.iter_mut().enumerate() {
+        for (i, (row, text, buttons, mark)) in self.queue_rows.iter_mut().enumerate() {
             let item = queue.items.get(i);
             let visibility = if all && item.is_some() { Visibility::Visible } else { Visibility::Gone };
             if ui.node(*row).is_some_and(|n| n.visibility() != visibility) {
                 ui.set_visibility(*row, visibility);
+                changed = true;
+            }
+            // The line over the item the queue goes back to.
+            let repeats = match queue.end {
+                QueueEnd::Repeat { from, times } if from == i && item.is_some() => Some(times),
+                _ => None,
+            };
+            let words = match repeats {
+                Some(None) => "Repeats from here, for ever:".to_string(),
+                Some(Some(t)) => {
+                    let left = t.saturating_sub(queue.rounds);
+                    format!(
+                        "Repeats from here, {}:",
+                        if left == 1 { "once more".to_string() } else { format!("{left} times more") }
+                    )
+                }
+                None => String::new(),
+            };
+            changed |= mark.set(ui, &words);
+            let visibility = if all && repeats.is_some() { Visibility::Visible } else { Visibility::Gone };
+            if ui.node(mark.widget).is_some_and(|n| n.visibility() != visibility) {
+                ui.set_visibility(mark.widget, visibility);
                 changed = true;
             }
             let Some(item) = item else { continue };
@@ -563,6 +589,12 @@ impl CityView {
             }
             set_pressed(ui, stop, queue.end == QueueEnd::Stop);
             set_pressed(ui, repeat, queue.end != QueueEnd::Stop);
+            // It says which item it would repeat from: the one chosen.
+            let words = format!("Repeat from item {}", about.map_or(1, |i| i + 1));
+            if ui.text(repeat) != Some(words.as_str()) {
+                ui.set_text(repeat, &words);
+                changed = true;
+            }
         }
         if let Some((row, words)) = &mut self.queue_times {
             let repeats = matches!(queue.end, QueueEnd::Repeat { .. });
