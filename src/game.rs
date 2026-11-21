@@ -106,6 +106,9 @@ pub enum StackState {
     Done,
     /// It is on its way somewhere, on a standing order.
     Marching,
+    /// It defends where it stands (`Order::Defend`), until it is sent
+    /// somewhere.
+    Defending,
     /// It can go nowhere more this turn.
     Spent,
 }
@@ -149,8 +152,8 @@ pub struct Ghost {
 }
 
 /// What a unit is doing about a standing order: its `goto`, whether it has
-/// stalled, whether it has moved this turn.
-type MarchState = (Option<Hex>, bool, bool);
+/// stalled, whether it has moved this turn, whether it defends.
+type MarchState = (Option<Hex>, bool, bool, bool);
 
 /// Units that go together (`Game::group`): those that move, each at the
 /// prices of a table (its own, or a commander's with flyers, theirs), and
@@ -580,7 +583,7 @@ impl Game {
         let (round, mark) = (self.round, self.history.len());
         // Being done with units changes nothing to take back: the order
         // before can still be.
-        let keeps = matches!(order, Order::Done { .. });
+        let keeps = matches!(order, Order::Done { .. } | Order::Defend { .. });
         let done = self.carry_out(side, order);
         if keeps && done.is_ok() {
             self.undo = last;
@@ -698,7 +701,7 @@ impl Game {
                 }
                 let before: Vec<(UnitId, MarchState)> = units
                     .iter()
-                    .map(|id| self.own_unit(side, *id).map(|u| (*id, (u.goto, u.stalled, u.moved))))
+                    .map(|id| self.own_unit(side, *id).map(|u| (*id, (u.goto, u.stalled, u.moved, u.defending))))
                     .collect::<Result<_, _>>()?;
                 if units.is_empty() {
                     return Err("no units".to_string());
@@ -722,7 +725,7 @@ impl Game {
                 }
                 for id in &units {
                     if let Some(unit) = self.map.unit_mut(*id) {
-                        (unit.goto, unit.stalled) = (Some(to), false);
+                        (unit.goto, unit.stalled, unit.defending) = (Some(to), false, false);
                     }
                 }
                 // This turn's step, as the march would, a stack (the units of a
@@ -747,6 +750,23 @@ impl Game {
                     _ => self.undo = None,
                 }
                 Ok(events)
+            }
+            Order::Defend { units, on } => {
+                for id in &units {
+                    self.own_unit(side, *id)?;
+                }
+                if units.is_empty() {
+                    return Err("no units".to_string());
+                }
+                for id in &units {
+                    if let Some(unit) = self.map.unit_mut(*id) {
+                        unit.defending = on;
+                        if on {
+                            (unit.goto, unit.stalled) = (None, false);
+                        }
+                    }
+                }
+                Ok(Vec::new())
             }
             Order::Done { units } => {
                 for id in &units {
@@ -921,9 +941,9 @@ impl Game {
                 for (hex, order) in &stacks {
                     self.map.set_stack_order(*hex, order);
                 }
-                for (id, (goto, stalled, moved)) in goals {
+                for (id, (goto, stalled, moved, defending)) in goals {
                     if let Some(unit) = self.map.unit_mut(id) {
-                        (unit.goto, unit.stalled, unit.moved) = (goto, stalled, moved);
+                        (unit.goto, unit.stalled, unit.moved, unit.defending) = (goto, stalled, moved, defending);
                     }
                 }
                 // They are where they were, and selected again, to go
@@ -998,7 +1018,7 @@ impl Game {
             let cost = cost.ok_or(format!("{} cannot get there this turn", unit.name))?;
             going.push((*id, unit.pos(), cost));
             before.push((*id, unit.pos(), unit.movement));
-            goals.push((*id, (unit.goto, unit.stalled, unit.moved)));
+            goals.push((*id, (unit.goto, unit.stalled, unit.moved, unit.defending)));
             let way = self.known_path_by(unit, *table, to, unit.movement, &sight).unwrap_or_default();
             ways.push(std::iter::once(unit.pos()).chain(way.into_iter().map(|(h, _)| h)).collect());
         }
@@ -1006,7 +1026,7 @@ impl Game {
             let unit = self.own_unit(side, *id)?;
             going.push((*id, unit.pos(), 0));
             before.push((*id, unit.pos(), unit.movement));
-            goals.push((*id, (unit.goto, unit.stalled, unit.moved)));
+            goals.push((*id, (unit.goto, unit.stalled, unit.moved, unit.defending)));
         }
         // Nobody is left in the water with no ship, and nobody goes onto the
         // water with none to carry them.
@@ -1107,7 +1127,7 @@ impl Game {
         }
         for id in &ids {
             if let Some(unit) = self.map.unit_mut(*id) {
-                (unit.moved, unit.goto, unit.stalled) = (true, None, false);
+                (unit.moved, unit.goto, unit.stalled, unit.defending) = (true, None, false, false);
             }
         }
         if let Some((side, at)) = self.emerging.take() {
@@ -2313,6 +2333,7 @@ impl Game {
                 u.side() == side
                     && u.movement > 0
                     && !u.done
+                    && !u.defending
                     && (u.goto.is_none() || u.stalled)
                     && compute_range(map, u).reachable().next().is_some()
             })
@@ -2338,7 +2359,8 @@ impl Game {
                     .filter_map(|id| map.units().get(*id))
                     .filter(|u| u.side() == side)
                     .collect();
-                let can_go = |u: &&Unit| u.movement > 0 && compute_range(map, u).reachable().next().is_some();
+                let can_go =
+                    |u: &&Unit| u.movement > 0 && !u.defending && compute_range(map, u).reachable().next().is_some();
                 let free: Vec<&Unit> = units.iter().copied().filter(can_go).collect();
                 let state = if free.iter().any(|u| u.goto.is_some() && u.stalled) {
                     StackState::Stalled
@@ -2350,6 +2372,8 @@ impl Game {
                     StackState::Done
                 } else if units.iter().any(|u| u.goto.is_some()) {
                     StackState::Marching
+                } else if units.iter().any(|u| u.defending) {
+                    StackState::Defending
                 } else {
                     StackState::Spent
                 };

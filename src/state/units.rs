@@ -144,6 +144,9 @@ pub struct Unit {
     /// done with it (`Order::Done`).
     pub moved: bool,
     pub done: bool,
+    /// It defends where it stands (`Order::Defend`), turn after turn, until
+    /// it is sent somewhere: Next stack and the tasks pass it by.
+    pub defending: bool,
 }
 
 /// The highest level, and the battles won a unit needs for each level above
@@ -326,6 +329,7 @@ impl Units {
             stalled: false,
             moved: false,
             done: false,
+            defending: false,
         });
         id
     }

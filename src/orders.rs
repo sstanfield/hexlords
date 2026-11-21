@@ -23,6 +23,10 @@ pub enum Order {
     /// The player is done with these units this turn: they are not offered
     /// again (Next stack) though they have moves left.
     Done { units: Vec<UnitId> },
+    /// These units defend where they stand (`on`), turn after turn, until
+    /// they are sent somewhere (a move or a standing order ends it), or no
+    /// longer (`!on`). Next stack and the tasks pass a defender by.
+    Defend { units: Vec<UnitId>, on: bool },
     /// Units on a temple seek its blessing: each the temple has not blessed
     /// yet is blessed (chance says how) and stops there for the turn (its
     /// movement is spent); one it has blessed already is not, and keeps its

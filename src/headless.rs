@@ -144,6 +144,8 @@ pub fn order_line(game: &Game, order: &Order) -> String {
         Order::Undo => "undo".to_string(),
         Order::GoTo { units, to } => format!("goto {} {} {}", names(units), to.row, to.col),
         Order::Done { units } => format!("done {}", names(units)),
+        Order::Defend { units, on: true } => format!("defend {}", names(units)),
+        Order::Defend { units, on: false } => format!("undefend {}", names(units)),
         Order::Bless { units } => format!("bless {}", names(units)),
         Order::Disband { units } => format!("disband {}", names(units)),
         Order::Walls { city } => {

@@ -210,6 +210,7 @@ A line each, in the order they are to be carried out:
 | `toward <units> <row> <col>` | Move together as far as the slowest gets this turn on its cheapest way to that hex, and where there is room for all of them |
 | `goto <units> <row> <col>` | A standing order: go to that hex over as many turns as it takes. This turn's part is taken at once (as `toward`), the rest at the start of each of the side's turns, before the program is asked; it never attacks: a step into another side's units stops it (it keeps the order, and tries again next turn). A `move` or `toward` of the same units ends it |
 | `done <units>` | Put the units aside for this turn (Next stack and the player's tasks pass them by); it changes nothing else |
+| `defend <units>`, `undefend <units>` | Mark the units as defenders, staying where they are turn after turn (Next stack and the player's tasks pass them by) until they are sent somewhere; or no longer |
 | `bless <units>` | Units on a temple seek its blessing: each the temple has not blessed yet is blessed (chance says how) and its movement is spent for the turn; one it blessed before keeps its movement |
 | `disband <units>` | Send units home for good: they are gone, and their upkeep with them (a ship at sea only with those it carries, or with ships enough left to carry them) |
 | `build <row> <col> <index or none>` | Set what a city of its side builds |

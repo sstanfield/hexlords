@@ -414,6 +414,9 @@ pub fn unit_details(map: &Map, unit: &Unit) -> Vec<String> {
     lines.extend(leads);
     lines.extend(travel);
     lines.extend(growth_line(unit));
+    if unit.defending {
+        lines.push("Defending: it stays here until it is sent somewhere".to_string());
+    }
     match map.units().move_cost(unit.move_cost) {
         Some(cost) => lines.extend(enters(cost, 5)),
         None => lines.push("Enters nothing".to_string()),
@@ -595,6 +598,7 @@ pub fn task_line(game: &Game, task: &Task) -> String {
                 StackState::MovesLeft => "can go further".to_string(),
                 StackState::Done => "put aside, with moves left".to_string(),
                 StackState::Marching => format!("on the way to {goal}"),
+                StackState::Defending => "defending: stays put".to_string(),
                 StackState::Spent => "no moves left".to_string(),
             };
             format!("{who} {here_words}: {what}")

@@ -382,6 +382,11 @@ thing to happen. Ideas to try, as the rules grow:
   puts the selected units aside: Next stack passes them by, as if they had
   no moves left, and the selection goes on to the next stack that waits.
   The next turn they are back.
+- **Defending** (built, the owner's word 2026-11-21): F, or Defend here in
+  the Units menu (`Order::Defend`), marks the selected units as defenders:
+  they stay put turn after turn, Next stack passes them by, and the tasks
+  list them last ("defending: stays put"), until they are sent somewhere (a move or
+  Go to ends it) or F stands them down. A unit's box says it defends.
 - **A menu bar** (built, the owner's word 2026-11-20: "start cleaning up the
   interface"): Game, Units, Cities, View and Help, each item with its keys
   (every one but the help's topics has one), so the sidebar keeps only End

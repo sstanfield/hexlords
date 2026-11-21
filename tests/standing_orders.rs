@@ -504,3 +504,77 @@ fn on_another_side_s_turn_the_screen_looks_and_orders_nothing() {
     push(&mut s, &format!("{}{}", hexgame::city_windows::PANEL_PREFIX, hexgame::city_windows::build_id(0)));
     assert_eq!(s.screen.game.map.city_at(REDHOLD).unwrap().building, None);
 }
+
+/// The owner (2026-11-21): units marked as defending stay put, turn after
+/// turn, and Next stack and the most pressing tasks pass them by; until
+/// they are sent somewhere, or stood down.
+#[test]
+fn defenders_stay_put_and_are_passed_by_until_sent_somewhere() {
+    let mut game = game("garrison soldiers 2\n");
+    let a = at(&game, REDHOLD);
+    let kind = game.map.units().kind_named("soldiers").unwrap();
+    let b = game.map.new_unit_of(Side::Red, kind).unwrap();
+    game.map.place_unit(b, SOUTHWICK).unwrap();
+    // The order before can still be taken back: defending changes nothing
+    // to take back.
+    game.apply(Order::Move { units: vec![b], to: Hex::new(16, 5) }).unwrap();
+    game.apply(Order::Defend { units: a.clone(), on: true }).unwrap();
+    assert!(game.can_undo());
+    assert_eq!(game.next_stack(None, false), Some(Hex::new(16, 5)), "Redhold's defenders are passed by");
+    let tasks = game.tasks(Side::Red);
+    let defending = Task::Stack { at: REDHOLD, units: 2, state: StackState::Defending };
+    assert!(tasks.contains(&defending), "{tasks:?}");
+    assert_eq!(defending.tier(), 3, "not among the pressing ones");
+    // Next turn, and the one after: still defending, still passed by.
+    for _ in 0..2 {
+        round(&mut game);
+        assert!(a.iter().all(|id| game.map.units().get(*id).unwrap().defending));
+        assert_eq!(game.next_stack(None, false), Some(Hex::new(16, 5)));
+    }
+    // Sent somewhere, one defends no more; undone, it defends again.
+    game.apply(Order::Move { units: vec![a[0]], to: Hex::new(6, 5) }).unwrap();
+    assert!(!game.map.units().get(a[0]).unwrap().defending);
+    game.apply(Order::Undo).unwrap();
+    assert!(game.map.units().get(a[0]).unwrap().defending);
+    // A standing order ends it; so does standing down.
+    game.apply(Order::GoTo { units: vec![a[0]], to: FAR }).unwrap();
+    assert!(!game.map.units().get(a[0]).unwrap().defending);
+    game.apply(Order::Defend { units: vec![a[1]], on: false }).unwrap();
+    assert!(!game.map.units().get(a[1]).unwrap().defending);
+    // Not another side's; and the protocol's words.
+    let blue = game.map.new_unit_of(Side::Blue, kind).unwrap();
+    game.map.place_unit(blue, BLUEMOOR).unwrap();
+    assert!(game.apply(Order::Defend { units: vec![blue], on: true }).is_err());
+    assert_eq!(
+        hexgame::agents::parse_order(&game, "defend red.0.0"),
+        Ok(Some(Order::Defend { units: vec![a[0]], on: true }))
+    );
+    assert_eq!(
+        hexgame::agents::parse_order(&game, "undefend red.0.0"),
+        Ok(Some(Order::Defend { units: vec![a[0]], on: false }))
+    );
+}
+
+/// F marks the selected stack as defending and goes on to the next; F on
+/// defenders stands them down.
+#[test]
+fn f_marks_defenders_and_stands_them_down() {
+    let mut red = game("garrison soldiers\n");
+    let kind = red.map.units().kind_named("soldiers").unwrap();
+    let other = red.map.new_unit_of(Side::Red, kind).unwrap();
+    red.map.place_unit(other, SOUTHWICK).unwrap();
+    let mut s = session(red);
+    click_hex(&mut s, REDHOLD);
+    let first = s.screen.game.selected().unwrap();
+    type_char(&mut s, 'f');
+    assert!(s.screen.game.map.units().get(first).unwrap().defending);
+    assert_eq!(s.screen.game.selected(), Some(other), "on to the next");
+    type_char(&mut s, 't');
+    let lines = s.tasks_window().unwrap().lines().to_vec();
+    assert!(lines.contains(&"Soldiers in Redhold: defending: stays put".to_string()), "{lines:?}");
+    // F on a defender: it stands down, and stays selected.
+    click_hex(&mut s, REDHOLD);
+    type_char(&mut s, 'f');
+    assert!(!s.screen.game.map.units().get(first).unwrap().defending);
+    assert_eq!(s.screen.game.selected(), Some(first));
+}

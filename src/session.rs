@@ -111,6 +111,7 @@ pub const LOG_ID: &str = "log";
 pub const GO_TO_ID: &str = "go_to";
 pub const BLESS_ID: &str = "seek_blessing";
 pub const DISBAND_ID: &str = "disband";
+pub const DEFEND_ID: &str = "defend";
 pub const DONE_ID: &str = "done";
 pub const TASKS_ID: &str = "tasks";
 pub const MY_CITIES_ID: &str = "my_cities";
@@ -254,7 +255,7 @@ fn help_section() -> Vec<HelpSection> {
             &[
                 ("N,  or  Next", "Select the next stack that can still move (Shift+N: the one before)"),
                 ("G,  or  Go to", "Then click a hex: the selected units go there, over as many turns as it takes"),
-                ("D,  B,  X", "Put the selected units aside this turn; B: seek a temple's blessing; X: disband them"),
+                ("D,  F,  B,  X", "Aside this turn; F: defend, staying put; B: a temple's blessing; X: disband them"),
             ],
         ),
         HelpSection::new(
@@ -1725,6 +1726,28 @@ impl Session {
     /// Done (D, or the Done button): the selected units are put aside for
     /// this turn (Next stack and the tasks pass them by), and the next
     /// stack that waits is selected.
+    /// F, or Defend: the selected units defend where they stand, until they
+    /// are sent somewhere (Next stack and the tasks pass them by); if they
+    /// all defend already, they stand down. Then on to the next stack, as
+    /// with Done.
+    pub fn defend_stack(&mut self) {
+        if self.covered() || !self.persons_turn() {
+            return;
+        }
+        let game = &self.screen.game;
+        let units = game.selection().to_vec();
+        let on = !units.iter().all(|id| game.map.units().get(*id).is_some_and(|u| u.defending));
+        if units.is_empty() || self.screen.game.apply(Order::Defend { units, on }).is_err() {
+            return;
+        }
+        if !on {
+            // Standing down: they stay selected, to be sent somewhere.
+            self.screen.game.refresh();
+            return;
+        }
+        self.after_aside();
+    }
+
     pub fn done_with_stack(&mut self) {
         if self.covered() || !self.persons_turn() {
             return;
@@ -1733,6 +1756,12 @@ impl Session {
         if units.is_empty() || self.screen.game.apply(Order::Done { units }).is_err() {
             return;
         }
+        self.after_aside();
+    }
+
+    /// The selected stack was put aside (done, or defending): the selection
+    /// goes, and on to the next stack, if one waits for orders.
+    fn after_aside(&mut self) {
         self.picking = None;
         let game = &self.screen.game;
         let here = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos());
@@ -1893,6 +1922,7 @@ impl Session {
                 .separator()
                 .item(GO_TO_ID, "Go to...", "G", own)
                 .item(DONE_ID, "Done for this turn", "D", own)
+                .item(DEFEND_ID, "Defend here (or stand down)", "F", own)
                 .item(BLESS_ID, "Seek a blessing", "B", temple)
                 .item(DISBAND_ID, "Disband...", "X", own)
                 .item(DESELECT_ID, "Drop the selection", "Esc", units.is_some())
@@ -2060,6 +2090,7 @@ impl Session {
                 RootCommand::Click(id) if id == TbId::new(LOG_ID) => self.toggle_log(),
                 RootCommand::Click(id) if id == TbId::new(GO_TO_ID) => self.start_go_to(),
                 RootCommand::Click(id) if id == TbId::new(DONE_ID) => self.done_with_stack(),
+                RootCommand::Click(id) if id == TbId::new(DEFEND_ID) => self.defend_stack(),
                 RootCommand::Click(id) if id == TbId::new(BLESS_ID) => self.seek_blessing(),
                 RootCommand::Click(id) if id == TbId::new(DISBAND_ID) => self.ask_disband(),
                 RootCommand::Click(id) if id == TbId::new(crate::disband_window::DISBAND_YES_ID) => {
@@ -2104,6 +2135,7 @@ impl Session {
                         'l' | 'L' => self.toggle_log(),
                         'g' | 'G' => self.start_go_to(),
                         'd' | 'D' => self.done_with_stack(),
+                        'f' | 'F' => self.defend_stack(),
                         'b' | 'B' => self.seek_blessing(),
                         'x' | 'X' => self.ask_disband(),
                         't' | 'T' => self.toggle_tasks(),

@@ -579,6 +579,8 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
         }
         ["goto", u, row, col] => Order::GoTo { units: units(u)?, to: hex(row, col)? },
         ["done", u] => Order::Done { units: units(u)? },
+        ["defend", u] => Order::Defend { units: units(u)?, on: true },
+        ["undefend", u] => Order::Defend { units: units(u)?, on: false },
         ["bless", u] => Order::Bless { units: units(u)? },
         ["disband", u] => Order::Disband { units: units(u)? },
         ["walls", row, col] => {
@@ -593,7 +595,7 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
         }
         _ => {
             return Err(
-                "not an order (move, toward, goto, done, bless, disband, build, rally, walls, undo, end)".to_string()
+                "not an order (move, toward, goto, done, defend, undefend, bless, disband, build, rally, walls, undo, end)".to_string()
             );
         }
     }))
