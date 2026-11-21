@@ -201,8 +201,16 @@ impl Game {
     }
 
     /// `side`'s turn ends: those of its units that waited for its word after
-    /// a battle and were left alone go on next turn.
-    pub(super) fn stand_easy(&mut self, side: Side) {
+    /// a battle and were left alone go on (once a turn: a battle at the end
+    /// of this turn, the marauders' before the marches', is the next one's
+    /// to wait for). Whoever leads the side's marauders at the end of its
+    /// turn says so first (`marauder::maraud`); the turn's end does too.
+    pub fn stand_easy(&mut self, side: Side) {
+        let now = (self.turn(), side);
+        if self.eased == Some(now) {
+            return;
+        }
+        self.eased = Some(now);
         let ids: Vec<UnitId> = self.map.units().of_side(side).filter(|u| u.fought).map(|u| u.id()).collect();
         for id in ids {
             if let Some(unit) = self.map.unit_mut(id) {

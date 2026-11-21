@@ -372,7 +372,7 @@ pub struct Session {
     stops: Vec<Hex>,
     /// A hex clicked once while a stack on patrol or marauding was selected:
     /// a second click there sends it (`choose`).
-    confirm: Option<Hex>,
+    confirm: Option<(Hex, Vec<UnitId>)>,
     /// The item of a city's queue whose units the pick sends, if it is one;
     /// and the city's window that made way for the pick, with its item.
     rally_item: Option<usize>,
@@ -1435,6 +1435,11 @@ impl Session {
         if self.rally_window.as_ref().is_some_and(|w| !w.is_open(&self.screen.ui)) {
             self.rally_window = None;
         }
+        // The patrol's window shut by its title bar's button: let go, as
+        // Never mind does (the stack is selected again).
+        if self.patrol_window.as_ref().is_some_and(|w| !w.is_open(&self.screen.ui)) {
+            self.let_patrol_go();
+        }
         if let Some(window) = &mut self.rally_window {
             window.refresh(&mut self.screen.ui, &self.screen.game, viewer);
         }
@@ -1950,13 +1955,15 @@ impl Session {
             let side = game.player();
             let theirs =
                 |id: &UnitId| !selection.contains(id) && game.map.units().get(*id).is_some_and(|u| u.side() == side);
+            // (Another of the side's stacks there is selected, no order.)
             let other_stack = game.map.units_at(hex).iter().any(theirs);
-            let orders = hex != here && (game.can_move_to(hex) || !other_stack);
-            if orders && self.confirm != Some(hex) {
+            let orders = hex != here && !other_stack;
+            let asked = (hex, selection.to_vec());
+            if orders && self.confirm.as_ref() != Some(&asked) {
                 let duty = if units().any(|u| u.marauding) { "marauding" } else { "on patrol" };
                 self.notice =
                     Some(format!("It is {duty}: click there again to send it there instead, which ends that."));
-                self.confirm = Some(hex);
+                self.confirm = Some(asked);
                 return;
             }
         }
@@ -2246,8 +2253,9 @@ impl Session {
 
     /// True if something happened to `side` since it last ended a turn
     /// that its log tells: what the others did to it, and what went wrong
-    /// at the start of its turn (a march stopped short, units left unpaid);
-    /// not what goes on as it should (units built, blessed on their way).
+    /// for it at the end of its last turn or the start of this one (a march
+    /// stopped short, a battle on patrol, units left unpaid); not what goes
+    /// on as it should (units built, blessed on their way).
     fn has_news(&self, side: Side) -> bool {
         let game = &self.screen.game;
         let records = game.history().get(self.seen_by(side)..).unwrap_or_default();
@@ -2499,7 +2507,7 @@ impl Session {
     }
 
     /// U, or Maraud: the computer leads the selected units (`marauder`), at
-    /// once with what movement they have and at the start of each of their
+    /// once with what movement they have and at the end of each of their
     /// side's turns, until another order; if they all maraud already, they
     /// are called back (and stay selected). Then on to the next stack, as
     /// with Done.
@@ -2714,7 +2722,7 @@ impl Session {
     /// See to a task of the list: select its stack and look at it, or open
     /// its city.
     fn see_to(&mut self, task: Task) {
-        self.picking = None;
+        self.drop_pick();
         let mine = self.persons_turn();
         match task {
             Task::Stack { at, .. } => {

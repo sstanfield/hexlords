@@ -1,5 +1,5 @@
 //! Marauders: stacks a side has handed to the computer (`Order::Maraud`).
-//! At the start of each of the side's turns, before its player plays (the
+//! At the end of each of the side's turns, after its player's orders (the
 //! session runs it for a person, `agents::play_turn` for an agent), the
 //! computer leads each of its marauding stacks on its own, in the bold
 //! planner's ways (`planner::BOLD`): it attacks the other sides' stacks it
@@ -36,6 +36,9 @@ const SCOUT_TRIES: usize = 6;
 /// and the orders the game refused (something unseen in the way: it leaves
 /// that hex be for the rest of the turn).
 pub fn maraud(game: &mut Game, side: Side) -> TurnReport {
+    // Those that fought and were left alone go on (the turn's end does it
+    // too, once).
+    game.stand_easy(side);
     let mut report = TurnReport::default();
     let mut led: Vec<UnitId> = Vec::new();
     let mut blocked: Vec<Hex> = Vec::new();

@@ -408,8 +408,9 @@ thing to happen. Ideas to try, as the rules grow:
   player ticks the box where a temple is handy). A unit is sent the
   moment it is done. A route's hexes have to be ones that something the
   city builds can get to over the land; a city taken forgets where its
-  old holder sent its units. What a turn's start brings (the marches, the
-  units built, what they take) is that turn's in the history.
+  old holder sent its units. What a turn's end brings (the marches and
+  patrols, what they take) is that turn's in the history, and what its
+  start brings (the units built, the deserters) the next one's.
 - **Rally points** (built, the owner's word 2026-11-21: gathering new
   units into armies is the drudgery, moving armies and taking cities the
   fun): each side has ten, 0 to 9 (`Game::rally_points`,
@@ -491,8 +492,8 @@ thing to happen. Ideas to try, as the rules grow:
   left it unpaid; the sides out. The game keeps the history
   (`Game::history`); the log is what it says to the side at the screen.
   When the person's turn comes it opens if the others did something to
-  them, or something went wrong at the start of their turn (a march
-  stopped short, units left unpaid), what is new in a color of its own;
+  them, or something went wrong for them as their last turn ended or this
+  one began (a march stopped short, a battle on patrol, units left unpaid), what is new in a color of its own;
   the button says Start turn, which closes it (so does any order). With
   nothing to tell, the turn starts at once (the owner's word 2026-11-21).
   While the others play (the computer's turns a little apart,

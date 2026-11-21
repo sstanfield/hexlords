@@ -55,10 +55,11 @@ done
 | `careful` | The planner, slow and sure: answers threats with more defenders, big armies, high odds |
 | `cmd:<program> [<argument> ...]` | A program that plays (below) |
 
-A side's turn played by an agent (`agents::play_turn`) starts with the
-computer leading the side's marauding stacks, if it has any
-(`marauder::maraud`, the same as for a person: `docs/gameplay.md`,
-"Marauders"); the computer's own players hand none to it.
+A side's turn played by an agent (`agents::play_turn`) ends with the
+computer leading the side's marauding stacks, if it has any, after the
+agent's orders (`marauder::maraud`, the same as for a person:
+`docs/gameplay.md`, "Marauders"); then its marches and patrols go. The
+computer's own players hand none to it.
 
 A new agent is a type that implements `Agent` and a name in `agents::by_name`.
 It is shown its side's view of the game for each order (`Game::view_for`,

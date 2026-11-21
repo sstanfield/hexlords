@@ -558,13 +558,11 @@ impl CityView {
             };
             let words = match repeats {
                 Some(None) => "Repeats from here, for ever:".to_string(),
-                Some(Some(t)) => {
-                    let left = t.saturating_sub(queue.rounds);
-                    format!(
-                        "Repeats from here, {}:",
-                        if left == 1 { "once more".to_string() } else { format!("{left} times more") }
-                    )
-                }
+                Some(Some(t)) => match t.saturating_sub(queue.rounds) {
+                    0 => "Repeated from here; this is the last time:".to_string(),
+                    1 => "Repeats from here, once more:".to_string(),
+                    left => format!("Repeats from here, {left} times more:"),
+                },
                 None => String::new(),
             };
             changed |= mark.set(ui, &words);

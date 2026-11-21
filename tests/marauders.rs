@@ -3,8 +3,8 @@
 //! to conquer on its own"): the computer leads a stack its player handed it,
 //! with ordinary orders; after a battle it waits for its player's word;
 //! another order ends it; the text protocol; whoever runs the side leads
-//! them (an agent's turn, and the screen at the start of a person's, hotseat
-//! too); U and the Units menu.
+//! them, at the end of its turn (an agent's, after its orders, and the
+//! screen as a person ends theirs, hotseat too); U and the Units menu.
 
 mod common;
 
@@ -195,7 +195,7 @@ fn a_marauder_leaves_alone_what_it_cannot_beat_and_goes_for_a_city() {
 }
 
 #[test]
-fn a_marauder_attacked_waits_a_turn_for_its_players_word() {
+fn a_marauder_attacked_waits_for_its_players_word_through_its_turn() {
     let mut game = game();
     let red = marauders(&mut game, 2);
     // Blue's levy attacks it, and loses.
@@ -204,11 +204,12 @@ fn a_marauder_attacked_waits_a_turn_for_its_players_word() {
     let events = game.apply(Order::Move { units: levy, to: CAMP }).unwrap();
     assert!(events.iter().any(|e| matches!(e, Event::Battle { won: false, .. })));
     game.apply(Order::EndTurn).unwrap();
+    // Red's turn: it waits for red's word.
     assert!(red.iter().all(|id| unit(&game, *id).fought));
-    assert!(maraud(&mut game, Side::Red).events.is_empty(), "it waits");
     assert_eq!(stack_state(&game, CAMP), StackState::Fought);
-    // Left alone, it goes on the next turn.
-    round(&mut game);
+    assert_eq!(game.waiting_stacks(Side::Red), [CAMP]);
+    // Left alone, it goes on at the end of the turn (where the computer
+    // leads the marauders).
     assert!(!maraud(&mut game, Side::Red).events.is_empty());
 }
 
@@ -227,7 +228,7 @@ fn under_total_fog_a_marauder_goes_to_see_more() {
 }
 
 #[test]
-fn an_agents_turn_leads_its_marauders_first() {
+fn an_agents_turn_leads_its_marauders_after_its_orders() {
     let mut game = game();
     let red = marauders(&mut game, 2);
     put(&mut game, Side::Blue, "levy", Hex::new(12, 16), 1);

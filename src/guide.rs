@@ -505,7 +505,8 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                     "After a battle",
                     "A stack on patrol or marauding that fights (or is attacked) waits for your word: it needs \
                      orders, and N goes to it. D lets it go on (at once, if it waited since your turn began); \
-                     any other order ends its patrol or its marauding; left alone, it goes on next turn."
+                     any other order ends its patrol or its marauding; left alone, it goes on at the end of \
+                     your turn."
                         .to_string(),
                 ),
                 (

@@ -1,6 +1,6 @@
 //! A patrol (`Order::Patrol`): the places a stack goes round, turn after
 //! turn, and whether it attacks what it meets on the way. Plain data: the
-//! rules move it (`Game`, at the start of each of its side's turns).
+//! rules move it (`Game`, at the end of each of its side's turns).
 //!
 //! Not a port: the C++ had no orders.
 

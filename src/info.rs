@@ -107,7 +107,7 @@ pub fn record_lines(map: &Map, record: &Record, side: Side) -> Vec<String> {
             let dead: Vec<&Fallen> = dead.iter().collect();
             vec![format!("At {}, {} went down with your ships.", place(map, *at), counted(&dead))]
         }
-        // A standing order that stopped short, at the start of the turn.
+        // A standing order that stopped short, at the end of a turn.
         Event::Stalled { side: whose, units, at, to } if *whose == side => {
             let (who, waits) = match units.len() {
                 1 => ("One of your units".to_string(), "It waits"),
@@ -452,7 +452,10 @@ pub fn duty_line(map: &Map, unit: &Unit, count: usize) -> String {
         (Some(_), true) => format!("{who} fought on patrol: D lets it go on; another order ends the patrol."),
         (None, true) => format!("{who} fought, marauding: D lets it go on; U calls it back."),
         (Some(patrol), false) if unit.stalled => {
-            format!("{who}, {}: stopped short, something is in the way (D: try again next turn).", patrol_words(patrol))
+            format!(
+                "{who}, {}: stopped short, something is in the way (D: try again at the turn's end).",
+                patrol_words(patrol)
+            )
         }
         (Some(patrol), false) => {
             format!("{who}, {}, {} (P: another patrol; a move ends it).", patrol_words(patrol), patrol_way(patrol))
@@ -673,11 +676,11 @@ pub fn queue_end_line(city: &City) -> String {
     match city.queue.end {
         QueueEnd::Stop => "Then it stops, and waits for orders.".to_string(),
         QueueEnd::Repeat { from, times: None } => format!("Then again from item {}, for ever.", from + 1),
-        QueueEnd::Repeat { from, times: Some(t) } => {
-            let left = t.saturating_sub(city.queue.rounds);
-            let times = if left == 1 { "once more".to_string() } else { format!("{left} times more") };
-            format!("Then again from item {}, {times}; then it stops.", from + 1)
-        }
+        QueueEnd::Repeat { from, times: Some(t) } => match t.saturating_sub(city.queue.rounds) {
+            0 => format!("It is going round from item {} the last time; then it stops.", from + 1),
+            1 => format!("Then again from item {}, once more; then it stops.", from + 1),
+            left => format!("Then again from item {}, {left} times more; then it stops.", from + 1),
+        },
     }
 }
 

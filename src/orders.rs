@@ -39,7 +39,7 @@ pub enum Order {
     Queue { city: CityId, items: Vec<QueueItem>, end: QueueEnd },
     /// Send units to a hex, near or far, by way of the stops `via` in order
     /// (none: straight there): they go as far as the slowest gets this turn,
-    /// and on at the start of each of their side's turns until they are
+    /// and on at the end of each of their side's turns until they are
     /// there (a standing order; another order for them ends it). At a stop
     /// they go on to the next at once, with what movement they have left;
     /// at a stop on a temple (or the end), those it has not blessed seek its
@@ -82,8 +82,8 @@ pub enum Order {
     /// Units on one hex patrol `waypoints` (on land the side has seen), turn
     /// after turn: the first of them first, round again after the last if it
     /// is the first again, else back the way they came. They go as far as
-    /// the slowest gets this turn, and on at the start of each of their
-    /// side's turns, on at once from a waypoint with what movement is left.
+    /// the slowest gets this turn, and on at the end of each of their side's
+    /// turns, on at once from a waypoint with what movement is left.
     /// With `attack` (in percent) they attack the other sides' stacks they
     /// see and can reach, at those odds or better, once a turn at most; else
     /// never. A battle (theirs, or one they are attacked in) and they need

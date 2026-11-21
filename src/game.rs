@@ -511,7 +511,7 @@ pub struct Game {
     /// each one's record in the history, its round, the fight; and the one
     /// the order being carried out fought, until it is kept.
     fights: Vec<(usize, u32, Fight)>,
-    fought: Option<Fight>,
+    fought: Vec<Fight>,
     /// After a battle won by a stack with no commander against the odds:
     /// its side, and the hex its captain would rise on.
     emerging: Option<(Side, Hex)>,
@@ -529,6 +529,9 @@ pub struct Game {
     explored: Vec<Vec<bool>>,
     /// The cities whose walls were raised this turn (once a turn each).
     raised: Vec<CityId>,
+    /// The turn (round, side) whose units left alone after a battle were
+    /// last let go on (`stand_easy`: once a turn).
+    eased: Option<(u32, Side)>,
     /// Each side's rally points (by `Side::index`), 0 to 9.
     rally_points: Vec<[Option<RallyPoint>; RALLY_POINTS]>,
     /// The sides that are out, in the order they went.
@@ -564,6 +567,7 @@ impl Game {
             round: 1,
             rng,
             raised: Vec::new(),
+            eased: None,
             rally_points: vec![[None; RALLY_POINTS]; NUM_SIDES + 1],
             out: Vec::new(),
             trail: vec![Vec::new(); NUM_SIDES + 1],
@@ -576,7 +580,7 @@ impl Game {
             history: Vec::new(),
             treasury: [setup.gold; NUM_SIDES + 1],
             fights: Vec::new(),
-            fought: None,
+            fought: Vec::new(),
             emerging: None,
             promoted: Vec::new(),
             setup,
@@ -721,6 +725,8 @@ impl Game {
             Order::Defend { units, .. } => !ends_orders(units),
             _ => false,
         };
+        // (The fights an order's battles leave, in their order.)
+        self.fought.clear();
         let done = self.carry_out(side, order);
         if keeps && done.as_ref().is_ok_and(|events| events.is_empty()) {
             self.undo = last;
@@ -740,8 +746,9 @@ impl Game {
     /// Keep what an order of `turn`'s, in `round`, did that is worth keeping:
     /// not the moves (there are too many, and they say little afterwards), the
     /// turns' beginnings, or an undo.
-    /// (What comes after a turn's beginning, in the same order, is that
-    /// turn's: the marches, the units built, what they take.)
+    /// (What comes before a turn's beginning, in the same order, is the
+    /// turn that ends: its marches and patrols, and what they take; what
+    /// comes after it is the new turn's: the units built, the deserters.)
     fn remember(&mut self, round: u32, turn: Side, events: &[Event]) {
         let (mut round, mut turn) = (round, turn);
         for event in events {
@@ -752,10 +759,9 @@ impl Game {
                 continue;
             }
             // A battle's fight is kept beside its record.
-            if matches!(event, Event::Battle { .. }) {
-                if let Some(fight) = self.fought.take() {
-                    self.fights.push((self.history.len(), round, fight));
-                }
+            if matches!(event, Event::Battle { .. }) && !self.fought.is_empty() {
+                let fight = self.fought.remove(0);
+                self.fights.push((self.history.len(), round, fight));
             }
             self.history.push(Record { round, turn, event: event.clone() });
         }
@@ -1533,12 +1539,14 @@ impl Game {
         // its kind (an item before it taken out); else from the start.
         let old = &c.queue;
         let at = old.current().and_then(|current| {
-            let same_kind = |j: usize| items.get(j).is_some_and(|new| new.what == current.what);
-            if same_kind(old.at) || (items.len() == old.items.len() && old.at < items.len()) {
-                Some(old.at)
-            } else {
-                (0..items.len()).filter(|j| same_kind(*j)).min_by_key(|j| (j.abs_diff(old.at), *j))
-            }
+            let nearest = |found: &dyn Fn(&QueueItem) -> bool| {
+                (0..items.len()).filter(|j| found(&items[*j])).min_by_key(|j| (j.abs_diff(old.at), *j))
+            };
+            // The same item (another taken out or put in before it); an
+            // item changed in place; one of its kind.
+            nearest(&|new| new == current)
+                .or_else(|| (items.len() == old.items.len() && old.at < items.len()).then_some(old.at))
+                .or_else(|| nearest(&|new| new.what == current.what))
         });
         let (at, made, rounds) = match (at, old.current()) {
             (Some(at), Some(current)) if items[at].what == current.what => (at, old.made, old.rounds),
@@ -1939,7 +1947,7 @@ impl Game {
         let (all_attackers, all_defenders) = (attackers.to_vec(), self.map.units_at(at).to_vec());
         let siege = self.siege_of(attackers);
         let walls = self.map.city_at(at).map(|c| c.walls);
-        self.fought = Some(Fight {
+        self.fought.push(Fight {
             at,
             attacker: side,
             defender,
@@ -2126,7 +2134,9 @@ impl Game {
         self.stand_easy(ending);
         let mut events = self.marches(ending);
         events.extend(self.patrols(ending));
-        // What its units saw on their way is seen no longer.
+        // What its units saw on their way (the marches' too) is noted, and
+        // then seen no longer.
+        self.note_sightings();
         if let Some(trail) = self.trail.get_mut(ending.index()) {
             trail.clear();
         }
@@ -2644,7 +2654,7 @@ impl Game {
     /// and strengths, is what the odds before an attack tell a person.)
     pub fn view_for(&self, side: Side) -> Game {
         let mut view = self.clone();
-        (view.history, view.fights, view.fought, view.undo) = (Vec::new(), Vec::new(), None, None);
+        (view.history, view.fights, view.fought, view.undo) = (Vec::new(), Vec::new(), Vec::new(), None);
         for (i, ((memory, trail), (held, explored))) in view
             .memory
             .iter_mut()
@@ -2874,7 +2884,11 @@ impl Game {
         let ours = |game: &Game| {
             game.map.units_at(hex).iter().any(|id| game.map.units().get(*id).is_some_and(|u| u.side() == side))
         };
-        if self.map.units().get(first).is_some_and(|u| u.pos() == hex) || ours(self) {
+        if self.map.units().get(first).is_some_and(|u| u.pos() == hex) {
+            // (As it is: some of the stack, taken by their boxes, stay so.)
+            return SelectOutcome::Selected(first);
+        }
+        if ours(self) {
             self.deselect();
             return self.select_stack(hex);
         }
@@ -2920,16 +2934,15 @@ impl Game {
             .collect();
         let able: Vec<UnitId> =
             own.iter().copied().filter(|id| units.get(*id).is_some_and(|u| u.movement > 0)).collect();
-        // Not those that defend, were put aside or have moved this turn,
-        // unless they are all it has (the stack's boxes take them in one by
-        // one): a stack put aside in part was selected whole again, and sent
-        // off, defenders and all; a stack that moved onto another went on
-        // with it.
-        let waiting: Vec<UnitId> = able
-            .iter()
-            .copied()
-            .filter(|id| units.get(*id).is_some_and(|u| !u.defending && !u.done && !u.moved))
-            .collect();
+        // Not those that defend, were put aside, have moved this turn or are
+        // on a standing order (a march, a city's new units on their way, a
+        // patrol, marauding), unless they are all it has (the stack's boxes
+        // take them in one by one): a stack put aside in part was selected
+        // whole again, and sent off, defenders and all; a stack that moved
+        // onto another went on with it; a new unit on its way went with the
+        // garrison, its order lost.
+        let free = |u: &Unit| !u.defending && !u.done && !u.moved && (u.route.is_empty() || u.stalled) && !u.on_duty();
+        let waiting: Vec<UnitId> = able.iter().copied().filter(|id| units.get(*id).is_some_and(free)).collect();
         // (At sea, all of them: the ships carry who has no points left. On
         // patrol or marauding, all of them too: they go as one.)
         let stack = if self.map.open_water(hex) || patrol::together(&self.map, &own) {
