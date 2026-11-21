@@ -246,7 +246,10 @@ fn help_section() -> Vec<HelpSection> {
             &[
                 ("The menus along the top", "Everything there is to do; each item says its keys"),
                 ("Click a hex,  or  Enter", "Choose it: select its stack, or send the selected units there"),
-                ("Click a hex they cannot reach", "Drop the selection (and select the stack there, if it is yours)"),
+                (
+                    "Click a hex beyond their reach",
+                    "Send them there, over as many turns as it takes (Go to); your stack there: select it",
+                ),
                 ("A hex with another side's units", "Sending units there attacks them: the line below says the odds"),
                 ("Drag on the map", "Move it (a press that does not move is a click)"),
                 ("Point at a unit below", "All about it"),
@@ -1661,9 +1664,25 @@ impl Session {
             self.start_turn();
         }
         let before = self.screen.game.history().len();
+        let sent = self.screen.game.selection().to_vec();
         let outcome = self.screen.game.select_hex(hex);
         self.shown = hex;
         match outcome {
+            // Beyond their reach: sent there (Go to). The cursor follows
+            // them, or the next stack is selected.
+            SelectOutcome::Sent(_) => {
+                let game = &self.screen.game;
+                if let Some(at) = sent.iter().find_map(|id| game.map.units().get(*id)).map(|u| u.pos()) {
+                    self.screen.game.set_cursor(at);
+                    self.shown = at;
+                    self.after_move(at);
+                }
+            }
+            SelectOutcome::Refused(why) => {
+                self.notice = Some(format!("They cannot go there: {why}."));
+                let game = &self.screen.game;
+                self.shown = game.selected().and_then(|id| game.map.units().get(id)).map_or(hex, |u| u.pos());
+            }
             SelectOutcome::Fought(_) => {
                 // The battle, played out; or told in a line (Options).
                 let history = self.screen.game.history();

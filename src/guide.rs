@@ -446,8 +446,9 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                 ),
                 (
                     "Go to",
-                    "Sends the selected units somewhere far: they go there over the turns, on their own, \
-                           at the start of each of yours. A march never attacks: if something is in the way it \
+                    "Sends the selected units somewhere far (G, then a hex; or just click a hex beyond \
+                           their reach): they go there over the turns, on their own, at the start of each of \
+                           yours; Undo takes it back until they have gone a second leg. A march never attacks: if something is in the way it \
                            stops and waits for orders. Shift+click on the way there makes a stop: they go by \
                            way of it, and on at once; at a temple they seek its blessing and stop for the turn. \
                            A city's new units can go by stops too. Once they get where they go, they wait for \

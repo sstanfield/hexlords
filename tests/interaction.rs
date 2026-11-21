@@ -76,7 +76,7 @@ fn clicking_the_selected_unit_again_deselects_it() {
 }
 
 #[test]
-fn clicking_out_of_range_drops_the_selection() {
+fn clicking_beyond_reach_sends_them_there_or_says_why_not() {
     let mut s = session();
     let &[cav] = s.screen.game.map.units_at(START) else { panic!() };
     // Zoom out twice: at the start zoom everything in view is within reach.
@@ -85,19 +85,29 @@ fn clicking_out_of_range_drops_the_selection() {
     let p = pixel_of(&s, START);
     click(&mut s, p);
     assert_eq!(s.screen.game.selected(), Some(cav));
-    // A mountain next door, and grass too far away (the C++ teleported to
-    // both): the click drops the selection, and nothing moves.
-    for hex in [Hex::new(51, 51), Hex::new(50, 68), Hex::new(39, 50)] {
-        let p = pixel_of(&s, hex);
-        click(&mut s, p);
-        assert_eq!(s.screen.game.map.cursor, hex, "the click still moves the cursor");
-        assert_eq!(s.screen.game.selected(), None, "{hex}");
-        assert_eq!(s.screen.game.map.units_at(START), [cav]);
-        assert_eq!(s.screen.game.map.units().get(cav).unwrap().movement, 20);
-        let p = pixel_of(&s, START);
-        click(&mut s, p);
-        assert_eq!(s.screen.game.selected(), Some(cav));
-    }
+    // A mountain next door (the C++ teleported there): it says why not, and
+    // the rider stays selected, where it was.
+    let p = pixel_of(&s, Hex::new(51, 51));
+    click(&mut s, p);
+    assert_eq!(s.screen.game.map.cursor, Hex::new(51, 51), "the click still moves the cursor");
+    assert_eq!(s.screen.game.selected(), Some(cav));
+    assert_eq!(s.unit_line(), "They cannot go there: Test Cav cannot get there.");
+    assert_eq!(s.screen.game.map.units_at(START), [cav]);
+    // Grass too far for a turn: it goes there, over the turns (Go to), as
+    // far as it gets this turn; nothing stays selected.
+    let p = pixel_of(&s, Hex::new(50, 68));
+    click(&mut s, p);
+    let unit = s.screen.game.map.units().get(cav).unwrap();
+    assert_eq!(unit.goto(), Some(Hex::new(50, 68)));
+    assert_ne!(unit.pos(), START);
+    assert_eq!(s.screen.game.selected(), None);
+    // Undo: back where it was, with its points, and selected.
+    s.screen.ui.key(Some('z'), SpecialKey::None, turbo_ferret::Modifiers::CTRL, true);
+    s.screen.ui.key(Some('z'), SpecialKey::None, turbo_ferret::Modifiers::CTRL, false);
+    s.pump();
+    let unit = s.screen.game.map.units().get(cav).unwrap();
+    assert_eq!((unit.pos(), unit.movement, unit.goto()), (START, 20, None));
+    assert_eq!(s.screen.game.selected(), Some(cav));
     // The edge of the range is still a move: ten grass steps up.
     let p = pixel_of(&s, Hex::new(40, 50));
     click(&mut s, p);

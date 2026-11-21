@@ -40,6 +40,13 @@ pub enum SelectOutcome {
     Moved { unit: UnitId, cost: u32, events: Vec<Event> },
     /// Nothing was selected, and the hex has none of the side's units.
     Nothing,
+    /// The selected units could not reach the hex this turn, and were sent
+    /// there (`Order::GoTo`, over as many turns as it takes): what came of
+    /// it this turn. They are no longer selected.
+    Sent(Vec<Event>),
+    /// The selected units could not reach the hex, nor be sent there: why.
+    /// They stay selected.
+    Refused(String),
 }
 
 /// The hex after `from` in `hexes` (in reading order), or the one before it;
@@ -76,6 +83,9 @@ enum Undo {
     Built { city: CityId, building: Option<usize>, progress: u32 },
     /// A city's walls were raised a level, for `price`.
     Walls { city: CityId, price: u32 },
+    /// Units were given a standing order and have not gone anywhere yet:
+    /// what each was doing before.
+    Ordered { goals: Vec<(UnitId, MarchState)> },
 }
 
 /// A city as it was before a move took it, for an undo: its id, holder,
@@ -794,9 +804,12 @@ impl Game {
                     events.extend(self.march(side, ids));
                 }
                 // An undo gives the units back what they were doing before (a
-                // stack from one hex: units from several cannot be taken back).
+                // stack from one hex: units from several cannot be taken back);
+                // an order that has moved nobody yet is taken back whole.
+                let still = events.iter().all(|e| matches!(e, Event::Stalled { .. }));
                 match &mut self.undo {
                     Some(Undo::Moved { goals, .. }) if groups.len() == 1 => *goals = before,
+                    None if still => self.undo = Some(Undo::Ordered { goals: before }),
                     _ => self.undo = None,
                 }
                 Ok(events)
@@ -1017,6 +1030,18 @@ impl Game {
                 // They are where they were, and selected again, to go
                 // somewhere else.
                 self.select(units.iter().map(|(id, _, _)| *id).collect());
+            }
+            Undo::Ordered { goals } => {
+                for (id, _) in &goals {
+                    self.own_unit(side, *id)?;
+                }
+                let ids: Vec<UnitId> = goals.iter().map(|(id, _)| *id).collect();
+                for (id, march) in goals {
+                    if let Some(unit) = self.map.unit_mut(id) {
+                        march.restore(unit);
+                    }
+                }
+                self.select(ids);
             }
             Undo::Built { city, building, progress } => {
                 let holder = self.map.cities().get(city).map(|c| c.side);
@@ -2439,8 +2464,10 @@ impl Game {
     /// - Units are selected and all of them can reach the hex: they move there
     ///   (`Order::Move`: each pays its cost; into another side's units it is a
     ///   battle; a city may be taken) and are deselected.
-    /// - Units are selected and they cannot go there: they are deselected, and
-    ///   the hex's own units, if it has any, are selected instead.
+    /// - Units are selected and they cannot get there this turn: the hex's
+    ///   own units, if it has any, are selected instead; else they are sent
+    ///   there (`Order::GoTo`, over as many turns as it takes), or, if they
+    ///   cannot be, stay selected and the outcome says why.
     /// - Nothing is selected and the hex has units of the side whose turn it
     ///   is: select them all, the stack (those with points left, if any have).
     ///
@@ -2455,10 +2482,22 @@ impl Game {
             return SelectOutcome::Deselected;
         }
         let Some(cost) = self.range.as_ref().and_then(|r| r.cost(hex)) else {
+            let units = self.selected.clone();
             self.deselect();
-            return match self.select_stack(hex) {
-                SelectOutcome::Nothing => SelectOutcome::Deselected,
-                selected => selected,
+            match self.select_stack(hex) {
+                SelectOutcome::Nothing => {}
+                selected => return selected,
+            }
+            // Beyond their reach: they are sent there, if the side's.
+            if !units.iter().all(|id| self.own(*id)) {
+                return SelectOutcome::Deselected;
+            }
+            return match self.apply(Order::GoTo { units: units.clone(), to: hex, via: Vec::new() }) {
+                Ok(events) => SelectOutcome::Sent(events),
+                Err(why) => {
+                    self.select(units);
+                    SelectOutcome::Refused(why)
+                }
             };
         };
         let units = self.selected.clone();
@@ -2771,17 +2810,36 @@ mod tests {
     fn a_unit_cannot_go_where_it_cannot_reach() {
         let mut game = grassland();
         let &[id] = game.map.units_at(START) else { panic!() };
-        // The C++ teleported to all three of these for free (deviation D2);
-        // here a click out of reach drops the selection.
-        for hex in [Hex::new(0, 0), Hex::new(51, 51), Hex::new(50, 70), Hex::new(100, 100)] {
-            assert_eq!(game.select_hex(START), SelectOutcome::Selected(id));
-            assert_eq!(game.select_hex(hex), SelectOutcome::Deselected, "{hex}");
-            assert_eq!(game.selected(), None, "no longer selected");
+        // The C++ teleported to all of these for free (deviation D2); here
+        // a mountain, or a hex off the map, is refused: the unit stays
+        // selected, where it was.
+        assert_eq!(game.select_hex(START), SelectOutcome::Selected(id));
+        for hex in [Hex::new(0, 0), Hex::new(51, 51), Hex::new(100, 100)] {
+            assert!(matches!(game.select_hex(hex), SelectOutcome::Refused(_)), "{hex}");
+            assert_eq!(game.selected(), Some(id), "still selected");
             assert_eq!(game.map.units().get(id).unwrap().pos(), START);
             assert_eq!(game.map.units().get(id).unwrap().movement, 20);
         }
+        // Grass beyond its reach this turn: it is sent there (Go to).
+        assert!(matches!(game.select_hex(Hex::new(50, 70)), SelectOutcome::Sent(_)));
+        assert_eq!(game.selected(), None);
+        assert_eq!(game.map.units().get(id).unwrap().goto(), Some(Hex::new(50, 70)));
         // With nothing selected, a hex without units is nothing.
         assert_eq!(game.select_hex(Hex::new(0, 0)), SelectOutcome::Nothing);
+    }
+
+    #[test]
+    fn a_go_to_that_has_not_gone_anywhere_yet_can_be_taken_back() {
+        let mut game = grassland();
+        let &[id] = game.map.units_at(START) else { panic!() };
+        game.map.unit_mut(id).unwrap().movement = 0;
+        assert_eq!(game.select_hex(START), SelectOutcome::Selected(id));
+        assert_eq!(game.select_hex(Hex::new(50, 70)), SelectOutcome::Sent(Vec::new()));
+        assert_eq!(game.map.units().get(id).unwrap().goto(), Some(Hex::new(50, 70)));
+        assert!(game.can_undo());
+        game.apply(Order::Undo).unwrap();
+        assert_eq!(game.map.units().get(id).unwrap().goto(), None, "its order is gone");
+        assert_eq!(game.selected(), Some(id), "and it is selected again");
     }
 
     #[test]
@@ -2891,7 +2949,7 @@ mod tests {
         // The terrain changes: water next door is out of reach at once.
         let next_door = Hex::new(20, 22);
         game.map.tile_mut(next_door).unwrap().kind = TileType::Water;
-        assert_eq!(game.select_hex(next_door), SelectOutcome::Deselected, "select_hex refreshes by itself");
+        assert!(matches!(game.select_hex(next_door), SelectOutcome::Refused(_)), "select_hex refreshes by itself");
         assert!(!game.can_move_to(next_door));
         assert!(game.select_unit(cav));
 

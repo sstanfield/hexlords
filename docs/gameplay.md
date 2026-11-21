@@ -361,7 +361,10 @@ get around, and good defaults, so that little has to be said for the usual
 thing to happen. Ideas to try, as the rules grow:
 
 - **Orders that last** (built): Go to (G, or the Go to button, then a
-  hex: `Order::GoTo`) sends the selected units to a far hex: they take this
+  hex: `Order::GoTo`; or a click on a hex beyond the selection's reach
+  this turn, the owner's word 2026-11-21, which says why not if they
+  cannot go there and leaves them selected; a hex with the player's own
+  stack selects that instead) sends the selected units to a far hex: they take this
   turn's part at once, and the rest at the start of each of their side's
   turns, before the player plays (`Game::marches`), as far as the slowest
   of them goes, until they are there. It is taken if each unit could get
