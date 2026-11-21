@@ -211,9 +211,10 @@ impl Game {
         }
     }
 
-    /// At the start of `side`'s turn, its patrols go their way, a stack (the
-    /// units of a hex on the same patrol) at a time; not one that fought
-    /// since its last turn and waits for its player's word.
+    /// At the end of `side`'s turn, its patrols go their way, with the
+    /// movement they have left, a stack (the units of a hex on the same
+    /// patrol) at a time; not one that fought and waits for its player's
+    /// word (`stand_easy` lets those left alone go on first).
     pub(super) fn patrols(&mut self, side: Side) -> Vec<Event> {
         let ids: Vec<UnitId> = self.map.units().of_side(side).filter(|u| u.patrol.is_some()).map(|u| u.id()).collect();
         let mut events = Vec::new();

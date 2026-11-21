@@ -366,9 +366,12 @@ thing to happen. Ideas to try, as the rules grow:
   this turn, the owner's word 2026-11-21, which says why not if they
   cannot go there and leaves them selected; a hex with the player's own
   stack selects that instead) sends the selected units to a far hex: they take this
-  turn's part at once, and the rest at the start of each of their side's
-  turns, before the player plays (`Game::marches`), as far as the slowest
-  of them goes, until they are there. It is taken if each unit could get
+  turn's part at once, and the rest at the end of each of their side's
+  turns, with the movement they have left (`Game::marches`; the owner's
+  word 2026-11-21: in the turn their player can still give them other
+  orders, in a pinch, though they need none), as far as the slowest of
+  them goes, until they are there. A city's new units, sent somewhere,
+  wait in it through the turn they are built, and go at its end. It is taken if each unit could get
   there over the land in as many turns as it takes (`way_over_land`:
   whoever stands on the way now does not count, nor do the moves left this
   turn); units on several hexes go as a stack from each. A march never attacks: if its next
@@ -455,8 +458,9 @@ thing to happen. Ideas to try, as the rules grow:
   player moved and that stopped has had its orders, moves left or not:
   Next stack passes it by, as it does one put aside, and a click on its
   hex picks the units that have not moved first. A stack that got where
-  a standing order sent it, at the start of the turn, waits for orders
-  again. A row is a button:
+  a standing order sent it, at the end of the last turn, waits for orders
+  again; so does one whose march stopped short then (it stays stopped
+  until it gets on). A row is a button:
   a stack's selects it, a city's opens it; the list follows the game, so
   the player can work down it.
 - **Production that repeats** until told otherwise (it does), and the lists
@@ -553,8 +557,8 @@ thing to happen. Ideas to try, as the rules grow:
   patrol or marauding that is selected is not sent elsewhere by one stray
   click: a click that would give it an order (and so end its duty) says
   so, and a second click on the same hex sends it. It takes this turn's
-  part at once, and goes on at the start of each of its side's turns,
-  after the marches (`Game::patrols`): as far as the slowest of it gets,
+  part at once, and goes on at the end of each of its side's turns, after
+  the marches, with the movement it has left (`Game::patrols`): as far as the slowest of it gets,
   on from a waypoint at once with what movement is left (a short patrol
   may go round more than once a turn), never into another side's units it
   sees; with no way on it stops short, waits for orders, and tries again
@@ -575,9 +579,9 @@ thing to happen. Ideas to try, as the rules grow:
   computer until its player calls it back (U again) or gives it another
   order. Marauding is not a rule: the rules keep the flag, and the
   computer (`marauder`) gives the stack ordinary orders, at once with what
-  movement it has, and at the start of each of its side's turns before its
-  player plays (the screen leads a person's, hotseat too; an agent's turn
-  leads the computer's sides' and a program's). It is shown the side's
+  movement it has, and at the end of each of its side's turns (the screen
+  leads a person's as they end it, hotseat too; an agent's turn leads the
+  computer's sides' and a program's after its orders). It is shown the side's
   view, no more, and leads the stack in the bold planner's ways, scoped to
   it: it strikes the other sides' stacks it sees and can reach at the bold
   odds or better, and the cities it can reach that are empty or held by
@@ -596,10 +600,11 @@ thing to happen. Ideas to try, as the rules grow:
   needs orders (tier 1: "fought on patrol: D lets it go on"), Next stack
   goes to it, End turn counts it. Done lets it go on, at once if it can;
   another order ends its patrol or its marauding; left alone, it goes on
-  next turn. One attacked in another side's turn does not go on at the
-  start of its own: its player sees it first. A battle one fights on its
+  at the end of the turn. One attacked in another side's turn waits
+  through its own: its player sees it first. A battle one fights on its
   player's word (the patrol's window, U, D) is told as the player's own;
-  those at the start of a turn are in the log, which opens.
+  those at the end of a turn are in the log, which opens as the next
+  begins.
 - **Provinces** (shelved, the owner's word 2026-11-21): a group of cities
   handed to the computer under the player's general orders (a share of
   their taxes, units sent to the front). Shelved: multiplayer is meant to

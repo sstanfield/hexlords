@@ -96,12 +96,14 @@ fn a_patrol_goes_back_and_forth() {
     assert!(red.iter().all(|id| pos(&game, *id) == MIDDLE));
     assert_eq!(stack_state(&game, MIDDLE), StackState::Patrolling);
     assert!(game.waiting_stacks(Side::Red).is_empty(), "a patrol waits for nobody");
+    // On at the end of each of red's turns, with the moves left (none, at
+    // the end of this one).
     let mut seen = Vec::new();
-    for _ in 0..5 {
+    for _ in 0..6 {
         round(&mut game);
         seen.push(pos(&game, red[0]));
     }
-    assert_eq!(seen, [EAST, MIDDLE, WEST, MIDDLE, EAST]);
+    assert_eq!(seen, [MIDDLE, EAST, MIDDLE, WEST, MIDDLE, EAST]);
     assert!(red.iter().all(|id| pos(&game, *id) == pos(&game, red[0])), "together");
 }
 
@@ -216,7 +218,7 @@ fn game_with_levy() -> Game {
 }
 
 #[test]
-fn a_patrol_fights_once_a_turn_at_most_at_the_start_of_its_turn() {
+fn a_patrol_fights_once_a_turn_at_most_at_the_end_of_its_turn() {
     let mut game = game();
     let red = put(&mut game, Side::Red, "soldiers", WEST, 2);
     let order = Order::Patrol { units: red.clone(), waypoints: vec![WEST, MIDDLE, EAST], attack: Some(50) };
@@ -226,6 +228,8 @@ fn a_patrol_fights_once_a_turn_at_most_at_the_start_of_its_turn() {
     // nearest).
     let near = put(&mut game, Side::Blue, "levy", Hex::new(11, 13), 1);
     let far = put(&mut game, Side::Blue, "levy", Hex::new(9, 15), 1);
+    // (None at the end of this turn: it has no moves left.)
+    assert_eq!(battles(&round(&mut game)), 0);
     let events = round(&mut game);
     assert_eq!(battles(&events), 1);
     assert!(game.map.units().get(near[0]).is_none());
@@ -246,13 +250,15 @@ fn after_a_battle_done_lets_it_go_on_and_left_alone_it_goes_on_next_turn() {
     assert_eq!(stack_state(&game, at), StackState::Patrolling);
     assert!(game.waiting_stacks(Side::Red).is_empty());
     round(&mut game);
+    round(&mut game);
     assert_ne!(pos(&game, red[0]), at, "on its way again");
 
-    // Left alone: the same, next turn.
+    // Left alone: the same, at the end of the next turn.
     let mut game = game_with_levy();
     let red: Vec<UnitId> = game.map.units_at(WEST).to_vec();
     game.apply(Order::Patrol { units: red.clone(), waypoints: vec![WEST, MIDDLE], attack: Some(50) }).unwrap();
     let at = pos(&game, red[0]);
+    round(&mut game);
     round(&mut game);
     assert_ne!(pos(&game, red[0]), at, "on its way again");
     assert!(!unit(&game, red[0]).fought);
@@ -290,6 +296,7 @@ fn a_patrol_with_no_way_on_waits_for_orders() {
     game.apply(Order::Patrol { units: red.clone(), waypoints: vec![WEST, MIDDLE], attack: None }).unwrap();
     // Blue knights stand on the waypoint: it stops short, and waits.
     put(&mut game, Side::Blue, "knights", WEST, 1);
+    round(&mut game);
     let events = round(&mut game);
     assert!(events.iter().any(|e| matches!(e, Event::Stalled { .. })), "{events:?}");
     let at = pos(&game, red[0]);

@@ -86,7 +86,10 @@ fn a_queue_builds_its_items_in_turn_and_sends_each_where_it_says() {
     assert_eq!(kinds, ["Soldiers", "Soldiers", "Riders"]);
     let unit = |id: UnitId| game.map.units().get(id).unwrap();
     assert!(unit(made[0]).defending && unit(made[1]).defending, "a garrison");
-    assert_eq!(unit(made[2]).pos(), POINT, "to the rally point");
+    assert_eq!(unit(made[2]).route, [POINT], "to the rally point, at the turn's end");
+    round(&mut game);
+    let unit = |id: UnitId| game.map.units().get(id).unwrap();
+    assert_eq!(unit(made[2]).pos(), POINT);
     // At its end it stops: the city builds nothing, and needs orders.
     let c = game.map.cities().get(city).unwrap();
     assert!(c.queue.is_empty() && c.building.is_none());

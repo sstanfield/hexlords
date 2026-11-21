@@ -76,7 +76,11 @@ fn a_stack_sent_far_goes_there_over_turns() {
     // It is not waiting for orders: it is on its way.
     let stack = game.tasks(Side::Red).into_iter().find(|t| matches!(t, Task::Stack { .. }));
     assert_eq!(stack, Some(Task::Stack { at: here, units: 2, state: StackState::Marching }));
-    // The next turns, on its own, at the turn's start: 6 more, then there.
+    // On its own, at the end of each of red's turns (in the turn its
+    // player could still give it other orders), with the moves it has
+    // left: none this turn; then 6 more, then there.
+    let events = round(&mut game);
+    assert!(!events.iter().any(|e| matches!(e, Event::Moved { unit, .. } if *unit == red[0])), "none left");
     let events = round(&mut game);
     assert!(events.iter().any(|e| matches!(e, Event::Moved { unit, .. } if *unit == red[0])));
     assert_eq!(pos(&game, red[0]).distance(FAR), 3);
@@ -99,8 +103,10 @@ fn a_march_stops_short_of_another_sides_units_and_waits_for_orders() {
     game.map.place_unit(blue, Hex::new(5, 13)).unwrap();
     game.apply(Order::GoTo { units: red.clone(), to: Hex::new(5, 13), via: Vec::new() }).unwrap();
     assert_eq!(pos(&game, red[0]).distance(Hex::new(5, 13)), 2);
-    // Next turn: the step it would take is onto blue. It does not attack: it
-    // stops, keeps its order, and waits for its player.
+    // At the end of its next turn (none left in this one): the step it
+    // would take is onto blue. It does not attack: it stops, keeps its
+    // order, and waits for its player.
+    round(&mut game);
     let events = round(&mut game);
     let stalled = events.iter().find_map(|e| match e {
         Event::Stalled { units, to, .. } => Some((units.clone(), *to)),
@@ -169,11 +175,14 @@ fn a_city_sends_what_it_builds_where_its_holder_says() {
     game.apply(Order::Build { city, what: Some(0) }).unwrap();
     game.apply(Order::Rally { city, to: Sends::Route(vec![FAR]) }).unwrap();
     assert_eq!(game.map.cities().get(city).unwrap().sends, Sends::Route(vec![FAR]));
-    // Built at the start of red's turn, and on its way at once.
+    // Built at the start of red's turn, with its order; it waits in the
+    // city that turn (its player could give it another), and goes at the
+    // turn's end.
     let events = round(&mut game);
     let built = events.iter().find_map(|e| if let Event::Built { unit, .. } = e { Some(*unit) } else { None });
     let built = built.expect("soldiers built");
-    assert_eq!(goto(&game, built), Some(FAR));
+    assert_eq!((goto(&game, built), pos(&game, built)), (Some(FAR), REDHOLD));
+    round(&mut game);
     assert_eq!(pos(&game, built).distance(REDHOLD), 6);
     // Only its holder says where.
     let bluemoor = game.map.city_at(BLUEMOOR).unwrap().id;
@@ -307,6 +316,7 @@ fn a_stack_that_arrives_on_a_standing_order_waits_for_orders() {
         game.tasks(Side::Red).into_iter().find(|t| matches!(t, Task::Stack { at, .. } if *at == hex)).unwrap()
     };
     assert_eq!(task(&game, near), Task::Stack { at: near, units: 1, state: StackState::MovesLeft });
+    round(&mut game);
     round(&mut game);
     round(&mut game);
     assert_eq!((pos(&game, soldiers), goto(&game, soldiers)), (FAR, None));
@@ -453,6 +463,7 @@ fn go_to_is_taken_with_no_moves_left_and_marches_next_turn() {
     game.apply(Order::GoTo { units: vec![id], to: FAR, via: Vec::new() }).unwrap();
     assert_eq!((pos(&game, id), goto(&game, id)), (Hex::new(5, 11), Some(FAR)));
     round(&mut game);
+    round(&mut game);
     assert!(pos(&game, id).distance(FAR) < Hex::new(5, 11).distance(FAR), "on its way");
     // A hex no unit of it can get to over the land is refused, naming it.
     game.map.tile_mut(Hex::new(20, 20)).unwrap().kind = hexgame::state::TileType::Water;
@@ -501,6 +512,7 @@ fn undo_gives_a_stalled_stack_back_all_it_was() {
     let blue = game.map.new_unit_of(Side::Blue, kind).unwrap();
     game.map.place_unit(blue, Hex::new(5, 13)).unwrap();
     game.apply(Order::GoTo { units: vec![id], to: Hex::new(5, 13), via: Vec::new() }).unwrap();
+    round(&mut game);
     round(&mut game);
     let unit = game.map.units().get(id).unwrap();
     assert!(unit.stalled && !unit.moved);
@@ -698,4 +710,27 @@ fn undo_after_done_gives_the_units_back_unput_aside() {
     game.apply(Order::Undo).unwrap();
     let unit = game.map.units().get(a[0]).unwrap();
     assert_eq!((unit.pos(), unit.done), (REDHOLD, false));
+}
+
+/// The owner's word (2026-11-21): standing orders go at the end of the
+/// turn, "just in case a player needs to do something else with those
+/// troops". A new unit sent somewhere waits in its city through the turn,
+/// needing nobody (it is on its way), and its player can still send it
+/// elsewhere; then it does not go where its city sent it.
+#[test]
+fn a_standing_order_goes_at_the_turns_end_and_can_be_changed_before() {
+    let mut game = game("");
+    let city = game.map.city_at(REDHOLD).unwrap().id;
+    game.apply(Order::Build { city, what: Some(0) }).unwrap();
+    game.apply(Order::Rally { city, to: Sends::Route(vec![FAR]) }).unwrap();
+    let events = round(&mut game);
+    let built = events.iter().find_map(|e| if let Event::Built { unit, .. } = e { Some(*unit) } else { None }).unwrap();
+    assert_eq!((pos(&game, built), goto(&game, built)), (REDHOLD, Some(FAR)));
+    assert!(game.waiting_stacks(Side::Red).is_empty(), "on its way: it needs nobody");
+    // In a pinch: south instead.
+    let south = Hex::new(8, 5);
+    game.apply(Order::Move { units: vec![built], to: south }).unwrap();
+    assert_eq!(goto(&game, built), None);
+    round(&mut game);
+    assert_eq!(pos(&game, built), south, "its city's order is over");
 }

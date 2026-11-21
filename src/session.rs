@@ -620,6 +620,10 @@ impl Session {
             Some((_, seen)) => *seen = length,
             None => self.seen.push((side, length)),
         }
+        // At the end of the turn the computer leads the person's marauders
+        // (and the rules march the marches and the patrols): what comes of
+        // it is news for their next turn.
+        self.lead_marauders();
         self.screen.game.end_turn();
         // Nobody else plays before this person's next turn (a side alone):
         // nothing to wait for.
@@ -810,7 +814,6 @@ impl Session {
         if let Some(window) = self.patrol_window.take() {
             window.close(&mut self.screen.ui);
         }
-        self.lead_marauders();
         if self.temple.as_ref().is_some_and(|t| t.asks()) {
             if let Some(window) = self.temple.take() {
                 window.close(&mut self.screen.ui);
@@ -2488,8 +2491,8 @@ impl Session {
         self.go_on(at);
     }
 
-    /// At the start of a person's turn, before they play, the computer leads
-    /// their marauders (once a turn).
+    /// At the end of a person's turn, the computer leads their marauders
+    /// (once a turn).
     fn lead_marauders(&mut self) {
         let game = &self.screen.game;
         let turn = (game.turn(), game.player());

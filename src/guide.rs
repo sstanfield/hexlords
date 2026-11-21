@@ -447,8 +447,8 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                 (
                     "Go to",
                     "Sends the selected units somewhere far (G, then a hex; or just click a hex beyond \
-                           their reach): they go there over the turns, on their own, at the start of each of \
-                           yours; Undo takes it back until they have gone a second leg. A march never attacks: if something is in the way it \
+                           their reach): they go there over the turns, on their own, at the end of each of \
+                           yours (until then you can still send them elsewhere); Undo takes it back until they have gone a second leg. A march never attacks: if something is in the way it \
                            stops and waits for orders. Shift+click on the way there makes a stop: they go by \
                            way of it, and on at once; at a temple they seek its blessing and stop for the turn. \
                            A city's new units can go by stops too. Once they get where they go, they wait for \
@@ -491,12 +491,12 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                      on land you have seen, then click the last: back and forth along them, or round and round \
                      if the last is the stack's own hex. Then say whether it attacks: never (a scout keeps out \
                      of fights), or the stacks it sees and can reach at the odds you pick or better, once a \
-                     turn at most. It goes on from a waypoint at once, and at the start of each of your turns."
+                     turn at most. It goes on from a waypoint at once, and at the end of each of your turns."
                         .to_string(),
                 ),
                 (
                     "Maraud",
-                    "U: the computer leads the selected stack, at once and at the start of each of your \
+                    "U: the computer leads the selected stack, at once and at the end of each of your \
                      turns: it hunts the stacks it can beat, takes the cities it can, and looks for more. U \
                      again calls it back."
                         .to_string(),

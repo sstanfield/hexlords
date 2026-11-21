@@ -490,8 +490,10 @@ impl Units {
         for u in self.per_side[side.index()].iter_mut().filter_map(|slot| slot.unit.as_mut()) {
             // A map may give a kind any number of moves: the most there is stays the most.
             u.movement = u.base_move_points.saturating_add(u.movement.min(2));
-            // A new turn: nothing done yet.
-            (u.moved, u.done, u.stalled) = (false, false, false);
+            // A new turn: nothing done yet. (A standing order that stopped
+            // short at the end of the last stays stopped: it waits for
+            // orders, until it gets on.)
+            (u.moved, u.done) = (false, false);
         }
     }
 }

@@ -70,9 +70,10 @@ fn a_route_goes_by_way_of_its_stops_and_on_at_once() {
     assert_eq!((soldiers.route.clone(), soldiers.movement), (vec![FAR], 0));
     assert_eq!(soldiers.pos().distance(stop), 4);
     assert!(!game.can_undo(), "two legs: not to be taken back");
-    // It is on its way, and goes on at the start of the turns.
+    // It is on its way, and goes on at the end of the turns.
     let on_way = game.tasks(Side::Red).into_iter().find(|t| matches!(t, Task::Stack { .. })).unwrap();
     assert!(matches!(on_way, Task::Stack { state: StackState::Marching, .. }));
+    round(&mut game);
     round(&mut game);
     round(&mut game);
     let soldiers = unit(&game, id);
@@ -96,7 +97,8 @@ fn a_stop_on_a_temple_is_for_its_blessing() {
     assert!(unit(&game, red[0]).blessed_at(TEMPLE));
     assert!(red.iter().all(|id| unit(&game, *id).pos() == TEMPLE && unit(&game, *id).route == [FAR]));
     assert!(!game.can_undo(), "chance had a say");
-    // On, the next turn.
+    // On, at the end of the next turn.
+    round(&mut game);
     round(&mut game);
     assert!(red.iter().all(|id| unit(&game, *id).pos().distance(TEMPLE) >= 6));
     // A temple that has blessed them all is a stop like another: on at once.
@@ -128,11 +130,12 @@ fn a_city_sends_what_it_builds_by_way_of_stops() {
         line,
         "Redhold: building Soldiers, 0/1; new units go to the temple at row 5, column 8, then row 5, column 20"
     );
-    // Built at the start of red's turn, and to the temple at once, for its
+    // Built at the start of red's turn; to the temple at its end, for its
     // blessing.
     let events = round(&mut game);
     let built = events.iter().find_map(|e| if let Event::Built { unit, .. } = e { Some(*unit) } else { None });
     let built = built.expect("soldiers built");
+    let events = round(&mut game);
     assert!(events.iter().any(|e| matches!(e, Event::Blessed { unit, .. } if *unit == built)));
     assert_eq!((unit(&game, built).pos(), unit(&game, built).route.clone()), (TEMPLE, vec![FAR]));
 }

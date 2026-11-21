@@ -310,19 +310,22 @@ fn u_again_calls_it_back_and_the_units_menu_has_it() {
 }
 
 #[test]
-fn the_screen_leads_a_persons_marauders_as_their_turn_starts() {
+fn the_screen_leads_a_persons_marauders_at_the_end_of_their_turn() {
     let mut game = game();
     let red = marauders(&mut game, 2);
     let mut s = session(game);
-    // Red's first turn has started: they went.
+    // Red's first turn: they wait (red could still give them other orders);
+    // at its end they go.
+    assert_eq!(pos(&s.screen.game, red[0]), CAMP);
+    assert!(s.next_turn());
     let first = pos(&s.screen.game, red[0]);
     assert_ne!(first, CAMP);
     assert!(s.next_turn());
-    assert_ne!(pos(&s.screen.game, red[0]), first, "and again the next turn");
+    assert_ne!(pos(&s.screen.game, red[0]), first, "and again at the end of the next");
 }
 
 #[test]
-fn in_hotseat_each_persons_marauders_go_as_their_turn_comes() {
+fn in_hotseat_each_persons_marauders_go_as_their_turn_ends() {
     let mut game = game();
     let blue = put(&mut game, Side::Blue, "soldiers", Hex::new(8, 20), 2);
     let mut setup = game.setup().clone();
@@ -338,5 +341,8 @@ fn in_hotseat_each_persons_marauders_go_as_their_turn_comes() {
     assert_eq!(pos(&s.screen.game, blue[0]), Hex::new(8, 20), "not in red's turn");
     s.end_turn();
     assert!(s.covered(), "blue's turn, behind the cover");
-    assert_ne!(pos(&s.screen.game, blue[0]), Hex::new(8, 20), "blue's marauders went as its turn came");
+    assert_eq!(pos(&s.screen.game, blue[0]), Hex::new(8, 20), "nor as blue's begins");
+    push_widget(&mut s, BEGIN_TURN_ID);
+    s.end_turn();
+    assert_ne!(pos(&s.screen.game, blue[0]), Hex::new(8, 20), "blue's marauders went as its turn ended");
 }

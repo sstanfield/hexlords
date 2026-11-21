@@ -1042,8 +1042,9 @@ impl Game {
         group.movers.iter().map(|(id, _)| *id).chain(group.carried.iter().copied()).collect()
     }
 
-    /// At the start of `side`'s turn, its stacks on standing orders march, a
-    /// stack (the units of a hex with the same route) at a time.
+    /// At the end of `side`'s turn, its stacks on standing orders march, a
+    /// stack (the units of a hex with the same route) at a time, with the
+    /// movement they have left.
     fn marches(&mut self, side: Side) -> Vec<Event> {
         let mut groups: Vec<(Hex, &[Hex], Vec<UnitId>)> = Vec::new();
         for unit in self.map.units().of_side(side).filter(|u| self.map.contains(u.pos()) && !u.route.is_empty()) {
@@ -2036,16 +2037,22 @@ impl Game {
     /// and its cities' work.
     fn next_turn(&mut self) -> Vec<Event> {
         self.deselect();
-        // What its units saw on their way is seen no longer.
         let ending = self.player();
-        if let Some(trail) = self.trail.get_mut(ending.index()) {
-            trail.clear();
-        }
-        // A patrol that fought and was left alone goes on next turn.
-        self.stand_easy(ending);
         if self.order.is_empty() {
             self.round += 1;
             return Vec::new();
+        }
+        // The ending side's standing orders go now, at the end of its turn,
+        // with the movement its units have left (the owner's word,
+        // 2026-11-21: its player could still give them other orders in the
+        // turn, in a pinch): the marches, then the patrols (a patrol that
+        // fought and was left alone goes on).
+        self.stand_easy(ending);
+        let mut events = self.marches(ending);
+        events.extend(self.patrols(ending));
+        // What its units saw on their way is seen no longer.
+        if let Some(trail) = self.trail.get_mut(ending.index()) {
+            trail.clear();
         }
         // The sides still in; the game is over before none are.
         for _ in 0..self.order.len() * 2 {
@@ -2065,12 +2072,10 @@ impl Game {
         let round = self.round;
         self.raised.clear();
         self.fights.retain(|(_, fought, _)| fought + REPLAY_ROUNDS > round);
-        let mut events = vec![Event::Began { side, round: self.round }];
+        events.push(Event::Began { side, round: self.round });
         if self.round > 1 {
             self.map.reset_move_points(side);
             events.extend(self.pay_day(side));
-            events.extend(self.marches(side));
-            events.extend(self.patrols(side));
         }
         events
     }

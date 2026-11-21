@@ -139,9 +139,11 @@ fn a_city_sends_its_new_units_to_a_rally_point_by_a_temple_near_the_way() {
     let built = events.iter().find_map(|e| if let Event::Built { unit, .. } = e { Some(*unit) } else { None });
     let new = built.expect("a unit was built");
     // To the temple first (two hexes past the point: near enough), seven
-    // hexes off; blessed there the next turn, and on to the point the turn
-    // after.
+    // hexes off: it waits in the city this turn, goes six at its end, gets
+    // there and is blessed at the end of the next, and on to the point the
+    // turn after.
     assert_eq!(unit(&game, new).route, [TEMPLE, POINT]);
+    round(&mut game);
     round(&mut game);
     let u = unit(&game, new);
     assert!(u.blessed_at(TEMPLE), "blessed on the way");
@@ -158,6 +160,7 @@ fn a_temple_far_off_the_way_is_passed_by() {
     game.apply(Order::Rally { city: redhold, to: Sends::Point { n: 2, bless: true } }).unwrap();
     let events = round(&mut game);
     let new = events.iter().find_map(|e| if let Event::Built { unit, .. } = e { Some(*unit) } else { None }).unwrap();
+    round(&mut game);
     let u = unit(&game, new);
     assert_eq!((u.pos(), u.blessings.len(), u.bound), (NORTH, 0, None), "straight there");
 }
