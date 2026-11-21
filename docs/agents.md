@@ -48,7 +48,7 @@ done
 | Name | What it does |
 |---|---|
 | `passive` | Ends every turn at once |
-| `simple` | Builds a commander where it can when its side has none; takes a stack with units not yet blessed to a temple it can reach this turn; sets each idle city to build what gives the most strength for its turns, of what its taxes can keep (after its units' upkeep and that of what its cities are already building), and stops the dearest work when they cannot; keeps two units in each of its cities; attacks a city that is not its own, or another side's stack near its free units, with the strongest stack's worth of the free units that can reach it this turn, when the odds are at least 60 in 100 (or 15, when more than a stack can reach it: the first wave); else sends each stack's free units together toward the nearest such city, where they wait for the others |
+| `simple` | Builds a commander where it can when its side has none; takes a stack to a temple it can reach this turn that has not blessed some of its units, and seeks the blessing there (`bless`); sets each idle city to build what gives the most strength for its turns, of what its taxes can keep (after its units' upkeep and that of what its cities are already building), and stops the dearest work when they cannot; keeps two units in each of its cities; attacks a city that is not its own, or another side's stack near its free units, with the strongest stack's worth of the free units that can reach it this turn, when the odds are at least 60 in 100 (or 15, when more than a stack can reach it: the first wave; or, a siege, 5, when its side has three times the units and cities of the city's holder); else sends each stack's free units together toward the nearest such city, where they wait for the others |
 | `steady` | The computer's player unless another is chosen (`src/planner.rs`, below): armies around a commander, cities defended as they are threatened, attacks at fair odds |
 | `bold` | The planner, fast and many: grabs the empty and weak cities first, attacks at lower odds |
 | `careful` | The planner, slow and sure: answers threats with more defenders, big armies, high odds |
@@ -81,11 +81,14 @@ cities' work weighs). Each turn, order by order, it:
    one more;
 3. strikes where the game's own odds (`Game::battle_odds`, with the rules
    in them) are good enough for its style, waves at walls when more than a
-   stack can follow, and takes on stacks in the field near its cities and
-   units;
+   stack can follow, lays siege (waves at 5 in 100 or better) to the cities
+   of a side it outnumbers three times in units and cities (a last city
+   held by a full stack behind high walls fell to nobody before), and
+   takes on stacks in the field near its cities and units;
 4. gathers the rest around its commander (where it stood at the turn's
    start), sends small stacks to the army or keeps them home until there is
-   a force, stops at temples on the way (free of others, with room), and
+   a force, stops at temples on the way that have not blessed some of the
+   stack (free of others, with room) and seeks their blessing there, and
    sends each army toward the city most worth the trouble (its taxes
    against the way there and what defends it), a step at a time as far as
    it knows the way (never into a stack it has not chosen to attack).

@@ -457,7 +457,7 @@ impl Planner {
             }
             let odds = game.battle_odds(&able, *target).unwrap_or(100);
             let (dare, wear, _) = daring(&style, game);
-            if odds >= dare || (more > able.len() && odds >= wear) || crate::agents::siege(game, side, *target) {
+            if odds >= dare || (more > able.len() && odds >= wear) || crate::agents::siege(game, side, *target, odds) {
                 self.done.extend(able.iter().copied());
                 return Order::Move { units: able, to: *target };
             }

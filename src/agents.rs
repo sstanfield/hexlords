@@ -298,7 +298,7 @@ impl Agent for Simple {
             // Likely to win; or with more than a stack to send, likely
             // enough to wear the defenders down for the next.
             let odds = game.battle_odds(&able, *target).unwrap_or(100);
-            if odds >= Simple::DARE || (more > able.len() && odds >= Simple::WEAR) || siege(game, side, *target) {
+            if odds >= Simple::DARE || (more > able.len() && odds >= Simple::WEAR) || siege(game, side, *target, odds) {
                 self.done.extend(able.iter().copied());
                 return Order::Move { units: able, to: *target };
             }
@@ -425,11 +425,20 @@ pub fn blessing(game: &Game, side: Side, pilgrims: &mut Vec<UnitId>) -> Option<O
     None
 }
 
+/// The least odds, in percent, a siege's wave goes at: below them a stack
+/// dies and kills nobody (8 against 1 elite behind walls, in the
+/// simulations), and the side waits for stronger units.
+pub const SIEGE_ODDS: u32 = 5;
+
 /// True if `side` so outnumbers the holder of the city at `target` (three
-/// times its units and its cities) that it takes the city in waves, whatever
-/// the odds of each: a losing attack still kills defenders, and a last city
-/// held by a full stack behind high walls would else never fall.
-pub fn siege(game: &Game, side: Side, target: Hex) -> bool {
+/// times its units and its cities) that it takes the city in waves, at any
+/// odds of `SIEGE_ODDS` or more: a losing attack still kills defenders, and
+/// a last city held by a full stack behind high walls would else never
+/// fall. (`odds`: the wave's, `Game::battle_odds`.)
+pub fn siege(game: &Game, side: Side, target: Hex, odds: u32) -> bool {
+    if odds < SIEGE_ODDS {
+        return false;
+    }
     let map = &game.map;
     let Some(holder) = map.city_at(target).map(|c| c.side).filter(|s| *s != side && *s != Side::Grey) else {
         return false;
