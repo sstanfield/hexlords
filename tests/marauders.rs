@@ -8,14 +8,17 @@
 
 mod common;
 
+use common::{assets, choose, click, pixel_of, push_widget, type_char};
 use hexgame::agents::{self, Passive, parse_order};
 use hexgame::game::{Game, StackState, Task};
 use hexgame::headless::order_line;
 use hexgame::marauder::maraud;
 use hexgame::orders::{Event, Order};
+use hexgame::session::{BEGIN_TURN_ID, MARAUD_ID, MENU_UNITS_ID, Session};
 use hexgame::setup::{Fog, Setup};
 use hexgame::state::scenario::{self, Scenario};
 use hexgame::state::{Hex, Side, UnitId};
+use turbo_ferret::Size;
 
 /// Nobody's Greyford, south of the middle, with nobody in it.
 const GREYFORD: Hex = Hex::new(20, 15);
@@ -23,8 +26,8 @@ const GREYFORD: Hex = Hex::new(20, 15);
 const CAMP: Hex = Hex::new(12, 12);
 
 /// 30 x 30 grass: red's Redhold, blue's Bluemoor far to the east, nobody's
-/// Greyford in the south. Soldiers (3 strong) go 6 hexes a turn; a levy is
-/// 1 strong, knights 9. No chance in battle: the stronger wins.
+/// Greyford in the south. Soldiers (3 strong) go 6 hexes a turn, riders 10;
+/// a levy is 1 strong, knights 9. No chance in battle: the stronger wins.
 fn game() -> Game {
     let mut rows = vec!["g".repeat(30); 30];
     rows[5] = format!("{}c{}c{}", "g".repeat(5), "g".repeat(19), "g".repeat(4));
@@ -32,7 +35,8 @@ fn game() -> Game {
     let terrain = format!("30\n30\n{}\n", rows.join("\n"));
     let units = "unit soldiers\nname Soldiers\nstrength 3\nmoves 12\nprice 5\nenter grass 2, city 1\n\
                  unit levy\nname Levy\nstrength 1\nmoves 12\nenter grass 2, city 1\n\
-                 unit knights\nname Knights\nstrength 9\nmoves 12\nenter grass 2, city 1\n";
+                 unit knights\nname Knights\nstrength 9\nmoves 12\nenter grass 2, city 1\n\
+                 unit riders\nname Riders\nstrength 3\nmoves 20\nenter grass 2, city 1\n";
     let cities = "city 5 5\nname Redhold\nside red\ncity 5 25\nname Bluemoor\nside blue\n\
                   city 20 15\nname Greyford\n";
     let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
@@ -137,6 +141,23 @@ fn a_marauder_strikes_a_stack_it_can_beat_and_then_waits_for_its_players_word() 
 }
 
 #[test]
+fn a_marauding_stack_goes_as_one_as_far_as_the_slowest_gets() {
+    let mut game = game();
+    let mut red = put(&mut game, Side::Red, "soldiers", CAMP, 2);
+    red.extend(put(&mut game, Side::Red, "riders", CAMP, 1));
+    game.apply(Order::Maraud { units: red.clone(), on: true }).unwrap();
+    // Greyford is more than a soldier's turn away (and a levy near it, out
+    // of the soldiers' reach, would tempt the riders alone).
+    put(&mut game, Side::Blue, "levy", Hex::new(19, 17), 1);
+    let report = maraud(&mut game, Side::Red);
+    assert!(!report.events.is_empty());
+    let at = pos(&game, red[0]);
+    assert_ne!(at, CAMP);
+    let places: Vec<Hex> = red.iter().map(|id| pos(&game, *id)).collect();
+    assert!(places.iter().all(|h| *h == at), "together: {places:?}");
+}
+
+#[test]
 fn a_marauder_takes_a_city_before_a_stack() {
     let mut game = game();
     let red = put(&mut game, Side::Red, "soldiers", Hex::new(17, 15), 2);
@@ -235,4 +256,87 @@ fn the_text_protocol_says_maraud_unmaraud_and_roam() {
     assert!(parse_order(&game, "roam red.0.0 12").is_err());
     game.apply(parse_order(&game, "maraud red.0.0,red.1.0").unwrap().unwrap()).unwrap();
     assert!(red.iter().all(|id| unit(&game, *id).marauding));
+}
+
+// The screen.
+
+fn session(game: Game) -> Session {
+    common::with_game(&assets(), Size::new(1024, 768), 96, game).expect("the session starts")
+}
+
+fn click_hex(s: &mut Session, hex: Hex) {
+    s.screen.view.center_on(hex);
+    let p = pixel_of(s, hex);
+    click(s, p);
+}
+
+#[test]
+fn u_hands_a_stack_to_the_computer_at_once() {
+    let mut game = game();
+    let red = put(&mut game, Side::Red, "soldiers", CAMP, 2);
+    let levy = put(&mut game, Side::Blue, "levy", Hex::new(12, 16), 1);
+    let mut s = session(game);
+    click_hex(&mut s, CAMP);
+    type_char(&mut s, 'u');
+    let game = &s.screen.game;
+    assert!(game.map.units().get(levy[0]).is_none(), "it struck at once");
+    assert!(red.iter().all(|id| unit(game, *id).marauding && unit(game, *id).fought));
+    assert!(s.battle().is_some(), "the battle is played out, as the person's own are");
+    // It needs its player's word: the screen goes to it.
+    assert_eq!(game.selected().map(|id| pos(game, id)), Some(Hex::new(12, 16)));
+    assert_eq!(s.unit_line(), "2 units fought, marauding: D lets it go on; U calls it back.");
+}
+
+#[test]
+fn u_again_calls_it_back_and_the_units_menu_has_it() {
+    let mut game = game();
+    let mut red = put(&mut game, Side::Red, "soldiers", CAMP, 2);
+    red.extend(put(&mut game, Side::Red, "riders", CAMP, 1));
+    let mut s = session(game);
+    click_hex(&mut s, CAMP);
+    choose(&mut s, MENU_UNITS_ID, MARAUD_ID);
+    // Off toward Greyford, as one.
+    let at = pos(&s.screen.game, red[0]);
+    assert_ne!(at, CAMP);
+    assert!(red.iter().all(|id| pos(&s.screen.game, *id) == at && unit(&s.screen.game, *id).marauding));
+    // A click on them takes them all, though only the riders have moves
+    // left: they go as one.
+    click_hex(&mut s, at);
+    assert_eq!(s.screen.game.selection().len(), 3);
+    assert_eq!(s.unit_line(), "3 units, marauding: the computer leads it (U: call it back; a move ends it).");
+    type_char(&mut s, 'u');
+    assert!(red.iter().all(|id| !unit(&s.screen.game, *id).marauding));
+    assert_eq!(s.screen.game.selection().len(), 3, "still selected, to be sent somewhere");
+}
+
+#[test]
+fn the_screen_leads_a_persons_marauders_as_their_turn_starts() {
+    let mut game = game();
+    let red = marauders(&mut game, 2);
+    let mut s = session(game);
+    // Red's first turn has started: they went.
+    let first = pos(&s.screen.game, red[0]);
+    assert_ne!(first, CAMP);
+    assert!(s.next_turn());
+    assert_ne!(pos(&s.screen.game, red[0]), first, "and again the next turn");
+}
+
+#[test]
+fn in_hotseat_each_persons_marauders_go_as_their_turn_comes() {
+    let mut game = game();
+    let blue = put(&mut game, Side::Blue, "soldiers", Hex::new(8, 20), 2);
+    let mut setup = game.setup().clone();
+    setup.set_players("red=person,blue=person").unwrap();
+    let mut game = game.with_setup(setup);
+    // Blue hands its stack to the computer in its turn.
+    game.apply(Order::EndTurn).unwrap();
+    game.apply(Order::Maraud { units: blue.clone(), on: true }).unwrap();
+    game.apply(Order::EndTurn).unwrap();
+    let mut s = session(game);
+    assert!(s.covered(), "red's turn, behind the cover");
+    push_widget(&mut s, BEGIN_TURN_ID);
+    assert_eq!(pos(&s.screen.game, blue[0]), Hex::new(8, 20), "not in red's turn");
+    s.end_turn();
+    assert!(s.covered(), "blue's turn, behind the cover");
+    assert_ne!(pos(&s.screen.game, blue[0]), Hex::new(8, 20), "blue's marauders went as its turn came");
 }

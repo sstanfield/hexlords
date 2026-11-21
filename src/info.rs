@@ -417,16 +417,20 @@ pub fn unit_line(map: &Map, unit: &Unit) -> String {
     line
 }
 
-/// A patrol in words: "patrolling 3 waypoints back and forth, never
-/// attacks", "patrolling 4 waypoints round and round, attacks at 65% or
-/// better".
+/// A patrol in words: "patrolling 2 waypoints, never attacks",
+/// "patrolling 4 waypoints, attacks at 65% or better".
 pub fn patrol_words(patrol: &Patrol) -> String {
-    let way = if patrol.round { "round and round" } else { "back and forth" };
     let attack = match patrol.attack {
         None => "never attacks".to_string(),
         Some(odds) => format!("attacks at {odds}% or better"),
     };
-    format!("patrolling {} waypoints {way}, {attack}", patrol.stops.len())
+    format!("patrolling {} waypoints, {attack}", patrol.stops.len())
+}
+
+/// How a patrol goes round its waypoints: "round and round" (a loop), or
+/// "back and forth".
+pub fn patrol_way(patrol: &Patrol) -> &'static str {
+    if patrol.round { "round and round" } else { "back and forth" }
 }
 
 /// What a unit on patrol or marauding does, in words ("patrolling 3
@@ -437,6 +441,23 @@ pub fn duty_words(unit: &Unit) -> Option<String> {
         (Some(patrol), _) => Some(patrol_words(patrol)),
         (None, true) => Some("marauding: the computer leads it".to_string()),
         (None, false) => None,
+    }
+}
+
+/// The line under the stack about a selected unit (of `count` selected)
+/// that patrols or marauds: what it does, and what the keys do with it.
+pub fn duty_line(map: &Map, unit: &Unit, count: usize) -> String {
+    let who = if count > 1 { format!("{count} units") } else { named(map, unit) };
+    match (&unit.patrol, unit.fought) {
+        (Some(_), true) => format!("{who} fought on patrol: D lets it go on; another order ends the patrol."),
+        (None, true) => format!("{who} fought, marauding: D lets it go on; U calls it back."),
+        (Some(patrol), false) if unit.stalled => {
+            format!("{who}, {}: stopped short, something is in the way (D: try again next turn).", patrol_words(patrol))
+        }
+        (Some(patrol), false) => {
+            format!("{who}, {}, {} (P: another patrol; a move ends it).", patrol_words(patrol), patrol_way(patrol))
+        }
+        (None, false) => format!("{who}, marauding: the computer leads it (U: call it back; a move ends it)."),
     }
 }
 

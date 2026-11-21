@@ -48,44 +48,70 @@ pub fn maraud(game: &mut Game, side: Side) -> TurnReport {
         let Some(here) = map.units().of_side(side).filter(ready).map(|u| u.pos()).min_by_key(|h| (h.row, h.col)) else {
             break;
         };
-        let mut ids: Vec<UnitId> =
+        let ids: Vec<UnitId> =
             map.units().of_side(side).filter(ready).filter(|u| u.pos() == here).map(|u| u.id()).collect();
         led.extend(ids.iter().copied());
-        for _ in 0..STACK_ORDERS {
-            let view = game.view_for(side);
-            let Some(order) = decide(&view, side, &ids, &blocked) else { break };
-            let Order::Roam { units, to } = order.clone() else { break };
-            match game.apply(order.clone()) {
-                Ok(events) => report.events.extend(events),
-                Err(why) => {
-                    blocked.push(to);
-                    report.refused.push((order, why));
-                    continue;
-                }
-            }
-            // On, with those that went, while they may.
-            let map = &game.map;
-            ids = units
-                .into_iter()
-                .filter(|id| map.units().get(*id).is_some_and(|u| u.marauding && !u.fought && u.pos() == to))
-                .collect();
-            if ids.is_empty() {
-                break;
-            }
-        }
+        lead_stack(game, side, ids, (&mut blocked, &mut report));
     }
     report
 }
 
+/// The computer leads one marauding stack of the side whose turn it is
+/// (`ids`, on one hex) now, with what movement it has: when its player hands
+/// it over in the middle of a turn, or lets it go on after a battle.
+pub fn lead(game: &mut Game, ids: &[UnitId]) -> TurnReport {
+    let mut report = TurnReport::default();
+    let side = game.player();
+    let ready: Vec<UnitId> = ids
+        .iter()
+        .copied()
+        .filter(|id| game.map.units().get(*id).is_some_and(|u| u.side() == side && u.marauding && !u.fought))
+        .collect();
+    if game.winner().is_none() && !ready.is_empty() {
+        lead_stack(game, side, ready, (&mut Vec::new(), &mut report));
+    }
+    report
+}
+
+/// A few orders for the stack `ids` of `side`, while it goes on.
+fn lead_stack(game: &mut Game, side: Side, mut ids: Vec<UnitId>, (blocked, report): (&mut Vec<Hex>, &mut TurnReport)) {
+    for _ in 0..STACK_ORDERS {
+        let view = game.view_for(side);
+        let Some(order) = decide(&view, side, &ids, blocked) else { break };
+        let Order::Roam { units, to } = order.clone() else { break };
+        match game.apply(order.clone()) {
+            Ok(events) => report.events.extend(events),
+            Err(why) => {
+                blocked.push(to);
+                report.refused.push((order, why));
+                continue;
+            }
+        }
+        // On, with those that went, while they may.
+        let map = &game.map;
+        ids = units
+            .into_iter()
+            .filter(|id| map.units().get(*id).is_some_and(|u| u.marauding && !u.fought && u.pos() == to))
+            .collect();
+        if ids.is_empty() {
+            break;
+        }
+    }
+}
+
 /// The next order for the marauding stack `ids` of `side` (on one hex), as
 /// the side knows the game (`game`: its view): a strike, or a step toward
-/// what it goes for; `None` when it has done what it can this turn.
-/// (`blocked`: hexes the game refused to send it to this turn.)
+/// what it goes for; `None` when it has done what it can this turn. The
+/// stack goes as one, where all of it can get: once one of it has no moves
+/// left, it has done. (`blocked`: hexes the game refused to send it to this
+/// turn.)
 pub fn decide(game: &Game, side: Side, ids: &[UnitId], blocked: &[Hex]) -> Option<Order> {
     let map = &game.map;
     let here = map.units().get(*ids.first()?)?.pos();
-    let units: Vec<&Unit> =
-        ids.iter().filter_map(|id| map.units().get(*id)).filter(|u| u.pos() == here && u.movement > 0).collect();
+    let units: Vec<&Unit> = ids.iter().filter_map(|id| map.units().get(*id)).filter(|u| u.pos() == here).collect();
+    if units.iter().any(|u| u.movement == 0) {
+        return None;
+    }
     let lead = units.iter().copied().min_by_key(|u| u.movement)?;
     let ids: Vec<UnitId> = units.iter().map(|u| u.id()).collect();
     let sight = game.sight(side);
@@ -140,7 +166,8 @@ pub fn decide(game: &Game, side: Side, ids: &[UnitId], blocked: &[Hex]) -> Optio
     }
     goals.sort_by_key(|(score, h)| (Reverse(*score), h.row, h.col));
     goals.dedup_by_key(|(_, h)| *h);
-    let shut = |h: Hex| blocked.contains(&h);
+    // (A step is one all of it can get to: the stack stays whole.)
+    let shut = |h: Hex| blocked.contains(&h) || !reach(h);
     let toward = |to: Hex| match advance(game, (side, &sight), (&ids, lead), to, &shut)? {
         Order::Move { units, to } => Some(Order::Roam { units, to }),
         _ => None,

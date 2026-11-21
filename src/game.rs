@@ -2771,8 +2771,9 @@ impl Game {
             .copied()
             .filter(|id| units.get(*id).is_some_and(|u| !u.defending && !u.done && !u.moved))
             .collect();
-        // (At sea, all of them: the ships carry who has no points left.)
-        let stack = if self.map.open_water(hex) {
+        // (At sea, all of them: the ships carry who has no points left. On
+        // patrol or marauding, all of them too: they go as one.)
+        let stack = if self.map.open_water(hex) || patrol::together(&self.map, &own) {
             own
         } else if !waiting.is_empty() {
             waiting

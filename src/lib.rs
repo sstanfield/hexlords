@@ -49,6 +49,7 @@ pub mod new_game;
 pub mod options_window;
 pub mod orders;
 pub mod paths;
+pub mod patrol_window;
 pub mod planner;
 pub mod platform;
 pub mod rally_window;

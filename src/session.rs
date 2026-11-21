@@ -38,12 +38,13 @@ use crate::info;
 use crate::log_window::{self, LogWindow};
 use crate::options_window::{self, Options, OptionsWindow};
 use crate::orders::{Event, Order, RallyPoint};
+use crate::patrol_window::{self, PatrolWindow};
 use crate::rally_window::{self, RallyClick, RallyWindow};
 use crate::render::{AssetDirs, coin_icon, unit_icon};
 use crate::screen::{FULLSCREEN_ID, HELP_KEYS_ID, MapScreen, QUIT_ID, Scene, ZOOM_IN_ID, ZOOM_OUT_ID};
 use crate::setup::Controller;
 use crate::state::scenario::side_name;
-use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Sends, Side, UnitId};
+use crate::state::{CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Patrol, Sends, Side, UnitId};
 use crate::tasks_window::{self, TasksWindow};
 use crate::temple_window::{self, TempleWindow};
 
@@ -122,6 +123,9 @@ pub const CITY_DETAILS_ID: &str = "city_details";
 pub const OPTIONS_ID: &str = "options";
 /// The Units menu's Rally points (`rally_window`).
 pub const RALLY_POINTS_ID: &str = "rally_points";
+/// The Units menu's Patrol (`patrol_window`) and Maraud.
+pub const PATROL_ID: &str = "patrol";
+pub const MARAUD_ID: &str = "maraud";
 /// The window End turn opens first while something waits for orders
 /// (Options), and its buttons.
 pub const END_ASK_ID: &str = "end_turn_ask";
@@ -157,6 +161,8 @@ pub enum Pick {
     Rally(CityId),
     /// Where the side's rally point goes (0 to 9).
     RallyPoint(u8),
+    /// The waypoints of the selected units' patrol.
+    Patrol,
 }
 pub const STATUS_ID: &str = "status";
 /// The selected hex's heading, and the line about the selected unit.
@@ -283,6 +289,8 @@ fn help_section() -> Vec<HelpSection> {
                     "Aside this turn; F: defend, or stand down; B: a temple's blessing; X: disband",
                 ),
                 ("R", "Rally points: place them; Go to (or a city's Send to) onto one's flag sends units there"),
+                ("P", "Patrol: Shift+click waypoints, click the last (its own hex: a loop), say if it attacks"),
+                ("U", "Maraud: the computer leads the stack, hunts and takes cities; U again calls it back"),
             ],
         ),
         HelpSection::new(
@@ -431,6 +439,12 @@ pub struct Session {
     ask_new: Option<WindowParts>,
     /// A battle being watched, while its window is open.
     battle: Option<BattleWindow>,
+    /// The window that asks how a patrol fights, while it is open; and what
+    /// was chosen there last.
+    patrol_window: Option<PatrolWindow>,
+    patrol_odds: Option<u32>,
+    /// The turn (round and side) whose marauders the computer has led.
+    marauded: Option<(u32, Side)>,
 }
 
 impl Session {
@@ -550,6 +564,9 @@ impl Session {
             told_out: false,
             ask_new: None,
             battle: None,
+            patrol_window: None,
+            patrol_odds: None,
+            marauded: None,
             screen,
         };
         session.apply_layout_sizes();
@@ -778,6 +795,10 @@ impl Session {
         if let Some(window) = self.disband.take() {
             window.close(&mut self.screen.ui);
         }
+        if let Some(window) = self.patrol_window.take() {
+            window.close(&mut self.screen.ui);
+        }
+        self.lead_marauders();
         if self.temple.as_ref().is_some_and(|t| t.asks()) {
             if let Some(window) = self.temple.take() {
                 window.close(&mut self.screen.ui);
@@ -1171,6 +1192,18 @@ impl Session {
                     None => format!("Rally point {n}: click the hex where it goes (Esc: never mind)."),
                 }
             }
+            // (The map outlines the waypoints picked.)
+            _ if self.picking == Some(Pick::Patrol) => match (&self.refused, self.stops.len()) {
+                (Some(why), _) => format!("Patrol: {why}. Click another hex (Esc: never mind)."),
+                (None, 0) => "Patrol from here: click where it goes and back, or Shift+click waypoints and click \
+                              the last (Esc: never mind)."
+                    .to_string(),
+                (None, n) => format!(
+                    "Patrol from here, {} so far: click the last (the stack's own hex: round and round; \
+                     Shift+click: another).",
+                    if n == 1 { "1 waypoint".to_string() } else { format!("{n} waypoints") }
+                ),
+            },
             _ if self.picking.is_some() => {
                 let (what, first) = match self.picking {
                     Some(Pick::GoTo) => ("Go to", "click the hex they go to, over as many turns as it takes"),
@@ -1189,6 +1222,7 @@ impl Session {
                 }
             }
             _ if self.notice.is_some() => self.notice.clone().unwrap_or_default(),
+            Some(unit) if unit.on_duty() => info::duty_line(map, unit, game.selection().len()),
             Some(unit) if !unit.route.is_empty() && game.selection().len() == 1 => {
                 format!(
                     "{} (on the way to {})",
@@ -1534,6 +1568,7 @@ impl Session {
             self.options_window.as_ref().and_then(|w| open(w.window())),
             self.end_ask.as_ref().and_then(|w| open(w.window)),
             self.rally_window.as_ref().and_then(|w| open(w.window())),
+            self.patrol_window.as_ref().and_then(|w| open(w.window())),
         ];
         // The one on top: the last of them among the root window's children.
         let order = ui.children(root).to_vec();
@@ -1553,6 +1588,7 @@ impl Session {
             Some(8) => self.options_window.take().map(|w| w.close(ui)).is_some(),
             Some(9) => self.end_ask.take().map(|w| build::close(ui, w.window)).is_some(),
             Some(10) => self.rally_window.take().map(|w| w.close(ui)).is_some(),
+            Some(11) => self.patrol_window.take().map(|w| w.close(ui)).is_some(),
             _ => false,
         }
     }
@@ -1745,18 +1781,7 @@ impl Session {
                 self.shown = game.selected().and_then(|id| game.map.units().get(id)).map_or(hex, |u| u.pos());
             }
             SelectOutcome::Fought(_) => {
-                // The battle, played out; or told in a line (Options).
-                let history = self.screen.game.history();
-                let battle = (before..history.len()).find(|i| matches!(history[*i].event, Event::Battle { .. }));
-                if let Some(record) = battle {
-                    if self.options.quick_battles {
-                        let side = self.screen.game.player();
-                        let lines = info::battle_outcome(&self.screen.game, record, side);
-                        self.notice = Some(format!("{} (L: the log, to watch it.)", lines.join(" ")));
-                    } else {
-                        self.open_battle(record);
-                    }
-                }
+                self.tell_battle(before);
                 self.after_move(hex);
             }
             // Onto a temple: does the stack seek its blessing? (Options: it
@@ -1770,6 +1795,22 @@ impl Session {
                 self.after_move(hex);
             }
             _ => {}
+        }
+    }
+
+    /// The first battle in the history since it was `before` long, if there
+    /// was one: played out in its window; or told in a line (Options).
+    fn tell_battle(&mut self, before: usize) {
+        let history = self.screen.game.history();
+        let battle = (before..history.len()).find(|i| matches!(history[*i].event, Event::Battle { .. }));
+        if let Some(record) = battle {
+            if self.options.quick_battles {
+                let side = self.screen.game.player();
+                let lines = info::battle_outcome(&self.screen.game, record, side);
+                self.notice = Some(format!("{} (L: the log, to watch it.)", lines.join(" ")));
+            } else {
+                self.open_battle(record);
+            }
         }
     }
 
@@ -2172,6 +2213,126 @@ impl Session {
         }
     }
 
+    /// P, or Patrol: the next clicks on the map (or Enter) pick the selected
+    /// units' waypoints, from where they stand: Shift+click one on the way,
+    /// a plain click the last (their own hex again: round and round). Then a
+    /// window asks whether they attack.
+    pub fn start_patrol(&mut self) {
+        let game = &self.screen.game;
+        let own = game.selected().and_then(|id| game.map.units().get(id)).is_some_and(|u| u.side() == game.player());
+        if own && self.can_act() {
+            (self.picking, self.refused) = (Some(Pick::Patrol), None);
+            self.stops.clear();
+        }
+    }
+
+    /// The last waypoint of a patrol was picked: if it is a patrol the
+    /// selected units can go, the window asks how it fights; else the line
+    /// says why, and the picking goes on.
+    fn patrol_picked(&mut self, hex: Hex) {
+        let game = &self.screen.game;
+        let units = game.selection().to_vec();
+        let Some(here) = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos()) else { return };
+        let waypoints: Vec<Hex> = [here].into_iter().chain(self.stops.iter().copied()).chain([hex]).collect();
+        let checked = Patrol::new(&waypoints, None)
+            .and_then(|patrol| game.check_waypoints(game.player(), &units, &waypoints).map(|()| patrol));
+        let patrol = match checked {
+            Ok(patrol) => patrol,
+            Err(why) => {
+                self.refused = Some(why);
+                self.picking = Some(Pick::Patrol);
+                return;
+            }
+        };
+        self.stops.clear();
+        if let Some(old) = self.patrol_window.take() {
+            old.close(&mut self.screen.ui);
+        }
+        let (root, area) = (self.screen.root_window(), self.window_area());
+        let picked = (units.as_slice(), waypoints.as_slice());
+        let window = PatrolWindow::ask(&mut self.screen.ui, (root, area), picked, &patrol, self.patrol_odds);
+        self.patrol_window = Some(window);
+        self.screen.settle();
+    }
+
+    /// What the patrol's window chose: the units patrol, attacking at those
+    /// odds or better (or never), and take this turn's part at once.
+    fn patrol_chosen(&mut self, attack: Option<u32>) {
+        let Some(window) = self.patrol_window.take() else { return };
+        let (units, waypoints) = (window.units.clone(), window.waypoints.clone());
+        window.close(&mut self.screen.ui);
+        if !self.can_act() {
+            return;
+        }
+        self.patrol_odds = attack;
+        let before = self.screen.game.history().len();
+        match self.screen.game.apply(Order::Patrol { units: units.clone(), waypoints, attack }) {
+            Ok(_) => {
+                // The cursor follows them; nothing stays selected (or the
+                // next stack is, if the person said so).
+                let game = &self.screen.game;
+                let at = units.iter().find_map(|id| game.map.units().get(*id)).map(|u| u.pos());
+                self.screen.game.deselect();
+                self.tell_battle(before);
+                if let Some(at) = at {
+                    self.screen.game.set_cursor(at);
+                    self.shown = at;
+                    self.after_move(at);
+                }
+            }
+            Err(why) => self.notice = Some(format!("They cannot patrol there: {why}.")),
+        }
+    }
+
+    /// The window that asks how a patrol fights, while it is open.
+    pub fn patrol_window(&self) -> Option<&PatrolWindow> {
+        self.patrol_window.as_ref().filter(|w| w.is_open(&self.screen.ui))
+    }
+
+    /// U, or Maraud: the computer leads the selected units (`marauder`), at
+    /// once with what movement they have and at the start of each of their
+    /// side's turns, until another order; if they all maraud already, they
+    /// are called back (and stay selected). Then on to the next stack, as
+    /// with Done.
+    pub fn toggle_maraud(&mut self) {
+        if !self.can_act() {
+            return;
+        }
+        let game = &self.screen.game;
+        let units = game.selection().to_vec();
+        let on = !units.iter().all(|id| game.map.units().get(*id).is_some_and(|u| u.marauding));
+        let here = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos());
+        if units.is_empty() || self.screen.game.apply(Order::Maraud { units: units.clone(), on }).is_err() {
+            return;
+        }
+        if !on {
+            self.screen.game.refresh();
+            return;
+        }
+        let before = self.screen.game.history().len();
+        crate::marauder::lead(&mut self.screen.game, &units);
+        self.tell_battle(before);
+        let game = &self.screen.game;
+        let at = units.iter().find_map(|id| game.map.units().get(*id)).map(|u| u.pos()).or(here);
+        if let Some(at) = at {
+            self.screen.game.set_cursor(at);
+            self.shown = at;
+        }
+        self.go_on(at);
+    }
+
+    /// At the start of a person's turn, before they play, the computer leads
+    /// their marauders (once a turn).
+    fn lead_marauders(&mut self) {
+        let game = &self.screen.game;
+        let turn = (game.turn(), game.player());
+        if !self.persons_turn() || game.winner().is_some() || self.marauded == Some(turn) {
+            return;
+        }
+        self.marauded = Some(turn);
+        crate::marauder::maraud(&mut self.screen.game, turn.1);
+    }
+
     /// F, or Defend: the selected units defend where they stand, until they
     /// are sent somewhere (Next stack and the tasks pass them by); if they
     /// all defend already, they stand down. Then on to the next stack, as
@@ -2202,10 +2363,21 @@ impl Session {
             return;
         }
         let units = self.screen.game.selection().to_vec();
+        let before = self.screen.game.history().len();
+        // A marauder that fought goes on (as a patrol does, by the rules).
+        let game = &self.screen.game;
+        let marauders: Vec<UnitId> = units
+            .iter()
+            .copied()
+            .filter(|id| game.map.units().get(*id).is_some_and(|u| u.marauding && u.fought))
+            .collect();
+        let here = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos());
         if units.is_empty() || self.screen.game.apply(Order::Done { units }).is_err() {
             return;
         }
-        self.after_aside();
+        crate::marauder::lead(&mut self.screen.game, &marauders);
+        self.tell_battle(before);
+        self.go_on(here);
     }
 
     /// The selected stack was put aside (done, or defending): the selection
@@ -2262,6 +2434,7 @@ impl Session {
                     }
                 }
             }
+            Pick::Patrol => self.patrol_picked(hex),
             Pick::Rally(city) => {
                 // A rally point's hex, with no stops: to that rally point.
                 let side = self.screen.game.player();
@@ -2299,6 +2472,7 @@ impl Session {
             Pick::GoTo => game.check_route(side, game.selection(), &route),
             Pick::Rally(city) => game.check_rally(side, city, &route),
             Pick::RallyPoint(_) => Ok(()),
+            Pick::Patrol => game.check_waypoints(side, game.selection(), &route),
         };
         match checked {
             Ok(()) => {
@@ -2503,6 +2677,8 @@ impl Session {
                 .item(GO_TO_ID, "Go to...", "G", own)
                 .item(DONE_ID, "Done for this turn", "D", own)
                 .item(DEFEND_ID, "Defend here (or stand down)", "F", own)
+                .item(PATROL_ID, "Patrol...", "P", own)
+                .item(MARAUD_ID, "Maraud (or call back)", "U", own)
                 .item(BLESS_ID, "Seek a blessing", "B", temple)
                 .item(DISBAND_ID, "Disband...", "X", own)
                 .separator()
@@ -2715,6 +2891,18 @@ impl Session {
                         temple.close(&mut self.screen.ui);
                     }
                 }
+                RootCommand::Click(id) if id == TbId::new(PATROL_ID) => self.start_patrol(),
+                RootCommand::Click(id) if id == TbId::new(MARAUD_ID) => self.toggle_maraud(),
+                RootCommand::Click(id) if id == TbId::new(patrol_window::PATROL_CANCEL_ID) => {
+                    if let Some(window) = self.patrol_window.take() {
+                        window.close(&mut self.screen.ui);
+                    }
+                }
+                RootCommand::Click(id) if self.patrol_window.as_ref().and_then(|w| w.click(id)).is_some() => {
+                    if let Some(odds) = self.patrol_window.as_ref().and_then(|w| w.click(id)) {
+                        self.patrol_chosen(odds);
+                    }
+                }
                 RootCommand::Click(id) if id == TbId::new(TASKS_ID) => self.toggle_tasks(),
                 RootCommand::Click(id) if id == TbId::new(OPTIONS_ID) => self.toggle_options(),
                 RootCommand::Click(id) if id == TbId::new(RALLY_POINTS_ID) => self.toggle_rally_window(),
@@ -2784,6 +2972,8 @@ impl Session {
                         'o' | 'O' => self.open_shown_city(),
                         'h' | 'H' => self.go_to_capital(),
                         'r' | 'R' => self.toggle_rally_window(),
+                        'p' | 'P' => self.start_patrol(),
+                        'u' | 'U' => self.toggle_maraud(),
                         _ => {}
                     }
                 }
@@ -2888,7 +3078,8 @@ impl Scene for Session {
             return &self.stops;
         }
         let game = &self.screen.game;
-        game.selected().and_then(|id| game.map.units().get(id)).map_or(&[], |u| u.route.as_slice())
+        let unit = game.selected().and_then(|id| game.map.units().get(id));
+        unit.map_or(&[], |u| u.patrol.as_ref().map_or(u.route.as_slice(), |p| p.stops.as_slice()))
     }
 
     /// The selected unit shows on its hex, over the others of its stack (in a

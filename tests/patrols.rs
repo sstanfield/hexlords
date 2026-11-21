@@ -6,13 +6,18 @@
 
 mod common;
 
+use common::{assets, choose, click, pixel_of, press, push_widget, shift_click, type_char};
 use hexgame::agents::parse_order;
 use hexgame::game::{Game, StackState, Task};
 use hexgame::headless::order_line;
 use hexgame::orders::{Event, Order};
+use hexgame::patrol_window::{PATROL_CANCEL_ID, choice_id};
+use hexgame::screen::Scene;
+use hexgame::session::{MENU_UNITS_ID, PATROL_ID, Pick, Session};
 use hexgame::setup::{Fog, Setup};
 use hexgame::state::scenario::{self, Scenario};
 use hexgame::state::{Hex, Side, UnitId};
+use turbo_ferret::{Size, SpecialKey};
 
 const REDHOLD: Hex = Hex::new(5, 5);
 const BLUEMOOR: Hex = Hex::new(5, 25);
@@ -351,4 +356,110 @@ fn the_text_protocol_says_the_waypoints_and_the_odds() {
     // A program's patrol goes as a person's does.
     game.apply(parse_order(&game, "patrol red.0.0,red.1.0 10 5 10 11").unwrap().unwrap()).unwrap();
     assert_eq!(pos(&game, red[0]), MIDDLE);
+}
+
+// The screen.
+
+fn session(game: Game) -> Session {
+    common::with_game(&assets(), Size::new(1024, 768), 96, game).expect("the session starts")
+}
+
+fn click_hex(s: &mut Session, hex: Hex) {
+    s.screen.view.center_on(hex);
+    let p = pixel_of(s, hex);
+    click(s, p);
+}
+
+fn shift_click_hex(s: &mut Session, hex: Hex) {
+    s.screen.view.center_on(hex);
+    let p = pixel_of(s, hex);
+    shift_click(s, p);
+}
+
+#[test]
+fn p_then_shift_click_the_waypoints_click_the_last_and_say_how_it_fights() {
+    let mut game = game();
+    let red = put(&mut game, Side::Red, "soldiers", WEST, 2);
+    let mut s = session(game);
+    click_hex(&mut s, WEST);
+    type_char(&mut s, 'p');
+    assert_eq!(s.picking(), Some(Pick::Patrol));
+    assert!(s.unit_line().starts_with("Patrol from here: click where it goes and back"), "{}", s.unit_line());
+    // Another side's city is no waypoint: the line says why.
+    shift_click_hex(&mut s, BLUEMOOR);
+    assert_eq!(
+        s.unit_line(),
+        "Patrol: a patrol goes into no city but its side's. Click another hex (Esc: never mind)."
+    );
+    shift_click_hex(&mut s, MIDDLE);
+    assert!(s.unit_line().starts_with("Patrol from here, 1 waypoint so far: click the last"), "{}", s.unit_line());
+    shift_click_hex(&mut s, EAST);
+    assert_eq!(s.outlined(), [MIDDLE, EAST], "the map outlines them");
+    // The stack's own hex last: round and round. A window asks how it
+    // fights.
+    click_hex(&mut s, WEST);
+    assert_eq!(s.picking(), None);
+    let window = s.patrol_window().expect("it asks");
+    assert_eq!(window.waypoints, [WEST, MIDDLE, EAST, WEST]);
+    assert!(red.iter().all(|id| unit(&s.screen.game, *id).patrol.is_none()), "not before it is told");
+    push_widget(&mut s, &choice_id(2));
+    assert!(s.patrol_window().is_none());
+    let patrol = unit(&s.screen.game, red[0]).patrol.clone().expect("patrolling");
+    assert_eq!((patrol.attack, patrol.round, patrol.stops.len()), (Some(75), true, 3));
+    assert!(red.iter().all(|id| pos(&s.screen.game, *id) == MIDDLE), "this turn's part at once");
+}
+
+#[test]
+fn the_window_can_be_let_go_and_the_units_menu_starts_a_patrol() {
+    let mut game = game();
+    let red = put(&mut game, Side::Red, "soldiers", WEST, 1);
+    let mut s = session(game);
+    click_hex(&mut s, WEST);
+    choose(&mut s, MENU_UNITS_ID, PATROL_ID);
+    assert_eq!(s.picking(), Some(Pick::Patrol));
+    // One click: between here and there.
+    click_hex(&mut s, MIDDLE);
+    assert_eq!(s.patrol_window().map(|w| w.waypoints.clone()), Some(vec![WEST, MIDDLE]));
+    press(&mut s, SpecialKey::Esc);
+    assert!(s.patrol_window().is_none());
+    assert!(s.screen.game.selected().is_some(), "only the window went");
+    type_char(&mut s, 'p');
+    click_hex(&mut s, MIDDLE);
+    push_widget(&mut s, PATROL_CANCEL_ID);
+    assert!(s.patrol_window().is_none());
+    assert!(unit(&s.screen.game, red[0]).patrol.is_none());
+    assert_eq!(pos(&s.screen.game, red[0]), WEST);
+}
+
+#[test]
+fn a_patrolling_stack_says_so_and_shows_its_waypoints() {
+    let mut game = game();
+    let red = put(&mut game, Side::Red, "soldiers", WEST, 2);
+    game.apply(Order::Patrol { units: red.clone(), waypoints: vec![WEST, MIDDLE, EAST], attack: None }).unwrap();
+    let mut s = session(game);
+    click_hex(&mut s, MIDDLE);
+    assert_eq!(s.screen.game.selection().len(), 2);
+    assert_eq!(
+        s.unit_line(),
+        "2 units, patrolling 3 waypoints, never attacks, back and forth (P: another patrol; a move ends it)."
+    );
+    assert_eq!(s.outlined(), [WEST, MIDDLE, EAST]);
+    let task = s.screen.game.tasks(Side::Red).into_iter().find(|t| matches!(t, Task::Stack { .. })).unwrap();
+    let line = hexgame::info::task_line(&s.screen.game, &task);
+    assert_eq!(line, "2 units at row 10, column 11: patrolling 3 waypoints, never attacks");
+}
+
+#[test]
+fn after_a_battle_next_goes_to_the_patrol_and_d_lets_it_go_on() {
+    let mut game = game_with_levy();
+    let red: Vec<UnitId> = game.map.units_at(WEST).to_vec();
+    game.apply(Order::Patrol { units: red.clone(), waypoints: vec![WEST, MIDDLE], attack: Some(50) }).unwrap();
+    let at = pos(&game, red[0]);
+    let mut s = session(game);
+    type_char(&mut s, 'n');
+    assert_eq!(s.screen.game.selected().map(|id| pos(&s.screen.game, id)), Some(at));
+    assert_eq!(s.unit_line(), "2 units fought on patrol: D lets it go on; another order ends the patrol.");
+    type_char(&mut s, 'd');
+    assert!(red.iter().all(|id| !unit(&s.screen.game, *id).fought && unit(&s.screen.game, *id).patrol.is_some()));
+    assert!(s.screen.game.waiting_stacks(Side::Red).is_empty());
 }

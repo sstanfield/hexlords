@@ -12,7 +12,7 @@ use std::cmp::Reverse;
 
 use super::{Game, MarchState, StackState, Undo};
 use crate::orders::Event;
-use crate::state::{Hex, Patrol, Side, Unit, UnitId, hostile};
+use crate::state::{Hex, Map, Patrol, Side, Unit, UnitId, hostile};
 
 /// How many legs and waypoints a patrol goes by in a turn, at the most (a
 /// guard: its movement runs out long before).
@@ -35,6 +35,15 @@ pub(super) fn alarm_state(units: &[&Unit]) -> Option<StackState> {
     } else {
         None
     }
+}
+
+/// True if `ids` (a side's units on a hex) all patrol, or all maraud: a
+/// click on their hex selects them all.
+pub(super) fn together(map: &Map, ids: &[UnitId]) -> bool {
+    let units: Vec<&Unit> = ids.iter().filter_map(|id| map.units().get(*id)).collect();
+    !units.is_empty()
+        && (units.iter().all(|u| u.patrol.is_some() && u.patrol == units[0].patrol)
+            || units.iter().all(|u| u.marauding))
 }
 
 /// How a stack stands if some of it patrols or marauds.
