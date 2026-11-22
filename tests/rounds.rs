@@ -415,6 +415,50 @@ fn what_units_see_on_their_way_stays_seen_while_the_next_orders_are_given() {
     assert!(!g.sight(Side::Red).sees(middle), "and no longer once that round has played");
 }
 
+/// With total fog a plan could only end on land already seen, a couple of
+/// hexes on: in rounds a stack explored two hexes a round, and the
+/// computer's sides never found each other (2026-11-22: of 40 games, none
+/// ended and each had one battle). A stack may be sent toward land its
+/// side has never seen: it goes over what it has seen, and finds its way as
+/// the round shows it more.
+#[test]
+fn under_total_fog_a_stack_sent_toward_unseen_land_finds_its_way_as_it_sees_it() {
+    let mut a = None;
+    let mut g = game_with(|g| a = Some(put(g, Side::Red, "riders", Hex::new(10, 5))), |s| s.fog = Fog::Total);
+    let a = a.unwrap();
+    let far = Hex::new(10, 20);
+    let sight = g.sight(Side::Red);
+    assert!(!sight.knows(far) && !sight.knows(Hex::new(10, 9)), "black: never seen");
+    // A move there is refused, as ever; so is Go to. Toward it, it sets off.
+    let unseen = Err(hexlords::game::UNSEEN.to_string());
+    assert_eq!(g.apply(Order::Move { units: vec![a], to: far }), unseen);
+    assert_eq!(g.apply(Order::GoTo { units: vec![a], to: far, via: Vec::new() }), unseen);
+    assert_eq!(g.apply(Order::Toward { units: vec![a], to: far }), Ok(Vec::new()));
+    let events = play(&mut g);
+    // Ten hexes, its whole round: far past what its side knew when it set
+    // off, each step onto land it had come to see.
+    let at = pos(&g, a).unwrap();
+    assert_eq!(steps(&events).len(), 10, "{at:?}");
+    assert!(at.distance(far) <= 8 && !sight.knows(at), "nearer by half, on land it had not seen: {at:?}");
+    assert!(g.map.units().get(a).unwrap().route.is_empty(), "the plan ended with the round");
+}
+
+#[test]
+fn under_total_fog_the_computers_sides_find_each_other_in_rounds() {
+    let (mut game, _) = Game::load(std::path::Path::new("assets/maps/continent")).unwrap();
+    let mut setup = Setup::solo(&game.map, None, "steady");
+    for seat in &mut setup.seats {
+        seat.controller = hexlords::setup::Controller::Computer("steady".to_string());
+    }
+    (setup.mode, setup.fog, setup.seed) = (Mode::Rounds, Fog::Total, 2);
+    game = game.with_setup(setup);
+    let mut lines = Vec::new();
+    headless::play(&mut game, 90, &mut |_, line| lines.push(line.to_string())).unwrap();
+    let fights = lines.iter().filter(|l| l.contains(" attacks ") && !l.contains("attacks neutral")).count();
+    let taken = lines.iter().filter(|l| l.contains(" takes ")).count();
+    assert!(fights >= 3 && taken >= 6, "{fights} battles between sides, {taken} cities taken");
+}
+
 #[test]
 fn agents_play_rounds_to_an_end_and_a_seed_plays_the_same_game() {
     let play = |seed: u64| {

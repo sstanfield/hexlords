@@ -211,7 +211,9 @@ end
   (nothing moves until every side has given its orders; then the round
   plays out, every stack a hex at a time), so the game it is shown is the
   one at the round's start, whatever it has ordered. In turns the line is
-  not there.
+  not there. In rounds `toward` may name land the side has never seen
+  (total fog of war): the units set off toward it and find their way as
+  they come to see more.
 - `order`: this round's order of turns.
 - `battles <lines, strength or dice> chance <0 to 10>`: how the game's
   battles go (`docs/gameplay.md`, "Fighting"; on the dice the chance plays

@@ -12,6 +12,9 @@
 //!   **plan**: `Order::Move`, `Toward` and `Roam` give the units a route to
 //!   that hex for this round (`Unit::planned`); `GoTo` and `Patrol` are
 //!   standing orders as ever, and take their first step with the round.
+//!   With total fog of war, `Toward` may name land the side has never
+//!   seen: the units set off toward it over the land they have seen, and
+//!   find their way as they come to see more (`way_toward`).
 //!   `Order::EndTurn` says the side has done; `Order::Undo` takes a plan
 //!   back.
 //! - **The round plays out** (`Game::play_out`) once every side has done, a
@@ -43,7 +46,7 @@
 use super::{Game, MarchState, Sight, UNSEEN, Undo};
 use crate::orders::Event;
 use crate::setup::{Mode, TurnOrder};
-use crate::state::{Hex, Side, TileType, Unit, UnitId, hostile};
+use crate::state::{Hex, MoveCostId, Side, TileType, Unit, UnitId, hostile};
 
 /// A round plays out in at most this many ticks (a guard: movement runs out
 /// long before).
@@ -93,8 +96,10 @@ impl Game {
         if roam && before.iter().any(|(_, was)| !was.marauding) {
             return Err("they are not marauding".to_string());
         }
+        // (Toward land the side has never seen, they may set off: they find
+        // their way as they come to see it, `way_toward`.)
         let sight = self.sight(side);
-        if !sight.knows(to) {
+        if !sight.knows(to) && reach {
             return Err(UNSEEN.to_string());
         }
         // As a move is refused: who cannot go together, cannot get there, or
@@ -105,7 +110,7 @@ impl Game {
             if reach && self.known_range_by(unit, *table, &sight).cost(to).is_none() {
                 return Err(format!("{} cannot get there this turn", unit.name));
             }
-            if !reach && unit.pos() != to && self.known_path_by(unit, *table, to, u32::MAX, &sight).is_none() {
+            if !reach && unit.pos() != to && self.way_toward(unit, *table, to, &sight).is_none() {
                 return Err("there is no way there".to_string());
             }
         }
@@ -169,6 +174,32 @@ impl Game {
             events.extend(self.play_out());
         }
         events
+    }
+
+    /// The way of `unit` (at the prices of `table`) toward `to`, as its
+    /// side knows the map: each hex and what it costs to get there. To land
+    /// the side has never seen (total fog of war: shut until it is seen)
+    /// there is no way yet: the way is to the hex it can get to that is
+    /// nearest to it, if that is nearer than where it stands (never one
+    /// another side's units stand on); as it goes it sees more, and the next
+    /// tick finds the way on. So a stack can be sent to look into the dark,
+    /// a step at a time over land it has seen.
+    fn way_toward(&self, unit: &Unit, table: MoveCostId, to: Hex, sight: &Sight) -> Option<Vec<(Hex, u32)>> {
+        if sight.knows(to) {
+            return self.known_path_by(unit, table, to, u32::MAX, sight);
+        }
+        let mut far = unit.clone();
+        far.movement = u32::MAX / 2;
+        let range = self.known_range_by(&far, table, sight);
+        let (side, here) = (unit.side(), unit.pos());
+        let (nearest, _) = range
+            .reachable()
+            .filter(|(hex, _)| !hostile(&self.map, side, *hex))
+            .min_by_key(|(hex, cost)| (hex.distance(to), *cost, hex.row, hex.col))?;
+        if nearest.distance(to) >= here.distance(to) {
+            return None;
+        }
+        self.known_path_by(unit, table, nearest, u32::MAX, sight)
     }
 
     /// The round that plays out goes on (`playing_out`): a tick, in which
@@ -310,7 +341,7 @@ impl Game {
                 break;
             }
             let sight = self.sight(side);
-            let way = self.known_path_by(lead, table, to, u32::MAX, &sight);
+            let way = self.way_toward(lead, table, to, &sight);
             let Some((hex, cost)) = way.and_then(|way| way.first().copied()) else { break };
             if cost > lead.movement {
                 break;
@@ -365,7 +396,7 @@ impl Game {
             let Some(to) = to else { continue };
             let Ok(group) = self.group(&ids) else { continue };
             let Some((lead, table)) = group.lead(&self.map) else { continue };
-            let way = self.known_path_by(lead, table, to, u32::MAX, &sight).unwrap_or_default();
+            let way = self.way_toward(lead, table, to, &sight).unwrap_or_default();
             let near = way.into_iter().take_while(|(_, cost)| *cost <= lead.movement).map(|(hex, _)| hex);
             for hex in near.chain([to]) {
                 if !hexes.contains(&hex) {

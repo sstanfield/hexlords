@@ -30,7 +30,9 @@ use crate::agents::Agent;
 use crate::game::{Game, Sight};
 use crate::orders::Order;
 use crate::state::combat::{DEFAULT_CHANCE, MAX_CHANCE, System, walls_bonus};
-use crate::state::{CityId, Hex, MAX_STACK, Side, TileType, Travel, Unit, UnitId, UnitProd, compute_range, hostile};
+use crate::state::{
+    CityId, Hex, HexSide, MAX_STACK, Side, TileType, Travel, Unit, UnitId, UnitProd, compute_range, hostile,
+};
 
 /// What makes one style of play another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,6 +148,9 @@ const SCOUT_SPREAD: u32 = 4;
 const SCOUT_TRIES: usize = 6;
 /// How many steps a turn a stack takes to see more, at the most.
 const SCOUT_STEPS: u32 = 3;
+/// In rounds, how far past the edge of the known land a stack that goes to
+/// see more is sent (`beyond`): about a round's march.
+const SCOUT_REACH: u32 = 8;
 /// Late in the game (the owner, 2026-11-20: "late game should have a lot of
 /// quality stacks, not just junk units"): with this many soldiers (two
 /// stacks' worth, more than it fields at once), it builds the strongest it
@@ -182,6 +187,30 @@ pub fn worth(strength: u32, game: &Game) -> f64 {
         // strength at the chance a game has unless it is set.
         System::Dice => s * (1.0 + f64::from(MAX_CHANCE - DEFAULT_CHANCE) / 10.0),
     }
+}
+
+/// In rounds, where a stack that goes to see more of the map by way of
+/// `edge` (a hex at the edge of the land its side knows, `sight`) is sent
+/// (`Order::Toward`): a stack has one plan a round, made before it sees
+/// anything new, so a plan to the edge would end there with most of its
+/// movement unspent. It is sent on past the edge, straight out into the
+/// land not seen ([`SCOUT_REACH`] hexes, or as far as it is not seen): it
+/// goes as far as it can over the land it comes to see (`game::rounds`).
+pub fn beyond(game: &Game, sight: &Sight, edge: Hex) -> Hex {
+    let (rows, cols) = (game.map.rows(), game.map.cols());
+    let on_map = |(row, col): (i32, i32)| Hex::on_map(row, col, rows, cols);
+    let out = HexSide::ALL.into_iter().find(|side| on_map(edge.toward(*side)).is_some_and(|h| !sight.knows(h)));
+    let Some(out) = out else { return edge };
+    // (Only as far as the land is not seen: a hex it has seen and cannot
+    // get to, the sea say, is nowhere to be sent.)
+    let mut to = edge;
+    for _ in 0..SCOUT_REACH {
+        match on_map(to.toward(out)).filter(|h| !sight.knows(*h)) {
+            Some(next) => to = next,
+            None => break,
+        }
+    }
+    to
 }
 
 /// `x` to the `n`th, by multiplying.
@@ -684,6 +713,11 @@ impl Planner {
             .take(SCOUT_TRIES)
             .find_map(|to| advance(game, (side, sight), (ids, lead), to, &blocked).map(|order| (to, order)))?;
         self.scouted.push(to);
+        // In rounds: on past the edge, as far as it gets this round (one
+        // plan a round).
+        if game.rounds() {
+            return Some(Order::Toward { units: ids.to_vec(), to: beyond(game, sight, to) });
+        }
         // Those that go may go on, seeing more, a few steps a turn.
         let steps = match self.explored.iter_mut().find(|(id, _)| *id == lead.id()) {
             Some((_, n)) => {
@@ -925,6 +959,31 @@ mod tests {
         let lead = game.map.units().get(stack[1]).unwrap().clone();
         let order = advance(&game, (Side::Red, &sight), (&stack, &lead), there, &|_| false);
         assert!(!matches!(order, Some(Order::Move { to, .. }) if to == there), "{order:?}");
+    }
+
+    /// In rounds a scout is sent on past the edge of the land its side
+    /// knows, straight out, as far as the land is not seen.
+    #[test]
+    fn a_scout_is_sent_past_the_edge_into_the_land_not_seen() {
+        let mut rows = vec!["g".repeat(30); 30];
+        rows[15] = format!("{}c{}", "g".repeat(15), "g".repeat(14));
+        let terrain = format!("30\n30\n{}\n", rows.join("\n"));
+        let cities = "city 15 15\nname Redhold\nside red\n";
+        let (map, warnings) = scenario::parse(&terrain, None, Some(cities)).unwrap();
+        let game = Game::from_scenario(Scenario { map, assets: None, warnings });
+        let mut setup = crate::setup::Setup::solo(&game.map, Some(Side::Red), "passive");
+        setup.fog = crate::setup::Fog::Total;
+        let game = game.with_setup(setup);
+        let (home, sight) = (Hex::new(15, 15), game.sight(Side::Red));
+        let edge = sight.frontier(&game.map);
+        assert!(!edge.is_empty(), "there is land not seen");
+        for hex in edge {
+            let to = beyond(&game, &sight, hex);
+            assert!(!sight.knows(to) && hex.distance(to) == SCOUT_REACH, "{hex:?} to {to:?}");
+            assert!(to.distance(home) > hex.distance(home), "outward: {hex:?} to {to:?}");
+        }
+        // With nothing unseen beside it, a hex is where it is sent.
+        assert_eq!(beyond(&game, &Sight::all(), home), home);
     }
 
     /// The review (2026-11-21): the planner weighed a wounded unit as whole

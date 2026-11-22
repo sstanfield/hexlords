@@ -488,6 +488,17 @@ changed.
 - **What a side sees** (fog of war): what its units saw on their way as
   the round played out stays seen while the next orders are given, until
   that round plays out.
+- **Into the dark** (total fog of war). Land a side has never seen is
+  shut to it, as in turns: no unit steps onto it. But in turns a stack
+  creeps, a step and a look at a time; a round's plan is made before
+  anything is seen, and would end at the edge of the known land, two
+  hexes on (found by playing it, 2026-11-22: the computer's sides never
+  met). So in rounds a stack may be sent **toward** land its side has
+  never seen (`Order::Toward`; at the screen, a click on the black): as
+  the round plays out it goes over the land it has seen toward the hex
+  nearest to where it was sent, sees more, and the next tick finds the
+  way on (`rounds::way_toward`); each step is still onto land it has
+  seen. `Move` and `GoTo` to unseen land are refused as ever.
 - **At the screen.** A click plans: the stack stays, and the map outlines
   the ways the person's stacks will take this round (their own only). The
   End turn button reads "Orders done". The computer's sides give their
@@ -505,7 +516,15 @@ changed.
 - **The agents** play rounds as they are: each of their moves is a plan
   for the round, made from what they see when they plan (`docs/agents.md`;
   a program is told `mode rounds`). They do not yet think about what the
-  others might do meanwhile: a first opponent, not a cunning one.
+  others might do meanwhile: a first opponent, not a cunning one. To see
+  more of the map they send a stack on past the edge of the land they
+  know (`planner::beyond`). Measured (the continent, the steady planners,
+  40 seeds each, 200 rounds at most): in turns every game ends, in 49
+  rounds; in rounds 39 of 40, in 72 (their attacks from several hexes
+  arrive a stack at a time); with fog of war, all 40, in 71; with total
+  fog they find each other and fight (85 battles and 18 cities taken a
+  game), but only 5 of 40 games end in 200 rounds (in turns they do, in
+  about 80): they are slow to find the last cities. To be made better.
 - Open: whether a tick should be a hex for everyone or a share of each
   stack's movement (riders arriving first); whether a march should fight
   its way through; plans of more than one leg.

@@ -302,6 +302,7 @@ fn help_section() -> Vec<HelpSection> {
                 (&undo, "Take back the last move, a city's work or its walls (not a battle)"),
                 (&end_turn, "End the turn (End turn (3): three stacks or cities still wait for orders)"),
                 ("In rounds", "A click is a plan (its way outlined): nothing moves until every side's orders are done"),
+                ("In rounds, a click on the black", "Total fog: the stack sets off toward land not seen, to look"),
                 (
                     "Orders done (in rounds)",
                     "End turn's button: the round then plays out, a hex at a time; a plan attacks where it ends",
@@ -2689,6 +2690,10 @@ impl Session {
             SelectOutcome::Sent(_) => {
                 // (One met on the way, unseen, is a battle: told.)
                 self.tell_battle(before);
+                if self.screen.game.rounds() {
+                    self.notice =
+                        Some("Planned: they set off as the round plays out (Ctrl+Z: not after all).".to_string());
+                }
                 let game = &self.screen.game;
                 if let Some(at) = sent.iter().find_map(|id| game.map.units().get(*id)).map(|u| u.pos()) {
                     self.screen.game.set_cursor(at);

@@ -3094,7 +3094,15 @@ impl Game {
             if !units.iter().all(|id| self.own(*id)) {
                 return SelectOutcome::Deselected;
             }
-            return match self.apply(Order::GoTo { units: units.clone(), to: hex, via: Vec::new() }) {
+            // In rounds, land the side has never seen (total fog of war):
+            // they set off toward it, to look, and find their way as the
+            // round plays out.
+            let order = if self.rounds() && !self.sight(side).knows(hex) {
+                Order::Toward { units: units.clone(), to: hex }
+            } else {
+                Order::GoTo { units: units.clone(), to: hex, via: Vec::new() }
+            };
+            return match self.apply(order) {
                 Ok(events) => SelectOutcome::Sent(events),
                 Err(why) => {
                     self.select(units);

@@ -224,6 +224,29 @@ fn in_hotseat_each_plans_behind_the_cover_and_is_shown_the_round() {
 }
 
 #[test]
+fn a_click_on_land_never_seen_sends_the_stack_to_look() {
+    let g = game("passive", |g| {
+        put(g, Side::Red, "soldiers", Hex::new(10, 5));
+    });
+    let mut setup = g.setup().clone();
+    setup.fog = Fog::Total;
+    let g = g.with_setup(setup);
+    let a = g.map.units().of_side(Side::Red).next().map(|u| u.id()).unwrap();
+    let mut s = session(g);
+    let far = Hex::new(10, 20);
+    assert!(!s.sight().knows(far));
+    click_hex(&mut s, Hex::new(10, 5));
+    click_hex(&mut s, far);
+    assert!(s.refusal().is_none(), "not refused: it goes to look");
+    let unit = s.screen.game.map.units().get(a).unwrap();
+    assert!(unit.planned && unit.route == [far]);
+    assert!(s.unit_line().starts_with("Planned: they set off as the round plays out"), "{}", s.unit_line());
+    assert_eq!(Scene::outlined(&s).last(), Some(&far), "where it is sent, in the dark");
+    assert!(Scene::next_turn(&mut s));
+    assert!(pos(&s, a).distance(Hex::new(10, 5)) >= 5, "its whole round, into what it came to see");
+}
+
+#[test]
 fn a_round_in_one_step_for_scripts() {
     let mut a = None;
     let mut s = session(game("passive", |g| a = Some(put(g, Side::Red, "soldiers", Hex::new(10, 5)))));

@@ -504,6 +504,13 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                  its way stops short of one in its way, as in turns; a patrol attacks at its odds."
                     .to_string(),
             ),
+            (
+                "Into the dark",
+                "With total fog of war, a click on land you have never seen sends the stack toward it, to \
+                 look: as the round plays out it goes over the land it has seen, and finds its way on as it \
+                 sees more."
+                    .to_string(),
+            ),
         ]
     } else {
         Vec::new()

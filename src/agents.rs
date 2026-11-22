@@ -374,6 +374,12 @@ impl Agent for Simple {
                 // (total fog of war), to the nearest edge of what it knows.
                 let edge = game.frontier_for(lead, &sight);
                 if let Some((to, _)) = edge.into_iter().filter(|(h, _)| *h != here).take(6).find(|(h, _)| way(*h)) {
+                    // In rounds: on past the edge, as far as they get this
+                    // round (one plan a round).
+                    if game.rounds() {
+                        let to = crate::planner::beyond(game, &sight, to);
+                        return Order::Toward { units: ids, to };
+                    }
                     let steps = self.explored.iter().filter(|(id, _)| *id == lead.id()).count() as u32;
                     self.explored.push((lead.id(), steps + 1));
                     if steps + 1 < Simple::SCOUT_STEPS {
