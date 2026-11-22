@@ -461,10 +461,63 @@ fn units(_game: &Game) -> Vec<HelpSection> {
 }
 
 fn orders(game: &Game) -> Vec<HelpSection> {
-    let order = match game.setup().order {
-        TurnOrder::Fixed => "The sides play one after the other, in the same order every round.",
-        TurnOrder::Drawn => "The sides play one after the other, in an order drawn anew every round.",
+    let order = match (game.rounds(), game.setup().order) {
+        (false, TurnOrder::Fixed) => "The sides play one after the other, in the same order every round.",
+        (false, TurnOrder::Drawn) => "The sides play one after the other, in an order drawn anew every round.",
+        (true, TurnOrder::Fixed) => {
+            "Rounds: every side gives its orders, then the round plays out at once. The sides step in the same \
+             order every round."
+        }
+        (true, TurnOrder::Drawn) => {
+            "Rounds: every side gives its orders, then the round plays out at once. The sides step in an order \
+             drawn anew every round."
+        }
     };
+    // In rounds: how a round goes.
+    let rounds: Vec<(&str, String)> = if game.rounds() {
+        vec![
+            (
+                "Your orders",
+                "A click on where a stack goes is a plan: nothing moves yet, and the map outlines the way. \
+                 Another click is another plan; Undo takes the last back. What moves nobody happens at once: \
+                 what a city builds, its walls, Defend, a blessing. Then Orders done (where End turn is)."
+                    .to_string(),
+            ),
+            (
+                "The round",
+                "Once every side's orders are done the round plays out a tick at a time: in each, every stack \
+                 with somewhere to go takes one step, a hex, the sides in the round's order. It ends when \
+                 nobody moves any more; then every side's taxes come in and its cities build, together."
+                    .to_string(),
+            ),
+            (
+                "Meeting",
+                "A stack that steps onto a hex another side stands on attacks it. So two stacks making for \
+                 the same hex fight there, the one that got there first defending; a stack sent against one \
+                 that has left finds the hex empty, and takes it; your stacks beside a hex they are all sent \
+                 against attack it together."
+                    .to_string(),
+            ),
+            (
+                "Who attacks",
+                "Only a plan attacks a stack it sees, where it ends. A stack on a march (Go to) or a patrol on \
+                 its way stops short of one in its way, as in turns; a patrol attacks at its odds."
+                    .to_string(),
+            ),
+        ]
+    } else {
+        Vec::new()
+    };
+    let mut sections = Vec::new();
+    if !rounds.is_empty() {
+        sections.push(section("Rounds", &rounds));
+    }
+    sections.extend(orders_sections(order));
+    sections
+}
+
+/// The Orders topic's sections that turns and rounds share.
+fn orders_sections(order: &str) -> Vec<HelpSection> {
     vec![
         section(
             "Turns",

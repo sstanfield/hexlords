@@ -183,6 +183,11 @@ pub struct Unit {
     pub patrol: Option<Patrol>,
     pub marauding: bool,
     pub fought: bool,
+    /// In rounds: its route is this round's move (`Order::Move`, `Toward`,
+    /// `Roam`), planned and not yet made: as the round plays out it goes
+    /// there a hex at a time, attacks what stands where it ends, and the
+    /// plan ends with the round, got there or not.
+    pub planned: bool,
     /// The hits it took that have not healed (`combat::Rules::wounds`: they
     /// heal as its side's turn ends; fewer than `combat::HITS`). Wounded, it
     /// fights at half its own strength, rounded up.
@@ -272,9 +277,10 @@ impl Unit {
         self.patrol.is_some() || self.marauding
     }
 
-    /// It patrols and marauds no more (another order of its player's).
+    /// It patrols and marauds no more (another order of its player's), nor
+    /// is its route a round's plan.
     pub fn stand_down(&mut self) {
-        (self.patrol, self.marauding, self.fought) = (None, false, false);
+        (self.patrol, self.marauding, self.fought, self.planned) = (None, false, false, false);
     }
 
     /// True if the temple at `at` has blessed it.
@@ -395,6 +401,7 @@ impl Units {
             patrol: None,
             marauding: false,
             fought: false,
+            planned: false,
             wounds: 0,
         });
         id

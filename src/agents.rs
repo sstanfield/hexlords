@@ -519,6 +519,11 @@ pub fn parse_unit(name: &str) -> Option<UnitId> {
 pub fn describe(game: &Game, side: Side) -> String {
     let map = &game.map;
     let mut out = format!("turn {} {}\n", game.turn(), side_name(side));
+    // (In rounds: the orders to move are plans, and the round plays out
+    // once every side has given its own.)
+    if game.rounds() {
+        out.push_str("mode rounds\n");
+    }
     out.push_str(&format!("order {}\n", game.order().iter().map(|s| side_name(*s)).collect::<Vec<_>>().join(" ")));
     let combat = game.setup().combat;
     let exact = if combat.system == System::Dice { format!(" exact {}", combat.exact.name()) } else { String::new() };

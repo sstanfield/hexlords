@@ -13,8 +13,10 @@ cargo run --release -- --headless --map assets/maps/continent --seed 7 --rounds 
 cargo run --release -- --headless --map assets/maps/continent --players red=simple,blue=passive --log
 ```
 
-The computer plays every side (`simple`, unless `--players` says otherwise;
-a person cannot play without a window). The game goes on until one side is
+The computer plays every side (`steady`, unless `--players` says otherwise;
+a person cannot play without a window). `--mode rounds` plays in rounds
+(every side gives its orders, then the round plays out at once), where the
+agents' moves are plans for the round. The game goes on until one side is
 left or `--rounds` (200) have gone by, and then says how it stands:
 
 ```
@@ -204,6 +206,12 @@ end
 ```
 
 - `turn <round> <side>`: whose turn it is, which is the side the program plays.
+- `mode rounds`: only in a game played in rounds (`--mode rounds`,
+  `docs/gameplay.md`, "Rounds"): the program's orders to move are plans
+  (nothing moves until every side has given its orders; then the round
+  plays out, every stack a hex at a time), so the game it is shown is the
+  one at the round's start, whatever it has ordered. In turns the line is
+  not there.
 - `order`: this round's order of turns.
 - `battles <lines, strength or dice> chance <0 to 10>`: how the game's
   battles go (`docs/gameplay.md`, "Fighting"; on the dice the chance plays

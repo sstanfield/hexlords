@@ -25,8 +25,9 @@ side sees the others' stacks only as banners with their size, and fog of
 war is a choice made with the game: off, on, or total, where land never
 seen is black and shut until explored (`Game::sight`, `Sight`).
 **`docs/gameplay.md` is the plan for the rules**: two modes (turns one side
-after the other, and rounds where all sides give orders at once) on one set
-of rules made of orders. The computer's players are agents, which also play
+after the other, and rounds where all sides give orders at once and the
+round then plays out a tick at a time: both built) on one set of rules made
+of orders. The computer's players are agents, which also play
 without a window (`docs/agents.md`).
 
 **The C++ is history, not a specification.** The owner's word (2026-11-18):
@@ -45,7 +46,7 @@ touching the rules.
 | Path | What |
 |---|---|
 | `src/state/` | Map, tiles, roads, units and their kinds, cities, movement range; `combat`, the battles (pure); `rng`, the game's chance; `scenario`, the reader of a map's files. No UI, no graphics |
-| `src/game.rs`, `src/game/patrol.rs`, `src/orders.rs`, `src/setup.rs` | `Game`: the map, whose turn it is, and the rules: `Game::apply` carries out an `Order` and says what came of it (`Event`s); the selected unit and its range for the screen; `game::patrol`: patrols, and marauding's flag, as rules. `Setup`: a game before it starts (the mode, the order of turns, who plays each side, the seed) |
+| `src/game.rs`, `src/game/patrol.rs`, `src/game/rounds.rs`, `src/orders.rs`, `src/setup.rs` | `Game`: the map, whose turn it is, and the rules: `Game::apply` carries out an `Order` and says what came of it (`Event`s); the selected unit and its range for the screen; `game::patrol`: patrols, and marauding's flag, as rules; `game::rounds`: the second mode (an order to move is a plan, and the round plays out a tick at a time, every stack a hex, `Game::play_out`). `Setup`: a game before it starts (the mode, the order of turns, who plays each side, the seed) |
 | `src/agents.rs`, `src/planner.rs`, `src/marauder.rs`, `src/headless.rs` | The computer's players (`Agent`: `passive`, `simple`, `cmd:<program>` over a text protocol; `planner`: `steady`, `bold`, `careful`, which read the rules in effect); with fog of war each is given its side's view (`Game::view_for`); `marauder`: the computer leading a side's marauding stacks; a game played without a window (`--headless`) |
 | `src/view.rs`, `src/minimap_view.rs` | Pure math: zoom, scale factors, visible hexes, picking, panning, recentering; the minimap's fit and marker |
 | `src/render/` | miniquad drawing: hex meshes, shaders, textures, the map and minimap renderers, the PNG writer; the units' icons for the panels (`unit_icon`, on the CPU) |

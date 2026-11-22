@@ -26,7 +26,7 @@ Built (2026-11-19):
 - the map with terrain and roads; a map's kinds of unit (strength, moves,
   upkeep, price, what each terrain costs to enter); cities (holder, walls,
   what they can build at what cost, garrison);
-- **a new game screen**: the map, the mode (rounds are shown, to come), the
+- **a new game screen**: the map, the mode (turns or rounds), the
   order of turns (the same each round, or drawn anew), who plays each side
   (a person, or the computer); several people play hotseat;
 - **turns**: one side after the other, in the round's order; only that
@@ -62,7 +62,10 @@ Built (2026-11-19):
   size, their cities only from outside; and **fog of war**, set with the
   game (below, 9).
 
-Not built: rounds, saved games.
+- **rounds** (below, "Rounds"): every side gives its orders, then the
+  round plays out a tick at a time, on the turns' own rules.
+
+Not built: saved games.
 
 ## One set of rules, two modes
 
@@ -432,24 +435,80 @@ and the rules use integers, not floats.
 
 ## Rounds
 
-- **Planning.** Each side gives its stacks paths and its cities what to
-  build. The map shows its own planned paths; the others' stay hidden. A
-  side says "done", and the round resolves when every side has.
-- **Resolution** (from section 8's proposal, refined):
-  - A path is cut into steps, each with its cost in movement points.
-  - The round advances in ticks. In each tick every stack that can pay for
-    its next step takes it, all at the same moment.
-  - Two hostile stacks entering one hex in the same tick fight there. Two
-    that would swap hexes meet halfway, and fight. A stack entering a hex an
-    enemy stands in attacks it.
-  - A stack that fought, or whose way is blocked, stops for the rest of the
-    round (unless its orders say to go on: a later refinement).
-  - After the movement: cities change hands, then every side's income,
-    upkeep and production, together.
-  - What happened is a list of events, which each side sees replayed (as far
-    as its fog allows).
-- Hotseat: each person plans in turn behind the hiding screen; the replay
-  is shown to each.
+Built (2026-11-22, the owner's word: "implement the round (simultaneous
+turns) feature"; `src/game/rounds.rs`, chosen on the new game screen or
+with `--mode rounds`). The rules are the turns' own, applied at another
+moment; what the sketch left open is decided as below, to be played and
+changed.
+
+- **Planning.** The sides give their orders one after the other (who goes
+  first learns nothing by it: nothing moves, and nobody sees another's
+  plans). What moves no unit is carried out at once: what a city builds,
+  its queue, where it sends its units, its walls, a rally point, Defend,
+  Done, a blessing sought, a unit sent home. An order to move is a
+  **plan**: `Order::Move`, `Toward` and `Roam` give the units a route to
+  that hex for this round (`Unit::planned`: refused as a move is, if they
+  cannot get there this turn as things stand); `GoTo` and `Patrol` are
+  standing orders as in turns, and take their first step with the round.
+  Another plan takes a plan's place; `Order::Undo` takes the last back.
+  A side says it has done with `Order::EndTurn` ("Orders done").
+- **The round plays out** once every side has done, a **tick** at a time
+  (`Game::play_out`):
+  - In each tick every stack with somewhere to go (a plan, a march, a
+    patrol) takes one step, a hex, on the way its side knows, if the
+    slowest of it can pay for it. (A hex a tick for everyone: a rider and
+    a foot soldier three hexes from a city get there in the same tick; the
+    rider's movement takes it farther in the round, not faster.)
+  - The sides step in the round's order, so who steps first in a tick is
+    the one thing the order decides: with the order drawn anew each round
+    (the new game screen's choice), nobody knows.
+  - A stack that steps onto a hex another side stands on attacks it. So
+    two stacks making for the same hex fight there, the one that stepped
+    in first defending it (with the ground's bonus); two that would swap
+    hexes fight on the hex of the one that steps second (the sketch's
+    "meet halfway": there is no halfway on a hex map); a stack sent
+    against one that has left finds the hex empty, and takes it; a city
+    two sides make for is taken by the first there and attacked by the
+    next.
+  - Only a plan attacks a stack it sees, and only where it ends; a march
+    (Go to) or a patrol on its way stops short of one, as in turns, and a
+    patrol attacks at its odds (it makes for the stack it would attack, a
+    hex a tick). Units nobody saw (fog of war) are met, in a battle, by
+    anyone.
+  - Stacks of one side that stand beside the hex they are all sent against
+    attack it together, as one attack (as many as a hex holds).
+  - A battle ends a stack's round: an attack uses up its movement.
+- **The round ends** when a tick goes by with nobody moving. The plans
+  end, got there or not (a stack that did not get there waits for orders
+  next round). The standing orders use what movement is left as at a
+  turn's end, and say if they are stopped short. Wounds heal. Then the
+  next round begins for every side together: its units' movement, its
+  taxes, its upkeep, what its cities built (`Event::Began` names the side
+  that gives its orders first).
+- **What a side sees** (fog of war): what its units saw on their way as
+  the round played out stays seen while the next orders are given, until
+  that round plays out.
+- **At the screen.** A click plans: the stack stays, and the map outlines
+  the ways the person's stacks will take this round (their own only). The
+  End turn button reads "Orders done". The computer's sides give their
+  orders at once; then the round plays out before the person, a tick at a
+  time, every stack of a tick going at the same moment, their battles in
+  their window as the round comes to them (the round waits); the map goes
+  to the person's own stacks if none is in view, and back to where they
+  were looking when it is over. (While a screen watches, the last side's
+  `EndTurn` only begins the round and the screen plays the ticks; without
+  one it plays the round out whole. The same game either way.)
+- **Hotseat**: each person plans in turn behind the hiding screen; the
+  last of them watches the round play out, and each of the others is
+  shown it as their next orders begin (what is still there to be shown:
+  the stacks they see, going; their battles).
+- **The agents** play rounds as they are: each of their moves is a plan
+  for the round, made from what they see when they plan (`docs/agents.md`;
+  a program is told `mode rounds`). They do not yet think about what the
+  others might do meanwhile: a first opponent, not a cunning one.
+- Open: whether a tick should be a hex for everyone or a share of each
+  stack's movement (riders arriving first); whether a march should fight
+  its way through; plans of more than one leg.
 
 ## Easy to play
 
@@ -799,7 +858,8 @@ it; the rules are written once for both modes from the first step.
    one wins; a first AI.
 5. **Fog of war.** **Done (2026-11-19)**, with orders that last and the
    tasks.
-6. **Rounds.** Planned paths, "done", the resolution, the replay.
+6. **Rounds.** Planned paths, "done", the resolution, the replay. **Done
+   (2026-11-22).**
 7. **Saves, then the network.**
 
 ## Decided (2026-11-19, the owner's word)
@@ -835,8 +895,8 @@ it; the rules are written once for both modes from the first step.
 
 ## Still open
 
-1. Rounds: what happens when two stacks meet halfway, and the other cases
-   of the resolution; a sketch is above, to be tried once the battles exist.
+1. Rounds are built ("Rounds", above); what play says of the cases of
+   the resolution (who steps first, a hex a tick for everyone) is open.
 2. Combat: which system a game starts with (lines for now). Agents
    against agents without a window can compare them (`--battles`, with
    many seeds).

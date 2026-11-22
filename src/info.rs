@@ -462,7 +462,8 @@ pub fn mission(game: &Game, units: &[&Unit]) -> Option<String> {
     if let Some(unit) = units.iter().find(|u| u.on_duty()) {
         return duty_words(unit).map(|w| w.replace(": the computer leads it", ", led by the computer"));
     }
-    if let Some(unit) = units.iter().find(|u| !u.route.is_empty()) {
+    // (A round's plan is no mission: another takes its place unasked.)
+    if let Some(unit) = units.iter().find(|u| !u.route.is_empty() && !u.planned) {
         return Some(format!("on the way to {}", route_words_to(map, &unit.route, unit.bound)));
     }
     let unit = units.iter().find(|u| u.defending)?;

@@ -25,8 +25,9 @@ direction. So far:
   do; the other sides show only as banners, and fog of war is a choice (in
   part, or total: land never seen is black until it is explored); the
   last side left wins. [docs/gameplay.md](docs/gameplay.md) is the plan for
-  the rules, in two modes (sides taking turns, built; or all giving orders
-  at once);
+  the rules, in two modes, both built: sides taking turns; or rounds, where
+  all give their orders and the round then plays out at once, every stack
+  a hex at a time;
 - a [map editor](#the-map-editor) for the terrain and the roads;
 - a random map generator, `mapgen`, with a ruler for any map
   ([docs/mapgen.md](docs/mapgen.md)): the terrain so far; rivers, cities,
@@ -121,8 +122,10 @@ build, in how many turns, at what price.
 ![The list of cities and a city in full](docs/screenshots/cities.png)
 
 **A new game** starts on its own screen: the map (the preview beside the
-settings can be looked over like the game's), how to play (turns; rounds are
-to come), the order of the turns (the same each round, or drawn anew), the
+settings can be looked over like the game's), how to play (turns, one side after the
+other; or rounds: every side gives its orders, a click being a plan the map
+outlines, and then the round plays out before you), the order of the turns
+(the same each round, or drawn anew; in rounds, who steps first), the
 battles (lines, strength or dice; how much chance, from 0 to 10, or on the
 dice what a roll of exactly a side's number does; whether wounds last and
 whether the loser of an exchange may hit back; a cap of 9 on a unit's
@@ -172,7 +175,8 @@ waits in the city until there is enough ([docs/gameplay.md](docs/gameplay.md)).
 ## Options
 
 ```
-hexlords [--map <file.map or map directory>] [--players <side>=<who>,...] [--order fixed|drawn] [--seed <n>]
+hexlords [--map <file.map or map directory>] [--players <side>=<who>,...] [--mode turns|rounds]
+        [--order fixed|drawn] [--seed <n>]
         [--chance <0-10>] [--battles lines|strength|dice] [--dice-exact hits|misses|defenders] [--wounds] [--blows-back]
         [--cap <n>] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] [--log]]
         [--script <steps>]
@@ -188,6 +192,9 @@ Without `--map` the window opens on the new game screen.
   agent of the computer's: `steady` (the default), `bold`, `careful` (the
   planner's styles), `simple`, `passive`, `cmd:<program>`
   ([docs/agents.md](docs/agents.md)).
+- `--mode turns|rounds`: the sides play one after the other (turns, unless
+  it is said), or all give their orders and the round plays out at once
+  ([docs/gameplay.md](docs/gameplay.md), "Rounds").
 - `--order fixed|drawn`: the sides play in the same order each round, or one
   drawn anew; `--seed <n>`: the seed of the game's chance.
 - `--chance <0-10>`: how much chance there is in a battle: 0 none (the

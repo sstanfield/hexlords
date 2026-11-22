@@ -9,8 +9,8 @@ use common::{assets, click, widget};
 use hexlords::game::Game;
 use hexlords::new_game::{
     BATTLES_DICE_ID, BATTLES_STRENGTH_ID, BLOWS_BACK_ID, CAP_ID, CHANCE_LESS_ID, CHANCE_MORE_ID, EXACT_DEFENDERS_ID,
-    EXACT_MISSES_ID, FOG_ON_ID, FOG_TOTAL_ID, GOLD_LESS_ID, GOLD_MORE_ID, MODE_ROUNDS_ID, ORDER_DRAWN_ID, START_ID,
-    map_id, map_name, seat_id,
+    EXACT_MISSES_ID, FOG_ON_ID, FOG_TOTAL_ID, GOLD_LESS_ID, GOLD_MORE_ID, MODE_ROUNDS_ID, MODE_TURNS_ID,
+    ORDER_DRAWN_ID, START_ID, map_id, map_name, seat_id,
 };
 use hexlords::screen::Scene;
 use hexlords::session::{BEGIN_TURN_ID, COVER_ID, END_TURN_ID, GAME_OVER_ID, NEW_GAME_ID, Session};
@@ -57,10 +57,13 @@ fn the_screen_offers_the_maps_and_sets_the_game_up() {
     assert_eq!(seats, [(Side::Red, true), (Side::Green, false), (Side::Blue, false), (Side::Yellow, false)]);
     // The map shows, to be looked over.
     assert_eq!((screen.screen.game.map.rows(), screen.screen.game.map.cols()), (46, 72));
-    // Green to a person, the order drawn; rounds are not to be had yet.
+    // Green to a person, the order drawn; in rounds, and in turns again.
     push(&mut shell, &seat_id(Side::Green, true));
     push(&mut shell, ORDER_DRAWN_ID);
+    assert_eq!(shell.new_game_screen().unwrap().setup().mode, hexlords::setup::Mode::Turns);
     push(&mut shell, MODE_ROUNDS_ID);
+    assert_eq!(shell.new_game_screen().unwrap().setup().mode, hexlords::setup::Mode::Rounds);
+    push(&mut shell, MODE_TURNS_ID);
     let screen = shell.new_game_screen().unwrap();
     assert_eq!(screen.setup().controller(Side::Green), Some(&Controller::Person));
     assert_eq!(screen.setup().order, TurnOrder::Drawn);

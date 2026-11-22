@@ -189,8 +189,8 @@ impl NewGame {
                 ("A map's name", "Choose it: it shows beside the settings"),
                 ("A random map", "Its preset, size, sides, cities, temples, seed: then Make the map"),
                 ("Drag on the map", "Move it"),
-                ("Turns, Rounds", "How to play: one side after the other (rounds are to come)"),
-                ("Order of turns", "The same each round, or drawn anew"),
+                ("Turns, Rounds", "How to play: one side after the other; or all sides give their orders, then the round plays out at once"),
+                ("Order of turns", "The same each round, or drawn anew (in rounds: who steps first as a round plays out)"),
                 ("Battles", "Lines of duels, strength against strength, or dice; how much chance, 0 to 10 (on the dice, what a roll of exactly a side's number does); whether wounds last until a side's turn ends; whether the loser of an exchange may hit back; whether a unit fights at 9 at the most, its bonuses counted"),
                 ("Gold", "What each side's treasury holds at the start"),
                 ("Fog of war", "Each side sees only what is near its units and cities"),
@@ -473,9 +473,8 @@ impl NewGame {
         let row = build::row(ui, c, space);
         let turns = build::button(ui, row, MODE_TURNS_ID, "Turns");
         press(ui, turns, "mode", self.setup.mode == Mode::Turns);
-        let rounds = build::button(ui, row, MODE_ROUNDS_ID, "Rounds (to come)");
+        let rounds = build::button(ui, row, MODE_ROUNDS_ID, "Rounds");
         press(ui, rounds, "mode", self.setup.mode == Mode::Rounds);
-        ui.set_disabled(rounds, true);
 
         build::gap(ui, c, space);
         build::heading(ui, c, "Order of turns");
@@ -632,6 +631,10 @@ impl NewGame {
                 self.rebuild();
             } else if id == TbId::new(MODE_TURNS_ID) {
                 self.setup.mode = Mode::Turns;
+                self.rebuild();
+            } else if id == TbId::new(MODE_ROUNDS_ID) {
+                self.setup.mode = Mode::Rounds;
+                self.rebuild();
             } else if let Some(system) = [
                 (BATTLES_LINES_ID, System::Lines),
                 (BATTLES_STRENGTH_ID, System::Strength),

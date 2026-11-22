@@ -301,6 +301,11 @@ fn help_section() -> Vec<HelpSection> {
                 ("Esc", "Close the menu or the window on top; with none open, drop the selection"),
                 (&undo, "Take back the last move, a city's work or its walls (not a battle)"),
                 (&end_turn, "End the turn (End turn (3): three stacks or cities still wait for orders)"),
+                ("In rounds", "A click is a plan (its way outlined): nothing moves until every side's orders are done"),
+                (
+                    "Orders done (in rounds)",
+                    "End turn's button: the round then plays out, a hex at a time; a plan attacks where it ends",
+                ),
                 (&new_game, "A new game (once this one is over at once; before, it asks)"),
                 (&options, "Options: what the game does for you as a turn goes (selects, asks, tells)"),
             ],
@@ -513,6 +518,22 @@ pub struct Session {
     /// to be told again; and when the battle in the window was over.
     told: Vec<usize>,
     battle_over_at: Option<u64>,
+    /// In rounds: the ways the person's stacks take as the round plays out,
+    /// as things stand (outlined on the map), and what they were worked out
+    /// for (the map's revision, whose they are).
+    plans: Vec<Hex>,
+    plans_of: Option<(u64, Side)>,
+    /// In rounds: what happened as the last round played out, for the
+    /// people who did not watch it (hotseat: it is shown to each as their
+    /// orders begin), and who has seen it.
+    round_shown: Vec<Vec<(Option<usize>, Event)>>,
+    round_seen: Vec<Side>,
+    round_live: bool,
+    /// What is to be shown now is a tick of a round: its stacks go together.
+    together: bool,
+    /// In rounds: where the person was looking when their orders were done
+    /// (the map goes back there once the round has played out).
+    looked: Option<[f32; 2]>,
 }
 
 /// How long a battle's window shows how it ended before the computer goes
@@ -658,6 +679,13 @@ impl Session {
             pass_due: false,
             told: Vec::new(),
             battle_over_at: None,
+            plans: Vec::new(),
+            plans_of: None,
+            round_shown: Vec::new(),
+            round_seen: Vec::new(),
+            round_live: false,
+            together: false,
+            looked: None,
             screen,
         };
         // What happens is kept for the screen to show.
@@ -707,6 +735,7 @@ impl Session {
         // (and the rules march the marches and the patrols): what comes of
         // it is news for their next turn.
         self.lead_marauders();
+        self.looked = self.screen.game.rounds().then(|| self.screen.view.middle());
         self.screen.game.end_turn();
         // Nobody else plays before this person's next turn (a side alone):
         // nothing to wait for.
@@ -816,16 +845,17 @@ impl Session {
     /// The window that asks before the turn ends, saying what waits.
     fn ask_end_turn(&mut self, lines: &[String]) {
         let (root, area) = (self.screen.root_window(), self.window_area());
+        let rounds = self.screen.game.rounds();
         let ui = &mut self.screen.ui;
-        let parts = build::window(ui, root, END_ASK_ID, "End turn");
-        build::heading(ui, parts.content, "End your turn?");
+        let parts = build::window(ui, root, END_ASK_ID, if rounds { "Orders done" } else { "End turn" });
+        build::heading(ui, parts.content, if rounds { "Are your orders done?" } else { "End your turn?" });
         for line in lines {
             build::text(ui, parts.content, line);
         }
         let space = ui.dimension_converter().dp_to_px(SPACING_DP * 2);
         build::gap(ui, parts.content, space);
         let buttons = build::row(ui, parts.content, space);
-        build::primary_button(ui, buttons, END_ANYWAY_ID, "End the turn");
+        build::primary_button(ui, buttons, END_ANYWAY_ID, if rounds { "They are done" } else { "End the turn" });
         build::button(ui, buttons, END_TASKS_ID, "Show the tasks");
         build::button(ui, buttons, END_KEEP_ID, "Keep playing");
         build::text(ui, parts.content, "(Options: whether End turn asks.)");
@@ -893,6 +923,58 @@ impl Session {
         }
     }
 
+    /// In rounds, the round that plays out goes on (`Game::play_out`): its
+    /// ticks, until one of them has something to show (the stacks the
+    /// person sees going, their battles: the next tick waits for them), or
+    /// the round is over: the next one's orders are handed over once what
+    /// it did has been shown. What happened is kept, to be shown to the
+    /// people who did not watch (hotseat).
+    fn play_round(&mut self, now_ms: u64) {
+        if !std::mem::replace(&mut self.round_live, true) {
+            self.round_shown.clear();
+            self.round_seen = self.last_person.into_iter().collect();
+        }
+        while self.screen.game.playing_out() {
+            self.screen.game.play_out();
+            let happened = self.screen.game.take_happened();
+            self.round_shown.push(happened.clone());
+            self.together = true;
+            self.see_what(happened);
+            self.together = false;
+            if !self.screen.game.playing_out() {
+                self.round_live = false;
+                self.last_play = Some(now_ms);
+                if self.showing.is_idle() {
+                    self.turn_passed();
+                } else {
+                    self.pass_due = true;
+                }
+                return;
+            }
+            if !self.showing.is_idle() {
+                return;
+            }
+        }
+    }
+
+    /// In rounds and hotseat: the person whose orders begin is shown what
+    /// happened as the last round played out, if they did not watch it
+    /// (the stacks they see that are still there, going; their battles).
+    fn show_last_round(&mut self) {
+        let side = self.screen.game.player();
+        if !self.persons_turn() || self.round_seen.contains(&side) || self.round_shown.is_empty() {
+            return;
+        }
+        self.round_seen.push(side);
+        self.see();
+        self.showing.finish_moves();
+        self.together = true;
+        for tick in self.round_shown.clone() {
+            self.show_happened(tick, None);
+        }
+        self.together = false;
+    }
+
     /// Play the computer's turns now, up to a person's (a turn at most, once
     /// nobody here is in the game): what the frames do a turn at a time. For
     /// tests and scripts.
@@ -900,11 +982,22 @@ impl Session {
         // (Nothing is shown: what was being shown is where it went.)
         self.stop_showing();
         for _ in 0..self.screen.game.order().len() + 1 {
+            // (In rounds: the round plays out, all of it.)
+            if self.screen.game.playing_out() {
+                while self.screen.game.playing_out() {
+                    self.screen.game.play_out();
+                }
+                self.round_live = false;
+                self.turn_passed();
+            }
             let before = (self.screen.game.player(), self.screen.game.turn());
             if self.cover.is_some() || self.persons_turn() {
                 break;
             }
             self.play_one();
+            if self.screen.game.playing_out() {
+                continue;
+            }
             if (self.screen.game.player(), self.screen.game.turn()) == before || !self.people_in_play() {
                 break;
             }
@@ -977,6 +1070,13 @@ impl Session {
             if let Some(capital) = self.screen.game.capital(side) {
                 self.screen.game.deselect();
                 self.look_at(capital);
+            }
+        }
+        // In rounds, the same person's next orders: the map is where they
+        // left it (the round that played out took it to what happened).
+        if person {
+            if let Some([x, y]) = self.looked.take().filter(|_| self.last_person == Some(side)) {
+                self.screen.view.set_middle(x, y);
             }
         }
         if person {
@@ -1199,6 +1299,11 @@ impl Session {
     /// it changed (the cities' holders, the land seen).
     fn see(&mut self) {
         let happened = self.screen.game.take_happened();
+        self.see_what(happened);
+    }
+
+    /// As `see`, with what happened (`Game::take_happened`) already taken.
+    fn see_what(&mut self, happened: Vec<(Option<usize>, Event)>) {
         let game = &self.screen.game;
         let key = (game.map.revision(), game.turn(), self.seer(), game.player());
         if self.sight_of == Some(key) {
@@ -1237,7 +1342,8 @@ impl Session {
         let before = before.as_ref().unwrap_or(&self.sight);
         // An order of the person's own, in their turn: what was being shown
         // of the moves before is where it went (the battles still play).
-        if self.can_act() {
+        // (Not between the ticks of a round shown again: `show_last_round`.)
+        if self.can_act() && !self.together {
             self.showing.finish_moves();
         }
         let seer = self.seer();
@@ -1276,6 +1382,19 @@ impl Session {
         if shown.iter().any(|s| matches!(s, Shown::Going(_))) {
             self.shown_sight = None;
         }
+        // In rounds, a tick of the round that plays out: its stacks go at
+        // the same moment (those between two battles, together).
+        if self.together {
+            let mut ticks: Vec<Shown> = Vec::new();
+            for next in shown {
+                match (ticks.last_mut(), next) {
+                    (Some(Shown::Together(all)), Shown::Going(going)) => all.push(going),
+                    (_, Shown::Going(going)) => ticks.push(Shown::Together(vec![going])),
+                    (_, other) => ticks.push(other),
+                }
+            }
+            shown = ticks;
+        }
         for shown in shown {
             self.showing.push(shown, before);
         }
@@ -1287,9 +1406,23 @@ impl Session {
     fn show(&mut self, now_ms: u64) {
         loop {
             match self.showing.tick(now_ms) {
-                Now::Idle | Now::Going(None) => break,
+                Now::Idle | Now::Going(None) | Now::Together(None) => break,
                 Now::Going(Some(way)) => {
                     if !self.can_act() {
+                        self.bring_into_view(&way);
+                    }
+                    break;
+                }
+                // Stacks going together: the map goes to the person's own,
+                // if none of them is in view; with none of theirs going, to
+                // another's they see, if none of those is in view.
+                Now::Together(Some((own, others))) => {
+                    let sight = self.shown_sight.as_ref().map_or(&self.sight, |(s, _)| s);
+                    let view = &self.screen.view;
+                    let in_view = |way: &Vec<Hex>| way.iter().any(|h| sight.sees(*h) && view.shows(*h));
+                    let ways = if own.is_empty() { &others } else { &own };
+                    let lead = ways.iter().find(|way| way.iter().any(|h| sight.sees(*h))).cloned();
+                    if let (false, false, Some(way)) = (self.can_act(), ways.iter().any(in_view), lead) {
                         self.bring_into_view(&way);
                     }
                     break;
@@ -1450,6 +1583,7 @@ impl Session {
     fn refresh(&mut self) {
         self.see();
         self.forget_stale_questions();
+        self.plan_ways();
         let game = &self.screen.game;
         let map = &game.map;
         let status = info::cursor_line_for(game, &self.sight);
@@ -1513,6 +1647,12 @@ impl Session {
             }
             _ if self.notice.is_some() => self.notice.clone().unwrap_or_default(),
             Some(unit) if unit.on_duty() => info::duty_line(map, unit, game.selection().len()),
+            Some(unit) if !unit.route.is_empty() && unit.planned => {
+                format!(
+                    "Planned: to {} as the round plays out (another click: another plan; F: stay).",
+                    info::route_words_to(map, &unit.route, None)
+                )
+            }
             Some(unit) if !unit.route.is_empty() && game.selection().len() == 1 => {
                 format!(
                     "{} (on the way to {})",
@@ -1612,9 +1752,14 @@ impl Session {
         let theirs = person && game.winner().is_none();
         let label = match side {
             _ if game.winner().is_some() => "Game over".to_string(),
+            Side::Grey if game.playing_out() => "The round plays out".to_string(),
             Side::Grey => "End turn".to_string(),
             _ if !person => format!("Waiting for {}", side_name(side)),
             _ if self.between => "Start turn".to_string(),
+            // (In rounds a side says its orders are done: the round plays
+            // out once every side has.)
+            _ if game.rounds() && stacks + cities > 0 => format!("Orders done ({})", stacks + cities),
+            side if game.rounds() => format!("{}'s orders done", self::title(side_name(side))),
             // What still waits for orders, counted.
             _ if stacks + cities > 0 => format!("End turn ({})", stacks + cities),
             side => format!("End {}'s turn", side_name(side)),
@@ -2219,6 +2364,24 @@ impl Session {
         open.iter().enumerate().fold(0, |bits, (i, open)| bits | (u32::from(*open) << i))
     }
 
+    /// In rounds: the ways the person's stacks take as the round plays out
+    /// (`Game::ways_this_round`), worked out again when the map changed or
+    /// the person did.
+    fn plan_ways(&mut self) {
+        let game = &self.screen.game;
+        if !game.rounds() || !self.persons_turn() || self.cover.is_some() {
+            if self.plans_of.take().is_some() {
+                self.plans.clear();
+            }
+            return;
+        }
+        let key = (game.map.revision(), game.player());
+        if self.plans_of != Some(key) {
+            self.plans = game.ways_this_round(key.1);
+            self.plans_of = Some(key);
+        }
+    }
+
     /// The window that asks about a stack's orders goes once it is not the
     /// question: the selection is another, a pick is under way, or another
     /// window has opened over it. And the screen's choice of a stack is
@@ -2435,10 +2598,19 @@ impl Session {
             self.pass_due = false;
             self.turn_passed();
         }
-        let due = self.last_play.is_none_or(|last| now_ms >= last.saturating_add(COMPUTER_TURN_MS));
+        // (In rounds the computer's orders are plans: there is nothing to
+        // follow before the round plays out, and nothing to wait for.)
+        let rounds = self.screen.game.rounds();
+        let due = rounds || self.last_play.is_none_or(|last| now_ms >= last.saturating_add(COMPUTER_TURN_MS));
         let idle = self.showing.is_idle() && !self.pass_due;
-        if !self.persons_turn() && self.cover.is_none() && due && idle {
-            if self.options.show_moves {
+        if self.screen.game.playing_out() {
+            // In rounds: the round plays out, a tick shown before the next.
+            if self.cover.is_none() && idle {
+                self.play_round(now_ms);
+                self.show(now_ms);
+            }
+        } else if !self.persons_turn() && self.cover.is_none() && due && idle {
+            if self.options.show_moves && !rounds {
                 self.play_steps(now_ms);
                 self.show(now_ms);
             } else {
@@ -2535,6 +2707,18 @@ impl Session {
             }
             // Onto a temple: does the stack seek its blessing? (Options: it
             // does, unasked.)
+            // In rounds, a plan: nothing has moved.
+            SelectOutcome::Moved { .. } if self.screen.game.rounds() => {
+                self.notice = Some(
+                    "Planned: they go there as the round plays out, and attack who stands there (Ctrl+Z: not after \
+                     all)."
+                        .to_string(),
+                );
+                let game = &self.screen.game;
+                let at = sent.iter().find_map(|id| game.map.units().get(*id)).map_or(hex, |u| u.pos());
+                self.shown = at;
+                self.after_move(at, &sent);
+            }
             SelectOutcome::Moved { .. } => {
                 if self.options.always_bless {
                     self.bless_unasked(hex);
@@ -2875,8 +3059,12 @@ impl Session {
         if let Some(winner) = game.winner() {
             return format!("{} has won.", title(side_name(winner)));
         }
+        if game.playing_out() {
+            return "The round plays out...".to_string();
+        }
         if !self.persons_turn() && side != Side::Grey {
-            return format!("{} is playing...", title(side_name(side)));
+            let does = if game.rounds() { "gives its orders" } else { "is playing" };
+            return format!("{} {does}...", title(side_name(side)));
         }
         if self.between { "Your turn: press Start turn when you are ready.".to_string() } else { String::new() }
     }
@@ -3625,6 +3813,7 @@ impl Session {
                     } else {
                         self.begin_orders();
                     }
+                    self.show_last_round();
                 }
             }
             self.refresh();
@@ -3991,6 +4180,11 @@ impl Scene for Session {
         }
         let game = &self.screen.game;
         let unit = game.selected().and_then(|id| game.map.units().get(id));
+        // In rounds: the ways the person's stacks take as the round plays
+        // out (a patrol selected: its waypoints).
+        if game.rounds() && unit.is_none_or(|u| u.patrol.is_none()) {
+            return &self.plans;
+        }
         unit.map_or(&[], |u| u.patrol.as_ref().map_or(u.route.as_slice(), |p| p.stops.as_slice()))
     }
 

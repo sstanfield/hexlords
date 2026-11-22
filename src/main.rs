@@ -5,6 +5,8 @@
 //!   side; the computer plays the others);
 //! - `--players red=person,blue=simple`: who plays which side (`person`, or an
 //!   agent: `passive`, `simple`, `cmd:<program>`);
+//! - `--mode turns|rounds`: the sides play one after the other (turns), or
+//!   all give their orders and the round plays out at once (rounds);
 //! - `--order fixed|drawn`: the sides play in the same order each round, or
 //!   one drawn anew; `--seed <n>`: the seed of the game's chance (without
 //!   it, one from the clock in a window, each game its own; 1 headless, or
@@ -40,7 +42,7 @@ use hexlords::headless;
 use hexlords::new_game::COMPUTER;
 use hexlords::script;
 use hexlords::session::Session;
-use hexlords::setup::{Controller, Fog, Setup, TurnOrder};
+use hexlords::setup::{Controller, Fog, Mode, Setup, TurnOrder};
 use hexlords::shell::Shell;
 use hexlords::state::combat::{Exact, MAX_CHANCE, System};
 
@@ -54,6 +56,8 @@ struct Args {
     script: Option<String>,
     /// `--players <side>=<who>,...`
     players: Option<String>,
+    /// `--mode turns|rounds`
+    mode: Option<Mode>,
     /// `--order fixed|drawn`
     order: Option<TurnOrder>,
     seed: Option<u64>,
@@ -72,7 +76,7 @@ struct Args {
 
 fn usage() -> String {
     format!(
-        "usage: hexlords [--map <file.map or map directory>] [--players <side>=<person|agent>,...] [--order fixed|drawn] \
+        "usage: hexlords [--map <file.map or map directory>] [--players <side>=<person|agent>,...] [--mode turns|rounds] [--order fixed|drawn] \
          [--seed <n>] [--chance <0-10>] [--battles lines|strength|dice] [--dice-exact hits|misses|defenders] [--wounds] [--blows-back] [--cap <n>] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] \
          [--log]] \
          [--script <steps>] {OPTIONS_USAGE}"
@@ -91,6 +95,13 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--map" => parsed.map = Some(PathBuf::from(value("a map")?)),
             "--script" => parsed.script = Some(value("steps")?),
             "--players" => parsed.players = Some(value("who plays which side")?),
+            "--mode" => {
+                parsed.mode = Some(match value("turns or rounds")?.as_str() {
+                    "turns" => Mode::Turns,
+                    "rounds" => Mode::Rounds,
+                    other => return Err(format!("--mode: \"{other}\" is not turns or rounds")),
+                })
+            }
             "--order" => {
                 parsed.order = Some(match value("fixed or drawn")?.as_str() {
                     "fixed" => TurnOrder::Fixed,
@@ -160,6 +171,7 @@ fn main() {
         map,
         script,
         players,
+        mode,
         order,
         seed,
         headless,
@@ -205,6 +217,7 @@ fn main() {
                     std::process::exit(2);
                 }
             }
+            setup.mode = mode.unwrap_or(setup.mode);
             setup.order = order.unwrap_or(setup.order);
             // (A script or a screenshot is to show the same game each time.)
             let again = headless || script.is_some() || window.screenshot.is_some();
@@ -314,6 +327,9 @@ mod tests {
         assert_eq!((o.players.as_deref(), o.order, o.seed), (Some("red=simple"), Some(TurnOrder::Drawn), Some(9)));
         let o = parse(&["--rounds", "5", "--log", "--order", "fixed"]).unwrap();
         assert_eq!((o.rounds, o.log, o.order), (Some(5), true, Some(TurnOrder::Fixed)));
+        assert_eq!(parse(&["--mode", "rounds"]).unwrap().mode, Some(Mode::Rounds));
+        assert_eq!((parse(&["--mode", "turns"]).unwrap().mode, parse(&[]).unwrap().mode), (Some(Mode::Turns), None));
+        assert_eq!(parse(&["--mode", "both"]).unwrap_err(), "--mode: \"both\" is not turns or rounds");
         assert_eq!(parse(&["--order", "sometimes"]).unwrap_err(), "--order: \"sometimes\" is not fixed or drawn");
         assert_eq!(parse(&["--seed", "x"]).unwrap_err(), "--seed: \"x\" is not a number");
         assert_eq!(parse(&["--rounds"]).unwrap_err(), "--rounds needs a number");

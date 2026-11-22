@@ -64,9 +64,15 @@ impl Going {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Shown {
     Going(Going),
+    /// Stacks going at the same moment (in rounds: a tick of the round that
+    /// plays out).
+    Together(Vec<Going>),
     /// The battle of the history's record: played out in its window.
     Battle(usize),
 }
+
+/// The ways of stacks going together, a way each.
+pub type Ways = Vec<Vec<Hex>>;
 
 /// What the screen shows now (`Showing::tick`).
 #[derive(Clone, Debug, PartialEq)]
@@ -76,9 +82,22 @@ pub enum Now {
     /// A stack going; the way, if it has just set off (for the screen to
     /// bring it into view).
     Going(Option<Vec<Hex>>),
+    /// Stacks going together; their ways, if they have just set off: the
+    /// person's own stacks', and the others'.
+    Together(Option<(Ways, Ways)>),
     /// A battle, until the screen says it is over (`Showing::battle_over`);
     /// true the first time (to open its window).
     Battle(usize, bool),
+}
+
+/// The stacks a thing shown has going: one, several together, or none (a
+/// battle).
+fn goings(shown: &Shown) -> &[Going] {
+    match shown {
+        Shown::Going(going) => std::slice::from_ref(going),
+        Shown::Together(all) => all,
+        Shown::Battle(_) => &[],
+    }
 }
 
 /// The stacks and battles to be shown, and the one shown now.
@@ -114,7 +133,7 @@ impl Showing {
     /// order); the battles to be shown are still to be.
     pub fn finish_moves(&mut self) {
         self.queue.retain(|shown| matches!(shown, Shown::Battle(_)));
-        if matches!(self.current, Some((Shown::Going(_), _))) {
+        if matches!(self.current, Some((Shown::Going(_) | Shown::Together(_), _))) {
             self.current = None;
         }
         self.before = None;
@@ -124,7 +143,7 @@ impl Showing {
     /// True if `unit` is shown going, or is still to be.
     pub fn goes(&self, unit: UnitId) -> bool {
         let current = self.current.iter().map(|(shown, _)| shown);
-        current.chain(&self.queue).any(|shown| matches!(shown, Shown::Going(going) if going.units.contains(&unit)))
+        current.chain(&self.queue).flat_map(goings).any(|going| going.units.contains(&unit))
     }
 
     /// True while what the person is shown to know is not what they know
@@ -166,6 +185,16 @@ impl Showing {
                     }
                     self.current = None;
                 }
+                Some((Shown::Together(all), since)) => {
+                    let length = all.iter().map(Going::length_ms).max().unwrap_or(0);
+                    if now_ms.saturating_sub(*since) < length {
+                        let ways = |own: bool| all.iter().filter(|g| g.own == own).map(|g| g.way.clone()).collect();
+                        return Now::Together(started.then(|| (ways(true), ways(false))));
+                    }
+                    let own = all.iter().filter(|g| g.own).flat_map(|g| g.way.iter().copied());
+                    self.reached.extend(own);
+                    self.current = None;
+                }
                 Some((Shown::Battle(record), _)) => return Now::Battle(*record, started),
             }
         }
@@ -185,8 +214,8 @@ impl Showing {
         let mut drawn: Vec<UnitId> = Vec::new();
         let mut out = Vec::new();
         let current = self.current.iter().map(|(shown, since)| (shown, Some(*since)));
-        for (shown, since) in current.chain(self.queue.iter().map(|shown| (shown, None))) {
-            let Shown::Going(going) = shown else { continue };
+        let all = current.chain(self.queue.iter().map(|shown| (shown, None)));
+        for (going, since) in all.flat_map(|(shown, since)| goings(shown).iter().map(move |g| (g, since))) {
             let units: Vec<UnitId> = going
                 .units
                 .iter()
@@ -211,8 +240,8 @@ impl Showing {
     /// The hexes the person's own stacks have been to so far, at `now_ms`.
     fn opened(&self, now_ms: u64) -> Vec<Hex> {
         let mut opened = self.reached.clone();
-        if let Some((Shown::Going(going), since)) = &self.current {
-            if going.own {
+        if let Some((shown, since)) = &self.current {
+            for going in goings(shown).iter().filter(|g| g.own) {
                 let (i, _) = going.at(now_ms.saturating_sub(*since));
                 opened.extend(going.way.iter().take(i + 1).copied());
             }
@@ -275,6 +304,37 @@ mod tests {
         assert!(showing.goes(unit), "on its way");
         showing.tick(1000 + STEP_MS);
         assert!(!showing.goes(unit), "there");
+    }
+
+    /// In rounds, a tick: its stacks go at the same moment, the person's
+    /// own and the others', and the land opens as the person's go.
+    #[test]
+    fn stacks_shown_together_go_at_the_same_moment() {
+        let mut showing = Showing::default();
+        let own = going(&[(5, 5), (5, 6)]);
+        let other = Going {
+            units: vec![UnitId { side: Side::Blue, index: 0, generation: 0 }],
+            side: Side::Blue,
+            way: vec![Hex::new(9, 9), Hex::new(9, 10)],
+            own: false,
+        };
+        let (mine, theirs) = (own.units[0], other.units[0]);
+        showing.push(Shown::Together(vec![other.clone(), own.clone()]), &Sight::all());
+        showing.push(Shown::Battle(3), &Sight::all());
+        assert!(showing.goes(mine) && showing.goes(theirs));
+        // It sets off: the ways, the person's own apart.
+        let ways = Some((vec![own.way.clone()], vec![other.way.clone()]));
+        assert_eq!(showing.tick(1000), Now::Together(ways));
+        assert_eq!(showing.tick(1000 + STEP_MS / 2), Now::Together(None), "both on their way");
+        assert_eq!(showing.opened_count(1000 + STEP_MS / 2), 1);
+        // Both there at once: the next thing.
+        assert_eq!(showing.tick(1000 + STEP_MS), Now::Battle(3, true));
+        assert!(!showing.goes(mine) && !showing.goes(theirs));
+        assert_eq!(showing.opened_count(1000 + STEP_MS), 2, "the person's own way, opened");
+        // An order of the person's cuts a tick short, as a move.
+        showing.push(Shown::Together(vec![own]), &Sight::all());
+        showing.finish_moves();
+        assert!(!showing.goes(mine));
     }
 
     #[test]

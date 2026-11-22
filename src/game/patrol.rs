@@ -82,6 +82,11 @@ impl Game {
                 unit.patrol = Some(patrol.clone());
             }
         }
+        // In rounds they go as the round plays out.
+        if self.rounds() {
+            self.undo = Some(Undo::Ordered { goals: before });
+            return Ok(Vec::new());
+        }
         self.undo = None;
         let events = self.patrol_step(side, units);
         let still = events.iter().all(|e| matches!(e, Event::Stalled { .. }));
@@ -132,6 +137,10 @@ impl Game {
         }
         for id in units {
             if let Some(unit) = self.map.unit_mut(*id) {
+                // (A round's plan of the computer's for them goes with it.)
+                if unit.planned {
+                    unit.route.clear();
+                }
                 unit.stand_down();
                 if on {
                     (unit.route, unit.bound, unit.stalled, unit.defending) = (Vec::new(), None, false, false);
@@ -178,7 +187,9 @@ impl Game {
             }
         }
         let mut events = Vec::new();
-        for ids in self.patrol_stacks(side, &alarmed) {
+        // (In rounds it goes on as the round plays out.)
+        let stacks = if self.rounds() { Vec::new() } else { self.patrol_stacks(side, &alarmed) };
+        for ids in stacks {
             events.extend(self.patrol_step(side, &ids));
         }
         if !events.is_empty() {
@@ -239,7 +250,7 @@ impl Game {
 
     /// Those of `ids` (`side`'s) that patrol, by stack: the units of a hex on
     /// the same patrol.
-    fn patrol_stacks(&self, side: Side, ids: &[UnitId]) -> Vec<Vec<UnitId>> {
+    pub(super) fn patrol_stacks(&self, side: Side, ids: &[UnitId]) -> Vec<Vec<UnitId>> {
         let map = &self.map;
         let mut stacks: Vec<(Hex, &Patrol, Vec<UnitId>)> = Vec::new();
         for unit in ids.iter().filter_map(|id| map.units().get(*id)) {
@@ -357,6 +368,24 @@ impl Game {
     /// fought; those who live keep their patrol, and wait for their player's
     /// word.
     fn patrol_attack(&mut self, side: Side, ids: &[UnitId], patrol: &Patrol) -> Option<Vec<Event>> {
+        let target = self.patrol_prey(side, ids, patrol)?;
+        let sight = self.sight(side);
+        let group = self.group(ids).ok()?;
+        let coming = self.coming(&group, target, &sight);
+        if coming.is_empty() {
+            return None;
+        }
+        let events = self.move_units(side, &coming, target).ok()?;
+        self.keep_patrol(&coming, patrol, true);
+        self.undo = None;
+        Some(events)
+    }
+
+    /// The stack a patrolling stack of `side` (`ids`, on one hex) attacks,
+    /// if its patrol attacks: of the other sides' stacks it sees and can
+    /// reach now (not nobody's), the one it is likeliest to beat (the
+    /// nearest, of two alike), if the odds are its least or better.
+    fn patrol_prey(&self, side: Side, ids: &[UnitId], patrol: &Patrol) -> Option<Hex> {
         let least = patrol.attack?;
         let at = self.map.units().get(*ids.first()?)?.pos();
         let sight = self.sight(side);
@@ -376,15 +405,70 @@ impl Game {
             .filter_map(|h| self.battle_odds(ids, h).map(|odds| (odds, h)))
             .filter(|(odds, _)| *odds >= least)
             .max_by_key(|(odds, h)| (*odds, Reverse(at.distance(*h)), Reverse((h.row, h.col))))?;
-        let group = self.group(ids).ok()?;
-        let coming = self.coming(&group, target, &sight);
-        if coming.is_empty() {
-            return None;
+        Some(target)
+    }
+
+    /// In rounds, as the round plays out: a patrolling stack of `side`
+    /// (`ids`, on one hex) takes this tick's step, a hex: toward a stack it
+    /// attacks (`patrol_prey`; the step into it is the attack), else toward
+    /// its next waypoint, on from one at once; never into another side's
+    /// units it sees but those it attacks (one it does not see is met, in a
+    /// battle). With no step to take it waits (the round's end says if it
+    /// is stopped short). After a battle it waits for its player's word.
+    pub(super) fn patrol_tick(&mut self, side: Side, ids: &[UnitId], stepped: &mut Vec<UnitId>) -> Vec<Event> {
+        let mut events = Vec::new();
+        let mut ids = ids.to_vec();
+        for _ in 0..PATROL_LEGS {
+            let units: Vec<&Unit> = ids.iter().filter_map(|id| self.map.units().get(*id)).collect();
+            let Some(first) = units.first() else { break };
+            let Some(patrol) = first.patrol.clone() else { break };
+            let at = first.pos();
+            ids = units.iter().filter(|u| u.pos() == at).map(|u| u.id()).collect();
+            let to = patrol.target();
+            if at == to {
+                // A waypoint: on to the next at once.
+                let mut next = patrol;
+                next.advance();
+                self.keep_patrol(&ids, &next, false);
+                continue;
+            }
+            let prey = self.patrol_prey(side, &ids, &patrol);
+            let Ok(group) = self.group(&ids) else { break };
+            let Some((lead, table)) = group.lead(&self.map) else { break };
+            if lead.movement == 0 {
+                break;
+            }
+            let sight = self.sight(side);
+            let way = self.known_path_by(lead, table, prey.unwrap_or(to), u32::MAX, &sight);
+            let Some((hex, cost)) = way.and_then(|way| way.first().copied()) else { break };
+            if cost > lead.movement {
+                break;
+            }
+            let foe = hostile(&self.map, side, hex);
+            if foe && sight.sees(hex) && prey != Some(hex) {
+                break;
+            }
+            if !foe && !self.fits(hex, &ids) {
+                break;
+            }
+            let coming = self.coming(&group, hex, &sight);
+            if coming.is_empty() {
+                break;
+            }
+            let Ok(moved) = self.move_units(side, &coming, hex) else { break };
+            let met = moved.iter().any(|e| matches!(e, Event::Battle { .. }));
+            events.extend(moved);
+            // The move ended their patrol: they keep it.
+            self.keep_patrol(&coming, &patrol, met);
+            for id in &coming {
+                if let Some(unit) = self.map.unit_mut(*id) {
+                    unit.moved = false;
+                }
+            }
+            stepped.extend(coming);
+            break;
         }
-        let events = self.move_units(side, &coming, target).ok()?;
-        self.keep_patrol(&coming, patrol, true);
-        self.undo = None;
-        Some(events)
+        events
     }
 
     /// `ids` patrol `patrol` (and are not stopped short); `fought`: they

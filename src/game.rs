@@ -19,6 +19,7 @@ use crate::state::{
 };
 
 mod patrol;
+mod rounds;
 
 /// The agent that passes its turns: the computer's, when nothing else is said.
 pub const PASSIVE: &str = "passive";
@@ -210,7 +211,8 @@ pub struct Ghost {
 
 /// What a unit is doing about a standing order, for an undo: its route,
 /// whether it has stalled, has moved this turn, defends, was put aside; its
-/// patrol, whether it marauds, whether it fought on either.
+/// patrol, whether it marauds, whether it fought on either; whether its
+/// route is a round's plan.
 #[derive(Clone, Debug)]
 struct MarchState {
     route: Vec<Hex>,
@@ -222,6 +224,7 @@ struct MarchState {
     patrol: Option<crate::state::Patrol>,
     marauding: bool,
     fought: bool,
+    planned: bool,
 }
 
 impl MarchState {
@@ -236,6 +239,7 @@ impl MarchState {
             patrol: unit.patrol.clone(),
             marauding: unit.marauding,
             fought: unit.fought,
+            planned: unit.planned,
         }
     }
 
@@ -243,6 +247,7 @@ impl MarchState {
         (unit.route, unit.bound, unit.stalled, unit.moved, unit.defending, unit.done) =
             (self.route, self.bound, self.stalled, self.moved, self.defending, self.done);
         (unit.patrol, unit.marauding, unit.fought) = (self.patrol, self.marauding, self.fought);
+        unit.planned = self.planned;
     }
 }
 
@@ -582,6 +587,8 @@ pub struct Game {
     /// The sides that are out, in the order they went.
     out: Vec<Side>,
     winner: Option<Side>,
+    /// In rounds, while a round plays out (`play_out`): how far it has got.
+    playing: Option<rounds::PlayOut>,
 }
 
 impl Game {
@@ -621,6 +628,7 @@ impl Game {
             held: vec![Vec::new(); NUM_SIDES + 1],
             explored: vec![Vec::new(); NUM_SIDES + 1],
             winner: None,
+            playing: None,
             undo: None,
             undo_mark: 0,
             history: Vec::new(),
@@ -638,8 +646,13 @@ impl Game {
         game
     }
 
-    /// The side whose turn it is (on a map without sides, nobody's).
+    /// The side whose turn it is (on a map without sides, nobody's): in
+    /// rounds, the side that gives its orders now, and nobody while the
+    /// round plays out (`playing_out`).
     pub fn player(&self) -> Side {
+        if self.playing.is_some() {
+            return Side::Grey;
+        }
         self.order.get(self.current).copied().unwrap_or(Side::Grey)
     }
 
@@ -748,15 +761,25 @@ impl Game {
 
     /// Carry out an order of the side whose turn it is, or say why not. The
     /// one way the game goes on: a person's clicks and the computer's agents
-    /// both come here.
+    /// both come here. (In rounds, an order to move is a plan, carried out
+    /// when the round plays out: `game::rounds`.)
     pub fn apply(&mut self, order: Order) -> Result<Vec<Event>, String> {
         if let Some(side) = self.winner {
             return Err(format!("the game is over: {} won", side_name(side)));
+        }
+        if self.playing.is_some() {
+            return Err("the round is playing out".to_string());
         }
         let side = self.player();
         let last = self.undo.take();
         if order == Order::Undo {
             return self.take_back(side, last);
+        }
+        // In rounds, a side that has done gives way to the next, or the
+        // round plays out: it keeps what happens itself, side by side.
+        if order == Order::EndTurn && self.rounds() {
+            self.fought.clear();
+            return Ok(self.end_planning());
         }
         let (round, mark) = (self.round, self.history.len());
         // Being done with units changes nothing to take back: the order
@@ -854,6 +877,9 @@ impl Game {
 
     fn carry_out(&mut self, side: Side, order: Order) -> Result<Vec<Event>, String> {
         match order {
+            Order::Move { units, to } if self.rounds() => self.plan(side, &units, to, true, false),
+            Order::Toward { units, to } if self.rounds() => self.plan(side, &units, to, false, false),
+            Order::Roam { units, to } if self.rounds() => self.plan(side, &units, to, true, true),
             Order::Move { units, to } => self.move_units(side, &units, to),
             Order::Toward { units, to } => {
                 // The way of the slowest; whoever can get as far comes along
@@ -932,6 +958,11 @@ impl Game {
                         unit.stand_down();
                     }
                 }
+                // In rounds they go as the round plays out.
+                if self.rounds() {
+                    self.undo = Some(Undo::Ordered { goals: before });
+                    return Ok(Vec::new());
+                }
                 // This turn's step, as the march would, a stack (the units of a
                 // hex) at a time.
                 let mut groups: Vec<(Hex, Vec<UnitId>)> = Vec::new();
@@ -968,7 +999,7 @@ impl Game {
                 for id in &units {
                     if let Some(unit) = self.map.unit_mut(*id) {
                         unit.defending = on;
-                        if on {
+                        if on || unit.planned {
                             (unit.route, unit.bound, unit.stalled) = (Vec::new(), None, false);
                             unit.stand_down();
                         }
@@ -1467,7 +1498,7 @@ impl Game {
         for id in ids {
             if let Some(unit) = self.map.unit_mut(*id) {
                 unit.moved = true;
-                (unit.route, unit.bound, unit.stalled) = (Vec::new(), None, false);
+                (unit.route, unit.bound, unit.stalled, unit.planned) = (Vec::new(), None, false, false);
                 unit.stand_down();
             }
         }
