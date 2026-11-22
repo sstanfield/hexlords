@@ -292,6 +292,12 @@ mod tests {
         // The canvas is the one gl.js looks for, and the files are the ones
         // `build` writes beside the page.
         assert!(PAGE.contains("<canvas id=\"glcanvas\" tabindex=\"1\">"));
+        // The canvas is opaque: the page does not show through where the
+        // game draws with less than full alpha (land in the fog of war
+        // did, with the page's loading note under it), and the wrapper is
+        // in place before the loader asks for its context.
+        let (opaque, loader) = (PAGE.find("alpha: false").unwrap(), PAGE.find("<script src=\"gl.js\">").unwrap());
+        assert!(PAGE.contains("canvas.getContext = function") && opaque < loader);
         assert!(PAGE.contains("<script src=\"gl.js\"></script>"));
         assert!(PAGE.contains("load(\"hexlords.wasm\")"));
         // The right button is the game's.

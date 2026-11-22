@@ -74,10 +74,23 @@
             note.textContent = text;
             note.className = "wrong";
         }
-        // The game moves its map with the right button: no menu there.
-        document.getElementById("glcanvas").addEventListener("contextmenu", function (event) {
-            event.preventDefault();
-        });
+        // (In a block of its own: the loader has a `canvas` too.)
+        {
+            const canvas = document.getElementById("glcanvas");
+            // The game moves its map with the right button: no menu there.
+            canvas.addEventListener("contextmenu", function (event) {
+                event.preventDefault();
+            });
+            // What the game draws is all there is to see, as in a window:
+            // the loader asks for a canvas with no options, which the page
+            // shows through wherever the game drew with less than full
+            // alpha (land dimmed by the fog of war let the note below show
+            // through it).
+            const context = canvas.getContext.bind(canvas);
+            canvas.getContext = function (kind, options) {
+                return context(kind, Object.assign({ alpha: false }, options));
+            };
+        }
         // A panic in the game stops it: say so (the console has the words).
         window.addEventListener("error", function (event) {
             wrong("Hexlords stopped: " + (event.message || "an error") + ". The browser's console says more; " +
