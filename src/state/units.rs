@@ -256,6 +256,12 @@ impl Unit {
             .saturating_add(blessed.saturating_mul(Blessing::STRENGTH))
     }
 
+    /// What it fights with now, before its stack, the ground and the walls:
+    /// its power, or, wounded, half of it, rounded up (`combat::wounded`).
+    pub fn fighting_power(&self) -> u32 {
+        if self.wounds > 0 { super::combat::wounded(self.power()) } else { self.power() }
+    }
+
     /// Where its standing order takes it now: the first stop of its route.
     pub fn goto(&self) -> Option<Hex> {
         self.route.first().copied()

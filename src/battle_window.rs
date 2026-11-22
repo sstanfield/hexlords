@@ -97,14 +97,14 @@ fn title(side: crate::state::Side) -> String {
     chars.next().map_or(String::new(), |c| c.to_uppercase().chain(chars).collect())
 }
 
-/// What a side brings to a battle, in a line: how many, and where its
-/// bonuses come from.
 /// The hits each unit came to the battle with (wounds that last), the
 /// attackers' and the defenders'.
 fn wounds(fight: &Fight) -> [Vec<u32>; 2] {
     [&fight.attackers, &fight.defenders].map(|units| units.iter().map(|u| u.wounds).collect())
 }
 
+/// What a side brings to a battle, in a line: how many, and where its
+/// bonuses come from.
 fn side_line(fight: &Fight, defending: bool) -> String {
     let (side, units) = if defending { (fight.defender, &fight.defenders) } else { (fight.attacker, &fight.attackers) };
     let who = if side == crate::state::Side::Grey { "Nobody's".to_string() } else { title(side) };
@@ -354,25 +354,33 @@ impl BattleWindow {
             let side = if which == ATTACKERS { self.fight.attacker } else { self.fight.defender };
             if side == crate::state::Side::Grey { "nobody".to_string() } else { side_name(side).to_string() }
         };
-        let (which, i) = (if blow.hit_attacker { ATTACKERS } else { DEFENDERS }, blow.unit);
+        let hit_side = if blow.hit_attacker { ATTACKERS } else { DEFENDERS };
+        let (which, i) = (hit_side, blow.unit);
         let hit = format!("{}'s {}", whose(which), unit(which, i).map_or("", |u| u.name.as_str()));
         let dead = self.hits[which].get(i).is_some_and(|h| *h >= HITS);
         let fate = if dead { format!("{}: out of the battle.", capital(&hit)) } else { format!("A hit on {hit}.") };
+        // The hits each had before this blow, and what it fought with then
+        // (once wounded, less: wounds that last).
+        let before = |which: usize, i: usize| {
+            let now = self.hits[which].get(i).copied().unwrap_or(0);
+            now.saturating_sub(u32::from(which == hit_side && i == blow.unit))
+        };
+        let with = |which: usize, i: usize, u: &Combatant| if before(which, i) > 0 { u.hurt } else { u.quarters };
         let fought = match (blow.attacker, blow.defender) {
             (Some(a), Some(d)) => {
-                let name = |which: usize, u: Option<&Combatant>| {
-                    u.map_or(String::new(), |u| format!("{}'s {} ({})", whose(which), u.name, points(u.quarters)))
+                let name = |which: usize, i: usize| {
+                    unit(which, i).map_or(String::new(), |u| {
+                        format!("{}'s {} ({})", whose(which), u.name, points(with(which, i, u)))
+                    })
                 };
-                format!(
-                    "{} against {}.",
-                    capital(&name(ATTACKERS, unit(ATTACKERS, a))),
-                    name(DEFENDERS, unit(DEFENDERS, d))
-                )
+                format!("{} against {}.", capital(&name(ATTACKERS, a)), name(DEFENDERS, d))
             }
             _ => {
-                // By strength: the stacks' totals, of those still standing.
+                // By strength: the stacks' totals, of those standing when it
+                // was fought.
                 let total = |which: usize, units: &[Combatant]| -> u32 {
-                    units.iter().enumerate().filter(|(i, _)| self.hits[which][*i] < HITS).map(|(_, u)| u.quarters).sum()
+                    let standing = |(i, _): &(usize, &Combatant)| before(which, *i) < HITS;
+                    units.iter().enumerate().filter(standing).map(|(i, u)| with(which, i, u)).sum()
                 };
                 let (a, d) = (total(ATTACKERS, &self.fight.attackers), total(DEFENDERS, &self.fight.defenders));
                 format!("{} {} against {} {}.", capital(&whose(ATTACKERS)), points(a), whose(DEFENDERS), points(d))

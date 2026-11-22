@@ -15,7 +15,7 @@ use super::units::UnitId;
 pub const DEFAULT_CHANCE: u8 = 5;
 pub const MAX_CHANCE: u8 = 10;
 /// How many hits a unit takes in a battle before it dies. (It is whole again
-/// after the battle, if it lives.)
+/// after the battle, if it lives, unless wounds last: `Rules::wounds`.)
 pub const HITS: u32 = 2;
 /// A battle ends after this many exchanges whatever happens (it never needs
 /// them: every exchange is a hit).

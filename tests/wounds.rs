@@ -4,13 +4,18 @@
 //! turn", and a wounded unit fights at half its strength, rounded up. A
 //! choice made with the game (`combat::Rules::wounds`), off unless chosen.
 
+mod common;
+
 use hexlords::game::Game;
 use hexlords::info;
+use hexlords::options_window::Options;
 use hexlords::orders::Order;
+use hexlords::session::Session;
 use hexlords::setup::Setup;
 use hexlords::state::combat::{self, System};
 use hexlords::state::scenario::{self, Scenario};
 use hexlords::state::{Hex, Side, UnitId};
+use turbo_ferret::Size;
 
 const HOLD: Hex = Hex::new(10, 10);
 
@@ -119,4 +124,65 @@ fn a_wounded_stack_is_easier_to_beat() {
     }
     let whole = game.battle_odds(&probe, HOLD).unwrap();
     assert!(wounded > whole + 5, "{wounded} against {whole}");
+}
+
+/// The review (2026-11-21): nobody's units have no turn, so they never
+/// healed; a garrison hit once fought at half strength for the rest of the
+/// game. Theirs heal as a round ends.
+#[test]
+fn nobodys_units_heal_as_the_round_ends() {
+    let (mut game, _, _) = game(true, System::Lines, 1);
+    let kind = game.map.units().kind_named("soldiers").unwrap();
+    let grey = game.map.new_unit_of(Side::Grey, kind).unwrap();
+    game.map.place_unit(grey, Hex::new(15, 3)).unwrap();
+    game.map.unit_mut(grey).unwrap().wounds = 1;
+    game.end_turn();
+    assert_eq!(game.map.units().get(grey).unwrap().wounds, 1, "not in the round");
+    game.end_turn();
+    assert_eq!(game.turn(), 2);
+    assert_eq!(game.map.units().get(grey).unwrap().wounds, 0, "as it ends");
+}
+
+/// The review (2026-11-21): the battle window said a unit hit earlier in
+/// the battle fought whole; it fought wounded.
+#[test]
+fn the_battle_window_says_a_unit_hit_in_the_battle_fights_wounded() {
+    let mut rows = vec!["g".repeat(20); 20];
+    rows[2] = format!("{}c{}", "g".repeat(2), "g".repeat(17));
+    rows[17] = format!("{}c{}", "g".repeat(17), "g".repeat(2));
+    let terrain = format!("20\n20\n{}\n", rows.join("\n"));
+    let units = "unit soldiers\nname Soldiers\nstrength 5\nmoves 12\nenter grass 2, city 1\n\
+                 unit guard\nname Guard\nstrength 4\nmoves 12\nenter grass 2, city 1\n";
+    let cities = "city 2 2\nname Redhold\nside red\ncity 17 17\nname Bluemoor\nside blue\n";
+    let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+    let mut game = Game::from_scenario(Scenario { map, assets: None, warnings });
+    for (side, kind, hex) in [(Side::Red, "soldiers", Hex::new(10, 9)), (Side::Blue, "guard", HOLD)] {
+        let kind = game.map.units().kind_named(kind).unwrap();
+        let id = game.map.new_unit_of(side, kind).unwrap();
+        game.map.place_unit(id, hex).unwrap();
+    }
+    let mut setup = Setup::solo(&game.map, Some(Side::Red), "passive");
+    // No chance: the 5 wins every exchange; the 4, once hit, is a 2.
+    (setup.combat.chance, setup.combat.system, setup.combat.wounds) = (0, System::Lines, true);
+    let options = Options::manual();
+    let mut s =
+        Session::with_options(&common::assets(), Size::new(1024, 768), 96, game.with_setup(setup), options).unwrap();
+    for hex in [Hex::new(10, 9), HOLD] {
+        s.screen.view.center_on(hex);
+        let p = common::pixel_of(&s, hex);
+        common::click(&mut s, p);
+    }
+    let mut said = Vec::new();
+    let mut t = 0;
+    while s.battle().is_some_and(|b| !b.done()) && t < 60_000 {
+        t += 100;
+        s.frame(t);
+        let line = s.battle().unwrap().status(&s.screen.ui)[0].clone();
+        if said.last() != Some(&line) && !line.is_empty() {
+            said.push(line);
+        }
+    }
+    let fought =
+        ["Ready...", "Red's Soldiers (5) against blue's Guard (4).", "Red's Soldiers (5) against blue's Guard (2)."];
+    assert_eq!(said, fought);
 }

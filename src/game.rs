@@ -454,8 +454,11 @@ pub struct Combatant {
     pub walls: u32,
     /// All of it, in quarters: what it fought with.
     pub quarters: u32,
-    /// The hits it came with (wounds that last, `combat::Rules::wounds`).
+    /// The hits it came with (wounds that last, `combat::Rules::wounds`),
+    /// and what it fights with once wounded, in quarters (as `quarters`
+    /// unless wounds last).
     pub wounds: u32,
+    pub hurt: u32,
 }
 
 /// What a unit's strength in a battle is made of (`Game::strength_parts`):
@@ -1923,9 +1926,8 @@ impl Game {
             .unwrap_or(0);
         let ground_kind = self.map.tile(at).map_or(TileType::Grass, |t| t.kind);
         let home = units.kind_of(unit).map_or(0, |k| k.bonus_on(ground_kind));
-        // (Wounded, half its own: `combat::wounded`.)
-        let own = if unit.wounds > 0 { combat::wounded(unit.power()) } else { unit.power() };
-        let mut parts = StrengthParts { own, led, home, ground: 0, walls: 0 };
+        // (Wounded, half its own: `Unit::fighting_power`.)
+        let mut parts = StrengthParts { own: unit.fighting_power(), led, home, ground: 0, walls: 0 };
         if defending {
             parts.ground = combat::ground_bonus(ground_kind);
             parts.walls = self
@@ -2142,6 +2144,11 @@ impl Game {
             .filter_map(|id| units.get(*id))
             .map(|unit| {
                 let parts = self.strength_parts(unit, at, defending, stack, siege);
+                let hurt = if self.setup.combat.wounds {
+                    StrengthParts { own: combat::wounded(unit.power()), ..parts }.quarters()
+                } else {
+                    parts.quarters()
+                };
                 Combatant {
                     unit: unit.id(),
                     side: unit.side(),
@@ -2153,15 +2160,16 @@ impl Game {
                         .map_or(crate::state::DEFAULT_UNIT_IMAGE, |k| k.image.as_str())
                         .to_string(),
                     commander: self.map.is_commander(unit.id()),
-                    // (Wounded, its own as its wounds leave it.)
+                    // (Wounded, its own as its wounds leave it, all of it.)
                     strength: if unit.wounds > 0 { parts.own } else { unit.strength },
-                    growth: parts.own.saturating_sub(unit.strength),
+                    growth: if unit.wounds > 0 { 0 } else { parts.own.saturating_sub(unit.strength) },
                     led: parts.led,
                     ground: parts.ground,
                     home: parts.home,
                     walls: parts.walls,
                     quarters: parts.quarters(),
                     wounds: unit.wounds,
+                    hurt,
                 }
             })
             .collect()
@@ -2214,13 +2222,10 @@ impl Game {
         events
     }
 
-    /// The next side's turn: after the last of the round, the first of the
-    /// next (in a new order, if it is drawn). From the second round on, a
-    /// side's turn begins with its units' points back (with up to 2 they kept)
-    /// and its cities' work.
-    /// `side`'s units' wounds heal.
-    fn heal(&mut self, side: Side) {
-        let hurt: Vec<UnitId> = self.map.units().of_side(side).filter(|u| u.wounds > 0).map(|u| u.id()).collect();
+    /// The wounds of the units of the sides `heals` says heal.
+    fn heal(&mut self, heals: impl Fn(Side) -> bool) {
+        let hurt: Vec<UnitId> =
+            self.map.units().iter().filter(|u| u.wounds > 0 && heals(u.side())).map(|u| u.id()).collect();
         for id in hurt {
             if let Some(unit) = self.map.unit_mut(id) {
                 unit.wounds = 0;
@@ -2228,6 +2233,10 @@ impl Game {
         }
     }
 
+    /// The next side's turn: after the last of the round, the first of the
+    /// next (in a new order, if it is drawn). From the second round on, a
+    /// side's turn begins with its units' points back (with up to 2 they kept)
+    /// and its cities' work.
     fn next_turn(&mut self) -> Vec<Event> {
         self.deselect();
         let ending = self.player();
@@ -2246,7 +2255,7 @@ impl Game {
         // Its units' wounds heal (`combat::Rules::wounds`; the owner's word,
         // 2026-11-21: attacked in waves in the others' turns, a stack stays
         // battered through its own, and is whole for the next waves).
-        self.heal(ending);
+        self.heal(|side| side == ending);
         // What its units saw on their way (the marches' too) is noted, and
         // then seen no longer.
         self.note_sightings();
@@ -2262,6 +2271,10 @@ impl Game {
                 if self.setup.order == TurnOrder::Drawn {
                     self.rng.shuffle(&mut self.order);
                 }
+                // The units of the sides that have no turn (nobody's, a
+                // side out or with no seat) heal as a round ends.
+                let (order, out) = (self.order.clone(), self.out.clone());
+                self.heal(|side| !order.contains(&side) || out.contains(&side));
             }
             if !self.out.contains(&self.order[self.current]) {
                 break;

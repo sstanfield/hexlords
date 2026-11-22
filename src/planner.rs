@@ -241,7 +241,7 @@ fn strongest_stack(game: &Game, mut units: Vec<UnitId>, target: Hex) -> Vec<Unit
         let unit = map.units().get(*id);
         if walled { unit.and_then(|u| map.units().kind_of(u)).map_or(0, |k| k.siege) } else { 0 }
     };
-    let power = |id: &UnitId| map.units().get(*id).map_or(0, |u| u.power());
+    let power = |id: &UnitId| map.units().get(*id).map_or(0, |u| u.fighting_power());
     units.sort_by_key(|id| (std::cmp::Reverse(siege(id)), std::cmp::Reverse(power(id))));
     // One siege engine is enough: the others go by their strength.
     if units.first().is_some_and(|id| siege(id) > 0) {
@@ -289,7 +289,7 @@ fn threat(game: &Game, side: Side, hex: Hex, sight: &Sight) -> f64 {
                 fresh.movement = fresh.base_move_points;
                 compute_range(map, &fresh).cost(hex).is_some()
             })
-            .map(|u| worth(u.power(), game))
+            .map(|u| worth(u.fighting_power(), game))
             .sum::<f64>()
 }
 
@@ -412,7 +412,7 @@ impl Planner {
                 .units_at(city.pos)
                 .iter()
                 .filter_map(|u| map.units().get(*u))
-                .map(|u| worth(u.power() + walls_bonus(city.walls), game))
+                .map(|u| worth(u.fighting_power() + walls_bonus(city.walls), game))
                 .sum();
             let danger = danger * f64::from(daring(&style, game).2) / 100.0;
             if danger > 0.0 && held < danger {
@@ -437,13 +437,13 @@ impl Planner {
                 .filter_map(|id| map.units().get(*id))
                 .filter(|u| !map.is_commander(u.id()))
                 .collect();
-            here.sort_by_key(|u| std::cmp::Reverse(u.power()));
+            here.sort_by_key(|u| std::cmp::Reverse(u.fighting_power()));
             let (mut held, mut count) = (0.0, 0);
             for unit in here {
                 if count >= keep && held >= danger {
                     break;
                 }
-                held += worth(unit.power() + walls_bonus(city.walls), game);
+                held += worth(unit.fighting_power() + walls_bonus(city.walls), game);
                 count += 1;
                 staying.push(unit.id());
             }
@@ -919,5 +919,35 @@ mod tests {
         let lead = game.map.units().get(stack[1]).unwrap().clone();
         let order = advance(&game, (Side::Red, &sight), (&stack, &lead), there, &|_| false);
         assert!(!matches!(order, Some(Order::Move { to, .. }) if to == there), "{order:?}");
+    }
+
+    /// The review (2026-11-21): the planner weighed a wounded unit as whole
+    /// (wounds that last), in its stacks and in the threats it sees.
+    #[test]
+    fn a_wounded_unit_is_weighed_as_it_fights() {
+        let terrain = format!("20\n20\n{}\n", vec!["g".repeat(20); 20].join("\n"));
+        let units = "unit soldiers\nname Soldiers\nstrength 4\nmoves 12\nenter grass 2\n\
+                     unit knight\nname Knight\nstrength 6\nmoves 12\nenter grass 2\n";
+        let (map, warnings) = scenario::parse(&terrain, Some(units), None).unwrap();
+        let mut game = Game::from_scenario(Scenario { map, assets: None, warnings });
+        let put = |game: &mut Game, side: Side, kind: &str, hex: Hex| {
+            let kind = game.map.units().kind_named(kind).unwrap();
+            let id = game.map.new_unit_of(side, kind).unwrap();
+            game.map.place_unit(id, hex).unwrap();
+            id
+        };
+        let mut units: Vec<UnitId> =
+            (0..MAX_STACK).map(|i| put(&mut game, Side::Red, "soldiers", Hex::new(3, i as u16))).collect();
+        let knight = put(&mut game, Side::Red, "knight", Hex::new(4, 4));
+        units.push(knight);
+        let foe = put(&mut game, Side::Blue, "knight", Hex::new(10, 11));
+        let target = Hex::new(10, 10);
+        let sight = game.sight(Side::Red);
+        assert!(strongest_stack(&game, units.clone(), target).contains(&knight), "whole, the strongest");
+        let whole = threat(&game, Side::Red, target, &sight);
+        game.map.unit_mut(knight).unwrap().wounds = 1;
+        game.map.unit_mut(foe).unwrap().wounds = 1;
+        assert!(!strongest_stack(&game, units, target).contains(&knight), "wounded, a 3: left out");
+        assert!(threat(&game, Side::Red, target, &sight) < whole, "a wounded foe is less of a threat");
     }
 }

@@ -356,11 +356,7 @@ fn last_seen(ghost: &Ghost) -> String {
 /// wounded, the strength its wounds leave it, starred ("2* · 7/10"; the
 /// font has no arrows).
 pub fn unit_numbers(unit: &Unit) -> String {
-    let strength = if unit.wounds > 0 {
-        format!("{}*", crate::state::combat::wounded(unit.power()))
-    } else {
-        unit.power().to_string()
-    };
+    let strength = if unit.wounds > 0 { format!("{}*", unit.fighting_power()) } else { unit.power().to_string() };
     format!("{strength} \u{b7} {}/{}", unit.movement, unit.base_move_points)
 }
 
