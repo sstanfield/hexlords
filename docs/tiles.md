@@ -224,7 +224,7 @@ a window is a dark panel inside a thin bronze line, with round corners and
 a soft shadow; its title bar darker, the title in gold; a button a raised
 plate, sunk and lined in bronze when pressed; and the button a window means
 its player to press (`build::primary_button`, the skin's `Primary`) in
-bronze. `assets/skin/hexgame.tb.txt` says how the skin cuts each into nine
+bronze. `assets/skin/hexlords.tb.txt` says how the skin cuts each into nine
 (the corners stay, the edges and the middle stretch); the rest of the skin
 is Turbo Badger's. To change their look, change `skin.rs` and run the
 generator.

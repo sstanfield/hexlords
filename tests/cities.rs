@@ -6,16 +6,16 @@
 mod common;
 
 use common::{assets, choose, click, descendants, pixel_of, press, widget};
-use hexgame::city_windows::CityList;
-use hexgame::city_windows::{
+use hexlords::city_windows::CityList;
+use hexlords::city_windows::{
     BUILD_NOTHING_ID, CITY_CLOSE_ID, CITY_RALLY_ID, CITY_WINDOW_ID, LIST_CLOSE_ID, LIST_DETAILS_ID, LIST_GOTO_ID,
     LIST_WINDOW_ID, PANEL_OPEN_ID, PANEL_PREFIX, build_id, row_id,
 };
-use hexgame::game::{Game, Sight};
-use hexgame::session::{ALL_CITIES_ID, CITY_DETAILS_ID, MENU_CITIES_ID, MY_CITIES_ID, Session};
-use hexgame::setup::Setup;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side};
+use hexlords::game::{Game, Sight};
+use hexlords::session::{ALL_CITIES_ID, CITY_DETAILS_ID, MENU_CITIES_ID, MY_CITIES_ID, Session};
+use hexlords::setup::Setup;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side};
 use turbo_ferret::widgets::{ImageWidget, Window};
 use turbo_ferret::{Point, Rect, Size, SpecialKey, TbId, Visibility};
 
@@ -83,7 +83,7 @@ fn disabled(s: &Session, name: &str) -> bool {
     s.screen.ui.node(widget(s, name)).is_some_and(|n| n.is_disabled())
 }
 
-fn city_id(s: &Session, hex: Hex) -> hexgame::state::CityId {
+fn city_id(s: &Session, hex: Hex) -> hexlords::state::CityId {
     s.screen.game.map.city_at(hex).unwrap().id
 }
 

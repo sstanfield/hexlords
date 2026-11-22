@@ -2,15 +2,15 @@
 //! the rules in effect, and that with fog of war they act on what their side
 //! sees and nothing more.
 
-use hexgame::agents::{self, Agents};
-use hexgame::game::Game;
-use hexgame::headless;
-use hexgame::orders::{Event, Order};
-use hexgame::planner::{self, Planner, STEADY};
-use hexgame::setup::{Fog, Setup};
-use hexgame::state::combat::System;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, UnitId};
+use hexlords::agents::{self, Agents};
+use hexlords::game::Game;
+use hexlords::headless;
+use hexlords::orders::{Event, Order};
+use hexlords::planner::{self, Planner, STEADY};
+use hexlords::setup::{Fog, Setup};
+use hexlords::state::combat::System;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side, UnitId};
 
 /// 30 x 30 grass: red's Redhold with `red`, blue's Bluemoor far off.
 fn game(red: &str, setup: impl FnOnce(&mut Setup)) -> Game {
@@ -127,9 +127,9 @@ fn it_hears_of_a_refusal_and_does_not_give_the_same_order_turn_after_turn() {
     let mut refused = 0;
     for _ in 0..8 {
         refused += agents::play_turn(&mut game, &mut steady).refused.len();
-        game.apply(hexgame::orders::Order::EndTurn).ok();
+        game.apply(hexlords::orders::Order::EndTurn).ok();
         while game.player() != Side::Red {
-            game.apply(hexgame::orders::Order::EndTurn).unwrap();
+            game.apply(hexlords::orders::Order::EndTurn).unwrap();
         }
     }
     assert!(refused <= 3, "{refused} refusals in 8 turns");
@@ -151,7 +151,7 @@ fn a_city_it_cannot_see_it_goes_to_look_at_and_then_takes() {
             break;
         }
         while game.player() != Side::Red {
-            game.apply(hexgame::orders::Order::EndTurn).unwrap();
+            game.apply(hexlords::orders::Order::EndTurn).unwrap();
         }
     }
     assert_eq!(game.map.city_at(Hex::new(5, 24)).unwrap().side, Side::Red, "taken");
@@ -173,7 +173,7 @@ fn it_does_not_attack_blind() {
             }
         }
         while game.player() != Side::Red {
-            game.apply(hexgame::orders::Order::EndTurn).unwrap();
+            game.apply(hexlords::orders::Order::EndTurn).unwrap();
         }
     }
 }
@@ -190,7 +190,7 @@ fn a_battle_tried_in_the_view_says_nothing_of_the_game_s() {
         game.map.place_unit(blue, Hex::new(6, 5)).unwrap();
         let red = game.map.units_at(Hex::new(5, 5))[0];
         let mut view = game.view_for(Side::Red);
-        let try_it = |g: &mut Game| g.apply(hexgame::orders::Order::Move { units: vec![red], to: Hex::new(6, 5) });
+        let try_it = |g: &mut Game| g.apply(hexlords::orders::Order::Move { units: vec![red], to: Hex::new(6, 5) });
         let (a, b) = (try_it(&mut view).unwrap(), try_it(&mut game).unwrap());
         let won = |events: &[Event]| events.iter().any(|e| matches!(e, Event::Battle { won: true, .. }));
         alike += usize::from(won(&a) == won(&b));
@@ -201,7 +201,7 @@ fn a_battle_tried_in_the_view_says_nothing_of_the_game_s() {
 #[test]
 fn it_does_not_take_its_unblessed_into_another_side_s_stack_on_a_temple() {
     let mut game = game("garrison militia 3\n", |_| {});
-    game.map.tile_mut(Hex::new(5, 8)).unwrap().kind = hexgame::state::TileType::Temple;
+    game.map.tile_mut(Hex::new(5, 8)).unwrap().kind = hexlords::state::TileType::Temple;
     let riders = game.map.units().kind_named("riders").unwrap();
     for _ in 0..6 {
         let blue = game.map.new_unit_of(Side::Blue, riders).unwrap();

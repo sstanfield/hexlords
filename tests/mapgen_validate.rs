@@ -5,12 +5,12 @@
 //! same and says why; the islands preset puts a capital on each home island
 //! and cities on every island of size.
 
-use hexgame::mapgen::config::Config;
-use hexgame::mapgen::grid::pieces;
-use hexgame::mapgen::reach::ReachClass;
-use hexgame::mapgen::stats::Stats;
-use hexgame::mapgen::{generate, score};
-use hexgame::state::{Side, TileType};
+use hexlords::mapgen::config::Config;
+use hexlords::mapgen::grid::pieces;
+use hexlords::mapgen::reach::ReachClass;
+use hexlords::mapgen::stats::Stats;
+use hexlords::mapgen::{generate, score};
+use hexlords::state::{Side, TileType};
 
 const UNITS: &str = include_str!("../assets/mapgen/units.txt");
 
@@ -132,8 +132,8 @@ fn an_air_citys_ring_is_not_land_wasted_and_the_previews_show_the_cells() {
     assert_eq!(stats.pockets.iter().sum::<usize>(), 0, "{:?}", stats.pockets);
     // The cells' borders are drawn when given.
     let marks = made.city_marks();
-    let plain = hexgame::mapgen::preview::preview(&map, 4.0, &marks, None);
-    let cells = hexgame::mapgen::preview::preview(&map, 4.0, &marks, Some(&made.cells()));
+    let plain = hexlords::mapgen::preview::preview(&map, 4.0, &marks, None);
+    let cells = hexlords::mapgen::preview::preview(&map, 4.0, &marks, Some(&made.cells()));
     assert_ne!(plain.rgba, cells.rgba);
     // A line for each side in the table, its capital named.
     let table = made.sides_table();

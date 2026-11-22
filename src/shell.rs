@@ -79,14 +79,14 @@ impl Shell {
                 let game = screen.take_game();
                 match Session::with_options(&self.assets, viewport, dpi, game, self.options) {
                     Ok(session) => self.now = Now::Playing(Box::new(session)),
-                    Err(e) => eprintln!("hexgame: the game did not start: {e}"),
+                    Err(e) => eprintln!("hexlords: the game did not start: {e}"),
                 }
             }
             Now::Playing(session) if session.wants_new_game() => {
                 self.options = session.options();
                 match NewGame::new(&self.assets, viewport, dpi, None) {
                     Ok(screen) => self.now = Now::NewGame(Box::new(screen)),
-                    Err(e) => eprintln!("hexgame: {e}"),
+                    Err(e) => eprintln!("hexlords: {e}"),
                 }
             }
             _ => {}

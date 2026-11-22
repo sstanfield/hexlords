@@ -6,13 +6,13 @@
 mod common;
 
 use common::{assets, choose, click, pixel_of, press, type_char, widget};
-use hexgame::game::Game;
-use hexgame::info::{log, record_lines};
-use hexgame::orders::{Event, Order, Record};
-use hexgame::session::{BEGIN_TURN_ID, END_TURN_ID, LOG_ID, MENU_VIEW_ID, Session};
-use hexgame::setup::Setup;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, UnitId};
+use hexlords::game::Game;
+use hexlords::info::{log, record_lines};
+use hexlords::orders::{Event, Order, Record};
+use hexlords::session::{BEGIN_TURN_ID, END_TURN_ID, LOG_ID, MENU_VIEW_ID, Session};
+use hexlords::setup::Setup;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side, UnitId};
 use turbo_ferret::{Point, Size, SpecialKey};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -55,7 +55,7 @@ fn the_history_keeps_battles_and_cities_and_not_moves() {
     let [Record { round: 1, turn: Side::Red, event: Event::Battle { won: false, dead, .. } }] = game.history() else {
         panic!("{:?}", game.history())
     };
-    let fallen = hexgame::orders::Fallen { side: Side::Red, name: "Levy".to_string(), person: false };
+    let fallen = hexlords::orders::Fallen { side: Side::Red, name: "Levy".to_string(), person: false };
     assert_eq!(dead, &[fallen], "who died, by name");
     // Blue's turn: it takes empty Southwick, and the record says it was
     // blue's turn in round 1.
@@ -204,7 +204,7 @@ fn when_the_last_person_is_out_the_computer_plays_on_a_turn_a_frame() {
     setup.combat.chance = 0;
     setup.set_players("blue=simple").unwrap();
     let mut s = common::with_game(&assets(), Size::new(1024, 768), 96, game.with_setup(setup)).unwrap();
-    let end_turn = |s: &Session| s.screen.ui.state(widget(s, hexgame::session::END_TURN_ID));
+    let end_turn = |s: &Session| s.screen.ui.state(widget(s, hexlords::session::END_TURN_ID));
     assert!(!end_turn(&s).contains(turbo_ferret::WidgetState::DISABLED));
     // Green's turn, then blue's: blue takes Redhold, red is out, and its log
     // says so; the computer does not play the rest of the game at once.
@@ -225,7 +225,7 @@ fn when_the_last_person_is_out_the_computer_plays_on_a_turn_a_frame() {
     assert_ne!(next, now, "a frame plays a turn");
     s.frame(32);
     assert_eq!(turn(&s), next, "but not the next one so soon");
-    s.frame(16 + hexgame::session::COMPUTER_TURN_MS);
+    s.frame(16 + hexlords::session::COMPUTER_TURN_MS);
     assert_ne!(turn(&s), next);
     assert!(s.log_lines().iter().any(|l| l == "You are out of the game."), "{:?}", s.log_lines());
 }

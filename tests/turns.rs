@@ -2,13 +2,13 @@
 //! is, what a side may do on it, cities taken, a side out, the winner; and
 //! the computer's agents that play, in the game and without a window.
 
-use hexgame::agents::{self, Agents, describe, parse_order, unit_name};
-use hexgame::game::Game;
-use hexgame::headless::{self, order_line};
-use hexgame::orders::{Event, Order};
-use hexgame::setup::{Controller, Setup, TurnOrder};
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side};
+use hexlords::agents::{self, Agents, describe, parse_order, unit_name};
+use hexlords::game::Game;
+use hexlords::headless::{self, order_line};
+use hexlords::orders::{Event, Order};
+use hexlords::setup::{Controller, Setup, TurnOrder};
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side};
 
 const RED_HOME: Hex = Hex::new(5, 5);
 const BLUE_HOME: Hex = Hex::new(5, 9);
@@ -37,7 +37,7 @@ fn game(setup: impl FnOnce(&mut Setup)) -> Game {
     game.with_setup(s)
 }
 
-fn rider(game: &Game) -> hexgame::state::UnitId {
+fn rider(game: &Game) -> hexlords::state::UnitId {
     game.map.units().of_side(Side::Red).next().unwrap().id()
 }
 

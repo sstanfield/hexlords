@@ -12,10 +12,10 @@
 
 use std::path::PathBuf;
 
-use hexgame::mapgen::check;
-use hexgame::mapgen::reach::ReachClass;
-use hexgame::mapgen::stats::Stats;
-use hexgame::state::{TileType, scenario};
+use hexlords::mapgen::check;
+use hexlords::mapgen::reach::ReachClass;
+use hexlords::mapgen::stats::Stats;
+use hexlords::state::{TileType, scenario};
 
 #[test]
 #[ignore = "needs the target map: MAPGEN_TARGET_DIR"]

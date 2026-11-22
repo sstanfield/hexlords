@@ -5,10 +5,10 @@
 mod common;
 
 use common::{assets, click, press};
-use hexgame::render::{CITY_SIDES, HexVariant, MapGeometry, Marks, RANGE_OVERLAY};
-use hexgame::script;
-use hexgame::session::Session;
-use hexgame::state::{Hex, Map, TileType};
+use hexlords::render::{CITY_SIDES, HexVariant, MapGeometry, Marks, RANGE_OVERLAY};
+use hexlords::script;
+use hexlords::session::Session;
+use hexlords::state::{Hex, Map, TileType};
 use turbo_ferret::{Point, Size, SpecialKey};
 
 /// (rows, columns): wide, tall, odd, and the two extremes.
@@ -229,7 +229,7 @@ fn the_maps_edges_are_cut_straight_on_all_four_sides() {
 
         // And the geometry of the far corner's view is inside the map's edges.
         let map = patterned(rows, cols);
-        let mut view = hexgame::view::MapView::new(rows, cols, Hex::new(last_row, last_col));
+        let mut view = hexlords::view::MapView::new(rows, cols, Hex::new(last_row, last_col));
         view.resize(819, 537);
         let mut geometry = MapGeometry::new();
         geometry.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, None));

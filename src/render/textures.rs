@@ -191,7 +191,7 @@ mod tests {
     #[test]
     fn a_maps_own_pictures_come_before_the_games() {
         let game = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
-        let own = std::env::temp_dir().join(format!("hexgame-assets-{}", std::process::id()));
+        let own = std::env::temp_dir().join(format!("hexlords-assets-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&own);
         std::fs::create_dir_all(own.join("units")).unwrap();
         // The map's "militia" is the game's water tile.

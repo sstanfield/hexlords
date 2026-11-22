@@ -3,11 +3,11 @@
 //! is taken away, Defend and undo, a queue edited, a city taken and taken
 //! back, too few points for a step.
 
-use hexgame::game::{CityState, Game, Task};
-use hexgame::orders::{Event, Order};
-use hexgame::setup::Setup;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, QueueEnd, QueueItem, Sends, Side, UnitId};
+use hexlords::game::{CityState, Game, Task};
+use hexlords::orders::{Event, Order};
+use hexlords::setup::Setup;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, QueueEnd, QueueItem, Sends, Side, UnitId};
 
 const REDHOLD: Hex = Hex::new(5, 5);
 const BLUEMOOR: Hex = Hex::new(5, 25);
@@ -99,7 +99,7 @@ fn done_takes_out_a_march_that_stalled_as_a_turn_ended() {
 /// units stay, and the queue can still be changed.
 #[test]
 fn a_queue_whose_rally_point_is_taken_away_can_still_be_changed() {
-    use hexgame::orders::RallyPoint;
+    use hexlords::orders::RallyPoint;
     let mut game = game();
     let redhold = game.map.city_at(REDHOLD).unwrap().id;
     game.apply(Order::RallyPoint { n: 0, point: Some(RallyPoint { at: Hex::new(5, 9), defend: false }) }).unwrap();
@@ -177,7 +177,7 @@ fn removing_a_finished_item_keeps_the_one_being_built() {
 
 mod common;
 
-fn click_hex(s: &mut hexgame::session::Session, hex: Hex) {
+fn click_hex(s: &mut hexlords::session::Session, hex: Hex) {
     s.screen.view.center_on(hex);
     let p = common::pixel_of(s, hex);
     common::click(s, p);

@@ -7,15 +7,15 @@
 mod common;
 
 use common::{assets, click, pixel_of, press, push_widget, shift_click, shift_press, type_char};
-use hexgame::city_windows::{CITY_RALLY_ID, PANEL_OPEN_ID};
-use hexgame::game::{Game, StackState, Task};
-use hexgame::orders::{Event, Order};
-use hexgame::screen::Scene;
-use hexgame::session::{Pick, Session};
-use hexgame::setup::Setup;
-use hexgame::shell::Shell;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Blessing, Hex, Sends, Side, TileType, UnitId};
+use hexlords::city_windows::{CITY_RALLY_ID, PANEL_OPEN_ID};
+use hexlords::game::{Game, StackState, Task};
+use hexlords::orders::{Event, Order};
+use hexlords::screen::Scene;
+use hexlords::session::{Pick, Session};
+use hexlords::setup::Setup;
+use hexlords::shell::Shell;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Blessing, Hex, Sends, Side, TileType, UnitId};
 use turbo_ferret::{Size, SpecialKey};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -47,7 +47,7 @@ fn at(game: &Game, hex: Hex) -> Vec<UnitId> {
     game.map.units_at(hex).to_vec()
 }
 
-fn unit(game: &Game, id: UnitId) -> &hexgame::state::Unit {
+fn unit(game: &Game, id: UnitId) -> &hexlords::state::Unit {
     game.map.units().get(id).unwrap()
 }
 
@@ -122,7 +122,7 @@ fn a_city_sends_what_it_builds_by_way_of_stops() {
     assert_eq!(why, "nothing Redhold builds can get there");
     game.apply(Order::Rally { city, to: Sends::Route(vec![TEMPLE, FAR]) }).unwrap();
     assert_eq!(game.map.cities().get(city).unwrap().sends, Sends::Route(vec![TEMPLE, FAR]));
-    let line = hexgame::info::task_line(
+    let line = hexlords::info::task_line(
         &game,
         &game.tasks(Side::Red).into_iter().find(|t| matches!(t, Task::City { .. })).unwrap(),
     );
@@ -157,16 +157,16 @@ fn the_text_protocol_says_the_stops_in_order() {
     let id = at(&game, REDHOLD)[0];
     let city = game.map.city_at(REDHOLD).unwrap().id;
     let goto = Order::GoTo { units: vec![id], to: FAR, via: vec![TEMPLE] };
-    assert_eq!(hexgame::agents::parse_order(&game, "goto red.0.0 5 8 5 20"), Ok(Some(goto.clone())));
-    assert_eq!(hexgame::headless::order_line(&game, &goto), "goto red.0.0 5 8 5 20");
+    assert_eq!(hexlords::agents::parse_order(&game, "goto red.0.0 5 8 5 20"), Ok(Some(goto.clone())));
+    assert_eq!(hexlords::headless::order_line(&game, &goto), "goto red.0.0 5 8 5 20");
     let rally = Order::Rally { city, to: Sends::Route(vec![TEMPLE, FAR]) };
-    assert_eq!(hexgame::agents::parse_order(&game, "rally 5 5 5 8 5 20"), Ok(Some(rally.clone())));
-    assert_eq!(hexgame::headless::order_line(&game, &rally), "rally 5 5 5 8 5 20");
+    assert_eq!(hexlords::agents::parse_order(&game, "rally 5 5 5 8 5 20"), Ok(Some(rally.clone())));
+    assert_eq!(hexlords::headless::order_line(&game, &rally), "rally 5 5 5 8 5 20");
     // Without stops, as before.
     let straight = Order::GoTo { units: vec![id], to: FAR, via: Vec::new() };
-    assert_eq!(hexgame::agents::parse_order(&game, "goto red.0.0 5 20"), Ok(Some(straight)));
+    assert_eq!(hexlords::agents::parse_order(&game, "goto red.0.0 5 20"), Ok(Some(straight)));
     // A row without its column.
-    assert!(hexgame::agents::parse_order(&game, "goto red.0.0 5 8 5").is_err());
+    assert!(hexlords::agents::parse_order(&game, "goto red.0.0 5 8 5").is_err());
 }
 
 // The screen.
@@ -236,7 +236,7 @@ fn shift_click_makes_a_stop_for_a_citys_new_units() {
     shift_click_hex(&mut s, TEMPLE);
     click_hex(&mut s, FAR);
     assert_eq!(s.screen.game.map.city_at(REDHOLD).unwrap().sends, Sends::Route(vec![TEMPLE, FAR]));
-    let says: Vec<String> = common::descendants(&s, hexgame::city_windows::CITY_WINDOW_ID)
+    let says: Vec<String> = common::descendants(&s, hexlords::city_windows::CITY_WINDOW_ID)
         .into_iter()
         .filter_map(|id| s.screen.ui.text(id).map(str::to_string))
         .collect();

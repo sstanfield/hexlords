@@ -14,9 +14,9 @@ use assetgen::scatter::Features;
 use assetgen::sides;
 use assetgen::terrain::Terrain;
 use assetgen::tile::{Edge, hex_distance, render, render_all, render_city};
-use hexgame::render::{CITY_SIDES, HexVariant, city_image, roads, side_color, tile_image};
-use hexgame::state::scenario::side_name;
-use hexgame::state::{Map, Side, TileType};
+use hexlords::render::{CITY_SIDES, HexVariant, city_image, roads, side_color, tile_image};
+use hexlords::state::scenario::side_name;
+use hexlords::state::{Map, Side, TileType};
 use turbo_ferret::image::{Limits, png};
 
 fn assets() -> PathBuf {
@@ -43,7 +43,7 @@ fn the_terrains_are_the_games() {
 
 #[test]
 fn the_squeeze_is_the_games() {
-    assert_eq!(ASPECT, hexgame::view::HEX_HEIGHT_ADJUST);
+    assert_eq!(ASPECT, hexlords::view::HEX_HEIGHT_ADJUST);
 }
 
 #[test]
@@ -235,8 +235,8 @@ fn the_game_turns_a_roads_picture_as_the_generator_drew_it() {
         }
     }
     // The sides are numbered alike: clockwise from the top.
-    assert_eq!(hexgame::state::HexSide::ALL.len(), road::SIDES);
-    assert_eq!(hexgame::state::HexSide::NorthEast.index(), 1);
+    assert_eq!(hexlords::state::HexSide::ALL.len(), road::SIDES);
+    assert_eq!(hexlords::state::HexSide::NorthEast.index(), 1);
 }
 
 #[test]
@@ -244,7 +244,7 @@ fn a_road_drawn_on_the_games_map_leaves_through_the_sides_the_map_says() {
     // A road hex with roads to its north-east and its south: the picture the
     // game picks, read where the game reads it, has road at the middle of
     // those two sides and nowhere else.
-    use hexgame::state::{Hex, HexSide, Map};
+    use hexlords::state::{Hex, HexSide, Map};
     let mut map = Map::new(20, 20, TileType::Grass).unwrap();
     let hex = Hex::new(10, 10);
     for side in [HexSide::NorthEast, HexSide::South] {
@@ -276,7 +276,7 @@ fn a_road_drawn_on_the_games_map_leaves_through_the_sides_the_map_says() {
 /// the generator draws, and the game's skin names each of them.
 #[test]
 fn the_games_skin_pictures_are_what_the_generator_makes() {
-    let skin = std::fs::read_to_string(assets().join("skin/hexgame.tb.txt")).unwrap();
+    let skin = std::fs::read_to_string(assets().join("skin/hexlords.tb.txt")).unwrap();
     let mut expected = Vec::new();
     for plate in &assetgen::skin::PLATES {
         for scale in assetgen::skin::SCALES {

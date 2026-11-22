@@ -35,20 +35,20 @@ mod tests {
 
     #[test]
     fn the_argument_wins() {
-        let got = resolve(Some(Path::new("elsewhere")), Some(Path::new("bin/hexgame")), Path::new("repo"), &|_| true);
+        let got = resolve(Some(Path::new("elsewhere")), Some(Path::new("bin/hexlords")), Path::new("repo"), &|_| true);
         assert_eq!(got, Path::new("elsewhere"));
     }
 
     #[test]
     fn next_to_the_executable_if_it_exists() {
-        let exe = Path::new("opt").join("bin").join("hexgame");
+        let exe = Path::new("opt").join("bin").join("hexlords");
         let want = Path::new("opt").join("bin").join("..").join("assets");
         assert_eq!(resolve(None, Some(&exe), Path::new("repo"), &|p| p == want), want);
     }
 
     #[test]
     fn the_repository_otherwise() {
-        let exe = Path::new("target").join("debug").join("hexgame");
+        let exe = Path::new("target").join("debug").join("hexlords");
         let want = Path::new("repo").join("assets");
         assert_eq!(resolve(None, Some(&exe), Path::new("repo"), &|_| false), want);
         assert_eq!(resolve(None, None, Path::new("repo"), &|_| true), want);

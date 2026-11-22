@@ -6,12 +6,12 @@
 //! reached as planned, and every temple and ruin on foot (rivers are no
 //! wall any more: bridges cross them).
 
-use hexgame::mapgen::config::Config;
-use hexgame::mapgen::grid::{Grid, pieces};
-use hexgame::mapgen::reach::{MoveClass, ReachClass, reach};
-use hexgame::mapgen::stats::Stats;
-use hexgame::mapgen::{Generated, check, generate};
-use hexgame::state::{Hex, Map, Side, TileType};
+use hexlords::mapgen::config::Config;
+use hexlords::mapgen::grid::{Grid, pieces};
+use hexlords::mapgen::reach::{MoveClass, ReachClass, reach};
+use hexlords::mapgen::stats::Stats;
+use hexlords::mapgen::{Generated, check, generate};
+use hexlords::state::{Hex, Map, Side, TileType};
 
 const UNITS: &str = include_str!("../assets/mapgen/units.txt");
 

@@ -3,9 +3,9 @@
 
 use std::path::PathBuf;
 
-use hexgame::screen::Scene;
-use hexgame::script;
-use hexgame::state::{Hex, Map, TileType};
+use hexlords::screen::Scene;
+use hexlords::script;
+use hexlords::state::{Hex, Map, TileType};
 use mapeditor::editor::{Editor, Tool};
 use turbo_ferret::{Modifiers, Point, Rect, Size, SpecialKey, TbId, WidgetId};
 
@@ -127,7 +127,7 @@ fn the_minimap_takes_the_maps_shape() {
     assert!(wide.h * 3 < tall.h, "a wide map gets a low minimap: {wide:?} against {tall:?}");
     // The wide one fits exactly: no margins.
     let shape = wide.h as f32 / wide.w as f32;
-    assert!((shape - 39.0 * hexgame::view::HEX_HEIGHT_ADJUST / 119.5).abs() < 0.01, "{shape}");
+    assert!((shape - 39.0 * hexlords::view::HEX_HEIGHT_ADJUST / 119.5).abs() < 0.01, "{shape}");
 }
 
 #[test]
@@ -753,7 +753,7 @@ fn the_maps_in_the_repository_are_good() {
             assert_eq!(report.warnings, Vec::<String>::new(), "{}", path.display());
             assert!(!report.units.is_empty() && !report.cities.is_empty(), "{}", path.display());
             // And the game starts on it, with units to move.
-            let (game, warnings) = hexgame::game::Game::load(&path).unwrap();
+            let (game, warnings) = hexlords::game::Game::load(&path).unwrap();
             assert!(warnings.is_empty());
             assert!(game.map.units().iter().count() > 0 && !game.map.units_at(game.map.cursor).is_empty());
             directories += 1;
@@ -769,7 +769,7 @@ fn the_maps_in_the_repository_are_good() {
 
 #[test]
 fn the_format_pages_units_and_cities_are_read_as_it_says() {
-    use hexgame::state::scenario::{parse_cities, parse_units};
+    use hexlords::state::scenario::{parse_cities, parse_units};
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let page = std::fs::read_to_string(root.join("docs/map-format.md")).unwrap();
     let (mut units, mut cities) = (0, 0);
@@ -781,7 +781,7 @@ fn the_format_pages_units_and_cities_are_read_as_it_says() {
                 let kinds = parse_units(block).unwrap_or_else(|e| panic!("{e}"));
                 match kinds[0].id.as_str() {
                     "transport" => {
-                        assert_eq!((kinds[0].travel, kinds[0].carries), (hexgame::state::Travel::Sea, 6));
+                        assert_eq!((kinds[0].travel, kinds[0].carries), (hexlords::state::Travel::Sea, 6));
                     }
                     _ => {
                         let horse = (kinds[0].id.as_str(), kinds[0].moves, kinds[0].cost.bridge);
@@ -814,12 +814,12 @@ fn the_example_continent_is_a_whole_map() {
     assert!(report.units.iter().any(|u| u.contains("travels air")), "a flyer: {:?}", report.units);
     assert!(report.roads > 50 && report.bridges >= 1 && report.passes >= 1, "{report}");
     // Every city is on the road: a road or another city beside it.
-    let (game, _) = hexgame::game::Game::load(&assets().join("maps/continent")).unwrap();
+    let (game, _) = hexlords::game::Game::load(&assets().join("maps/continent")).unwrap();
     for city in game.map.cities().iter() {
         assert!(game.map.road_links(city.pos) != 0, "{} has no road", city.name);
     }
     // Four sides hold a city each, and the first one's rider can ride out.
-    let held = game.map.cities().iter().filter(|c| c.side != hexgame::state::Side::Grey).count();
+    let held = game.map.cities().iter().filter(|c| c.side != hexlords::state::Side::Grey).count();
     assert_eq!(held, 4);
 }
 

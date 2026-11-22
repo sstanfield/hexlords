@@ -5,10 +5,10 @@
 
 use std::path::PathBuf;
 
-use hexgame::mapgen::config::Config;
-use hexgame::mapgen::generate;
-use hexgame::mapgen::stats::Stats;
-use hexgame::state::scenario;
+use hexlords::mapgen::config::Config;
+use hexlords::mapgen::generate;
+use hexlords::mapgen::stats::Stats;
+use hexlords::state::scenario;
 
 fn judged(name: &str) -> Stats {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/mapgen/judged").join(name);

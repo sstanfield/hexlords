@@ -126,7 +126,7 @@ impl MapScreen {
         let in_assets = |what: &str, e: &dyn std::fmt::Display| format!("{what}: {e} (assets: {})", assets.display());
         let mut ui = Ui::new(Config::for_dpi(dpi), Services::with_loader(FsLoader::new(assets)));
         // Turbo Badger's default skin, with the game's few changes on top.
-        ui.load_skin("skin/skin.tb.txt", Some("skin/hexgame.tb.txt")).map_err(|e| in_assets("skin", &e))?;
+        ui.load_skin("skin/skin.tb.txt", Some("skin/hexlords.tb.txt")).map_err(|e| in_assets("skin", &e))?;
         // The built-in font at 14 dp. (The C++ used DroidSans at this size.)
         let size = ui.dimension_converter().dp_to_px(14).clamp(1, 255) as u16;
         ui.set_default_font(FontDesc::new(DEFAULT_FONT, size));

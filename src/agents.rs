@@ -1,7 +1,7 @@
 //! The computer's players: agents. An agent is asked, again and again, for
 //! the next order of the side whose turn it is, until it says the turn is
 //! over; the game carries each order out (`Game::apply`) or refuses it. The
-//! same agents play in the window and without one (`hexgame --headless`), so
+//! same agents play in the window and without one (`hexlords --headless`), so
 //! games can be played many times over, to try the rules. An agent can also
 //! be a program of its own, which reads the game as text and writes its
 //! orders as text (`docs/agents.md`): a script, or a player driven by

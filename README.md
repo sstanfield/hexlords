@@ -1,4 +1,4 @@
-# HexGame
+# Hexlords
 
 A hex map strategy game in Rust, of cities, stacks of units and sides that
 take turns. It began as a port of the C++
@@ -169,7 +169,7 @@ waits in the city until there is enough ([docs/gameplay.md](docs/gameplay.md)).
 ## Options
 
 ```
-hexgame [--map <file.map or map directory>] [--players <side>=<who>,...] [--order fixed|drawn] [--seed <n>]
+hexlords [--map <file.map or map directory>] [--players <side>=<who>,...] [--order fixed|drawn] [--seed <n>]
         [--chance <0-10>] [--battles lines|strength] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] [--log]]
         [--script <steps>]
         [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
@@ -319,7 +319,7 @@ and F1.
 
 ## Licences
 
-HexGame is under the zlib licence (`LICENSE`), as the C++ original is.
+Hexlords is under the zlib licence (`LICENSE`), as the C++ original is.
 
 `NOTICE` lists what it is built on and ships with: Turbo Ferret and Turbo Badger
 (zlib), Turbo Badger's default skin in `assets/skin` (public domain), miniquad

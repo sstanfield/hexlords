@@ -1,4 +1,4 @@
-//! The HexGame tile generator: draws the terrain tiles the game shows on its
+//! The Hexlords tile generator: draws the terrain tiles the game shows on its
 //! map. Everything is computed (noise, shapes, a few lights), so the art is
 //! original, has no licence but the game's, and can be made again at any size:
 //!
@@ -47,6 +47,6 @@ pub mod terrain;
 pub mod tile;
 
 /// The game draws y at this much of x, so that hexes look regular (about
-/// √3/2). It is `hexgame::view::HEX_HEIGHT_ADJUST`; a test holds them together.
+/// √3/2). It is `hexlords::view::HEX_HEIGHT_ADJUST`; a test holds them together.
 #[allow(clippy::excessive_precision)] // the game's constant, digit for digit
 pub const ASPECT: f32 = 0.863_309_35;

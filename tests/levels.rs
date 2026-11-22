@@ -7,14 +7,14 @@
 mod common;
 
 use common::{assets, click, pixel_of, type_char, widget};
-use hexgame::game::{Game, emerge_chance};
-use hexgame::info;
-use hexgame::orders::{Event, Order};
-use hexgame::session::Session;
-use hexgame::setup::Setup;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Blessing, Hex, LEVEL_EXPERIENCE, Side, TileType, UnitId, level_for};
-use hexgame::temple_window::{TEMPLE_BLESS_ID, TEMPLE_CLOSE_ID};
+use hexlords::game::{Game, emerge_chance};
+use hexlords::info;
+use hexlords::orders::{Event, Order};
+use hexlords::session::Session;
+use hexlords::setup::Setup;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Blessing, Hex, LEVEL_EXPERIENCE, Side, TileType, UnitId, level_for};
+use hexlords::temple_window::{TEMPLE_BLESS_ID, TEMPLE_CLOSE_ID};
 use turbo_ferret::{Point, Size};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -324,8 +324,8 @@ fn the_panels_show_a_units_level_and_blessing() {
 
 #[test]
 fn the_ring_says_the_level() {
-    use hexgame::render::map_renderer::{ELITE_RING, RING_COLOR, VETERAN_RING, level_ring};
-    use hexgame::render::unit_icon::unit_icon;
+    use hexlords::render::map_renderer::{ELITE_RING, RING_COLOR, VETERAN_RING, level_ring};
+    use hexlords::render::unit_icon::unit_icon;
     assert_eq!([1, 2, 3].map(|l| level_ring(l).0), [RING_COLOR, VETERAN_RING, ELITE_RING]);
     // The icon's edge, halfway down its left: the ring's color.
     let edge = |level: u8| {

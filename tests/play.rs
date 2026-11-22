@@ -6,12 +6,12 @@
 mod common;
 
 use common::{assets, choose, click, pixel_of, press, type_char, widget};
-use hexgame::game::Game;
-use hexgame::orders::{Event, Order};
-use hexgame::session::{MENU_CITIES_ID, MENU_UNITS_ID, NEXT_CITY_ID, NEXT_STACK_ID, PREV_STACK_ID, Session, UNDO_ID};
-use hexgame::setup::Setup;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, UnitId};
+use hexlords::game::Game;
+use hexlords::orders::{Event, Order};
+use hexlords::session::{MENU_CITIES_ID, MENU_UNITS_ID, NEXT_CITY_ID, NEXT_STACK_ID, PREV_STACK_ID, Session, UNDO_ID};
+use hexlords::setup::Setup;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side, UnitId};
 use turbo_ferret::{Modifiers, Point, Size, SpecialKey};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -237,7 +237,7 @@ fn what_an_undo_takes_back_is_no_news_for_the_others() {
     // Two people: red takes Bluemoor, thinks better of it, and blue hears
     // nothing of it.
     let mut s = session(|s| s.set_players("blue=person").unwrap());
-    let begin = |s: &mut Session| push(s, hexgame::session::BEGIN_TURN_ID);
+    let begin = |s: &mut Session| push(s, hexlords::session::BEGIN_TURN_ID);
     begin(&mut s);
     let p = pixel_of(&s, REDHOLD);
     click(&mut s, p);

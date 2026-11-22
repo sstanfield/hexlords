@@ -4,13 +4,13 @@
 //! turn", and a wounded unit fights at half its strength, rounded up. A
 //! choice made with the game (`combat::Rules::wounds`), off unless chosen.
 
-use hexgame::game::Game;
-use hexgame::info;
-use hexgame::orders::Order;
-use hexgame::setup::Setup;
-use hexgame::state::combat::{self, System};
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, UnitId};
+use hexlords::game::Game;
+use hexlords::info;
+use hexlords::orders::Order;
+use hexlords::setup::Setup;
+use hexlords::state::combat::{self, System};
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side, UnitId};
 
 const HOLD: Hex = Hex::new(10, 10);
 

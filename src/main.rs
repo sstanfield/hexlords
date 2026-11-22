@@ -1,4 +1,4 @@
-//! HexGame in a window, or without one.
+//! Hexlords in a window, or without one.
 //!
 //! Without `--map` the window opens on the new game screen. Options:
 //! - `--map <file or directory>`: play this map at once (one person, the first
@@ -22,22 +22,22 @@
 //! - `--frames <n>`: quit after drawing `n` frames (a smoke test);
 //! - `--screenshot <file>`: draw a frame into a PNG file and quit (the last frame
 //!   of `--frames`, or the second);
-//! - `--script <steps>`: play some input first (see `hexgame::script`), for
+//! - `--script <steps>`: play some input first (see `hexlords::script`), for
 //!   example `--script "enter,right*3,enter"`.
 
 #![forbid(unsafe_code)]
 
 use std::path::PathBuf;
 
-use hexgame::app::{self, OPTIONS_USAGE, Options, WINDOW_SIZE, WINDOW_TITLE, WindowSpec};
-use hexgame::game::Game;
-use hexgame::headless;
-use hexgame::new_game::COMPUTER;
-use hexgame::script;
-use hexgame::session::Session;
-use hexgame::setup::{Controller, Fog, Setup, TurnOrder};
-use hexgame::shell::Shell;
-use hexgame::state::combat::{MAX_CHANCE, System};
+use hexlords::app::{self, OPTIONS_USAGE, Options, WINDOW_SIZE, WINDOW_TITLE, WindowSpec};
+use hexlords::game::Game;
+use hexlords::headless;
+use hexlords::new_game::COMPUTER;
+use hexlords::script;
+use hexlords::session::Session;
+use hexlords::setup::{Controller, Fog, Setup, TurnOrder};
+use hexlords::shell::Shell;
+use hexlords::state::combat::{MAX_CHANCE, System};
 
 /// The command line.
 #[derive(Clone, Debug, Default)]
@@ -64,7 +64,7 @@ struct Args {
 
 fn usage() -> String {
     format!(
-        "usage: hexgame [--map <file.map or map directory>] [--players <side>=<person|agent>,...] [--order fixed|drawn] \
+        "usage: hexlords [--map <file.map or map directory>] [--players <side>=<person|agent>,...] [--order fixed|drawn] \
          [--seed <n>] [--chance <0-10>] [--battles lines|strength] [--wounds] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] \
          [--log]] \
          [--script <steps>] {OPTIONS_USAGE}"
@@ -129,7 +129,7 @@ fn main() {
         Ok(args) => args,
         Err(message) => {
             if !message.is_empty() {
-                eprintln!("hexgame: {message}");
+                eprintln!("hexlords: {message}");
             }
             eprintln!("{}", usage());
             std::process::exit(2);
@@ -142,12 +142,12 @@ fn main() {
         Some(path) => match Game::load(path) {
             Ok((game, warnings)) => {
                 for warning in warnings {
-                    eprintln!("hexgame: --map: {}: {warning}", path.display());
+                    eprintln!("hexlords: --map: {}: {warning}", path.display());
                 }
                 Some(game)
             }
             Err(e) => {
-                eprintln!("hexgame: --map: {e}");
+                eprintln!("hexlords: --map: {e}");
                 std::process::exit(1);
             }
         },
@@ -164,7 +164,7 @@ fn main() {
             }
             if let Some(spec) = &players {
                 if let Err(e) = setup.set_players(spec) {
-                    eprintln!("hexgame: --players: {e}");
+                    eprintln!("hexlords: --players: {e}");
                     std::process::exit(2);
                 }
             }
@@ -185,7 +185,7 @@ fn main() {
     };
     if headless {
         let Some(mut game) = game else {
-            eprintln!("hexgame: --headless needs a --map");
+            eprintln!("hexlords: --headless needs a --map");
             std::process::exit(2);
         };
         let mut print = |_: &Game, line: &str| {
@@ -196,13 +196,13 @@ fn main() {
         match headless::play(&mut game, rounds.unwrap_or(200), &mut print) {
             Ok(outcome) => print!("{}", headless::summary(&outcome)),
             Err(e) => {
-                eprintln!("hexgame: --headless: {e}");
+                eprintln!("hexlords: --headless: {e}");
                 std::process::exit(2);
             }
         }
         return;
     }
-    let spec = WindowSpec { program: "hexgame", title: WINDOW_TITLE, size: WINDOW_SIZE };
+    let spec = WindowSpec { program: "hexlords", title: WINDOW_TITLE, size: WINDOW_SIZE };
     app::run(spec, window, move |assets, viewport, dpi| {
         let mut shell = match game {
             Some(game) => Shell::playing(assets, Session::with_game(assets, viewport, dpi, game)?),

@@ -7,16 +7,16 @@
 mod common;
 
 use common::{assets, choose, click, pixel_of, press, push_widget, shift_click, type_char};
-use hexgame::agents::parse_order;
-use hexgame::game::{Game, StackState, Task};
-use hexgame::headless::order_line;
-use hexgame::orders::{Event, Order};
-use hexgame::patrol_window::{PATROL_CANCEL_ID, PATROL_OK_ID, choice_id};
-use hexgame::screen::Scene;
-use hexgame::session::{MENU_UNITS_ID, PATROL_ID, Pick, Session};
-use hexgame::setup::{Fog, Setup};
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, UnitId};
+use hexlords::agents::parse_order;
+use hexlords::game::{Game, StackState, Task};
+use hexlords::headless::order_line;
+use hexlords::orders::{Event, Order};
+use hexlords::patrol_window::{PATROL_CANCEL_ID, PATROL_OK_ID, choice_id};
+use hexlords::screen::Scene;
+use hexlords::session::{MENU_UNITS_ID, PATROL_ID, Pick, Session};
+use hexlords::setup::{Fog, Setup};
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side, UnitId};
 use turbo_ferret::{Size, SpecialKey};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -62,7 +62,7 @@ fn pos(game: &Game, id: UnitId) -> Hex {
     game.map.units().get(id).unwrap().pos()
 }
 
-fn unit(game: &Game, id: UnitId) -> &hexgame::state::Unit {
+fn unit(game: &Game, id: UnitId) -> &hexlords::state::Unit {
     game.map.units().get(id).unwrap()
 }
 
@@ -167,7 +167,7 @@ fn under_total_fog_waypoints_are_on_land_the_side_has_seen() {
     };
     let red: Vec<UnitId> = game.map.units_at(WEST).to_vec();
     let far = Order::Patrol { units: red.clone(), waypoints: vec![WEST, EAST], attack: None };
-    assert_eq!(game.apply(far).unwrap_err(), hexgame::game::UNSEEN);
+    assert_eq!(game.apply(far).unwrap_err(), hexlords::game::UNSEEN);
     let near = Order::Patrol { units: red, waypoints: vec![WEST, Hex::new(10, 7)], attack: None };
     assert!(game.apply(near).is_ok());
 }
@@ -301,7 +301,7 @@ fn a_patrol_with_no_way_on_waits_for_orders() {
     assert!(events.iter().any(|e| matches!(e, Event::Stalled { .. })), "{events:?}");
     let at = pos(&game, red[0]);
     assert_eq!(stack_state(&game, at), StackState::Stalled);
-    let line = hexgame::info::task_line(&game, &Task::Stack { at, units: 1, state: StackState::Stalled });
+    let line = hexlords::info::task_line(&game, &Task::Stack { at, units: 1, state: StackState::Stalled });
     assert_eq!(
         line,
         format!("Soldiers at row {}, column {}: stopped on patrol, on the way to row 10, column 5", at.row, at.col)
@@ -351,7 +351,7 @@ fn the_text_protocol_says_the_waypoints_and_the_odds() {
     let mut game = game();
     let red = put(&mut game, Side::Red, "soldiers", WEST, 2);
     let line = "patrol red.0.0,red.1.0 10 5 10 11 10 17 10 5 attack 65";
-    assert_eq!(hexgame::agents::unit_name(red[0]), "red.0.0");
+    assert_eq!(hexlords::agents::unit_name(red[0]), "red.0.0");
     let order = Order::Patrol { units: red.clone(), waypoints: vec![WEST, MIDDLE, EAST, WEST], attack: Some(65) };
     assert_eq!(parse_order(&game, line), Ok(Some(order.clone())));
     assert_eq!(order_line(&game, &order), line);
@@ -457,7 +457,7 @@ fn a_patrolling_stack_says_so_and_shows_its_waypoints() {
     );
     assert_eq!(s.outlined(), [WEST, MIDDLE, EAST]);
     let task = s.screen.game.tasks(Side::Red).into_iter().find(|t| matches!(t, Task::Stack { .. })).unwrap();
-    let line = hexgame::info::task_line(&s.screen.game, &task);
+    let line = hexlords::info::task_line(&s.screen.game, &task);
     assert_eq!(line, "2 units at row 10, column 11: patrolling 3 waypoints, never attacks");
 }
 
@@ -466,7 +466,7 @@ fn the_help_says_p_and_u_and_the_orders_topic_explains_them() {
     let s = session(game());
     let keys: Vec<String> = s.screen.help().iter().flat_map(|h| h.rows.iter().map(|(k, _)| k.clone())).collect();
     assert!(keys.contains(&"P".to_string()) && keys.contains(&"U".to_string()), "{keys:?}");
-    let (_, sections) = hexgame::guide::topic(&s.screen.game, "help_orders").expect("the topic");
+    let (_, sections) = hexlords::guide::topic(&s.screen.game, "help_orders").expect("the topic");
     let rows: Vec<String> = sections.iter().flat_map(|h| h.rows.iter().map(|(k, _)| k.clone())).collect();
     for title in ["Patrol", "Maraud", "After a battle"] {
         assert!(rows.contains(&title.to_string()), "{title} is not in {rows:?}");
@@ -538,17 +538,17 @@ fn a_stray_click_does_not_end_a_patrol() {
     click_hex(&mut s, SOUTH);
     assert!(red.iter().all(|id| unit(&s.screen.game, *id).patrol.is_some()), "still patrolling");
     assert!(s.asks_mission());
-    let says = common::descendants(&s, hexgame::session::MISSION_ASK_ID)
+    let says = common::descendants(&s, hexlords::session::MISSION_ASK_ID)
         .into_iter()
         .filter_map(|w| s.screen.ui.text(w).map(str::to_string))
         .collect::<Vec<_>>();
     assert!(says.iter().any(|t| t.starts_with("These 2 units are patrolling 2 waypoints")), "{says:?}");
-    push_widget(&mut s, hexgame::session::MISSION_KEEP_ID);
+    push_widget(&mut s, hexlords::session::MISSION_KEEP_ID);
     assert!(!s.asks_mission());
     assert!(red.iter().all(|id| unit(&s.screen.game, *id).patrol.is_some()));
     // Again, and Send them: it goes there, and patrols no more.
     click_hex(&mut s, SOUTH);
-    push_widget(&mut s, hexgame::session::MISSION_GO_ID);
+    push_widget(&mut s, hexlords::session::MISSION_GO_ID);
     assert!(red.iter().all(|id| unit(&s.screen.game, *id).patrol.is_none()));
     assert_eq!(unit(&s.screen.game, red[0]).goto(), Some(SOUTH));
 }

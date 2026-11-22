@@ -5,9 +5,9 @@
 
 use std::path::Path;
 
-use hexgame::render::AssetDirs;
-use hexgame::state::scenario::{self, side_name};
-use hexgame::state::{Hex, Map, MapError, TileType};
+use hexlords::render::AssetDirs;
+use hexlords::state::scenario::{self, side_name};
+use hexlords::state::{Hex, Map, MapError, TileType};
 
 /// What a map file holds.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,9 +92,9 @@ pub fn check_path(path: &Path, assets: Option<&Path>) -> Result<Report, String> 
             leads.push_str(&format!(", siege {}", kind.siege));
         }
         match kind.travel {
-            hexgame::state::Travel::Sea => leads.push_str(&format!(", travels sea, carries {}", kind.carries)),
-            hexgame::state::Travel::Air => leads.push_str(", travels air"),
-            hexgame::state::Travel::Land => {}
+            hexlords::state::Travel::Sea => leads.push_str(&format!(", travels sea, carries {}", kind.carries)),
+            hexlords::state::Travel::Air => leads.push_str(", travels air"),
+            hexlords::state::Travel::Land => {}
         }
         report.units.push(format!(
             "{} \"{}\": strength {}, moves {}, upkeep {}, price {}{leads}, {}",

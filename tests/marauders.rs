@@ -9,15 +9,15 @@
 mod common;
 
 use common::{assets, choose, click, pixel_of, push_widget, type_char};
-use hexgame::agents::{self, Passive, parse_order};
-use hexgame::game::{Game, StackState, Task};
-use hexgame::headless::order_line;
-use hexgame::marauder::maraud;
-use hexgame::orders::{Event, Order};
-use hexgame::session::{BEGIN_TURN_ID, MARAUD_ID, MENU_UNITS_ID, Session};
-use hexgame::setup::{Fog, Setup};
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, UnitId};
+use hexlords::agents::{self, Passive, parse_order};
+use hexlords::game::{Game, StackState, Task};
+use hexlords::headless::order_line;
+use hexlords::marauder::maraud;
+use hexlords::orders::{Event, Order};
+use hexlords::session::{BEGIN_TURN_ID, MARAUD_ID, MENU_UNITS_ID, Session};
+use hexlords::setup::{Fog, Setup};
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side, UnitId};
 use turbo_ferret::Size;
 
 /// Nobody's Greyford, south of the middle, with nobody in it.
@@ -61,7 +61,7 @@ fn pos(game: &Game, id: UnitId) -> Hex {
     game.map.units().get(id).unwrap().pos()
 }
 
-fn unit(game: &Game, id: UnitId) -> &hexgame::state::Unit {
+fn unit(game: &Game, id: UnitId) -> &hexlords::state::Unit {
     game.map.units().get(id).unwrap()
 }
 
@@ -99,7 +99,7 @@ fn marauding_is_a_flag_another_order_ends() {
     assert!(red.iter().all(|id| unit(&game, *id).marauding));
     assert_eq!(stack_state(&game, CAMP), StackState::Marauding);
     assert!(game.waiting_stacks(Side::Red).is_empty(), "nobody need see to it");
-    assert_eq!(hexgame::info::duty_words(unit(&game, red[0])).unwrap(), "marauding: the computer leads it");
+    assert_eq!(hexlords::info::duty_words(unit(&game, red[0])).unwrap(), "marauding: the computer leads it");
     // Its move keeps it marauding, and is not the player's to take back.
     game.apply(roam).unwrap();
     assert!(red.iter().all(|id| unit(&game, *id).marauding && pos(&game, *id) == Hex::new(12, 14)));

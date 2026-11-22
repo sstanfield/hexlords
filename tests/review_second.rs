@@ -8,12 +8,12 @@
 mod common;
 
 use common::{assets, click, pixel_of};
-use hexgame::game::{Game, StackState, Task};
-use hexgame::orders::{Event, Order};
-use hexgame::session::Session;
-use hexgame::setup::{Fog, Setup};
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, UnitId};
+use hexlords::game::{Game, StackState, Task};
+use hexlords::orders::{Event, Order};
+use hexlords::session::Session;
+use hexlords::setup::{Fog, Setup};
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side, UnitId};
 use turbo_ferret::Size;
 
 const CAMP: Hex = Hex::new(12, 12);
@@ -51,7 +51,7 @@ fn pos(game: &Game, id: UnitId) -> Hex {
     game.map.units().get(id).unwrap().pos()
 }
 
-fn unit(game: &Game, id: UnitId) -> &hexgame::state::Unit {
+fn unit(game: &Game, id: UnitId) -> &hexlords::state::Unit {
     game.map.units().get(id).unwrap()
 }
 
@@ -190,7 +190,7 @@ fn with_a_patrol_selected_a_click_on_another_own_stack_asks_and_can_take_it() {
     // Take that stack.
     click_hex(&mut s, other_hex);
     assert!(s.asks_mission());
-    common::push_widget(&mut s, hexgame::session::MISSION_TAKE_ID);
+    common::push_widget(&mut s, hexlords::session::MISSION_TAKE_ID);
     assert_eq!(s.screen.game.selection(), other.as_slice(), "the other stack is selected");
     assert!(red.iter().all(|id| unit(&s.screen.game, *id).patrol.is_some()), "the patrol goes on");
 }
@@ -269,7 +269,7 @@ fn what_an_end_of_turn_march_sees_in_the_fog_is_remembered() {
 
 mod queue_resume {
     use super::*;
-    use hexgame::state::{QueueEnd, QueueItem, Sends};
+    use hexlords::state::{QueueEnd, QueueItem, Sends};
 
     fn qgame() -> Game {
         let mut rows = vec!["g".repeat(30); 30];
@@ -324,11 +324,11 @@ mod queue_resume {
         let items = vec![QueueItem { what: 0, count: 1, sends: Sends::Stay }];
         game.apply(Order::Queue { city, items, end: QueueEnd::Repeat { from: 0, times: Some(1) } }).unwrap();
         let c = game.map.cities().get(city).unwrap();
-        eprintln!("first pass: {}", hexgame::info::queue_end_line(c));
+        eprintln!("first pass: {}", hexlords::info::queue_end_line(c));
         game.apply(Order::EndTurn).unwrap();
         game.apply(Order::EndTurn).unwrap();
         let c = game.map.cities().get(city).unwrap();
-        let line = hexgame::info::queue_end_line(c);
+        let line = hexlords::info::queue_end_line(c);
         eprintln!("last pass: {line} (rounds {})", c.queue.rounds);
         assert!(!line.contains("0 times more"), "{line}");
     }
@@ -356,7 +356,7 @@ fn a_click_on_the_selected_stacks_hex_keeps_the_selection() {
 /// from the sidebar is let go.
 #[test]
 fn a_task_row_ends_a_pick_and_its_window_does_not_come_back() {
-    use hexgame::city_windows::{CITY_RALLY_ID, PANEL_PREFIX};
+    use hexlords::city_windows::{CITY_RALLY_ID, PANEL_PREFIX};
     use turbo_ferret::SpecialKey;
     let mut game = game();
     put(&mut game, Side::Red, "soldiers", Hex::new(10, 5), 1);
@@ -371,7 +371,7 @@ fn a_task_row_ends_a_pick_and_its_window_does_not_come_back() {
     // The tasks: a stack's row.
     common::type_char(&mut s, 't');
     s.frame(0);
-    common::push_widget(&mut s, &hexgame::tasks_window::row_id(0));
+    common::push_widget(&mut s, &hexlords::tasks_window::row_id(0));
     s.frame(0);
     assert!(s.picking().is_none(), "the pick is over");
     // Later: Redhold in the sidebar, its Send to..., let go with Esc.
@@ -391,8 +391,8 @@ fn a_task_row_ends_a_pick_and_its_window_does_not_come_back() {
 /// the city's stack: the garrison, not the new unit, whose march goes on.
 #[test]
 fn a_new_unit_on_its_way_is_left_out_of_the_garrisons_selection() {
-    use hexgame::orders::RallyPoint;
-    use hexgame::state::Sends;
+    use hexlords::orders::RallyPoint;
+    use hexlords::state::Sends;
     let mut rows = vec!["g".repeat(30); 30];
     rows[5] = format!("{}c{}c{}", "g".repeat(5), "g".repeat(19), "g".repeat(4));
     let terrain = format!("30\n30\n{}\n", rows.join("\n"));

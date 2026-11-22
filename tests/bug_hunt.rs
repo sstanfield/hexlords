@@ -9,12 +9,12 @@
 mod common;
 
 use common::{assets, click, pixel_of, press, push_widget, type_char};
-use hexgame::game::Game;
-use hexgame::options_window::Options;
-use hexgame::session::{Pick, Session};
-use hexgame::setup::Setup;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, UnitId};
+use hexlords::game::Game;
+use hexlords::options_window::Options;
+use hexlords::session::{Pick, Session};
+use hexlords::setup::Setup;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side, UnitId};
 use turbo_ferret::{Size, SpecialKey};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -124,13 +124,13 @@ fn an_order_by_key_starts_the_turn() {
     let mut s = session(g, Options::default());
     // A scout marches on blue's levy beside it: it stops short at the end
     // of the turn; red's next turn starts with its log open.
-    s.screen.game.apply(hexgame::orders::Order::GoTo { units: vec![scout], to: LEVY, via: vec![] }).unwrap();
+    s.screen.game.apply(hexlords::orders::Order::GoTo { units: vec![scout], to: LEVY, via: vec![] }).unwrap();
     s.end_turn();
     s.wait_for_turn();
     s.frame(10_000);
     assert!(!s.log_lines().is_empty(), "the log is open");
     let label = |s: &Session| {
-        s.screen.ui.text(common::widget(s, hexgame::session::END_TURN_ID)).unwrap_or_default().to_string()
+        s.screen.ui.text(common::widget(s, hexlords::session::END_TURN_ID)).unwrap_or_default().to_string()
     };
     assert_eq!(label(&s), "Start turn");
     // Next stack (only a look), then Done: an order, which starts the turn.
@@ -155,7 +155,7 @@ fn a_click_on_another_stack_with_a_patrol_selected_asks_join_or_take() {
     let south = at(&s, SOUTH);
     s.screen
         .game
-        .apply(hexgame::orders::Order::Patrol {
+        .apply(hexlords::orders::Order::Patrol {
             units: south.clone(),
             waypoints: vec![SOUTH, Hex::new(10, 2)],
             attack: None,
@@ -170,7 +170,7 @@ fn a_click_on_another_stack_with_a_patrol_selected_asks_join_or_take() {
     // The other stack is in reach: join it, or take it? Take it.
     click_hex(&mut s, target);
     assert!(s.asks_mission(), "it asks");
-    push_widget(&mut s, hexgame::session::MISSION_TAKE_ID);
+    push_widget(&mut s, hexlords::session::MISSION_TAKE_ID);
     assert_eq!(s.screen.game.selection(), [other], "the other stack is selected");
     assert!(s.screen.game.map.units().get(south[0]).unwrap().patrol.is_some(), "the patrol goes on");
 }
@@ -184,7 +184,7 @@ fn in_hotseat_the_line_under_the_stack_does_not_carry_over() {
     let g = g.with_setup(setup);
     let mut s = session(g, Options::manual());
     if s.covered() {
-        push_widget(&mut s, hexgame::session::BEGIN_TURN_ID);
+        push_widget(&mut s, hexlords::session::BEGIN_TURN_ID);
     }
     click_hex(&mut s, SOUTH);
     // Red is told something: a click on the selected patrol-less stack's far
@@ -201,7 +201,7 @@ fn in_hotseat_the_line_under_the_stack_does_not_carry_over() {
     click_hex(&mut s, LEVY);
     s.end_turn();
     s.wait_for_turn();
-    push_widget(&mut s, hexgame::session::BEGIN_TURN_ID);
+    push_widget(&mut s, hexlords::session::BEGIN_TURN_ID);
     s.frame(5000);
     assert!(!s.unit_line().starts_with("You attacked"), "red's battle line is shown to blue");
 }
@@ -235,7 +235,7 @@ fn send_to_does_nothing_in_the_computers_turn() {
     type_char(&mut s, 'o');
     s.end_turn();
     assert_ne!(s.screen.game.player(), Side::Red);
-    push_widget(&mut s, hexgame::city_windows::CITY_RALLY_ID);
+    push_widget(&mut s, hexlords::city_windows::CITY_RALLY_ID);
     assert_eq!(s.picking(), None, "no pick in blue's turn");
     click_hex(&mut s, Hex::new(9, 9));
 }
@@ -254,7 +254,7 @@ fn a_rally_point_goes_on_land_and_in_no_other_sides_city() {
     let mut game = Game::from_scenario(Scenario { map, assets: None, warnings });
     let setup = Setup::solo(&game.map, Some(Side::Red), "passive");
     game = game.with_setup(setup);
-    use hexgame::orders::{Order, RallyPoint};
+    use hexlords::orders::{Order, RallyPoint};
     let water = game.apply(Order::RallyPoint { n: 0, point: Some(RallyPoint { at: Hex::new(10, 10), defend: false }) });
     let city = game.apply(Order::RallyPoint { n: 1, point: Some(RallyPoint { at: Hex::new(5, 25), defend: false }) });
     assert_eq!(water, Err("a rally point goes on land".to_string()));
@@ -280,13 +280,13 @@ fn a_round_of_the_computers_turns_is_one_for_each_side_still_in() {
     assert_eq!(game.order(), [Side::Red, Side::Green, Side::Blue]);
     // Red takes Bluemoor, empty: blue is out. Green's turn.
     let levy = game.map.units_at(REDHOLD).to_vec();
-    game.apply(hexgame::orders::Order::Move { units: levy, to: Hex::new(5, 7) }).unwrap();
+    game.apply(hexlords::orders::Order::Move { units: levy, to: Hex::new(5, 7) }).unwrap();
     assert!(game.out().contains(&Side::Blue));
-    game.apply(hexgame::orders::Order::EndTurn).unwrap();
+    game.apply(hexlords::orders::Order::EndTurn).unwrap();
     assert_eq!((game.player(), game.turn()), (Side::Green, 1));
     // A round: green's turn and red's, and green's of round 2 is next.
-    let mut agents = hexgame::agents::Agents::for_game(&game).unwrap();
-    hexgame::agents::play_computers(&mut game, &mut agents);
+    let mut agents = hexlords::agents::Agents::for_game(&game).unwrap();
+    hexlords::agents::play_computers(&mut game, &mut agents);
     assert_eq!((game.player(), game.turn()), (Side::Green, 2));
 }
 
@@ -295,9 +295,9 @@ fn a_round_of_the_computers_turns_is_one_for_each_side_still_in() {
 #[test]
 fn an_agents_view_does_not_say_which_of_the_others_units_defend() {
     let mut game = game();
-    game.apply(hexgame::orders::Order::EndTurn).unwrap();
+    game.apply(hexlords::orders::Order::EndTurn).unwrap();
     let levy = game.map.units_at(LEVY).to_vec();
-    game.apply(hexgame::orders::Order::Defend { units: levy.clone(), on: true }).unwrap();
+    game.apply(hexlords::orders::Order::Defend { units: levy.clone(), on: true }).unwrap();
     assert!(game.map.units().get(levy[0]).unwrap().defending);
     let red = game.view_for(Side::Red);
     assert!(!red.map.units().get(levy[0]).unwrap().defending, "red is not told");
@@ -312,7 +312,7 @@ fn an_agents_view_does_not_say_which_of_the_others_units_defend() {
 fn the_screen_forgets_what_was_seen_on_the_way_when_the_turn_ends() {
     let game = game();
     let mut setup = game.setup().clone();
-    setup.fog = hexgame::setup::Fog::On;
+    setup.fog = hexlords::setup::Fog::On;
     let mut s = session(game.with_setup(setup), Options::manual());
     click_hex(&mut s, SOUTH);
     click_hex(&mut s, Hex::new(16, 6));

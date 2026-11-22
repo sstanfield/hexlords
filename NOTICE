@@ -1,6 +1,6 @@
-HexGame
+Hexlords
 
-HexGame is under the zlib licence: see LICENSE, which is the notice of the C++
+Hexlords is under the zlib licence: see LICENSE, which is the notice of the C++
 hexGame engine demo (https://github.com/sstanfield/hexGame, Copyright (c)
 2015-2016 Steven Stanfield). This Rust version is a port of it, so it is an
 altered version of that software; ported code carries

@@ -4,9 +4,9 @@
 
 use std::path::PathBuf;
 
-use hexgame::game::Game;
-use hexgame::session::Session;
-use hexgame::state::{Hex, Map, MoveCost, Side, TileType};
+use hexlords::game::Game;
+use hexlords::session::Session;
+use hexlords::state::{Hex, Map, MoveCost, Side, TileType};
 use turbo_ferret::{Modifiers, Point, Size, SpecialKey, TbId, WidgetId};
 
 pub fn assets() -> PathBuf {
@@ -26,7 +26,7 @@ pub fn session_at(w: i32, h: i32, dpi: i32) -> Session {
 /// screen selects nothing by itself, nor asks before End turn. The tests of
 /// the options start theirs with them (`Session::with_options`).
 pub fn with_game(assets: &std::path::Path, viewport: Size, dpi: i32, game: Game) -> Result<Session, String> {
-    Session::with_options(assets, viewport, dpi, game, hexgame::options_window::Options::manual())
+    Session::with_options(assets, viewport, dpi, game, hexlords::options_window::Options::manual())
 }
 
 /// A game on `map` with one black rider in its middle (grass 2, 20 moves),

@@ -3588,7 +3588,7 @@ mod tests {
 
     #[test]
     fn a_map_is_loaded_as_it_is() {
-        let dir = std::env::temp_dir().join(format!("hexgame-game-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hexlords-game-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("bare/assets")).unwrap();
         let terrain = format!("20\n20\n{}", "gggggggggggggggggggg\n".repeat(20));

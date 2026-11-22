@@ -6,12 +6,12 @@ version = 4
 name = "assetgen"
 version = "0.1.0"
 dependencies = [
- "hexgame",
+ "hexlords",
  "turbo-ferret",
 ]
 
 [[package]]
-name = "hexgame"
+name = "hexlords"
 version = "0.1.0"
 dependencies = [
  "miniquad",
@@ -38,7 +38,7 @@ dependencies = [
 name = "mapeditor"
 version = "0.1.0"
 dependencies = [
- "hexgame",
+ "hexlords",
  "turbo-ferret",
 ]
 
@@ -46,7 +46,7 @@ dependencies = [
 name = "mapgen"
 version = "0.1.0"
 dependencies = [
- "hexgame",
+ "hexlords",
 ]
 
 [[package]]

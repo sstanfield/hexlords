@@ -1,7 +1,7 @@
 //! A game played without a window: the computer plays every side (its
 //! agents), round after round, until one side is left or the rounds run out.
 //! It is how the rules are tried: many games, many seeds, agents against
-//! agents (`hexgame --headless`, `docs/agents.md`).
+//! agents (`hexlords --headless`, `docs/agents.md`).
 //!
 //! Not a port: the C++ had no players.
 

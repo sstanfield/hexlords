@@ -5,11 +5,11 @@
 //! "make sure they are distributed fairly (both) since temples are a
 //! definite boon").
 
-use hexgame::mapgen::cities::travel;
-use hexgame::mapgen::config::Config;
-use hexgame::mapgen::generate;
-use hexgame::mapgen::sites::{count, temple_count};
-use hexgame::state::{Hex, Side, TileType};
+use hexlords::mapgen::cities::travel;
+use hexlords::mapgen::config::Config;
+use hexlords::mapgen::generate;
+use hexlords::mapgen::sites::{count, temple_count};
+use hexlords::state::{Hex, Side, TileType};
 
 const UNITS: &str = include_str!("../assets/mapgen/units.txt");
 
@@ -87,11 +87,11 @@ fn a_count_is_kept_as_asked_and_the_game_reads_the_sites() {
     cfg.set("ruins", "0").unwrap();
     let made = generate(&cfg, UNITS, "units.txt").unwrap();
     let map = made.map().unwrap();
-    let all = hexgame::mapgen::grid::Grid::new(map.rows(), map.cols(), ());
+    let all = hexlords::mapgen::grid::Grid::new(map.rows(), map.cols(), ());
     let kind = |k: TileType| all.hexes().filter(|h| map.tile(*h).unwrap().kind == k).count();
     assert_eq!((kind(TileType::Temple), kind(TileType::Ruin)), (7, 0));
     // A temple in the game blesses (it is the game's temple).
-    let stats = hexgame::mapgen::stats::Stats::of(&map);
+    let stats = hexlords::mapgen::stats::Stats::of(&map);
     assert_eq!((stats.sites.temples, stats.sites.ruins), (7, 0));
 }
 
@@ -99,7 +99,7 @@ fn a_count_is_kept_as_asked_and_the_game_reads_the_sites() {
 /// turns them off; half one each puts each between neighbours, shared.
 #[test]
 fn temples_for_each_side_none_shared_or_several() {
-    let temples = |made: &hexgame::mapgen::Generated| {
+    let temples = |made: &hexlords::mapgen::Generated| {
         let t = &made.state.terrain;
         t.hexes().filter(|h| *t.get(*h) == TileType::Temple).collect::<Vec<Hex>>()
     };

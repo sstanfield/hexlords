@@ -638,7 +638,7 @@ mod tests {
     fn a_map_file_round_trips_through_the_file_system() {
         let mut m = map();
         m.tile_mut(Hex::new(3, 7)).unwrap().kind = TileType::Forest;
-        let path = std::env::temp_dir().join(format!("hexgame-map-test-{}.txt", std::process::id()));
+        let path = std::env::temp_dir().join(format!("hexlords-map-test-{}.txt", std::process::id()));
         m.save(&path).unwrap();
         let back = Map::load(&path);
         std::fs::remove_file(&path).unwrap();

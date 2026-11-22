@@ -3,15 +3,15 @@
 //! the game's session it needs no graphics context, so tests drive it.
 //!
 //! The widgets hold nothing: the sidebar's buttons and the keys arrive as
-//! commands (`hexgame::gui`), and everything the editor knows is here.
+//! commands (`hexlords::gui`), and everything the editor knows is here.
 
 use std::path::{Path, PathBuf};
 
-use hexgame::game::{Game, describe_terrain};
-use hexgame::gui::{MapCommand, MapKey, RootCommand};
-use hexgame::help::{HelpSection, command_key};
-use hexgame::screen::{MapScreen, Scene};
-use hexgame::state::{Hex, Map, TileType, scenario};
+use hexlords::game::{Game, describe_terrain};
+use hexlords::gui::{MapCommand, MapKey, RootCommand};
+use hexlords::help::{HelpSection, command_key};
+use hexlords::screen::{MapScreen, Scene};
+use hexlords::state::{Hex, Map, TileType, scenario};
 use turbo_ferret::{LayoutParams, Modifiers, Point, Size, SpecialKey, TbId, WidgetId, tbid};
 
 use crate::brush::{MAX_RADIUS, footprint, region};

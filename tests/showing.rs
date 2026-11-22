@@ -9,15 +9,15 @@
 mod common;
 
 use common::{assets, click, pixel_of};
-use hexgame::game::Game;
-use hexgame::options_window::Options;
-use hexgame::orders::{Event, Order};
-use hexgame::screen::Scene;
-use hexgame::session::Session;
-use hexgame::setup::{Fog, Setup};
-use hexgame::showing::{STEP_MS, WAY_MS};
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, UnitId};
+use hexlords::game::Game;
+use hexlords::options_window::Options;
+use hexlords::orders::{Event, Order};
+use hexlords::screen::Scene;
+use hexlords::session::Session;
+use hexlords::setup::{Fog, Setup};
+use hexlords::showing::{STEP_MS, WAY_MS};
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side, UnitId};
 use turbo_ferret::Size;
 
 const REDHOLD: Hex = Hex::new(5, 5);

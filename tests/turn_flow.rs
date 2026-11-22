@@ -7,15 +7,15 @@
 mod common;
 
 use common::{assets, choose, click, pixel_of, push_widget, type_char};
-use hexgame::game::Game;
-use hexgame::options_window::{self, Options};
-use hexgame::orders::Order;
-use hexgame::session::{
+use hexlords::game::Game;
+use hexlords::options_window::{self, Options};
+use hexlords::orders::Order;
+use hexlords::session::{
     END_ANYWAY_ID, END_KEEP_ID, END_TASKS_ID, END_TURN_ID, MENU_GAME_ID, OPTIONS_ID, Session, UNIT_LINE_ID,
 };
-use hexgame::setup::Setup;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, UnitId};
+use hexlords::setup::Setup;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side, UnitId};
 use turbo_ferret::{Modifiers, Size, SpecialKey};
 
 /// Red's Redhold, with soldiers in it.
@@ -214,7 +214,7 @@ fn end_turn_warns_when_the_gold_will_not_pay_the_upkeep() {
     }
     push_widget(&mut s, END_TURN_ID);
     assert!(s.asks_end_turn());
-    let lines = common::descendants(&s, hexgame::session::END_ASK_ID)
+    let lines = common::descendants(&s, hexlords::session::END_ASK_ID)
         .into_iter()
         .filter_map(|w| s.screen.ui.text(w).map(str::to_string))
         .collect::<Vec<_>>();

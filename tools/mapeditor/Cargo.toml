@@ -1,6 +1,6 @@
 [package]
 name = "mapeditor"
-description = "The HexGame map editor: paint terrain on a hex map and save it as a map file."
+description = "The Hexlords map editor: paint terrain on a hex map and save it as a map file."
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.86"
@@ -9,5 +9,5 @@ publish = false
 
 # The game's library and what it is built on, and nothing else (see CLAUDE.md).
 [dependencies]
-hexgame = { path = "../.." }
+hexlords = { path = "../.." }
 turbo-ferret = { workspace = true }

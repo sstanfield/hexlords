@@ -1,5 +1,5 @@
 //! The game's windows and buttons: the pictures its skin draws them with
-//! (`assets/skin/hexgame.tb.txt`), over Turbo Badger's default. A window is a
+//! (`assets/skin/hexlords.tb.txt`), over Turbo Badger's default. A window is a
 //! dark panel with a thin bronze border, round corners and a soft shadow;
 //! its title bar darker, under a bronze line; a button a raised plate, and
 //! the one a window means you to press (its first choice) in bronze.

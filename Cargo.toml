@@ -1,5 +1,5 @@
 [package]
-name = "hexgame"
+name = "hexlords"
 description = "A hex map strategy game foundation: the Rust port of the hexGame engine demo, on Turbo Ferret and miniquad."
 version = "0.1.0"
 edition = "2024"
@@ -11,7 +11,7 @@ publish = false
 path = "src/lib.rs"
 
 [[bin]]
-name = "hexgame"
+name = "hexlords"
 path = "src/main.rs"
 
 # Runtime dependencies are these three and nothing else (see CLAUDE.md).

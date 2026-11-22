@@ -4,11 +4,11 @@
 //! nobody is left in the water without a ship. A flyer goes where its prices
 //! let it, and a commander with flyers and no one else flies with them.
 
-use hexgame::game::Game;
-use hexgame::orders::{Event, Order};
-use hexgame::setup::Setup;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, UnitId};
+use hexlords::game::Game;
+use hexlords::orders::{Event, Order};
+use hexlords::setup::Setup;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side, UnitId};
 
 const REDHOLD: Hex = Hex::new(10, 8);
 const BLUEMOOR: Hex = Hex::new(10, 16);

@@ -8,16 +8,16 @@
 mod common;
 
 use common::{assets, click, pixel_of, press, push_widget, shift_click, type_char};
-use hexgame::city_windows::{
+use hexlords::city_windows::{
     CITY_RALLY_ID, PANEL_PREFIX, build_id, point_id, queue_add_id, queue_item_id, queue_remove_id,
 };
-use hexgame::game::Game;
-use hexgame::options_window::Options;
-use hexgame::orders::{Order, RallyPoint};
-use hexgame::session::{END_ASK_ID, END_TURN_ID, Session};
-use hexgame::setup::{Fog, Setup};
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, QueueEnd, QueueItem, Sends, Side, TileType, UnitId};
+use hexlords::game::Game;
+use hexlords::options_window::Options;
+use hexlords::orders::{Order, RallyPoint};
+use hexlords::session::{END_ASK_ID, END_TURN_ID, Session};
+use hexlords::setup::{Fog, Setup};
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, QueueEnd, QueueItem, Sends, Side, TileType, UnitId};
 use turbo_ferret::{Size, SpecialKey};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -139,7 +139,7 @@ fn next_stack_ends_a_pick() {
     shift_click(&mut s, p);
     type_char(&mut s, 'n');
     assert_eq!(s.picking(), None);
-    assert!(hexgame::screen::Scene::outlined(&s).is_empty(), "its stops are forgotten");
+    assert!(hexlords::screen::Scene::outlined(&s).is_empty(), "its stops are forgotten");
 }
 
 /// A click on a rally point's flag within reach sends the stack there

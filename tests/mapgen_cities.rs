@@ -5,13 +5,13 @@
 //! ship to leave by, in the air with a flyer; and what it writes the game
 //! reads, garrisons and all.
 
-use hexgame::mapgen::cities::{hemmed, tier};
-use hexgame::mapgen::cleanup::{JOIN_MIN, JOIN_WATER};
-use hexgame::mapgen::config::Config;
-use hexgame::mapgen::generate;
-use hexgame::mapgen::grid::{cheapest_path, pieces, steps_from};
-use hexgame::mapgen::reach::{MoveClass, ReachClass, movement_class};
-use hexgame::state::{Hex, Side, TileType};
+use hexlords::mapgen::cities::{hemmed, tier};
+use hexlords::mapgen::cleanup::{JOIN_MIN, JOIN_WATER};
+use hexlords::mapgen::config::Config;
+use hexlords::mapgen::generate;
+use hexlords::mapgen::grid::{cheapest_path, pieces, steps_from};
+use hexlords::mapgen::reach::{MoveClass, ReachClass, movement_class};
+use hexlords::state::{Hex, Side, TileType};
 
 const UNITS: &str = include_str!("../assets/mapgen/units.txt");
 
@@ -166,7 +166,7 @@ fn what_it_writes_the_game_reads_with_its_cities() {
 /// something ... to make taking it more valuable".
 #[test]
 fn a_city_hard_to_come_at_is_worth_more() {
-    let kinds = hexgame::state::scenario::parse_units(UNITS).unwrap();
+    let kinds = hexlords::state::scenario::parse_units(UNITS).unwrap();
     let strongest = kinds
         .iter()
         .filter(|k| movement_class(k) == MoveClass::Foot && k.commander == 0)
@@ -208,7 +208,7 @@ fn a_city_hard_to_come_at_is_worth_more() {
 
 #[test]
 fn cities_at_sea_have_ships_and_cities_in_the_air_flyers() {
-    let kinds = hexgame::state::scenario::parse_units(UNITS).unwrap();
+    let kinds = hexlords::state::scenario::parse_units(UNITS).unwrap();
     let class = |id: &str| kinds.iter().find(|k| k.id == id).map(movement_class);
     for seed in 1..=5 {
         let mut cfg = config(seed, "medium");
@@ -256,7 +256,7 @@ fn a_checkbox_needs_its_kind_of_unit_and_fairness_can_be_off() {
 /// for the armies of the late game.
 #[test]
 fn a_neutral_holds_one_of_its_weakest_and_a_capital_builds_the_strongest() {
-    let kinds = hexgame::state::scenario::parse_units(UNITS).unwrap();
+    let kinds = hexlords::state::scenario::parse_units(UNITS).unwrap();
     let foot = |id: &str| kinds.iter().find(|k| k.id == id && movement_class(k) == MoveClass::Foot && k.commander == 0);
     let strongest = kinds
         .iter()
@@ -298,15 +298,15 @@ fn every_generated_city_starts_with_walls() {
 /// work); in a turn for each 6 of its price.
 #[test]
 fn generated_cities_build_every_role() {
-    use hexgame::mapgen::cities::build_turns;
-    let kinds = hexgame::state::scenario::parse_units(UNITS).unwrap();
+    use hexlords::mapgen::cities::build_turns;
+    let kinds = hexlords::state::scenario::parse_units(UNITS).unwrap();
     let kind = |id: &str| kinds.iter().find(|k| k.id == id).unwrap();
     assert_eq!(
         ["militia", "lightinfantry", "heavyinfantry", "cavalry", "wyverns", "captain"].map(|id| build_turns(kind(id))),
         [1, 1, 2, 3, 3, 4]
     );
     let made = generate(&config(4, "medium"), UNITS, "units.txt").unwrap();
-    let builds = |c: &hexgame::mapgen::cities::City, id: &str| c.produce.iter().any(|(p, _)| p == id);
+    let builds = |c: &hexlords::mapgen::cities::City, id: &str| c.produce.iter().any(|(p, _)| p == id);
     for c in made.state.cities.iter().filter(|c| c.side != Side::Grey) {
         assert!(builds(c, "siegeengine"), "{} builds {:?}", c.name, c.produce);
     }
@@ -339,7 +339,7 @@ fn generated_cities_build_every_role() {
 /// count on it.
 #[test]
 fn nothing_in_the_template_walks_over_mountains() {
-    for kind in hexgame::state::scenario::parse_units(UNITS).unwrap() {
+    for kind in hexlords::state::scenario::parse_units(UNITS).unwrap() {
         if movement_class(&kind) == MoveClass::Foot {
             assert_eq!(kind.cost.mountain, 0, "{} enters mountains", kind.id);
         }

@@ -1,4 +1,4 @@
-//! HexGame: a hex map strategy game foundation.
+//! Hexlords: a hex map strategy game foundation.
 //!
 //! This is the Rust port of the hexGame engine demo
 //! (<https://github.com/sstanfield/hexGame>, C++). The UI is Turbo Ferret and the

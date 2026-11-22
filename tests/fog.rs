@@ -7,15 +7,15 @@
 mod common;
 
 use common::{assets, choose, click, pixel_of};
-use hexgame::agents;
-use hexgame::game::{CITY_SIGHT, Game, UNIT_SIGHT, UNSEEN};
-use hexgame::info;
-use hexgame::orders::{Event, Order};
-use hexgame::screen::Scene;
-use hexgame::session::{ALL_CITIES_ID, MENU_CITIES_ID, Session};
-use hexgame::setup::{Controller, Fog, Setup};
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Sends, Side, TileType};
+use hexlords::agents;
+use hexlords::game::{CITY_SIGHT, Game, UNIT_SIGHT, UNSEEN};
+use hexlords::info;
+use hexlords::orders::{Event, Order};
+use hexlords::screen::Scene;
+use hexlords::session::{ALL_CITIES_ID, MENU_CITIES_ID, Session};
+use hexlords::setup::{Controller, Fog, Setup};
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Sends, Side, TileType};
 use turbo_ferret::Size;
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -245,10 +245,10 @@ fn a_march_into_the_fog_meets_what_is_there() {
 fn the_computer_knows_what_a_person_in_its_place_would() {
     let mut game = game(Fog::On, Controller::Person);
     let bluemoor = game.map.city_at(BLUEMOOR).unwrap().id;
-    game.apply(hexgame::orders::Order::EndTurn).unwrap();
+    game.apply(hexlords::orders::Order::EndTurn).unwrap();
     assert_eq!(game.player(), Side::Blue);
-    game.apply(hexgame::orders::Order::Build { city: bluemoor, what: Some(0) }).unwrap();
-    game.apply(hexgame::orders::Order::EndTurn).unwrap();
+    game.apply(hexlords::orders::Order::Build { city: bluemoor, what: Some(0) }).unwrap();
+    game.apply(hexlords::orders::Order::EndTurn).unwrap();
     // Red's view: its own all there; blue's soldiers in their city out of
     // sight, and so is who holds it; what blue builds, blue's gold: not told.
     let view = game.view_for(Side::Red);
@@ -268,9 +268,9 @@ fn the_computer_knows_what_a_person_in_its_place_would() {
     // Without fog, every unit is in it; what nobody is told is not, fog or no
     // fog (what the others build, their gold).
     let mut clear = self::game(Fog::Off, Controller::Person);
-    clear.apply(hexgame::orders::Order::EndTurn).unwrap();
+    clear.apply(hexlords::orders::Order::EndTurn).unwrap();
     let bluemoor = clear.map.city_at(BLUEMOOR).unwrap().id;
-    clear.apply(hexgame::orders::Order::Build { city: bluemoor, what: Some(0) }).unwrap();
+    clear.apply(hexlords::orders::Order::Build { city: bluemoor, what: Some(0) }).unwrap();
     let view = clear.view_for(Side::Red);
     assert_eq!(view.map.units().iter().count(), clear.map.units().iter().count());
     let city = view.map.city_at(BLUEMOOR).unwrap();

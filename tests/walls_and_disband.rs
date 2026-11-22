@@ -7,14 +7,14 @@
 mod common;
 
 use common::{assets, click, pixel_of, type_char, widget};
-use hexgame::city_windows::CITY_WALLS_ID;
-use hexgame::disband_window::{DISBAND_NO_ID, DISBAND_YES_ID};
-use hexgame::game::Game;
-use hexgame::orders::{Event, Order};
-use hexgame::session::Session;
-use hexgame::setup::Setup;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Sends, Side, UnitId, WALLS_CAP, wall_price};
+use hexlords::city_windows::CITY_WALLS_ID;
+use hexlords::disband_window::{DISBAND_NO_ID, DISBAND_YES_ID};
+use hexlords::game::Game;
+use hexlords::orders::{Event, Order};
+use hexlords::session::Session;
+use hexlords::setup::Setup;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Sends, Side, UnitId, WALLS_CAP, wall_price};
 use turbo_ferret::{Point, Size};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -70,9 +70,9 @@ fn a_city_taken_loses_a_level_of_its_walls() {
     game.apply(Order::Undo).unwrap();
     assert_eq!((walls(&game, BLUEMOOR), game.map.city_at(BLUEMOOR).unwrap().side), (3, Side::Blue));
     // The log says so.
-    let lines = hexgame::info::record_lines(
+    let lines = hexlords::info::record_lines(
         &game.map,
-        &hexgame::orders::Record {
+        &hexlords::orders::Record {
             round: 1,
             turn: Side::Red,
             event: Event::Taken { city, from: Side::Blue, by: Side::Red, walls: Some(2) },
@@ -224,15 +224,15 @@ fn the_planner_disbands_its_weakest_to_make_room_for_the_strong() {
     }
     // Taxes 20, upkeep 24 a turn: it cannot keep the knights besides.
     assert!(game.income(Side::Red) < game.upkeep(Side::Red) + 7);
-    let mut planner = hexgame::planner::Planner::new(hexgame::planner::STEADY);
-    let order = hexgame::agents::Agent::next_order(&mut planner, &game.view_for(Side::Red), Side::Red);
+    let mut planner = hexlords::planner::Planner::new(hexlords::planner::STEADY);
+    let order = hexlords::agents::Agent::next_order(&mut planner, &game.view_for(Side::Red), Side::Red);
     let Order::Disband { units } = order else { panic!("{order:?}") };
     assert_eq!(units.len(), 1);
     assert_eq!(game.map.units().get(units[0]).unwrap().title(), "Levy");
     // Once it can keep them, its idle city builds the knights.
-    let mut planner = hexgame::planner::Planner::new(hexgame::planner::STEADY);
+    let mut planner = hexlords::planner::Planner::new(hexlords::planner::STEADY);
     for _ in 0..8 {
-        match hexgame::agents::Agent::next_order(&mut planner, &game.view_for(Side::Red), Side::Red) {
+        match hexlords::agents::Agent::next_order(&mut planner, &game.view_for(Side::Red), Side::Red) {
             order @ Order::Disband { .. } => {
                 game.apply(order).unwrap();
             }
@@ -251,7 +251,7 @@ fn the_planner_disbands_its_weakest_to_make_room_for_the_strong() {
 /// 1 or 2, 2 behind 3 to 5, 3 behind 6.
 #[test]
 fn walls_make_defenders_stronger_by_steps() {
-    use hexgame::state::combat::walls_bonus;
+    use hexlords::state::combat::walls_bonus;
     assert_eq!([0, 1, 2, 3, 4, 5, 6].map(walls_bonus), [0, 1, 1, 2, 2, 2, 3]);
 }
 
@@ -306,7 +306,7 @@ fn the_log_tells_of_walls_raised_and_units_disbanded() {
     game.apply(Order::Walls { city: redhold }).unwrap();
     let levy = at(&game, REDHOLD)[0];
     game.apply(Order::Disband { units: vec![levy] }).unwrap();
-    let lines: Vec<String> = hexgame::info::log(&game, Side::Red, 0)
+    let lines: Vec<String> = hexlords::info::log(&game, Side::Red, 0)
         .into_iter()
         .flat_map(|(_, entries)| entries.into_iter().flat_map(|e| e.lines))
         .collect();
@@ -346,8 +346,8 @@ fn the_planner_raises_low_walls_a_level_at_a_time() {
     for _ in 0..6 {
         new_unit(&mut game, Side::Blue, "knights", Hex::new(5, 7));
     }
-    let mut planner = hexgame::planner::Planner::new(hexgame::planner::STEADY);
-    let report = hexgame::agents::play_turn(&mut game, &mut planner);
+    let mut planner = hexlords::planner::Planner::new(hexlords::planner::STEADY);
+    let report = hexlords::agents::play_turn(&mut game, &mut planner);
     let raised =
         report.events.iter().any(|e| matches!(e, Event::WallsRaised { city, walls: 2, .. } if *city == redhold));
     assert!(raised, "{:?}", report.events);
@@ -368,8 +368,8 @@ fn the_planner_late_sends_its_weakest_home_before_stopping_work() {
     let knights = game.map.city_at(REDHOLD).unwrap().units.iter().position(|p| p.basename == "knights").unwrap();
     game.apply(Order::Build { city: redhold, what: Some(knights) }).unwrap();
     assert!(game.income(Side::Red) < game.upkeep(Side::Red) + 7, "it cannot keep the knights");
-    let mut planner = hexgame::planner::Planner::new(hexgame::planner::STEADY);
-    let order = hexgame::agents::Agent::next_order(&mut planner, &game.view_for(Side::Red), Side::Red);
+    let mut planner = hexlords::planner::Planner::new(hexlords::planner::STEADY);
+    let order = hexlords::agents::Agent::next_order(&mut planner, &game.view_for(Side::Red), Side::Red);
     assert!(matches!(order, Order::Disband { .. }), "{order:?}");
 }
 
@@ -403,7 +403,7 @@ fn a_city_window_with_nine_kinds_fits_the_screen() {
     let window = s.city_window().expect("its window").window();
     let r = area_of(&s, window);
     assert!(r.y >= 0 && r.bottom() <= 768, "{r:?}");
-    let close = area_of(&s, widget(&s, hexgame::city_windows::CITY_CLOSE_ID));
+    let close = area_of(&s, widget(&s, hexlords::city_windows::CITY_CLOSE_ID));
     assert!(close.bottom() <= r.bottom() && close.h > 0, "{close:?} in {r:?}");
 }
 
@@ -434,7 +434,7 @@ fn the_disband_window_lives_in_its_turn_and_says_why_not() {
     assert!(s.screen.game.map.units().get(boat).is_some());
     let says = |s: &Session| {
         let mut out = Vec::new();
-        let mut stack = vec![widget(s, hexgame::disband_window::DISBAND_WINDOW_ID)];
+        let mut stack = vec![widget(s, hexlords::disband_window::DISBAND_WINDOW_ID)];
         while let Some(id) = stack.pop() {
             out.extend(s.screen.ui.text(id).map(str::to_string));
             stack.extend(s.screen.ui.children(id).iter().copied());
@@ -448,7 +448,7 @@ fn the_disband_window_lives_in_its_turn_and_says_why_not() {
     let soldier = new_unit(&mut s.screen.game, Side::Red, "soldiers", REDHOLD);
     s.screen.game.select_unit(soldier);
     type_char(&mut s, 'g');
-    assert_eq!(s.picking(), Some(hexgame::session::Pick::GoTo));
+    assert_eq!(s.picking(), Some(hexlords::session::Pick::GoTo));
     type_char(&mut s, 'x');
     push(&mut s, DISBAND_YES_ID);
     assert!(s.screen.game.map.units().get(soldier).is_none() && s.picking().is_none());
@@ -478,9 +478,9 @@ fn the_planner_keeps_its_siege_engine() {
         }
     }
     let ram = new_unit(&mut game, Side::Red, "ram", Hex::new(4, 2));
-    let mut planner = hexgame::planner::Planner::new(hexgame::planner::STEADY);
+    let mut planner = hexlords::planner::Planner::new(hexlords::planner::STEADY);
     for _ in 0..6 {
-        let order = hexgame::agents::Agent::next_order(&mut planner, &game.view_for(Side::Red), Side::Red);
+        let order = hexlords::agents::Agent::next_order(&mut planner, &game.view_for(Side::Red), Side::Red);
         if let Order::Disband { units } = &order {
             assert!(!units.contains(&ram), "it sent its siege engine home");
         }
@@ -496,13 +496,13 @@ fn the_planner_keeps_its_siege_engine() {
 #[test]
 fn the_protocol_says_a_kinds_bonus_and_reads_the_new_orders() {
     let game = game("garrison levy\n", "", 50);
-    let text = hexgame::agents::describe(&game, Side::Red);
+    let text = hexlords::agents::describe(&game, Side::Red);
     assert!(text.lines().any(|l| l.starts_with("kind ram ") && l.contains(" siege 1 bonus none ")), "{text}");
     assert!(text.lines().any(|l| l.starts_with("kind ranger ") && l.contains(" bonus forest:2,city:1 ")), "{text}");
     let levy = at(&game, REDHOLD)[0];
-    let name = hexgame::agents::unit_name(levy);
+    let name = hexlords::agents::unit_name(levy);
     let redhold = game.map.city_at(REDHOLD).unwrap().id;
-    let parse = |line: &str| hexgame::agents::parse_order(&game, line);
+    let parse = |line: &str| hexlords::agents::parse_order(&game, line);
     assert_eq!(parse("walls 5 5"), Ok(Some(Order::Walls { city: redhold })));
     assert_eq!(parse(&format!("disband {name}")), Ok(Some(Order::Disband { units: vec![levy] })));
     assert_eq!(parse(&format!("bless {name}")), Ok(Some(Order::Bless { units: vec![levy] })));
@@ -513,7 +513,7 @@ fn the_protocol_says_a_kinds_bonus_and_reads_the_new_orders() {
 fn a_city_in_the_fog_has_the_walls_seen_last() {
     let game = game("garrison levy\n", "", 50);
     let mut setup = game.setup().clone();
-    setup.fog = hexgame::setup::Fog::On;
+    setup.fog = hexlords::setup::Fog::On;
     let mut game = game.with_setup(setup);
     // Red sees Bluemoor (walls 3) from a scout beside it; then the scout goes.
     let scout = new_unit(&mut game, Side::Red, "levy", Hex::new(5, 7));
@@ -536,7 +536,7 @@ fn a_city_in_the_fog_has_the_walls_seen_last() {
 fn a_siege_counts_the_units_seen_before() {
     let game = game("garrison levy 8\n", "garrison levy\n", 50);
     let mut setup = game.setup().clone();
-    setup.fog = hexgame::setup::Fog::On;
+    setup.fog = hexlords::setup::Fog::On;
     let mut game = game.with_setup(setup);
     // Red holds three cities to blue's one.
     let farwater = game.map.city_at(Hex::new(15, 15)).unwrap().id;
@@ -551,21 +551,21 @@ fn a_siege_counts_the_units_seen_before() {
     game.end_turn();
     let view = game.view_for(Side::Red);
     assert!(view.map.units().of_side(Side::Blue).next().is_none(), "none in sight");
-    let sure = Some(hexgame::state::combat::Forecast { odds: 100, kills: 1.0, losses: 0.0 });
+    let sure = Some(hexlords::state::combat::Forecast { odds: 100, kills: 1.0, losses: 0.0 });
     // Nine red units against five blue it knows of: no siege (9 < 3 x 5).
-    assert!(!hexgame::agents::siege(&view, Side::Red, BLUEMOOR, sure));
+    assert!(!hexlords::agents::siege(&view, Side::Red, BLUEMOOR, sure));
     // Seen long ago, they count no more (under total fog, sightings a
     // hundred rounds old barred every siege).
-    while game.turn() <= 1 + hexgame::agents::SIEGE_MEMORY {
+    while game.turn() <= 1 + hexlords::agents::SIEGE_MEMORY {
         game.end_turn();
     }
-    assert!(hexgame::agents::siege(&game.view_for(Side::Red), Side::Red, BLUEMOOR, sure));
+    assert!(hexlords::agents::siege(&game.view_for(Side::Red), Side::Red, BLUEMOOR, sure));
 }
 
 /// The generator's walls are 0 to 6, as high as walls go in the game.
 #[test]
 fn the_generators_walls_go_no_higher_than_the_games() {
-    let mut cfg = hexgame::mapgen::config::Config::default();
+    let mut cfg = hexlords::mapgen::config::Config::default();
     assert!(cfg.set("walls", "3:50 6:50").is_ok());
     assert!(cfg.set("walls", "3:50 7:50").unwrap_err().contains("above 6"));
 }
@@ -577,7 +577,7 @@ fn the_generators_walls_go_no_higher_than_the_games() {
 fn the_help_topics_tell_the_new_rules() {
     let game = game("", "", 50);
     let text = |id: &str| -> String {
-        let (_, sections) = hexgame::guide::topic(&game, id).unwrap();
+        let (_, sections) = hexlords::guide::topic(&game, id).unwrap();
         // (Wrapped: a row with no name goes on from the one before.)
         let rows = sections.iter().flat_map(|s| s.rows.iter());
         rows.map(|(a, b)| if a.is_empty() { format!(" {b}") } else { format!("\n{a}: {b}") }).collect::<String>()
@@ -599,7 +599,7 @@ fn the_help_topics_tell_the_new_rules() {
 fn the_planner_keeps_its_scout() {
     let mut game = game("garrison levy 8\n", "", 200);
     let mut setup = game.setup().clone();
-    setup.fog = hexgame::setup::Fog::Total;
+    setup.fog = hexlords::setup::Fog::Total;
     game = game.with_setup(setup);
     for row in [2, 3] {
         for _ in 0..8 {
@@ -609,9 +609,9 @@ fn the_planner_keeps_its_scout() {
     // The fastest, as weak as a levy and dearer to keep: the first to go,
     // were it not the scout.
     let runner = new_unit(&mut game, Side::Red, "runner", Hex::new(4, 2));
-    let mut planner = hexgame::planner::Planner::new(hexgame::planner::STEADY);
+    let mut planner = hexlords::planner::Planner::new(hexlords::planner::STEADY);
     for _ in 0..3 {
-        let report = hexgame::agents::play_turn(&mut game, &mut planner);
+        let report = hexlords::agents::play_turn(&mut game, &mut planner);
         let gone = report
             .events
             .iter()

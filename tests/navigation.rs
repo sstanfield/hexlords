@@ -6,8 +6,8 @@
 mod common;
 
 use common::{hover, pixel_of, press, session, widget};
-use hexgame::script;
-use hexgame::state::Hex;
+use hexlords::script;
+use hexlords::state::Hex;
 use turbo_ferret::{Point, Rect, SpecialKey};
 
 fn middle(r: Rect) -> Point {
@@ -61,7 +61,7 @@ fn the_map_stops_at_its_edges() {
     }
     // The widget's edges are on the map's (x from -0.5, y down from 1), and
     // the cursor is the hex under the pointer.
-    let edges = |s: &hexgame::session::Session| {
+    let edges = |s: &hexlords::session::Session| {
         let ([x, y], (hw, hh)) = (s.screen.view.middle(), s.screen.view.half_extent());
         [x - hw, x + hw, y + hh, y - hh]
     };
@@ -83,7 +83,7 @@ fn the_map_stops_at_its_edges() {
 fn two_fingers_on_the_minimap_move_the_view_the_way_they_do_on_the_map() {
     let mut s = session();
     let p = middle(s.screen.minimap_rect());
-    let marker = |s: &hexgame::session::Session| s.screen.mini_view.marker(&s.screen.view);
+    let marker = |s: &hexlords::session::Session| s.screen.mini_view.marker(&s.screen.view);
     let [l0, b0, r0, t0] = marker(&s);
     // The fingers go 20 pixels left and 10 up: on the main map that shows what
     // is to the right and below, and so it does here. The marker goes there,
@@ -131,7 +131,7 @@ fn a_zoom_at_the_pointer_keeps_the_hex_under_it() {
     let p = pixel_of(&s, hex);
     assert!(s.screen.zoom_target(p));
     let r = s.screen.map_rect();
-    let grid = |s: &hexgame::session::Session| {
+    let grid = |s: &hexlords::session::Session| {
         let (half_w, half_h) = (r.w as f32 / 2.0, r.h as f32 / 2.0);
         s.screen
             .view

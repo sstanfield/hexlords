@@ -6,18 +6,18 @@
 mod common;
 
 use common::{assets, choose, click, pixel_of, press, push_widget, type_char, widget};
-use hexgame::game::Game;
-use hexgame::guide;
-use hexgame::log_window::LOG_WINDOW_ID;
-use hexgame::screen::{HELP_KEYS_ID, ZOOM_IN_ID};
-use hexgame::session::{
+use hexlords::game::Game;
+use hexlords::guide;
+use hexlords::log_window::LOG_WINDOW_ID;
+use hexlords::screen::{HELP_KEYS_ID, ZOOM_IN_ID};
+use hexlords::session::{
     ALL_CITIES_ID, BEGIN_TURN_ID, CAPITAL_ID, DESELECT_ID, GO_TO_ID, LOG_ID, MENU_CITIES_ID, MENU_GAME_ID,
     MENU_HELP_ID, MENU_TITLES, MENU_UNITS_ID, MENU_VIEW_ID, Session, TASKS_ID, UNDO_ID,
 };
-use hexgame::setup::{Fog, Setup};
-use hexgame::state::combat::System;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side};
+use hexlords::setup::{Fog, Setup};
+use hexlords::state::combat::System;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side};
 use turbo_ferret::{Modifiers, Point, Size, SpecialKey, TbId};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -234,7 +234,7 @@ fn keys_and_mouse_shows_the_keys_over_a_topic() {
     choose(&mut s, MENU_HELP_ID, "help_cities");
     assert_eq!(s.screen.help_title(), Some("Help: cities and gold"));
     choose(&mut s, MENU_HELP_ID, HELP_KEYS_ID);
-    assert_eq!(s.screen.help_title(), Some(hexgame::screen::KEYS_TITLE));
+    assert_eq!(s.screen.help_title(), Some(hexlords::screen::KEYS_TITLE));
     choose(&mut s, MENU_HELP_ID, HELP_KEYS_ID);
     assert!(!s.screen.help_open(), "the keys again close them");
 }
@@ -256,9 +256,9 @@ fn esc_closes_the_window_on_top_first() {
 #[test]
 fn new_game_asks_while_the_game_goes_on_and_not_once_it_is_over() {
     let mut s = session(|_| {});
-    choose(&mut s, MENU_GAME_ID, hexgame::session::NEW_GAME_ASK_ID);
+    choose(&mut s, MENU_GAME_ID, hexlords::session::NEW_GAME_ASK_ID);
     assert!(s.asks_new_game() && !s.wants_new_game(), "it asks first");
-    push_widget(&mut s, hexgame::session::KEEP_PLAYING_ID);
+    push_widget(&mut s, hexlords::session::KEEP_PLAYING_ID);
     assert!(!s.asks_new_game() && !s.wants_new_game());
     // Ctrl+N (Cmd+N) too; Esc says no.
     let mods = if cfg!(target_os = "macos") { Modifiers::SUPER } else { Modifiers::CTRL };
@@ -268,8 +268,8 @@ fn new_game_asks_while_the_game_goes_on_and_not_once_it_is_over() {
     assert!(s.asks_new_game());
     press(&mut s, SpecialKey::Esc);
     assert!(!s.asks_new_game() && !s.wants_new_game());
-    choose(&mut s, MENU_GAME_ID, hexgame::session::NEW_GAME_ASK_ID);
-    push_widget(&mut s, hexgame::session::NEW_GAME_ID);
+    choose(&mut s, MENU_GAME_ID, hexlords::session::NEW_GAME_ASK_ID);
+    push_widget(&mut s, hexlords::session::NEW_GAME_ID);
     assert!(s.wants_new_game(), "leaving it");
 
     // Over: straight to a new game. Red takes blue's only city.
@@ -279,10 +279,10 @@ fn new_game_asks_while_the_game_goes_on_and_not_once_it_is_over() {
     let blue = game.map.units_at(BLUEMOOR)[0];
     game.map.kill_unit(blue);
     game.map.move_unit(red, Hex::new(15, 14)).unwrap();
-    game.apply(hexgame::orders::Order::Move { units: vec![red], to: BLUEMOOR }).unwrap();
+    game.apply(hexlords::orders::Order::Move { units: vec![red], to: BLUEMOOR }).unwrap();
     assert_eq!(s.screen.game.winner(), Some(Side::Red));
     s.frame(16);
-    choose(&mut s, MENU_GAME_ID, hexgame::session::NEW_GAME_ASK_ID);
+    choose(&mut s, MENU_GAME_ID, hexlords::session::NEW_GAME_ASK_ID);
     assert!(s.wants_new_game() && !s.asks_new_game());
 }
 
@@ -302,7 +302,7 @@ fn the_new_game_question_goes_the_way_of_the_other_windows() {
     let blue = game.map.units_at(BLUEMOOR)[0];
     game.map.kill_unit(blue);
     game.map.move_unit(red, Hex::new(15, 14)).unwrap();
-    game.apply(hexgame::orders::Order::Move { units: vec![red], to: BLUEMOOR }).unwrap();
+    game.apply(hexlords::orders::Order::Move { units: vec![red], to: BLUEMOOR }).unwrap();
     s.frame(16);
     assert!(!s.asks_new_game());
 }

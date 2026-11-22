@@ -2,13 +2,13 @@
 
 use std::path::PathBuf;
 
-use hexgame::app::{self, OPTIONS_USAGE, Options, WindowSpec};
-use hexgame::script;
-use hexgame::state::{Map, TileType};
+use hexlords::app::{self, OPTIONS_USAGE, Options, WindowSpec};
+use hexlords::script;
+use hexlords::state::{Map, TileType};
 use mapeditor::check::check_path;
 use mapeditor::editor::Editor;
 
-const WINDOW: WindowSpec = WindowSpec { program: "mapeditor", title: "HexGame Map Editor", size: (1280, 800) };
+const WINDOW: WindowSpec = WindowSpec { program: "mapeditor", title: "Hexlords Map Editor", size: (1280, 800) };
 /// The size of a new map when `--new` does not say.
 const NEW_SIZE: (u16, u16) = (100, 100);
 
@@ -70,7 +70,7 @@ fn first_map(file: Option<&PathBuf>, new: Option<(u16, u16)>) -> Result<Map, Str
     match (file, new) {
         // Of a map directory the editor edits the terrain.
         (Some(path), None) if path.exists() => {
-            Map::load(&hexgame::state::scenario::terrain_path(path)).map_err(|e| e.to_string())
+            Map::load(&hexlords::state::scenario::terrain_path(path)).map_err(|e| e.to_string())
         }
         (Some(path), Some(_)) if path.exists() => {
             Err(format!("--new: {} exists already (leave --new out to edit it)", path.display()))
@@ -110,7 +110,7 @@ fn main() {
         }
     };
     if !args.check.is_empty() {
-        let assets = hexgame::paths::asset_root(args.window.assets.as_deref());
+        let assets = hexlords::paths::asset_root(args.window.assets.as_deref());
         std::process::exit(if check_files(&args.check, &assets) { 0 } else { 1 });
     }
     let Args { window, file, new, script, .. } = args;

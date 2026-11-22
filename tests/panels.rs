@@ -7,11 +7,11 @@
 mod common;
 
 use common::{assets, click, hover, pixel_of, widget};
-use hexgame::game::Game;
-use hexgame::screen::Scene;
-use hexgame::session::{LEADER_ID, STACK_SLOTS, Session, TIP_LINES, unit_button_id};
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Side};
+use hexlords::game::Game;
+use hexlords::screen::Scene;
+use hexlords::session::{LEADER_ID, STACK_SLOTS, Session, TIP_LINES, unit_button_id};
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{DEFAULT_UNIT_IMAGE, Hex, MAX_STACK, Side};
 use turbo_ferret::{Modifiers, Point, Rect, Size, SpecialKey, Visibility};
 
 const CITY: Hex = Hex::new(10, 8);

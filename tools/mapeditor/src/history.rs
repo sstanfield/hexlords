@@ -1,7 +1,7 @@
 //! What the editor did to the terrain and the roads, so that it can be undone.
 //! A step is everything one gesture changed: a drag of the brush, a fill, a key.
 
-use hexgame::state::{Hex, Map, TileType};
+use hexlords::state::{Hex, Map, TileType};
 
 /// How many steps are remembered. Older ones are forgotten.
 pub const MAX_STEPS: usize = 200;

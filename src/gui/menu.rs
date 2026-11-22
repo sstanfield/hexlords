@@ -19,7 +19,7 @@ use turbo_ferret::{Axis, LayoutParams, Point, Rect, TbId, Ui, WidgetId};
 use super::build;
 
 /// The skins of a title, a menu's box, a row and the keys in it
-/// (`assets/skin/hexgame.tb.txt`).
+/// (`assets/skin/hexlords.tb.txt`).
 pub const TITLE_SKIN: &str = "MenuTitle";
 pub const DROP_SKIN: &str = "MenuDrop";
 pub const ROW_SKIN: &str = "ListRow";

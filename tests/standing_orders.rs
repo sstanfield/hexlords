@@ -7,14 +7,14 @@
 mod common;
 
 use common::{assets, choose, click, pixel_of, press, type_char, widget};
-use hexgame::city_windows::{CITY_NO_RALLY_ID, CITY_RALLY_ID, PANEL_OPEN_ID};
-use hexgame::game::{CityState, Game, StackState, Task};
-use hexgame::orders::{Event, Order};
-use hexgame::session::{DONE_ID, GO_TO_ID, MENU_VIEW_ID, Pick, Session, TASKS_ID};
-use hexgame::setup::Setup;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Sends, Side, TileType, UnitId};
-use hexgame::tasks_window::row_id;
+use hexlords::city_windows::{CITY_NO_RALLY_ID, CITY_RALLY_ID, PANEL_OPEN_ID};
+use hexlords::game::{CityState, Game, StackState, Task};
+use hexlords::orders::{Event, Order};
+use hexlords::session::{DONE_ID, GO_TO_ID, MENU_VIEW_ID, Pick, Session, TASKS_ID};
+use hexlords::setup::Setup;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Sends, Side, TileType, UnitId};
+use hexlords::tasks_window::row_id;
 use turbo_ferret::{Point, Size, SpecialKey};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -88,7 +88,7 @@ fn a_stack_sent_far_goes_there_over_turns() {
     assert!(red.iter().all(|id| pos(&game, *id) == FAR && goto(&game, *id).is_none()), "there; the order ends");
     // The text protocol says it, and reads it back.
     assert_eq!(
-        hexgame::agents::parse_order(&game, "goto red.0.0 5 21"),
+        hexlords::agents::parse_order(&game, "goto red.0.0 5 21"),
         Ok(Some(Order::GoTo { units: vec![red[0]], to: Hex::new(5, 21), via: Vec::new() }))
     );
 }
@@ -120,10 +120,10 @@ fn a_march_stops_short_of_another_sides_units_and_waits_for_orders() {
     assert!(game.tasks(Side::Red).iter().any(|t| matches!(t, Task::Stack { state: StackState::Stalled, .. })));
     // Its log says so.
     let record = game.history().iter().find(|r| matches!(r.event, Event::Stalled { .. })).unwrap();
-    let lines = hexgame::info::record_lines(&game.map, record, Side::Red);
+    let lines = hexlords::info::record_lines(&game.map, record, Side::Red);
     let line = format!(
         "One of your units stopped at {} on the way to row 5, column 13",
-        hexgame::info::place(&game.map, unit_at)
+        hexlords::info::place(&game.map, unit_at)
     );
     assert!(lines[0].starts_with(&line) && lines[0].ends_with("It waits for orders."), "{lines:?}");
     // Done puts it aside for the turn, stopped or not: it no longer needs
@@ -191,10 +191,13 @@ fn a_city_sends_what_it_builds_where_its_holder_says() {
     game.apply(Order::Rally { city, to: Sends::Stay }).unwrap();
     assert_eq!(game.map.cities().get(city).unwrap().sends, Sends::Stay);
     assert_eq!(
-        hexgame::agents::parse_order(&game, "rally 5 5 5 20"),
+        hexlords::agents::parse_order(&game, "rally 5 5 5 20"),
         Ok(Some(Order::Rally { city, to: Sends::Route(vec![FAR]) }))
     );
-    assert_eq!(hexgame::agents::parse_order(&game, "rally 5 5 none"), Ok(Some(Order::Rally { city, to: Sends::Stay })));
+    assert_eq!(
+        hexlords::agents::parse_order(&game, "rally 5 5 none"),
+        Ok(Some(Order::Rally { city, to: Sends::Stay }))
+    );
 }
 
 #[test]
@@ -223,7 +226,7 @@ fn done_puts_a_stack_aside_for_the_turn() {
     // A new turn, a new start.
     round(&mut game);
     assert!(!game.map.units().get(a[0]).unwrap().done);
-    assert_eq!(hexgame::agents::parse_order(&game, "done red.0.0"), Ok(Some(Order::Done { units: a })));
+    assert_eq!(hexlords::agents::parse_order(&game, "done red.0.0"), Ok(Some(Order::Done { units: a })));
 }
 
 #[test]
@@ -247,7 +250,7 @@ fn the_tasks_come_most_pressing_first() {
     );
     // The riders have had their orders: among the rest.
     assert_eq!(tasks.iter().map(Task::tier).collect::<Vec<_>>(), [1, 1, 3, 3]);
-    let lines: Vec<String> = tasks.iter().map(|t| hexgame::info::task_line(&game, t)).collect();
+    let lines: Vec<String> = tasks.iter().map(|t| hexlords::info::task_line(&game, t)).collect();
     assert_eq!(
         lines,
         [
@@ -435,7 +438,7 @@ fn a_city_window_sends_new_units_to_a_picked_hex() {
     press(&mut s, SpecialKey::Esc);
     push(&mut s, PANEL_OPEN_ID);
     let says = |s: &Session| -> Vec<String> {
-        common::descendants(s, hexgame::city_windows::CITY_WINDOW_ID)
+        common::descendants(s, hexlords::city_windows::CITY_WINDOW_ID)
             .into_iter()
             .filter_map(|id| s.screen.ui.text(id).map(str::to_string))
             .collect()
@@ -466,7 +469,7 @@ fn go_to_is_taken_with_no_moves_left_and_marches_next_turn() {
     round(&mut game);
     assert!(pos(&game, id).distance(FAR) < Hex::new(5, 11).distance(FAR), "on its way");
     // A hex no unit of it can get to over the land is refused, naming it.
-    game.map.tile_mut(Hex::new(20, 20)).unwrap().kind = hexgame::state::TileType::Water;
+    game.map.tile_mut(Hex::new(20, 20)).unwrap().kind = hexlords::state::TileType::Water;
     let refused = game.apply(Order::GoTo { units: vec![id], to: Hex::new(20, 20), via: Vec::new() }).unwrap_err();
     assert_eq!(refused, "Soldiers cannot get there");
 }
@@ -490,7 +493,7 @@ fn go_to_from_several_hexes_sends_each_stack() {
 fn a_rally_point_is_somewhere_the_city_s_units_can_get_and_is_lost_with_the_city() {
     let mut game = game("");
     let city = game.map.city_at(REDHOLD).unwrap().id;
-    game.map.tile_mut(Hex::new(20, 20)).unwrap().kind = hexgame::state::TileType::Water;
+    game.map.tile_mut(Hex::new(20, 20)).unwrap().kind = hexlords::state::TileType::Water;
     let refused = game.apply(Order::Rally { city, to: Sends::Route(vec![Hex::new(20, 20)]) }).unwrap_err();
     assert_eq!(refused, "nothing Redhold builds can get there");
     game.apply(Order::Rally { city, to: Sends::Route(vec![FAR]) }).unwrap();
@@ -560,7 +563,7 @@ fn a_box_selects_the_unit_it_shows_the_leader_s_too() {
     push(&mut s, "unit_1");
     assert!(!s.screen.game.selection().contains(&riders), "the riders' box leaves the riders out");
     assert!(s.screen.game.selection().contains(&soldiers));
-    push(&mut s, hexgame::session::LEADER_ID);
+    push(&mut s, hexlords::session::LEADER_ID);
     assert!(!s.screen.game.selection().contains(&captain), "the leader's box is the captain's");
 }
 
@@ -594,7 +597,7 @@ fn on_another_side_s_turn_the_screen_looks_and_orders_nothing() {
     // And red's own city's buttons give no orders while blue plays.
     press(&mut s, SpecialKey::Esc);
     click_hex(&mut s, REDHOLD);
-    push(&mut s, &format!("{}{}", hexgame::city_windows::PANEL_PREFIX, hexgame::city_windows::build_id(0)));
+    push(&mut s, &format!("{}{}", hexlords::city_windows::PANEL_PREFIX, hexlords::city_windows::build_id(0)));
     assert_eq!(s.screen.game.map.city_at(REDHOLD).unwrap().building, None);
 }
 
@@ -641,11 +644,11 @@ fn defenders_stay_put_and_are_passed_by_until_sent_somewhere() {
     game.map.place_unit(blue, BLUEMOOR).unwrap();
     assert!(game.apply(Order::Defend { units: vec![blue], on: true }).is_err());
     assert_eq!(
-        hexgame::agents::parse_order(&game, "defend red.0.0"),
+        hexlords::agents::parse_order(&game, "defend red.0.0"),
         Ok(Some(Order::Defend { units: vec![a[0]], on: true }))
     );
     assert_eq!(
-        hexgame::agents::parse_order(&game, "undefend red.0.0"),
+        hexlords::agents::parse_order(&game, "undefend red.0.0"),
         Ok(Some(Order::Defend { units: vec![a[0]], on: false }))
     );
 }

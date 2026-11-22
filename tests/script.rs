@@ -3,8 +3,8 @@
 mod common;
 
 use common::session;
-use hexgame::script;
-use hexgame::state::Hex;
+use hexlords::script;
+use hexlords::state::Hex;
 
 #[test]
 fn keys_go_through_the_ui() {

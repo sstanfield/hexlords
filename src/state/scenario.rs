@@ -816,7 +816,7 @@ city 12 14
 
     #[test]
     fn a_map_is_a_file_or_a_directory() {
-        let dir = std::env::temp_dir().join(format!("hexgame-scenario-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("hexlords-scenario-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("whole/assets/units")).unwrap();
         std::fs::write(dir.join("whole").join(TERRAIN_FILE), terrain()).unwrap();

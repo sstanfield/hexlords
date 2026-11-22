@@ -13,11 +13,11 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use hexgame::mapgen::config::Config;
-use hexgame::mapgen::preview::{self, Image};
-use hexgame::mapgen::stats::Stats;
-use hexgame::mapgen::{Generated, check, generate, score};
-use hexgame::state::scenario;
+use hexlords::mapgen::config::Config;
+use hexlords::mapgen::preview::{self, Image};
+use hexlords::mapgen::stats::Stats;
+use hexlords::mapgen::{Generated, check, generate, score};
+use hexlords::state::scenario;
 
 const USAGE: &str = "\
 usage: mapgen gen   [--preset NAME] [--config FILE] [--units PATH] [--seed N] [--KNOB VALUE ...]

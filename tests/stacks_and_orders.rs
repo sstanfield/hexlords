@@ -8,13 +8,13 @@
 mod common;
 
 use common::{assets, click, pixel_of, press, push_widget};
-use hexgame::game::Game;
-use hexgame::options_window::Options;
-use hexgame::orders::{Event, Order, RallyPoint};
-use hexgame::session::{MISSION_ASK_ID, MISSION_GO_ID, MISSION_KEEP_ID, MISSION_TAKE_ID, Session};
-use hexgame::setup::Setup;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, UnitId};
+use hexlords::game::Game;
+use hexlords::options_window::Options;
+use hexlords::orders::{Event, Order, RallyPoint};
+use hexlords::session::{MISSION_ASK_ID, MISSION_GO_ID, MISSION_KEEP_ID, MISSION_TAKE_ID, Session};
+use hexlords::setup::Setup;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side, UnitId};
 use turbo_ferret::{Size, SpecialKey};
 
 const REDHOLD: Hex = Hex::new(5, 5);

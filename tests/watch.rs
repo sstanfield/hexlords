@@ -8,15 +8,15 @@
 mod common;
 
 use common::{assets, choose, click, pixel_of, press, widget};
-use hexgame::battle_window::{BATTLE_AGAIN_ID, BATTLE_SKIP_ID, points};
-use hexgame::game::{Game, REPLAY_ROUNDS};
-use hexgame::info;
-use hexgame::orders::{Event, Order};
-use hexgame::session::{BEGIN_TURN_ID, LOG_ID, MENU_VIEW_ID, Session};
-use hexgame::setup::Setup;
-use hexgame::state::combat::HITS;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, UnitId};
+use hexlords::battle_window::{BATTLE_AGAIN_ID, BATTLE_SKIP_ID, points};
+use hexlords::game::{Game, REPLAY_ROUNDS};
+use hexlords::info;
+use hexlords::orders::{Event, Order};
+use hexlords::session::{BEGIN_TURN_ID, LOG_ID, MENU_VIEW_ID, Session};
+use hexlords::setup::Setup;
+use hexlords::state::combat::HITS;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side, UnitId};
 use turbo_ferret::{Point, Size, SpecialKey};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -112,7 +112,7 @@ fn an_attack_is_played_out_in_the_battles_window() {
     let n = window.progress().1;
     assert!(n >= 4, "two levies, two hits each, at least");
     // Both stacks, a card each, and where the bonuses come from.
-    let text = says(&s, hexgame::battle_window::BATTLE_WINDOW_ID);
+    let text = says(&s, hexlords::battle_window::BATTLE_WINDOW_ID);
     for line in [
         "Red attacks blue at Bluemoor",
         "Red: 4 units, led by a Captain (+1 each)",
@@ -169,7 +169,7 @@ fn the_computers_attacks_are_watched_from_the_log() {
     assert!(log.iter().any(|l| l.starts_with("Blue attacked you at Redhold")), "{log:?}");
     let watch = s.log_watchable();
     assert_eq!(watch.len(), 1, "one battle");
-    push(&mut s, &hexgame::log_window::watch_id(watch[0]));
+    push(&mut s, &hexlords::log_window::watch_id(watch[0]));
     let window = s.battle().expect("the battle");
     assert_eq!(window.progress().0, 0);
     push(&mut s, BATTLE_SKIP_ID);
@@ -192,7 +192,7 @@ fn in_hotseat_the_one_attacked_watches_it_from_their_log() {
     assert!(s.log_lines().iter().any(|l| l.starts_with("Red attacked you at Bluemoor")));
     let watch = s.log_watchable();
     assert_eq!(watch.len(), 1);
-    push(&mut s, &hexgame::log_window::watch_id(watch[0]));
+    push(&mut s, &hexlords::log_window::watch_id(watch[0]));
     push(&mut s, BATTLE_SKIP_ID);
     let outcome = s.battle().unwrap().outcome(&s.screen.ui);
     assert!(outcome[0].starts_with("Red attacked you at Bluemoor"), "told as blue: {outcome:?}");

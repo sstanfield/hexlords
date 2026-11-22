@@ -1,6 +1,6 @@
-//! The HexGame map editor: paint terrain on a hex map and save it as a map file
+//! The Hexlords map editor: paint terrain on a hex map and save it as a map file
 //! (`docs/map-format.md`). It is the game's main map and minimap
-//! (`hexgame::screen`) with a sidebar of Turbo Ferret widgets.
+//! (`hexlords::screen`) with a sidebar of Turbo Ferret widgets.
 //!
 //! - [`editor`]: the editor without its window (tests drive it).
 //! - [`brush`]: which hexes a stroke touches.

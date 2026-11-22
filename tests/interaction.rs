@@ -4,7 +4,7 @@
 mod common;
 
 use common::{click, hover, pixel_of, press, session, session_at, type_char};
-use hexgame::state::Hex;
+use hexlords::state::Hex;
 use turbo_ferret::{Point, SpecialKey};
 
 const START: Hex = Hex::new(50, 50);
@@ -193,7 +193,7 @@ fn the_cursor_stops_at_the_map_edge_and_the_view_does_not_jump() {
     // The view came along in steps and now rests in the corner, its edges on
     // the map's. More presses against the edge change nothing (the C++
     // recentered on every one).
-    let edges = |s: &hexgame::session::Session| {
+    let edges = |s: &hexlords::session::Session| {
         let ([x, y], (hw, hh)) = (s.screen.view.middle(), s.screen.view.half_extent());
         [x - hw, x + hw, y + hh, y - hh]
     };
@@ -263,7 +263,7 @@ fn picking_follows_the_zoom_and_the_center() {
 
 /// The button pressed on the map, the pointer moved through `path`, and the
 /// button let go at its end; the session hears of each step.
-fn drag_through(s: &mut hexgame::session::Session, from: Point, path: &[Point]) {
+fn drag_through(s: &mut hexlords::session::Session, from: Point, path: &[Point]) {
     use turbo_ferret::Modifiers;
     s.screen.ui.pointer_move(from, Modifiers::NONE);
     s.screen.ui.pointer_down(from, 1, Modifiers::NONE);
@@ -323,7 +323,7 @@ fn a_drag_off_the_map_takes_the_map_along_and_clicks_nothing() {
 
 #[test]
 fn the_overlay_and_the_minimap_follow_changes_to_the_map() {
-    use hexgame::state::TileType;
+    use hexlords::state::TileType;
     let mut s = session();
     assert!(s.screen.take_minimap_dirty());
     press(&mut s, SpecialKey::Enter);

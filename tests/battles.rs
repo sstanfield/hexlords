@@ -7,16 +7,16 @@
 mod common;
 
 use common::{assets, click, pixel_of, press, widget};
-use hexgame::agents::Simple;
-use hexgame::battle_window::BATTLE_WINDOW_ID;
-use hexgame::game::Game;
-use hexgame::headless;
-use hexgame::orders::{Event, Order};
-use hexgame::session::Session;
-use hexgame::setup::{Controller, Setup};
-use hexgame::state::combat::System;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, MAX_STACK, Side, TileType, UnitId};
+use hexlords::agents::Simple;
+use hexlords::battle_window::BATTLE_WINDOW_ID;
+use hexlords::game::Game;
+use hexlords::headless;
+use hexlords::orders::{Event, Order};
+use hexlords::session::Session;
+use hexlords::setup::{Controller, Setup};
+use hexlords::state::combat::System;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, MAX_STACK, Side, TileType, UnitId};
 use turbo_ferret::{Point, Size, SpecialKey};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -265,7 +265,7 @@ fn the_screen_tells_the_odds_and_reports_the_battle() {
     // The battle's window: played out, and then how it went.
     let battle = s.battle().expect("the battle, to watch");
     assert_eq!(battle.progress().0, 0);
-    push_id(&mut s, hexgame::battle_window::BATTLE_SKIP_ID);
+    push_id(&mut s, hexlords::battle_window::BATTLE_SKIP_ID);
     assert_eq!(
         s.battle().unwrap().outcome(&s.screen.ui),
         [
@@ -287,7 +287,7 @@ fn who_was_attacked_while_they_waited_hears_of_it() {
     let mut s =
         session(game("garrison soldiers 3\n", "garrison levy\n", |s| s.set_players("red=person,blue=person").unwrap()));
     let begin = |s: &mut Session| {
-        let r = s.screen.area(widget(s, hexgame::session::BEGIN_TURN_ID));
+        let r = s.screen.area(widget(s, hexlords::session::BEGIN_TURN_ID));
         click(s, Point::new(r.x + r.w / 2, r.y + r.h / 2));
     };
     begin(&mut s);
@@ -324,10 +324,10 @@ fn who_was_attacked_while_they_waited_hears_of_it() {
 fn the_panels_say_what_a_commander_does() {
     let game = game("garrison captain\n", "", |_| {});
     let captain = game.map.units().get(at(&game, REDHOLD)[0]).unwrap();
-    assert!(hexgame::info::unit_line(&game.map, captain).ends_with(", price 0, commands (+1)"));
-    let details = hexgame::info::unit_details(&game.map, captain);
+    assert!(hexlords::info::unit_line(&game.map, captain).ends_with(", price 0, commands (+1)"));
+    let details = hexlords::info::unit_details(&game.map, captain);
     assert_eq!(details[2], "Commands: +1 to its stack; fights last");
-    assert!(details.len() <= hexgame::session::TIP_LINES, "{details:?}");
+    assert!(details.len() <= hexlords::session::TIP_LINES, "{details:?}");
 }
 
 #[test]
@@ -377,8 +377,8 @@ fn the_simple_agent_attacks_stacks_in_the_field() {
     let levy = game.map.units().kind_named("levy").unwrap();
     let blue = game.map.new_unit_of(Side::Blue, levy).unwrap();
     game.map.place_unit(blue, Hex::new(8, 5)).unwrap();
-    let mut agents = hexgame::agents::Agents::for_game(&game).unwrap();
-    let report = hexgame::agents::play_turn(&mut game, agents.get_mut(Side::Red).unwrap());
+    let mut agents = hexlords::agents::Agents::for_game(&game).unwrap();
+    let report = hexlords::agents::play_turn(&mut game, agents.get_mut(Side::Red).unwrap());
     assert!(
         report.events.iter().any(|e| matches!(e, Event::Battle { at, won: true, .. } if *at == Hex::new(8, 5))),
         "{:?}",
@@ -427,7 +427,7 @@ fn a_good_stack_takes_a_city_and_walls_do_not_make_it_a_fortress() {
 
 #[test]
 fn a_side_that_lost_its_commander_builds_another() {
-    use hexgame::agents::Agent;
+    use hexlords::agents::Agent;
     let mut game = game_with("produce soldiers 1\nproduce captain 3\ngarrison soldiers 2\n", "", |s| {
         s.set_players("red=simple").unwrap()
     });
@@ -444,7 +444,7 @@ fn a_side_that_lost_its_commander_builds_another() {
     game.map.set_production(redhold, Some(1));
     game.map.city_mut(redhold).unwrap().progress = 3;
     let city = game.map.city_at(REDHOLD).unwrap();
-    assert_eq!(hexgame::info::progress_short(&game.map, city), "Captain: they wait for room");
+    assert_eq!(hexlords::info::progress_short(&game.map, city), "Captain: they wait for room");
 }
 
 /// A kind at home on some ground fights the stronger there (`bonus`),

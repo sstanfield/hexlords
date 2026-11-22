@@ -3,7 +3,7 @@
 `mapgen` makes a map directory in the game's format (`docs/map-format.md`)
 from a seed and a few knobs, measures any map, and checks one. The same seed
 and knobs make the same map, byte for byte, on every machine. The generator
-is `hexgame::mapgen` (pure: no files, no clock, so the game can call it one
+is `hexlords::mapgen` (pure: no files, no clock, so the game can call it one
 day); `tools/mapgen` is its command line.
 
 Its targets are a hand-built map's statistics ("the target map", the
@@ -80,7 +80,7 @@ checkboxes are flags (`--sea-cities`, `--fly-cities`).
 3. Change a knob in a copy of a preset and run the batch again with the same
    seeds into `runs/b`. Each stage draws on its own stream of chance, so only
    what comes after the change moves.
-4. Play the good ones (once there are cities): `hexgame --map runs/b/seed-3`.
+4. Play the good ones (once there are cities): `hexlords --map runs/b/seed-3`.
 
 ## The knobs
 

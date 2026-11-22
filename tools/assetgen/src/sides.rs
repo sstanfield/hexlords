@@ -1,6 +1,6 @@
 //! The sides of the game, as far as the pictures go: a name for file names
 //! and a color. A city is drawn once for each, its roofs in the side's color
-//! (`terrain::city`). These are the game's `hexgame::render::side_color` and
+//! (`terrain::city`). These are the game's `hexlords::render::side_color` and
 //! `scenario::side_name`; a test holds them together.
 
 use crate::shapes::Rgb;

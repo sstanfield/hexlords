@@ -4,9 +4,9 @@
 mod common;
 
 use common::{click, hover, press, session, session_at};
-use hexgame::gui::{MiniMapCommand, MiniMapWidget};
-use hexgame::session::Session;
-use hexgame::state::Hex;
+use hexlords::gui::{MiniMapCommand, MiniMapWidget};
+use hexlords::session::Session;
+use hexlords::state::Hex;
 use turbo_ferret::{Modifiers, Point, Size, SpecialKey};
 
 /// How far two hexes are apart, in rows and columns.

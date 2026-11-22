@@ -6,11 +6,11 @@
 mod common;
 
 use common::{click, hover, pixel_of, press, session, session_at, type_char, widget};
-use hexgame::gui::RootCommand;
-use hexgame::help::{command_key, fullscreen_keys};
-use hexgame::screen::{HELP_CLOSE_ID, HELP_ID};
-use hexgame::session::Session;
-use hexgame::state::Hex;
+use hexlords::gui::RootCommand;
+use hexlords::help::{command_key, fullscreen_keys};
+use hexlords::screen::{HELP_CLOSE_ID, HELP_ID};
+use hexlords::session::Session;
+use hexlords::state::Hex;
 use turbo_ferret::widgets::Window;
 use turbo_ferret::{Modifiers, Point, Rect, SpecialKey, TbId};
 

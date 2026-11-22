@@ -6,14 +6,14 @@
 mod common;
 
 use common::{assets, click, widget};
-use hexgame::agents::{Agent, Simple};
-use hexgame::game::Game;
-use hexgame::info;
-use hexgame::orders::{Event, Order};
-use hexgame::session::Session;
-use hexgame::setup::Setup;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side, UnitId};
+use hexlords::agents::{Agent, Simple};
+use hexlords::game::Game;
+use hexlords::info;
+use hexlords::orders::{Event, Order};
+use hexlords::session::Session;
+use hexlords::setup::Setup;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side, UnitId};
 use turbo_ferret::{Point, Size};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -160,9 +160,9 @@ fn the_menu_bar_shows_the_treasury_and_a_city_its_taxes() {
     let (bar, gold) = (s.screen.area(widget(&s, "menu_bar")), s.screen.area(widget(&s, "gold_out")));
     assert!(gold.y >= bar.y && gold.bottom() <= bar.bottom() && gold.right() > bar.right() - 40, "{gold:?} {bar:?}");
     // The city's window says what it brings in.
-    let r = s.screen.area(widget(&s, hexgame::city_windows::PANEL_OPEN_ID));
+    let r = s.screen.area(widget(&s, hexlords::city_windows::PANEL_OPEN_ID));
     click(&mut s, Point::new(r.x + r.w / 2, r.y + r.h / 2));
-    let window = widget(&s, hexgame::city_windows::CITY_WINDOW_ID);
+    let window = widget(&s, hexlords::city_windows::CITY_WINDOW_ID);
     let mut texts = Vec::new();
     let mut stack = vec![window];
     while let Some(id) = stack.pop() {

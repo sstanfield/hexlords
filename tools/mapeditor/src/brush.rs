@@ -1,7 +1,7 @@
 //! Which hexes a stroke of the editor touches: the brush's footprint, and the
 //! region a fill floods. Pure functions of the map.
 
-use hexgame::state::{Hex, Map};
+use hexlords::state::{Hex, Map};
 
 /// The largest brush: three hexes across is radius 1, five is radius 2.
 pub const MAX_RADIUS: u8 = 2;
@@ -55,7 +55,7 @@ pub fn region(map: &Map, start: Hex) -> Vec<Hex> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hexgame::state::TileType;
+    use hexlords::state::TileType;
 
     fn map() -> Map {
         Map::new(20, 20, TileType::Grass).unwrap()

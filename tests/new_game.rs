@@ -6,18 +6,18 @@
 mod common;
 
 use common::{assets, click, widget};
-use hexgame::game::Game;
-use hexgame::new_game::{
+use hexlords::game::Game;
+use hexlords::new_game::{
     BATTLES_STRENGTH_ID, CHANCE_LESS_ID, CHANCE_MORE_ID, FOG_ON_ID, FOG_TOTAL_ID, GOLD_LESS_ID, GOLD_MORE_ID,
     MODE_ROUNDS_ID, ORDER_DRAWN_ID, START_ID, map_id, map_name, seat_id,
 };
-use hexgame::screen::Scene;
-use hexgame::session::{BEGIN_TURN_ID, COVER_ID, END_TURN_ID, GAME_OVER_ID, NEW_GAME_ID, Session};
-use hexgame::setup::{Controller, Fog, Setup, TurnOrder};
-use hexgame::shell::Shell;
-use hexgame::state::combat::{Rules, System};
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, Side};
+use hexlords::screen::Scene;
+use hexlords::session::{BEGIN_TURN_ID, COVER_ID, END_TURN_ID, GAME_OVER_ID, NEW_GAME_ID, Session};
+use hexlords::setup::{Controller, Fog, Setup, TurnOrder};
+use hexlords::shell::Shell;
+use hexlords::state::combat::{Rules, System};
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, Side};
 use turbo_ferret::{Point, Size, TbId};
 
 fn shell() -> Shell {
@@ -63,7 +63,7 @@ fn the_screen_offers_the_maps_and_sets_the_game_up() {
     let screen = shell.new_game_screen().unwrap();
     assert_eq!(screen.setup().controller(Side::Green), Some(&Controller::Person));
     assert_eq!(screen.setup().order, TurnOrder::Drawn);
-    assert_eq!(screen.setup().mode, hexgame::setup::Mode::Turns);
+    assert_eq!(screen.setup().mode, hexlords::setup::Mode::Turns);
     // Another map: the example is terrain alone, with no sides: nothing to
     // play, and the game does not start.
     let example = screen.maps().iter().position(|m| map_name(m) == "example").unwrap();
@@ -132,11 +132,11 @@ fn the_battles_are_set_up_on_the_screen_and_carried_into_the_game() {
     }
     assert_eq!(shell.new_game_screen().unwrap().setup().combat.chance, 10);
     // Gold at the start, in tens.
-    assert_eq!(shell.new_game_screen().unwrap().setup().gold, hexgame::setup::START_GOLD);
+    assert_eq!(shell.new_game_screen().unwrap().setup().gold, hexlords::setup::START_GOLD);
     push(&mut shell, GOLD_MORE_ID);
     push(&mut shell, GOLD_MORE_ID);
     push(&mut shell, GOLD_LESS_ID);
-    let gold = hexgame::setup::START_GOLD + 10;
+    let gold = hexlords::setup::START_GOLD + 10;
     assert!(
         descendants_of(&shell, "new_game_settings")
             .iter()
@@ -270,7 +270,7 @@ fn descendants(s: &Session, name: &str) -> Vec<String> {
 /// seed), shown, and played.
 #[test]
 fn a_random_map_is_set_made_shown_and_played() {
-    use hexgame::new_game::{
+    use hexlords::new_game::{
         AIR_ID, MAKE_ID, RANDOM_ID, SEA_ID, SIDES_LESS_ID, SIZE_LESS_ID, TEMPLES_LESS_ID, TEMPLES_MORE_ID,
     };
     let mut shell = shell();
@@ -329,16 +329,16 @@ fn a_random_map_of_more_sides_than_its_preset_is_made() {
         shell.pump();
     }
     let mut shell = Shell::new_game(&assets(), Size::new(1024, 768), 96, None).unwrap();
-    push(&mut shell, hexgame::new_game::RANDOM_ID);
-    push(&mut shell, hexgame::new_game::SIDES_MORE_ID);
+    push(&mut shell, hexlords::new_game::RANDOM_ID);
+    push(&mut shell, hexlords::new_game::SIDES_MORE_ID);
     let colours = |shell: &mut Shell| {
         let random = shell.new_game_screen().unwrap().random().unwrap();
         (random.config.sides, random.config.colours.len())
     };
     assert_eq!(colours(&mut shell), (5, 5));
-    push(&mut shell, hexgame::new_game::PRESET_MORE_ID);
+    push(&mut shell, hexlords::new_game::PRESET_MORE_ID);
     assert_eq!(colours(&mut shell), (5, 5), "another preset keeps the sides and their colours");
-    push(&mut shell, hexgame::new_game::MAKE_ID);
+    push(&mut shell, hexlords::new_game::MAKE_ID);
     assert!(shell.new_game_screen().unwrap().problem().is_none());
 }
 

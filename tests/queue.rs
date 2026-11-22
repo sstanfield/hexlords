@@ -8,18 +8,18 @@
 mod common;
 
 use common::{assets, pixel_of, push_widget};
-use hexgame::agents::parse_order;
-use hexgame::city_windows::{
+use hexlords::agents::parse_order;
+use hexlords::city_windows::{
     BUILD_NOTHING_ID, CITY_DEFEND_ID, QUEUE_FEWER_ID, QUEUE_MORE_TIMES_ID, QUEUE_REPEAT_ID, QUEUE_STOP_ID, build_id,
     point_id, queue_add_id, queue_item_id, queue_less_id, queue_more_id, queue_remove_id,
 };
-use hexgame::game::{CityState, Game, Task};
-use hexgame::headless::order_line;
-use hexgame::orders::{Event, Order, RallyPoint};
-use hexgame::session::Session;
-use hexgame::setup::Setup;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{CityId, Hex, QueueEnd, QueueItem, Sends, Side, UnitId};
+use hexlords::game::{CityState, Game, Task};
+use hexlords::headless::order_line;
+use hexlords::orders::{Event, Order, RallyPoint};
+use hexlords::session::Session;
+use hexlords::setup::Setup;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{CityId, Hex, QueueEnd, QueueItem, Sends, Side, UnitId};
 use turbo_ferret::Size;
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -241,7 +241,7 @@ fn press(s: &mut Session, id: &str) {
     s.frame(0);
 }
 
-fn queue(s: &Session) -> hexgame::state::Queue {
+fn queue(s: &Session) -> hexlords::state::Queue {
     s.screen.game.map.city_at(REDHOLD).unwrap().queue.clone()
 }
 
@@ -260,7 +260,7 @@ fn the_city_window_makes_a_queue_item_by_item() {
     // riders, and one fewer of the soldiers.
     press(&mut s, &queue_add_id(1));
     press(&mut s, &point_id(0));
-    press(&mut s, hexgame::city_windows::CITY_BLESS_ID);
+    press(&mut s, hexlords::city_windows::CITY_BLESS_ID);
     press(&mut s, &queue_add_id(2));
     press(&mut s, &build_id(1));
     press(&mut s, &queue_less_id(0));
@@ -269,7 +269,7 @@ fn the_city_window_makes_a_queue_item_by_item() {
     // Repeat from the second: choose it, then Repeat; twice, then for ever.
     press(&mut s, &queue_item_id(1));
     let says = |s: &Session| -> Vec<String> {
-        common::descendants(s, hexgame::city_windows::CITY_WINDOW_ID)
+        common::descendants(s, hexlords::city_windows::CITY_WINDOW_ID)
             .into_iter()
             .filter_map(|w| s.screen.ui.text(w).map(str::to_string))
             .collect()
@@ -303,7 +303,7 @@ fn send_to_for_an_item_makes_way_for_the_map_and_comes_back() {
     press(&mut s, &queue_add_id(0));
     press(&mut s, &queue_add_id(1));
     press(&mut s, &queue_item_id(0));
-    press(&mut s, hexgame::city_windows::CITY_RALLY_ID);
+    press(&mut s, hexlords::city_windows::CITY_RALLY_ID);
     assert!(s.city_window().is_none(), "out of the way");
     let to = Hex::new(9, 5);
     s.screen.view.center_on(to);

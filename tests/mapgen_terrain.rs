@@ -4,10 +4,10 @@
 //! over seeds and sizes, the water and the land's mix are what the config
 //! asks, and the terrain lies as the target map's does.
 
-use hexgame::mapgen::config::Config;
-use hexgame::mapgen::stats::Stats;
-use hexgame::mapgen::{check, generate, score};
-use hexgame::state::TileType;
+use hexlords::mapgen::config::Config;
+use hexlords::mapgen::stats::Stats;
+use hexlords::mapgen::{check, generate, score};
+use hexlords::state::TileType;
 
 const UNITS: &str = include_str!("../assets/mapgen/units.txt");
 
@@ -107,8 +107,8 @@ fn tiny_maps_come_near_it() {
 /// more than `DEPTH` hexes into its range, but for the odd hollow filled.
 #[test]
 fn mountain_ranges_are_thin() {
-    use hexgame::mapgen::grid::steps_from;
-    use hexgame::mapgen::relief::DEPTH;
+    use hexlords::mapgen::grid::steps_from;
+    use hexlords::mapgen::relief::DEPTH;
     for seed in 1..=20 {
         let g = generate(&config(seed, "medium"), UNITS, "units.txt").unwrap().state;
         let t = &g.terrain;
@@ -164,7 +164,7 @@ fn every_layout_and_preset_makes_a_map() {
         c.set("size", "small").unwrap();
         let s = Stats::of(&generate(&c, UNITS, "units.txt").unwrap().map().unwrap());
         assert!((s.water_share() - c.water).abs() <= 0.01, "{preset}: {}", s.water_share());
-        for (i, t) in hexgame::mapgen::stats::LAND.iter().enumerate().skip(1) {
+        for (i, t) in hexlords::mapgen::stats::LAND.iter().enumerate().skip(1) {
             assert!((s.land_share(*t) - c.mix[i]).abs() <= 1.0, "{preset}: {t:?}");
         }
     }

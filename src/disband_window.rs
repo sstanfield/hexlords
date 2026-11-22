@@ -14,7 +14,7 @@ pub const DISBAND_WINDOW_ID: &str = "disband_window";
 pub const DISBAND_YES_ID: &str = "disband_yes";
 pub const DISBAND_NO_ID: &str = "disband_no";
 const SPACING_DP: i32 = 8;
-/// The skin of a line that says what went wrong (`assets/skin/hexgame.tb.txt`).
+/// The skin of a line that says what went wrong (`assets/skin/hexlords.tb.txt`).
 const WARNING_SKIN: &str = "Warning";
 /// A unit's icon beside its line, in dp.
 const ICON_DP: i32 = 26;

@@ -7,13 +7,13 @@
 
 mod common;
 
-use hexgame::agents::parse_order;
-use hexgame::game::{Game, Task};
-use hexgame::headless::order_line;
-use hexgame::orders::{Event, Order, RallyPoint};
-use hexgame::setup::Setup;
-use hexgame::state::scenario::{self, Scenario};
-use hexgame::state::{Hex, MAX_STACK, Sends, Side, TileType, UnitId};
+use hexlords::agents::parse_order;
+use hexlords::game::{Game, Task};
+use hexlords::headless::order_line;
+use hexlords::orders::{Event, Order, RallyPoint};
+use hexlords::setup::Setup;
+use hexlords::state::scenario::{self, Scenario};
+use hexlords::state::{Hex, MAX_STACK, Sends, Side, TileType, UnitId};
 
 const REDHOLD: Hex = Hex::new(5, 5);
 /// A rally point five hexes south of Redhold, a temple two past it, and a
@@ -54,7 +54,7 @@ fn soldiers(game: &mut Game, hex: Hex, n: usize) -> Vec<UnitId> {
         .collect()
 }
 
-fn unit(game: &Game, id: UnitId) -> &hexgame::state::Unit {
+fn unit(game: &Game, id: UnitId) -> &hexlords::state::Unit {
     game.map.units().get(id).unwrap()
 }
 
@@ -214,10 +214,10 @@ fn a_sides_rally_points_are_its_own() {
 mod screen {
     use super::*;
     use crate::common::{self, assets, click, pixel_of, push_widget, type_char};
-    use hexgame::city_windows::{CITY_BLESS_ID, CITY_RALLY_ID, PANEL_PREFIX, point_id};
-    use hexgame::rally_window::{defend_id, place_id, remove_id};
-    use hexgame::screen::Scene;
-    use hexgame::session::{Pick, Session};
+    use hexlords::city_windows::{CITY_BLESS_ID, CITY_RALLY_ID, PANEL_PREFIX, point_id};
+    use hexlords::rally_window::{defend_id, place_id, remove_id};
+    use hexlords::screen::Scene;
+    use hexlords::session::{Pick, Session};
     use turbo_ferret::{Size, SpecialKey};
 
     fn session(game: Game) -> Session {

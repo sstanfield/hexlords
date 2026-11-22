@@ -25,7 +25,7 @@ pub fn text_from_left(ui: &mut Ui, button: WidgetId) {
 }
 use turbo_ferret::{Axis, Gravity, ImageHandle, LayoutParams, Rect, TbId, Ui, WidgetId};
 
-/// The skin of a heading: a color of its own (`assets/skin/hexgame.tb.txt`).
+/// The skin of a heading: a color of its own (`assets/skin/hexlords.tb.txt`).
 pub const HEADING_SKIN: &str = "Heading";
 /// The skin of a cover: opaque.
 pub const COVER_SKIN: &str = "Cover";
@@ -110,7 +110,7 @@ pub fn primary_button(ui: &mut Ui, parent: WidgetId, id: &str, label: &str) -> W
     button
 }
 
-/// The skin element of a primary button (`assets/skin/hexgame.tb.txt`).
+/// The skin element of a primary button (`assets/skin/hexlords.tb.txt`).
 pub const PRIMARY_SKIN: &str = "Primary";
 
 /// A line of text with a picture before it (a unit's icon), `size` pixels

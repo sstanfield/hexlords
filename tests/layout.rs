@@ -4,10 +4,10 @@
 mod common;
 
 use common::{assets, click, hover, pixel_of, press, session, session_at, widget};
-use hexgame::game::Game;
-use hexgame::gui::{MapCommand, MapKey, MapWidget, MiniMapWidget, RootCommand, RootWindow};
-use hexgame::session::Session;
-use hexgame::state::{Hex, Map, TileType};
+use hexlords::game::Game;
+use hexlords::gui::{MapCommand, MapKey, MapWidget, MiniMapWidget, RootCommand, RootWindow};
+use hexlords::session::Session;
+use hexlords::state::{Hex, Map, TileType};
 use turbo_ferret::{Modifiers, Point, Rect, Size, SpecialKey, tbid};
 
 /// The height of the menu bar and the space under it, at 96 DPI.
