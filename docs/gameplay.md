@@ -527,8 +527,8 @@ thing to happen. Ideas to try, as the rules grow:
 - **Done for the turn** (built): D, or the Done button (`Order::Done`),
   puts the selected units aside: Next stack passes them by, as if they had
   no moves left, and the selection goes on to the next stack that waits
-  (a stack moved stays selected while it has moves left, Options: D is how
-  the person moves on from it). The next turn they are back.
+  (a stack moved stays selected while it can go on: D is how the person
+  moves on from it). The next turn they are back.
 - **Defending** (built, the owner's word 2026-11-21): F, or Defend here in
   the Units menu (`Order::Defend`), marks the selected units as defenders:
   they stay put turn after turn, Next stack passes them by, and the tasks
@@ -576,18 +576,21 @@ thing to happen. Ideas to try, as the rules grow:
   for them, never what an order does (`options_window::Options`). The
   first selects the next stack that waits by itself: when a turn starts
   (the nearest to the cursor), and once the stack the person moved can go
-  no further this turn, as Done and Defend do (on at first). Until then
-  the stack moved stays selected (the owner's word, 2026-11-21: "if a
-  stack is moved and it has more MP leave it selected, in FOW games the
-  user may have to creep into the fog ... they can hit D if they are
-  really done"): those of it, still together, with moves left and
-  somewhere to go (of a stack partly spent, those with moves left; at
-  sea the ship's whole stack, which it carries); a move refused leaves it
-  selected as it was. A move that spends it, a battle (an attack uses up
-  the attackers' moves, and a battle lost leaves nothing), a march still
-  on its way, a patrol and a blessing that stops it all go on to the next
-  stack; so does Done, which is how the person says they are done with a
-  stack that still has moves. Off, nothing stays selected after a move.
+  no further this turn, as Done and Defend do (off at first: the owner's
+  word, 2026-11-21, "I like to look around before moving on"). Either
+  way, the stack moved stays selected while it can go on (the owner's
+  word, 2026-11-21: "if a stack is moved and it has more MP leave it
+  selected, in FOW games the user may have to creep into the fog ... they
+  can hit D if they are really done"; "all modes even when next stack
+  after move is off"): the whole stack, never some of it ("the goal is to
+  make it easier to creep into fog not to break the stack up"), so a
+  stack one of whose units has no moves left is done with; at sea, the
+  ship's whole stack, which it carries. A move refused leaves it selected
+  as it was. A move that spends it, a battle (an attack uses up the
+  attackers' moves, and a battle lost leaves nothing), a march still on
+  its way, a patrol and a blessing that stops it leave nothing selected,
+  or the next stack with the option; so does Done, which is how the person
+  says they are done with a stack that can still go on.
   End turn counts what waits for orders ("End
   turn (3)": the tier-1 tasks), and, as the second option says (on at
   first), asks before the turn ends while anything does, or while the

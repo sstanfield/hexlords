@@ -273,7 +273,7 @@ fn help_section() -> Vec<HelpSection> {
                 ("The menus along the top", "Everything there is to do; each item says its keys"),
                 (
                     "Click a hex,  or  Enter",
-                    "Choose it: select its stack, or send the selected units there (Options: kept while moves last)",
+                    "Choose it: select its stack, or send the selected units there (still selected while they can go on)",
                 ),
                 (
                     "Click one of your stacks",
@@ -2564,52 +2564,50 @@ impl Session {
         }
     }
 
-    /// The person's stack (`units`) moved to `at` (or fought there), if the
-    /// person said so (Options): those of it that can go on this turn stay
-    /// selected (the owner's word, 2026-11-21: "if a stack is moved and it
-    /// has more MP leave it selected, in FOW games the user may have to
-    /// creep into the fog ... they can hit D if they are really done");
-    /// once none can, the next stack that waits for orders is selected.
+    /// The person's stack (`units`) moved to `at` (or fought there): while
+    /// it can go on this turn, it stays selected, whatever the Options (the
+    /// owner's word, 2026-11-21: "if a stack is moved and it has more MP
+    /// leave it selected, in FOW games the user may have to creep into the
+    /// fog ... they can hit D if they are really done", and "the entire
+    /// stack, the goal is to make it easier to creep into fog not to break
+    /// the stack up"); once it cannot, nothing is, or the next stack that
+    /// waits for orders if the person said so (Options).
     fn after_move(&mut self, at: Hex, units: &[UnitId]) {
-        if self.options.next_after_move && !self.keep_going(units) {
+        if !self.keep_going(units) && self.options.next_after_move {
             self.go_on(Some(at));
         }
     }
 
-    /// Select those of `units` (the person's, just moved) that can go on
-    /// this turn: on the hex the first of them is on and on no standing
-    /// order (a march still under way, a patrol, marauding, defending),
-    /// those with moves left; at sea, all of them first (as a click on
-    /// their hex takes them: the ships carry who has no moves left, and a
-    /// ship alone could not leave them in the water). False, and nothing
-    /// selected, if they can go nowhere.
+    /// Select `units` (the person's, just moved) if they can go on this
+    /// turn together: the whole stack, never some of it, those of them on
+    /// the hex the first is on and on no standing order (a march still
+    /// under way, a patrol, marauding, defending); at sea that is the ship
+    /// and those it carries. False, and nothing selected, if together they
+    /// can go nowhere (one of them has no moves left, say).
     fn keep_going(&mut self, units: &[UnitId]) -> bool {
         let game = &mut self.screen.game;
         game.deselect();
         let (map, side) = (&game.map, game.player());
         let Some(at) = units.iter().find_map(|id| map.units().get(*id)).map(|u| u.pos()) else { return false };
-        let free: Vec<&crate::state::Unit> = units
+        let kept: Vec<UnitId> = units
             .iter()
             .filter_map(|id| map.units().get(*id))
             .filter(|u| u.side() == side && u.pos() == at)
             .filter(|u| u.route.is_empty() && !u.defending && !u.on_duty())
+            .map(|u| u.id())
             .collect();
-        let able: Vec<UnitId> = free.iter().filter(|u| u.movement > 0).map(|u| u.id()).collect();
-        let tries = if map.open_water(at) { vec![free.iter().map(|u| u.id()).collect(), able] } else { vec![able] };
-        for kept in tries {
-            let Some((first, rest)) = kept.split_first() else { continue };
-            game.select_unit(*first);
-            for id in rest {
-                game.toggle_unit(*id);
-            }
-            if game.range().is_some_and(|r| r.reachable().next().is_some()) {
-                // (The person's stack, not the screen's choice.)
-                self.auto_selection.clear();
-                self.picking = None;
-                return true;
-            }
-            game.deselect();
+        let Some((first, rest)) = kept.split_first() else { return false };
+        game.select_unit(*first);
+        for id in rest {
+            game.toggle_unit(*id);
         }
+        if game.range().is_some_and(|r| r.reachable().next().is_some()) {
+            // (The person's stack, not the screen's choice.)
+            self.auto_selection.clear();
+            self.picking = None;
+            return true;
+        }
+        game.deselect();
         false
     }
 
@@ -2699,9 +2697,8 @@ impl Session {
         );
         self.temple = Some(window);
         // The stack that was selected (kept after its move onto the temple)
-        // has spent its moves on the blessing: those of it that have not
-        // stay selected (the temple had blessed them before), or on to the
-        // next stack (Options).
+        // has spent its moves on the blessing: it is no longer selected, and
+        // the next stack that waits is, if the person said so (Options).
         if !selection.is_empty() && selection.iter().all(|id| units.contains(id)) {
             self.after_move(at, &selection);
         }

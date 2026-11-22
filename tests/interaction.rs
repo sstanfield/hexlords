@@ -61,8 +61,10 @@ fn click_to_select_click_to_move() {
     assert_eq!(s.screen.game.map.cursor, target);
     assert_eq!(s.screen.game.map.units_at(target), [cav]);
     assert_eq!(s.screen.game.map.units().get(cav).unwrap().movement, 14);
-    assert!(s.screen.game.selected().is_none(), "a move deselects");
-    assert!(!s.screen.game.can_move_to(Hex::new(50, 54)));
+    // With moves left, it stays selected, its range from where it went
+    // (the owner's word, 2026-11-21).
+    assert_eq!(s.screen.game.selected(), Some(cav), "still selected");
+    assert!(s.screen.game.can_move_to(Hex::new(50, 54)));
 }
 
 #[test]
@@ -136,8 +138,8 @@ fn enter_selects_and_moves_at_the_cursor() {
     press(&mut s, SpecialKey::Enter);
     assert_eq!(s.screen.game.map.units_at(Hex::new(50, 53)), [cav]);
     assert_eq!(s.screen.game.map.units().get(cav).unwrap().movement, 14);
-    assert!(s.screen.game.selected().is_none());
-    // Enter again selects it where it stands now, and once more keeps it.
+    // Still selected, with moves left; Enter on its hex keeps it.
+    assert_eq!(s.screen.game.selected(), Some(cav));
     press(&mut s, SpecialKey::Enter);
     assert_eq!(s.screen.game.selected(), Some(cav));
     press(&mut s, SpecialKey::Enter);

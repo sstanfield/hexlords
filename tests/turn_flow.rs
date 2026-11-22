@@ -101,7 +101,7 @@ fn next_goes_to_the_nearest_stack_that_waits_and_round_them_all() {
 
 #[test]
 fn the_screen_selects_the_next_stack_as_a_turn_starts_and_after_a_move() {
-    let mut s = session(Options::default());
+    let mut s = session(Options { next_after_move: true, ..Options::default() });
     // The turn starts with the stack nearest the cursor selected (it starts
     // on Redhold).
     assert_eq!(selected_at(&s), Some(REDHOLD));
@@ -130,7 +130,10 @@ fn with_the_option_off_nothing_is_selected_by_itself() {
     assert_eq!(selected_at(&s), None);
     click_hex(&mut s, REDHOLD);
     click_hex(&mut s, Hex::new(7, 5));
-    assert_eq!(selected_at(&s), None, "a move leaves nothing selected");
+    // (The stack moved stays selected while it can go on, either way.)
+    assert_eq!(selected_at(&s), Some(Hex::new(7, 5)), "its own, kept");
+    click_hex(&mut s, Hex::new(11, 5));
+    assert_eq!(selected_at(&s), None, "spent: no other stack is selected");
 }
 
 #[test]
@@ -138,14 +141,16 @@ fn the_options_window_ticks_and_unticks_them() {
     let mut s = session(Options::default());
     choose(&mut s, MENU_GAME_ID, OPTIONS_ID);
     assert!(s.options_window().is_some());
-    assert!(s.options().next_after_move);
-    // A click on a box (or its words) turns it off, and on again.
-    push_widget(&mut s, options_window::NEXT_AFTER_MOVE_ID);
+    // Off at first (the owner's word, 2026-11-21: "I like to look around
+    // before moving on").
     assert!(!s.options().next_after_move);
+    // A click on a box (or its words) turns it on, and off again.
+    push_widget(&mut s, options_window::NEXT_AFTER_MOVE_ID);
+    assert!(s.options().next_after_move);
     push_widget(&mut s, options_window::QUICK_BATTLES_ID);
     assert!(s.options().quick_battles);
     push_widget(&mut s, options_window::NEXT_AFTER_MOVE_ID);
-    assert!(s.options().next_after_move);
+    assert!(!s.options().next_after_move);
     // Esc closes it; Cmd+, (Ctrl+,) opens it, and closes it.
     common::press(&mut s, SpecialKey::Esc);
     assert!(s.options_window().is_none());
@@ -162,7 +167,7 @@ fn the_options_window_ticks_and_unticks_them() {
 
 #[test]
 fn end_turn_says_how_many_wait_and_asks_first() {
-    let mut s = session(Options::default());
+    let mut s = session(Options { next_after_move: true, ..Options::default() });
     let redhold = s.screen.game.map.city_at(REDHOLD).unwrap().id;
     s.screen.game.apply(Order::Build { city: redhold, what: Some(0) }).unwrap();
     s.pump();
@@ -195,7 +200,7 @@ fn end_turn_says_how_many_wait_and_asks_first() {
 
 #[test]
 fn end_turn_warns_when_the_gold_will_not_pay_the_upkeep() {
-    let mut s = session(Options::default());
+    let mut s = session(Options { next_after_move: true, ..Options::default() });
     let redhold = s.screen.game.map.city_at(REDHOLD).unwrap().id;
     s.screen.game.apply(Order::Build { city: redhold, what: Some(0) }).unwrap();
     for _ in 0..3 {

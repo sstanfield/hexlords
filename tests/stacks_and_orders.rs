@@ -91,8 +91,9 @@ fn with_the_screens_choice_enter_takes_the_other_stack() {
     let mut game = game();
     let a = put(&mut game, Side::Red, "soldiers", Hex::new(10, 5));
     let b = put(&mut game, Side::Red, "soldiers", Hex::new(10, 8));
-    // The screen selects the stack nearest the cursor (Redhold, empty: a).
-    let mut s = session(game, Options::default());
+    // The screen selects the stack nearest the cursor (Redhold, empty: a;
+    // Options: its first).
+    let mut s = session(game, Options { next_after_move: true, ..Options::default() });
     assert_eq!(s.screen.game.selection(), [a]);
     click_hex(&mut s, Hex::new(10, 8));
     assert!(s.asks_mission());
@@ -265,7 +266,7 @@ fn a_stack_chosen_again_by_the_person_is_theirs() {
     let mut game = game();
     let a = put(&mut game, Side::Red, "soldiers", Hex::new(10, 5));
     let b = put(&mut game, Side::Red, "soldiers", Hex::new(10, 8));
-    let mut s = session(game, Options::default());
+    let mut s = session(game, Options { next_after_move: true, ..Options::default() });
     assert_eq!(s.screen.game.selection(), [a], "the screen chose a");
     press(&mut s, SpecialKey::Esc);
     click_hex(&mut s, Hex::new(10, 5));

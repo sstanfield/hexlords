@@ -29,7 +29,7 @@ fn the_plans_flow_as_a_script() {
     script::run(&mut s, "enter,right*3,enter").unwrap();
     assert_eq!(s.screen.game.map.units_at(Hex::new(50, 53)), [cav]);
     assert_eq!(s.screen.game.map.units().get(cav).unwrap().movement, 14);
-    assert!(s.screen.game.selected().is_none());
+    assert_eq!(s.screen.game.selected(), Some(cav), "moves left: still selected");
 }
 
 #[test]

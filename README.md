@@ -66,7 +66,7 @@ as it shows from outside.
 |---|---|
 | A menu's title | Opens it (with one open, pointing at another title opens that one); a click elsewhere, or Esc, closes it |
 | Move the pointer over the map | The hex under it becomes the cursor (red border) |
-| Click a hex, or Enter at the cursor | The hex is the selected one: the panels are about it. With no unit selected: select your stack on the hex (those of its units with moves left), which shows where all of them can go (red tint). With units selected: they move to the hex together if all of them can reach it (into another side's units: an attack), and those with moves left stay selected (once none has, the next stack that waits is selected: Options); any other hex drops the selection (and selects your stack there, if it has one) |
+| Click a hex, or Enter at the cursor | The hex is the selected one: the panels are about it. With no unit selected: select your stack on the hex (those of its units with moves left), which shows where all of them can go (red tint). With units selected: they move to the hex together if all of them can reach it (into another side's units: an attack), and while the whole stack can go on it stays selected (once it cannot, nothing is, or the next stack that waits: Options); any other hex drops the selection (and selects your stack there, if it has one) |
 | Drag on the map with the left button | Moves the map with the pointer (a press that hardly moves is still a click) |
 | Esc | Close the menu or the window on top (the help first); with none open, drop the selection |
 | Undo, or Ctrl+Z (Cmd+Z) | Take back the last move or city order, unless it was a battle (chance had a say) or put a side out: the units are back where they were, with their points, selected |

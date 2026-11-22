@@ -322,6 +322,10 @@ fn the_selected_unit_goes_where_it_is_sent_and_the_panels_follow() {
     click_hex(&mut s, far);
     // The rider is there, and so are the panels.
     assert_eq!(s.screen.game.map.units_at(far), [ids[2]]);
+    // With moves left it is still selected; Esc drops it.
+    assert_eq!(s.screen.game.selected(), Some(ids[2]));
+    assert!(pressed(&s, "unit_0"));
+    common::press(&mut s, turbo_ferret::SpecialKey::Esc);
     assert_eq!(s.screen.game.selected(), None);
     assert_eq!(s.shown(), far);
     assert_eq!(s.hex_title(), "Row 10, column 12: grass, road, 1 unit (green)");

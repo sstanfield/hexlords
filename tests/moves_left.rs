@@ -2,8 +2,11 @@
 //! 2026-11-21: "if a stack is moved and it has more MP leave it selected,
 //! in FOW games the user may have to creep into the fog so this will be
 //! useful vs assuming the stack is done- they can hit D if they are really
-//! done"). Once it has none left the screen goes on to the next stack that
-//! waits for orders, as it did after every move (Options: the first).
+//! done"), the whole stack ("the goal is to make it easier to creep into
+//! fog not to break the stack up"), whatever the options ("all modes even
+//! when next stack after move is off"). Once it can go no further, nothing
+//! is selected, or the next stack that waits for orders (Options: the
+//! first, off at first).
 
 mod common;
 
@@ -55,10 +58,10 @@ fn put(game: &mut Game, side: Side, kind: &str, hex: Hex) -> UnitId {
     id
 }
 
-/// The options as a game starts with them (the next stack selected after a
-/// move), with moves not shown unless the test shows them.
+/// The next stack selected by itself (Options: the first), with moves not
+/// shown unless the test shows them.
 fn options() -> Options {
-    Options { show_moves: false, ..Options::default() }
+    Options { show_moves: false, next_after_move: true, ..Options::default() }
 }
 
 /// A session on `game` with nothing selected yet (the screen selected the
@@ -146,27 +149,60 @@ fn done_puts_the_stack_kept_selected_aside_and_goes_on() {
     assert!(s.screen.game.selection().is_empty());
 }
 
+/// The whole stack stays selected, or none of it (the owner's word,
+/// 2026-11-21: not to break the stack up).
 #[test]
-fn of_a_stack_partly_spent_those_with_moves_left_stay_selected() {
-    let (mut a, mut p) = (None, None);
-    let mut s = session(
-        game(Fog::Off, |g| {
+fn a_stack_stays_selected_whole_or_not_at_all() {
+    // Two soldiers with moves left: both, to go on together.
+    let mut two = Vec::new();
+    let mut s =
+        session(game(Fog::Off, |g| two = (0..2).map(|_| put(g, Side::Red, "soldiers", A)).collect()), options());
+    click_hex(&mut s, A);
+    click_hex(&mut s, Hex::new(10, 7));
+    assert_eq!(s.screen.game.selection(), two, "the whole stack");
+    // Soldiers and plodders: the plodders' moves spent, the stack can go no
+    // further together; it is not split, and the screen goes on.
+    for next_after_move in [true, false] {
+        let (mut a, mut p) = (None, None);
+        let place = |g: &mut Game| {
             a = Some(put(g, Side::Red, "soldiers", A));
             p = Some(put(g, Side::Red, "plodders", A));
-        }),
-        options(),
-    );
-    let (a, p) = (a.unwrap(), p.unwrap());
+        };
+        let mut s = session(game(Fog::Off, place), Options { next_after_move, ..options() });
+        let (a, p) = (a.unwrap(), p.unwrap());
+        click_hex(&mut s, A);
+        assert_eq!(s.screen.game.selection(), [a, p]);
+        let to = Hex::new(10, 8);
+        click_hex(&mut s, to);
+        assert_eq!((unit(&s, a).pos(), unit(&s, p).pos()), (to, to), "they went together");
+        assert_eq!((unit(&s, a).movement, unit(&s, p).movement), (6, 0));
+        let next = if next_after_move { on_b(&s) } else { Vec::new() };
+        assert_eq!(s.screen.game.selection(), next, "not the soldiers alone");
+    }
+}
+
+/// With the option off (as at first) the stack stays selected all the
+/// same while it can go on; once it cannot, nothing is.
+#[test]
+fn with_the_next_stack_left_to_the_person_a_stack_stays_selected_too() {
+    let mut a = None;
+    let options = Options { next_after_move: false, ..options() };
+    let mut s = session(game(Fog::Off, |g| a = Some(put(g, Side::Red, "soldiers", A))), options);
+    let a = a.unwrap();
     click_hex(&mut s, A);
-    assert_eq!(s.screen.game.selection(), [a, p]);
-    let to = Hex::new(10, 8);
-    click_hex(&mut s, to);
-    assert_eq!((unit(&s, a).pos(), unit(&s, p).pos()), (to, to), "they went together");
-    assert_eq!((unit(&s, a).movement, unit(&s, p).movement), (6, 0));
-    assert_eq!(s.screen.game.selection(), [a], "the soldiers, who can go on");
-    // They go on alone.
-    click_hex(&mut s, Hex::new(10, 9));
-    assert_eq!((unit(&s, a).pos(), unit(&s, p).pos()), (Hex::new(10, 9), to));
+    click_hex(&mut s, Hex::new(10, 7));
+    assert_eq!(s.screen.game.selection(), [a], "kept");
+    click_hex(&mut s, Hex::new(10, 11));
+    assert_eq!(unit(&s, a).movement, 0);
+    assert!(s.screen.game.selection().is_empty(), "spent: nothing, no other stack");
+    // D on a stack kept: aside, and on to the next (D's own, as N is).
+    let mut a = None;
+    let mut s = session(game(Fog::Off, |g| a = Some(put(g, Side::Red, "soldiers", A))), options);
+    click_hex(&mut s, A);
+    click_hex(&mut s, Hex::new(10, 7));
+    type_char(&mut s, 'd');
+    assert!(unit(&s, a.unwrap()).done);
+    assert_eq!(s.screen.game.selection(), on_b(&s));
 }
 
 #[test]

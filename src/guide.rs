@@ -481,7 +481,7 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                 (
                     "Options",
                     "The Game menu's Options: whether the next stack that waits is selected by itself \
-                     (as a turn starts, and once the stack you moved has no moves left), whether a \
+                     (as a turn starts, and once the stack you moved can go no further), whether a \
                      battle is told in a line or played out (and how fast), whether moves are shown \
                      as they happen (the computer's an order at a time, the map on what it does), \
                      whether a temple asks, whether End turn asks while something waits for orders."
@@ -501,9 +501,10 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                 (
                     "Moving",
                     "Click your stack, then where it goes (or click its units under the map to take some \
-                            of them). While it has moves left it stays selected, to go on a step at a time \
-                            (into the fog, say): D when you are done with it, and the next stack that waits \
-                            is selected, as it is once its moves run out (Options). Onto another of your \
+                            of them). While the whole stack can go on it stays selected, to go on a step at a \
+                            time (into the fog, say): D when you are done with it, and the next stack that \
+                            waits is selected, as it is once it can go no further, if you choose (Options). \
+                            Onto another of your \
                             stacks in reach, it asks: join it, or take that stack. A stack with orders of \
                             its own (marching, defending, on patrol) asks before new ones end them. An order \
                             refused says why. Undo takes back the last move, a city's work or its walls, \
