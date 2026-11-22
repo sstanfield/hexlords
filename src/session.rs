@@ -271,7 +271,10 @@ fn help_section() -> Vec<HelpSection> {
             "The game",
             &[
                 ("The menus along the top", "Everything there is to do; each item says its keys"),
-                ("Click a hex,  or  Enter", "Choose it: select its stack, or send the selected units there"),
+                (
+                    "Click a hex,  or  Enter",
+                    "Choose it: select its stack, or send the selected units there (Options: kept while moves last)",
+                ),
                 (
                     "Click one of your stacks",
                     "Select it; one the selected units can reach: asks, join it or take it (Enter: the first)",
@@ -313,7 +316,7 @@ fn help_section() -> Vec<HelpSection> {
                 ),
                 (
                     "D,  or  Done;  F,  B,  X",
-                    "Aside this turn; F: defend, or stand down; B: a temple's blessing; X: disband",
+                    "Aside this turn, on to the next; F: defend, or stand down; B: a temple's blessing; X: disband",
                 ),
                 ("R", "Rally points: place them; Go to (or a city's Send to) onto one's flag sends units there"),
                 ("P", "Patrol: Shift+click waypoints, click the last (its own hex: a loop), say if it attacks"),
@@ -2518,7 +2521,7 @@ impl Session {
                 if let Some(at) = sent.iter().find_map(|id| game.map.units().get(*id)).map(|u| u.pos()) {
                     self.screen.game.set_cursor(at);
                     self.shown = at;
-                    self.after_move(at);
+                    self.after_move(at, &sent);
                 }
             }
             SelectOutcome::Refused(why) => {
@@ -2528,7 +2531,7 @@ impl Session {
             }
             SelectOutcome::Fought(_) => {
                 self.tell_battle(before);
-                self.after_move(hex);
+                self.after_move(hex, &sent);
             }
             // Onto a temple: does the stack seek its blessing? (Options: it
             // does, unasked.)
@@ -2538,7 +2541,7 @@ impl Session {
                 } else {
                     self.offer_blessing(hex);
                 }
-                self.after_move(hex);
+                self.after_move(hex, &sent);
             }
             _ => {}
         }
@@ -2561,12 +2564,53 @@ impl Session {
         }
     }
 
-    /// The person's stack moved to `at` (or fought there): the next stack
-    /// that waits for orders is selected, if the person said so (Options).
-    fn after_move(&mut self, at: Hex) {
-        if self.options.next_after_move {
+    /// The person's stack (`units`) moved to `at` (or fought there), if the
+    /// person said so (Options): those of it that can go on this turn stay
+    /// selected (the owner's word, 2026-11-21: "if a stack is moved and it
+    /// has more MP leave it selected, in FOW games the user may have to
+    /// creep into the fog ... they can hit D if they are really done");
+    /// once none can, the next stack that waits for orders is selected.
+    fn after_move(&mut self, at: Hex, units: &[UnitId]) {
+        if self.options.next_after_move && !self.keep_going(units) {
             self.go_on(Some(at));
         }
+    }
+
+    /// Select those of `units` (the person's, just moved) that can go on
+    /// this turn: on the hex the first of them is on and on no standing
+    /// order (a march still under way, a patrol, marauding, defending),
+    /// those with moves left; at sea, all of them first (as a click on
+    /// their hex takes them: the ships carry who has no moves left, and a
+    /// ship alone could not leave them in the water). False, and nothing
+    /// selected, if they can go nowhere.
+    fn keep_going(&mut self, units: &[UnitId]) -> bool {
+        let game = &mut self.screen.game;
+        game.deselect();
+        let (map, side) = (&game.map, game.player());
+        let Some(at) = units.iter().find_map(|id| map.units().get(*id)).map(|u| u.pos()) else { return false };
+        let free: Vec<&crate::state::Unit> = units
+            .iter()
+            .filter_map(|id| map.units().get(*id))
+            .filter(|u| u.side() == side && u.pos() == at)
+            .filter(|u| u.route.is_empty() && !u.defending && !u.on_duty())
+            .collect();
+        let able: Vec<UnitId> = free.iter().filter(|u| u.movement > 0).map(|u| u.id()).collect();
+        let tries = if map.open_water(at) { vec![free.iter().map(|u| u.id()).collect(), able] } else { vec![able] };
+        for kept in tries {
+            let Some((first, rest)) = kept.split_first() else { continue };
+            game.select_unit(*first);
+            for id in rest {
+                game.toggle_unit(*id);
+            }
+            if game.range().is_some_and(|r| r.reachable().next().is_some()) {
+                // (The person's stack, not the screen's choice.)
+                self.auto_selection.clear();
+                self.picking = None;
+                return true;
+            }
+            game.deselect();
+        }
+        false
     }
 
     /// The person is done with the stack on `here`: the selection goes, and
@@ -2635,6 +2679,7 @@ impl Session {
         let (at, units) = (ask.at, ask.units.clone());
         ask.close(&mut self.screen.ui);
         let (root, area) = (self.screen.root_window(), self.window_area());
+        let selection = self.screen.game.selection().to_vec();
         let events = match self.screen.game.apply(Order::Bless { units: units.clone() }) {
             Ok(events) => events,
             Err(why) => {
@@ -2653,6 +2698,13 @@ impl Session {
             (&events, &icons),
         );
         self.temple = Some(window);
+        // The stack that was selected (kept after its move onto the temple)
+        // has spent its moves on the blessing: those of it that have not
+        // stay selected (the temple had blessed them before), or on to the
+        // next stack (Options).
+        if !selection.is_empty() && selection.iter().all(|id| units.contains(id)) {
+            self.after_move(at, &selection);
+        }
         self.screen.settle();
     }
 
@@ -3046,7 +3098,7 @@ impl Session {
                 if let Some(at) = at {
                     self.screen.game.set_cursor(at);
                     self.shown = at;
-                    self.after_move(at);
+                    self.after_move(at, &units);
                 }
             }
             Err(why) => {
@@ -3200,7 +3252,7 @@ impl Session {
                         if let Some(at) = at {
                             self.screen.game.set_cursor(at);
                             self.shown = at;
-                            self.after_move(at);
+                            self.after_move(at, &units);
                         }
                     }
                     // Refused: say why, and pick again.
@@ -3917,9 +3969,13 @@ impl Scene for Session {
         Session::next_turn(self)
     }
 
-    /// Where the selected unit can go.
+    /// Where the selected unit can go: once it is shown there (a stack
+    /// kept selected after its move is not marked from where it went
+    /// before it has got there, nor into land it has yet to be shown to
+    /// see).
     fn marked(&self, hex: Hex) -> bool {
-        self.screen.game.can_move_to(hex)
+        let game = &self.screen.game;
+        game.can_move_to(hex) && !game.selected().is_some_and(|id| self.showing.goes(id))
     }
 
     /// The stops picked so far (Go to, or a city's rally point), or else

@@ -105,10 +105,14 @@ fn the_screen_selects_the_next_stack_as_a_turn_starts_and_after_a_move() {
     // The turn starts with the stack nearest the cursor selected (it starts
     // on Redhold).
     assert_eq!(selected_at(&s), Some(REDHOLD));
-    // A move: on to the nearest stack that waits.
+    // A move that leaves the stack moves: it stays selected.
     let soldiers = at(&s, REDHOLD);
     click_hex(&mut s, Hex::new(7, 5));
     assert_eq!(s.screen.game.map.units().get(soldiers[0]).map(|u| u.pos()), Some(Hex::new(7, 5)));
+    assert_eq!(selected_at(&s), Some(Hex::new(7, 5)));
+    // A move that spends the rest: on to the nearest stack that waits.
+    click_hex(&mut s, Hex::new(11, 5));
+    assert_eq!(s.screen.game.map.units().get(soldiers[0]).map(|u| u.movement), Some(0));
     assert_eq!(selected_at(&s), Some(SOUTH));
     // Done: the last one.
     type_char(&mut s, 'd');

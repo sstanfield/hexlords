@@ -29,7 +29,12 @@ type OptionBox = (&'static str, &'static str, fn(&mut Options) -> &mut bool);
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Options {
     /// The stack that waits for orders next is selected: when a turn
-    /// starts, and after a move (a battle too), as after Done.
+    /// starts, and once the stack the person moved can go no further this
+    /// turn (a move that spent it, a battle, a march on its way), as after
+    /// Done. Until then the stack moved stays selected, those of it with
+    /// moves left (the owner's word, 2026-11-21: in the fog of war a stack
+    /// may have to creep; D says it is done). Off, nothing stays selected
+    /// after a move.
     pub next_after_move: bool,
     /// A battle of theirs is told in a line under the map instead of played
     /// out in its window (the log's Watch plays it).
@@ -81,7 +86,7 @@ impl Options {
         [
             (
                 NEXT_AFTER_MOVE_ID,
-                "Select the next stack that waits for orders, after a move and as a turn starts",
+                "Select the next stack that waits as a turn starts and once a stack's moves run out",
                 |o| &mut o.next_after_move,
             ),
             (QUICK_BATTLES_ID, "Tell a battle in a line, not played out (the log can play it)", |o| {

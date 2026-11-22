@@ -526,8 +526,9 @@ thing to happen. Ideas to try, as the rules grow:
   defenders too.
 - **Done for the turn** (built): D, or the Done button (`Order::Done`),
   puts the selected units aside: Next stack passes them by, as if they had
-  no moves left, and the selection goes on to the next stack that waits.
-  The next turn they are back.
+  no moves left, and the selection goes on to the next stack that waits
+  (a stack moved stays selected while it has moves left, Options: D is how
+  the person moves on from it). The next turn they are back.
 - **Defending** (built, the owner's word 2026-11-21): F, or Defend here in
   the Units menu (`Order::Defend`), marks the selected units as defenders:
   they stay put turn after turn, Next stack passes them by, and the tasks
@@ -574,8 +575,20 @@ thing to happen. Ideas to try, as the rules grow:
   Ctrl+,) are the person's, not rules: they change what the screen does
   for them, never what an order does (`options_window::Options`). The
   first selects the next stack that waits by itself: when a turn starts
-  (the nearest to the cursor) and after each move or battle, as Done and
-  Defend do (on at first). End turn counts what waits for orders ("End
+  (the nearest to the cursor), and once the stack the person moved can go
+  no further this turn, as Done and Defend do (on at first). Until then
+  the stack moved stays selected (the owner's word, 2026-11-21: "if a
+  stack is moved and it has more MP leave it selected, in FOW games the
+  user may have to creep into the fog ... they can hit D if they are
+  really done"): those of it, still together, with moves left and
+  somewhere to go (of a stack partly spent, those with moves left; at
+  sea the ship's whole stack, which it carries); a move refused leaves it
+  selected as it was. A move that spends it, a battle (an attack uses up
+  the attackers' moves, and a battle lost leaves nothing), a march still
+  on its way, a patrol and a blessing that stops it all go on to the next
+  stack; so does Done, which is how the person says they are done with a
+  stack that still has moves. Off, nothing stays selected after a move.
+  End turn counts what waits for orders ("End
   turn (3)": the tier-1 tasks), and, as the second option says (on at
   first), asks before the turn ends while anything does, or while the
   gold and the taxes will not pay next turn's upkeep (units would leave);
@@ -589,10 +602,12 @@ thing to happen. Ideas to try, as the rules grow:
   changes at once, and the screen shows the stacks that went going from
   hex to hex (`showing`, a step in `showing::STEP_MS`, a way in
   `showing::WAY_MS` at most), the person's own and the others' where the
-  person sees them, the land opening up as the person's own go; the
-  computer plays a turn an order at a time (`agents::play_step`), the map
-  brought to what it does; and a battle the person's side is in that no
-  order of theirs told (the computer attacking them, a march or a patrol
+  person sees them, the land opening up as the person's own go (a stack
+  kept selected after its move has its reach marked once it is shown
+  where it went, not before: nor into land it has yet to be shown to
+  see); the computer plays a turn an order at a time
+  (`agents::play_step`), the map brought to what it does; and a battle
+  the person's side is in that no order of theirs told (the computer attacking them, a march or a patrol
   at a turn's end) is played out in its window, everything else waiting
   for it, unless battles are told in a line. The window that says who won
   waits for the battle that won it. Without a window nothing is kept for

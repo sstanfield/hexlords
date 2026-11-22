@@ -121,6 +121,12 @@ impl Showing {
         self.reached.clear();
     }
 
+    /// True if `unit` is shown going, or is still to be.
+    pub fn goes(&self, unit: UnitId) -> bool {
+        let current = self.current.iter().map(|(shown, _)| shown);
+        current.chain(&self.queue).any(|shown| matches!(shown, Shown::Going(going) if going.units.contains(&unit)))
+    }
+
     /// True while what the person is shown to know is not what they know
     /// (`sight`).
     pub fn has_sight(&self) -> bool {
@@ -254,6 +260,21 @@ mod tests {
         showing.battle_over();
         assert_eq!(showing.tick(9000), Now::Idle);
         assert!(showing.is_idle());
+    }
+
+    #[test]
+    fn a_unit_goes_until_it_is_shown_there() {
+        let mut showing = Showing::default();
+        let g = going(&[(5, 5), (5, 6)]);
+        let (unit, other) = (g.units[0], UnitId { side: Side::Red, index: 1, generation: 0 });
+        assert!(!showing.goes(unit));
+        showing.push(Shown::Going(g), &Sight::all());
+        assert!(showing.goes(unit), "still to go");
+        assert!(!showing.goes(other));
+        showing.tick(1000);
+        assert!(showing.goes(unit), "on its way");
+        showing.tick(1000 + STEP_MS);
+        assert!(!showing.goes(unit), "there");
     }
 
     #[test]
