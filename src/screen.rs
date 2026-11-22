@@ -15,14 +15,16 @@
 //! C++: src/Application.cpp Application (the Turbo Badger setup and the frame),
 //! src/gui/mapwidget.cpp MapWidget::OnEvent (the cursor and zoom keys)
 
-use std::path::Path;
+use std::borrow::Cow;
+use std::path::{Path, PathBuf};
 
 use turbo_ferret::font::DEFAULT_FONT;
 use turbo_ferret::{
-    Config, FontDesc, FsLoader, Gravity, LayoutParams, Point, Rect, Services, Size, SpecialKey, TbId, Ui, WidgetId,
-    tbid,
+    Config, FontDesc, Gravity, LayoutParams, LoadError, Point, Rect, ResourceLoader, Services, Size, SpecialKey, TbId,
+    Ui, WidgetId, tbid,
 };
 
+use crate::files;
 use crate::game::Game;
 use crate::gui::build;
 use crate::gui::{self, MapCommand, MapKey, MapWidget, MiniMapCommand, MiniMapWidget, RootCommand, RootWindow};
@@ -62,6 +64,29 @@ const HELP_SCROLL_BAR_DP: i32 = 18;
 /// before it is a drag that moves the map rather than a click (in a scene
 /// that wants that, [`MapScreen::set_drag_pans`]).
 pub const DRAG_DP: i32 = 6;
+
+/// Turbo Ferret's files (the skin, the layouts, the pictures), read from the
+/// asset directory through [`crate::files`]: from the disk, or in a browser
+/// from inside the program.
+pub struct AssetLoader {
+    root: PathBuf,
+}
+
+impl AssetLoader {
+    pub fn new(root: impl Into<PathBuf>) -> AssetLoader {
+        AssetLoader { root: root.into() }
+    }
+}
+
+impl ResourceLoader for AssetLoader {
+    fn load(&mut self, path: &str) -> Result<Cow<'static, [u8]>, LoadError> {
+        match files::read(&self.root.join(path)) {
+            Ok(bytes) => Ok(Cow::Owned(bytes)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(LoadError::NotFound(path.to_string())),
+            Err(e) => Err(LoadError::Io(format!("{path}: {e}"))),
+        }
+    }
+}
 
 pub struct MapScreen {
     pub ui: Ui,
@@ -124,7 +149,7 @@ impl MapScreen {
     /// C++: Application::Application
     pub fn new(assets: &Path, viewport: Size, dpi: i32, layout: &str, game: Game) -> Result<MapScreen, String> {
         let in_assets = |what: &str, e: &dyn std::fmt::Display| format!("{what}: {e} (assets: {})", assets.display());
-        let mut ui = Ui::new(Config::for_dpi(dpi), Services::with_loader(FsLoader::new(assets)));
+        let mut ui = Ui::new(Config::for_dpi(dpi), Services::with_loader(AssetLoader::new(assets)));
         // Turbo Badger's default skin, with the game's few changes on top.
         ui.load_skin("skin/skin.tb.txt", Some("skin/hexlords.tb.txt")).map_err(|e| in_assets("skin", &e))?;
         // The built-in font at 14 dp. (The C++ used DroidSans at this size.)

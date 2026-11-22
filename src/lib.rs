@@ -6,6 +6,8 @@
 //! comment: `// C++: src/state/map.cpp Map::placeUnit`.
 //!
 //! - [`state`]: the map, units, cities and movement. No UI, no graphics.
+//! - [`files`]: reading files, from the disk or (in a browser) from inside the
+//!   program.
 //! - [`game`]: the state plus what the player has selected, whose turn it is,
 //!   and the rules that carry out [`orders`]; [`setup`], a game before it
 //!   starts.
@@ -35,6 +37,7 @@ pub mod app;
 pub mod battle_window;
 pub mod city_windows;
 pub mod disband_window;
+pub mod files;
 pub mod game;
 pub mod gui;
 pub mod guide;

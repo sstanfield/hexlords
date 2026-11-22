@@ -39,6 +39,7 @@ use crate::log_window::{self, LogWindow};
 use crate::options_window::{self, Options, OptionsWindow};
 use crate::orders::{Event, Order, RallyPoint};
 use crate::patrol_window::{self, PatrolClick, PatrolWindow};
+use crate::platform::WEB;
 use crate::rally_window::{self, RallyClick, RallyWindow};
 use crate::render::{AssetDirs, coin_icon, unit_icon};
 use crate::screen::{FULLSCREEN_ID, HELP_KEYS_ID, MapScreen, QUIT_ID, Scene, ZOOM_IN_ID, ZOOM_OUT_ID};
@@ -3779,13 +3780,16 @@ impl Session {
             (false, false) => "End turn",
         };
         let menu = if id == TbId::new(MENU_GAME_ID) {
-            Menu::new(MENU_GAME_ID)
-                .item(END_TURN_ID, turn_word, &command('T'), turn)
+            // (In a browser Ctrl+T and Ctrl+N are its own, and a page does
+            // not quit: its tab is closed.)
+            let keys = |key: char| if WEB { String::new() } else { command(key) };
+            let menu = Menu::new(MENU_GAME_ID)
+                .item(END_TURN_ID, turn_word, &keys('T'), turn)
                 .item(UNDO_ID, "Undo", &command('Z'), turn && game.can_undo())
                 .separator()
                 .item(OPTIONS_ID, "Options...", &command(','), true)
-                .item(NEW_GAME_ASK_ID, "New game...", &command('N'), true)
-                .item(QUIT_ID, "Quit", &command('Q'), true)
+                .item(NEW_GAME_ASK_ID, "New game...", &keys('N'), true);
+            if WEB { menu } else { menu.item(QUIT_ID, "Quit", &command('Q'), true) }
         } else if id == TbId::new(MENU_UNITS_ID) {
             Menu::new(MENU_UNITS_ID)
                 .item(NEXT_STACK_ID, "Next stack", "N", people)
@@ -3810,14 +3814,15 @@ impl Session {
                 .item(MY_CITIES_ID, "My cities", "M", people)
                 .item(ALL_CITIES_ID, "All cities", "A", true)
         } else if id == TbId::new(MENU_VIEW_ID) {
-            Menu::new(MENU_VIEW_ID)
+            let menu = Menu::new(MENU_VIEW_ID)
                 .item(TASKS_ID, "Tasks", "T", people)
                 .item(LOG_ID, "Log", "L", true)
                 .separator()
                 .item(CAPITAL_ID, "Your capital", "H", people)
                 .item(ZOOM_IN_ID, "Zoom in", "2", true)
-                .item(ZOOM_OUT_ID, "Zoom out", "1", true)
-                .item(FULLSCREEN_ID, "Fullscreen", fullscreen_keys(), true)
+                .item(ZOOM_OUT_ID, "Zoom out", "1", true);
+            // (In a browser fullscreen is the browser's: `help::window_section`.)
+            if WEB { menu } else { menu.item(FULLSCREEN_ID, "Fullscreen", fullscreen_keys(), true) }
         } else if id == TbId::new(MENU_HELP_ID) {
             let mut menu = Menu::new(MENU_HELP_ID).item(HELP_KEYS_ID, "Keys and mouse", "F1  or  ?", true).separator();
             for (topic, title) in guide::TOPICS {

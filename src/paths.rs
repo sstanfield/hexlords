@@ -10,7 +10,13 @@ use std::path::{Path, PathBuf};
 /// 1. `--assets <dir>`, if given;
 /// 2. `<exe dir>/../assets`, if it exists (the C++ rule, for installed builds);
 /// 3. `assets` next to `Cargo.toml`, so that `cargo run` works.
+///
+/// In a browser there are no directories: the assets are inside the program
+/// under the name `assets` (`crate::files`), and that is the answer.
 pub fn asset_root(arg: Option<&Path>) -> PathBuf {
+    if crate::files::EMBEDDED_ASSETS {
+        return PathBuf::from("assets");
+    }
     let exe = std::env::current_exe().ok();
     resolve(arg, exe.as_deref(), Path::new(env!("CARGO_MANIFEST_DIR")), &|p| p.is_dir())
 }

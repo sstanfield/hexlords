@@ -37,7 +37,7 @@ impl AssetDirs {
         self.dirs
             .iter()
             .map(|dir| path.split('/').fold(dir.clone(), |file, part| file.join(part)))
-            .find(|f| f.is_file())
+            .find(|f| crate::files::is_file(f))
     }
 
     /// Read and decode a PNG file to straight-alpha RGBA, top row first.
@@ -46,7 +46,7 @@ impl AssetDirs {
             let dirs: Vec<String> = self.dirs.iter().map(|d| d.display().to_string()).collect();
             format!("{path}: no such file (assets: {})", dirs.join(", "))
         })?;
-        let bytes = std::fs::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+        let bytes = crate::files::read(&file).map_err(|e| format!("{}: {e}", file.display()))?;
         let image = png::decode(&bytes, &Limits::DEFAULT).map_err(|e| format!("{}: {e}", file.display()))?;
         if image.size.w <= 0 || image.size.h <= 0 {
             return Err(format!("{}: an empty image", file.display()));

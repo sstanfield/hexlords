@@ -52,6 +52,35 @@ by Cargo from its repository).
 
 The game uses OpenGL (miniquad's default backend on every desktop platform).
 
+### In a browser
+
+The game also builds as WebAssembly and plays in a browser, the same game
+with the same screens:
+
+```sh
+rustup target add wasm32-unknown-unknown    # once
+cargo run -p web -- --serve                 # build it, then open http://127.0.0.1:8080
+cargo run -p web                            # only build it, into target/web
+```
+
+`target/web` is all a web server has to give out: `index.html`,
+`hexlords.wasm` (the game with its assets inside it, about 5 MB, half that
+compressed), `gl.js` (miniquad's loader) and the licences. Put the directory
+on any server of static files; a browser will not load WebAssembly from a
+`file:` address, which is what `--serve` is for. `--out <dir>` fills another
+directory, `--debug` makes an unoptimized build.
+
+What is different in a browser:
+
+- The maps are the ones in `assets/maps` when it was built, and random maps.
+  There is no command line, so no `--map` and no agents of your own (`cmd:`).
+- Nothing is kept: loading the page again is a new game.
+- Fullscreen and closing are the browser's (F11; on a Mac Ctrl+Cmd+F), and it
+  keeps some keys for itself: Ctrl+T and Ctrl+N do not reach the game (use
+  the End turn button and the Game menu), and Cmd is not Ctrl there (undo is
+  Ctrl+Z on a Mac too). The help (F1 or `?`) says so in a browser.
+- It needs WebGL, which every current browser has.
+
 ## Controls
 
 Along the top are the menus (Game, Units, Cities, View, Help: each item says
@@ -311,7 +340,7 @@ cargo test --workspace    # needs no GPU and no display
 ```
 
 The repository is a Cargo workspace: the game at its root, the tools
-(`mapeditor`, `assetgen`) under `tools/`. The code is laid out so that almost all of it runs in `cargo test`:
+(`mapeditor`, `assetgen`, `mapgen`, `web`) under `tools/`. The code is laid out so that almost all of it runs in `cargo test`:
 the game state (`src/state`, `src/game.rs`), the view math (`src/view.rs`,
 `src/minimap_view.rs`), the geometry the renderers draw (`src/render`), and the
 UI with its input (`src/screen.rs`, `src/session.rs` and the editor, driven
@@ -333,6 +362,12 @@ screenshots: nobody has used its live window yet. **Linux and Windows have not b
 run yet. Things to try by hand on each: the mouse (hover, click to select and
 move), the keys above, resizing the window, a HiDPI and a plain screen, F11
 and F1.
+
+The browser build was run in **Chrome 157 on macOS** (headless, driven over
+its DevTools protocol, at 1x and 2x): the new game screen, a random map, turns
+and a round against the computer, the mouse, the wheel, a right drag, the keys
+and the menus. **Firefox and Safari have not been tried**, nor a touch screen,
+and nobody has played it there by hand yet.
 
 ## Licences
 

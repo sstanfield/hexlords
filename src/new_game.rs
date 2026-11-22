@@ -13,12 +13,14 @@ use std::path::{Path, PathBuf};
 use turbo_ferret::widgets::{ScrollContainer, ScrollMode};
 use turbo_ferret::{LayoutParams, Size, TbId, WidgetId};
 
+use crate::files;
 use crate::game::Game;
 use crate::gui::RootCommand;
 use crate::gui::build;
 use crate::help::HelpSection;
 use crate::mapgen::config::{Config, DENSITIES, PRESETS, SIZES, Size as MapSize, TEMPLE_CHOICES};
 use crate::mapgen::reach::{MoveClass, movement_class};
+use crate::platform;
 use crate::screen::{MapScreen, Scene};
 use crate::setup::{Controller, Fog, Mode, Setup, TurnOrder};
 use crate::state::combat::{Exact, MAX_CHANCE, System, UNIT_CAP};
@@ -103,13 +105,9 @@ pub fn find_maps(assets: &Path) -> Vec<PathBuf> {
     let mut maps = Vec::new();
     let encumbered = assets.parent().map(|root| root.join("encumbered"));
     for dir in [Some(assets.join("maps")), encumbered].into_iter().flatten() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-        let mut found: Vec<PathBuf> = entries
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "map") || p.join("terrain.map").is_file())
-            .collect();
-        found.sort();
-        maps.extend(found);
+        let Ok(entries) = files::list(&dir) else { continue };
+        let is_map = |p: &PathBuf| p.extension().is_some_and(|x| x == "map") || files::is_file(&p.join("terrain.map"));
+        maps.extend(entries.into_iter().filter(is_map));
     }
     maps
 }
@@ -153,8 +151,7 @@ pub struct Random {
 
 /// A seed from the clock (each map its own; the rules never look at it).
 fn clock_seed() -> u64 {
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
-    now.map_or(1, |d| (d.as_nanos() % 1_000_000_007) as u64)
+    (platform::clock_nanos() % 1_000_000_007) as u64
 }
 
 /// The size a config asks for, as an index into `SIZES` (medium if none).
@@ -212,9 +209,8 @@ impl NewGame {
         let mut setup = Setup::solo(&screen.game.map, None, COMPUTER);
         // Each game its own chance: the seed is drawn here, once (the rules
         // themselves never look at the clock).
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
-        setup.seed = now.map_or(1, |d| d.as_nanos() as u64);
-        let template = std::fs::read_to_string(assets.join(UNITS_TEMPLATE)).ok().and_then(|text| {
+        setup.seed = (platform::clock_nanos() as u64).max(1);
+        let template = files::read_to_string(&assets.join(UNITS_TEMPLATE)).ok().and_then(|text| {
             let kinds = crate::state::scenario::parse_units(&text).ok()?;
             let has = |class: MoveClass| kinds.iter().any(|k| movement_class(k) == class);
             Some((text, has(MoveClass::Naval), has(MoveClass::Flyer)))

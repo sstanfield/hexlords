@@ -28,6 +28,7 @@ use super::hex::Hex;
 use super::map::{MAX_STACK, Map, MapError};
 use super::terrain::{MoveCost, TileType};
 use super::units::{DEFAULT_UNIT_IMAGE, Side, Travel, UnitKind};
+use crate::files;
 
 /// The files of a map directory.
 pub const TERRAIN_FILE: &str = "terrain.map";
@@ -533,21 +534,21 @@ fn from_map_error(file: &str, e: MapError) -> ScenarioError {
 /// The terrain file of a map: the file itself, or `terrain.map` in a map
 /// directory.
 pub fn terrain_path(path: &Path) -> PathBuf {
-    if path.is_dir() { path.join(TERRAIN_FILE) } else { path.to_path_buf() }
+    if files::is_dir(path) { path.join(TERRAIN_FILE) } else { path.to_path_buf() }
 }
 
 /// Read a map: a `.map` file (terrain and roads only), or a map directory.
 /// Errors name the file as it was asked for.
 pub fn load(path: &Path) -> Result<Scenario, ScenarioError> {
     let read = |file: &Path| -> Result<String, ScenarioError> {
-        std::fs::read_to_string(file).or_else(|e| error(&file.display().to_string(), 0, e.to_string()))
+        files::read_to_string(file).or_else(|e| error(&file.display().to_string(), 0, e.to_string()))
     };
     let optional = |file: PathBuf| -> Result<Option<String>, ScenarioError> {
-        if file.is_file() { read(&file).map(Some) } else { Ok(None) }
+        if files::is_file(&file) { read(&file).map(Some) } else { Ok(None) }
     };
     // In a directory, the errors name its files by their whole path.
     let within = |e: ScenarioError| ScenarioError { file: path.join(&e.file).display().to_string(), ..e };
-    if !path.is_dir() {
+    if !files::is_dir(path) {
         let text = read(path)?;
         let map = Map::parse(&text).map_err(|e| from_map_error(&path.display().to_string(), e))?;
         let (map, warnings) = build(map, Vec::new(), &[])?;
@@ -557,7 +558,7 @@ pub fn load(path: &Path) -> Result<Scenario, ScenarioError> {
     let units = optional(path.join(UNITS_FILE))?;
     let cities = optional(path.join(CITIES_FILE))?;
     let (map, warnings) = parse(&terrain, units.as_deref(), cities.as_deref()).map_err(within)?;
-    let assets = Some(path.join(ASSETS_DIR)).filter(|dir| dir.is_dir());
+    let assets = Some(path.join(ASSETS_DIR)).filter(|dir| files::is_dir(dir));
     Ok(Scenario { map, assets, warnings })
 }
 

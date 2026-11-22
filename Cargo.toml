@@ -21,12 +21,14 @@ turbo-ferret = { workspace = true }
 turbo-ferret-miniquad = { workspace = true }
 
 # The game is the root package; the tools are members (`cargo run -p mapeditor`,
-# `cargo run -p assetgen --release`, `cargo run -p mapgen`).
+# `cargo run -p assetgen --release`, `cargo run -p mapgen`, `cargo run -p web`).
 [workspace]
-members = ["tools/assetgen", "tools/mapeditor", "tools/mapgen"]
+members = ["tools/assetgen", "tools/mapeditor", "tools/mapgen", "tools/web"]
 
 [workspace.dependencies]
-miniquad = "=0.4.11" # the version turbo-ferret-miniquad is built against
+# The version turbo-ferret-miniquad is built against. `log-impl`: miniquad's
+# way to the browser's console (`platform::complain`).
+miniquad = { version = "=0.4.11", features = ["log-impl"] }
 turbo-ferret = { git = "https://github.com/sstanfield/turbo-ferret", rev = "a37cb83" }
 turbo-ferret-miniquad = { git = "https://github.com/sstanfield/turbo-ferret", rev = "a37cb83" }
 

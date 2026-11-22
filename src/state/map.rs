@@ -189,7 +189,7 @@ impl Map {
     }
 
     pub fn load(path: &Path) -> Result<Map, MapError> {
-        let text = std::fs::read_to_string(path).map_err(|e| MapError::Io(format!("{}: {e}", path.display())))?;
+        let text = crate::files::read_to_string(path).map_err(|e| MapError::Io(format!("{}: {e}", path.display())))?;
         Map::parse(&text)
     }
 

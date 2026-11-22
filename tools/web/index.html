@@ -1,0 +1,110 @@
+<!doctype html>
+<!-- Hexlords in a browser. `cargo run -p web` puts this page beside
+     hexlords.wasm (the game, with its assets inside) and gl.js (miniquad's
+     loader, which gives the game WebGL and the canvas's input). -->
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hexlords</title>
+    <!-- (No picture for the tab, and no request for one.) -->
+    <link rel="icon" href="data:,">
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #26292e;
+        }
+
+        /* The game is the whole page. Nothing is drawn on the canvas until the
+           game's first frame, so the note under it shows while it loads. */
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: block;
+            outline: none;
+            z-index: 1;
+        }
+
+        #note {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            color: #d8d8d8;
+            font: 16px/1.5 sans-serif;
+            z-index: 0;
+        }
+
+        /* What went wrong is said over the game. */
+        #note.wrong {
+            z-index: 2;
+            height: auto;
+            padding: 12px 0;
+            background: #7a2222;
+            color: #ffffff;
+        }
+
+        a {
+            color: inherit;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="glcanvas" tabindex="1"></canvas>
+    <div id="note">Loading Hexlords&hellip;</div>
+    <script>
+        "use strict";
+        const note = document.getElementById("note");
+        function wrong(text) {
+            note.textContent = text;
+            note.className = "wrong";
+        }
+        // The game moves its map with the right button: no menu there.
+        document.getElementById("glcanvas").addEventListener("contextmenu", function (event) {
+            event.preventDefault();
+        });
+        // A panic in the game stops it: say so (the console has the words).
+        window.addEventListener("error", function (event) {
+            wrong("Hexlords stopped: " + (event.message || "an error") + ". The browser's console says more; " +
+                "load the page again for a new game.");
+        });
+        function supported() {
+            if (location.protocol === "file:") {
+                wrong("This page has to come from a web server, not from a file: run  cargo run -p web -- --serve");
+                return false;
+            }
+            if (typeof WebAssembly !== "object") {
+                wrong("Hexlords needs WebAssembly, which this browser does not have.");
+                return false;
+            }
+            if (!document.createElement("canvas").getContext("webgl")) {
+                wrong("Hexlords needs WebGL, which this browser does not have (or has turned off).");
+                return false;
+            }
+            return true;
+        }
+    </script>
+    <script src="gl.js"></script>
+    <script>
+        if (supported()) {
+            load("hexlords.wasm");
+        }
+    </script>
+</body>
+
+</html>

@@ -762,7 +762,7 @@ impl MapRenderer {
         let texture = match self.dirs.texture(ctx, image, Sampling::Smooth) {
             Ok(texture) => Some(texture),
             Err(e) => {
-                eprintln!("a unit's picture: {e}");
+                crate::platform::complain(&format!("a unit's picture: {e}"));
                 None
             }
         };

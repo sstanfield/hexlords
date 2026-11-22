@@ -46,12 +46,13 @@ touching the rules.
 | Path | What |
 |---|---|
 | `src/state/` | Map, tiles, roads, units and their kinds, cities, movement range; `combat`, the battles (pure); `rng`, the game's chance; `scenario`, the reader of a map's files. No UI, no graphics |
+| `src/files.rs`, `build.rs` | Reading the game's files: from the disk, or in a browser (the WebAssembly build) from the copy of `assets/` inside the program, which `build.rs` lists. Everything that reads a file of the game's asks here, not `std::fs` |
 | `src/game.rs`, `src/game/patrol.rs`, `src/game/rounds.rs`, `src/orders.rs`, `src/setup.rs` | `Game`: the map, whose turn it is, and the rules: `Game::apply` carries out an `Order` and says what came of it (`Event`s); the selected unit and its range for the screen; `game::patrol`: patrols, and marauding's flag, as rules; `game::rounds`: the second mode (an order to move is a plan, and the round plays out a tick at a time, every stack a hex, `Game::play_out`). `Setup`: a game before it starts (the mode, the order of turns, who plays each side, the seed) |
 | `src/agents.rs`, `src/planner.rs`, `src/marauder.rs`, `src/headless.rs` | The computer's players (`Agent`: `passive`, `simple`, `cmd:<program>` over a text protocol; `planner`: `steady`, `bold`, `careful`, which read the rules in effect); with fog of war each is given its side's view (`Game::view_for`); `marauder`: the computer leading a side's marauding stacks; a game played without a window (`--headless`) |
 | `src/view.rs`, `src/minimap_view.rs` | Pure math: zoom, scale factors, visible hexes, picking, panning, recentering; the minimap's fit and marker |
 | `src/render/` | miniquad drawing: hex meshes, shaders, textures, the map and minimap renderers, the PNG writer; the units' icons for the panels (`unit_icon`, on the CPU) |
 | `src/gui/` | Turbo Ferret widgets: `MapWidget`, `MiniMapWidget`, `RootWindow`. They record commands; they hold no game state. `build`: windows made from code (the help, the cities'); `menu`: a menu bar (an item is a button: its click is its id) |
-| `src/platform.rs` | What miniquad leaves out: bringing the window to the front on macOS (the crate's one `unsafe` block) |
+| `src/platform.rs` | What miniquad leaves out: bringing the window to the front on macOS (the crate's one `unsafe` block); and what differs in a browser (`WEB`): the clock, the time of day for a seed, where a complaint goes |
 | `src/screen.rs` | `MapScreen`: the `Ui`, a map and the two views together, with no window: what the game and the tools share. `Scene`: what the window can run |
 | `src/new_game.rs`, `src/shell.rs` | The new game screen (a scene on a map screen of its own: the maps, or a random map made there with `mapgen`), and the window's scene from it to the game and back |
 | `src/session.rs`, `src/showing.rs`, `src/info.rs`, `src/guide.rs`, `src/city_windows.rs`, `src/log_window.rs`, `src/battle_window.rs`, `src/tasks_window.rs`, `src/temple_window.rs`, `src/disband_window.rs`, `src/patrol_window.rs` | `Session`: the game on a map screen (its layout, the menus and their keys, what a click and Enter do, what a click picks after Go to, the panels around the map: the treasury, the stack's boxes, the box the pointer opens over a unit, the city in the sidebar; what the person at the screen sees). `info`: what the panels say, as plain functions of the game's state (and what the game's history says to a side). `city_windows`: a city in full (in a window, or smaller in the sidebar), where its holder sets what it builds and where its new units go, and the lists of cities. `log_window`: a side's log of battles and cities. `battle_window`: a battle played out. `tasks_window`: what a side has left to do this turn. `temple_window`: whether a stack on a temple seeks its blessing, and what each was given. `disband_window`: whether the selected units go home for good. `patrol_window`: whether a patrol attacks, and at what odds. `showing` (pure): what the screen shows happening, the stacks going hex by hex and the battles in their turn (the game keeps what happens only while watched, `Game::watch`). `guide`: the Help menu's topics, written from the game in play. Tests drive them all |
@@ -60,6 +61,7 @@ touching the rules.
 | `tools/mapeditor/` | The map editor, a workspace member on the game's library: `Editor` (a scene: the sidebar, painting, files), `brush`, `history` (undo), `check` (`--check`) |
 | `src/mapgen/` | The random map generator, pure (`docs/mapgen.md`): `config` (the knobs, the presets, the size), `land`, `relief`, `rivers`, `biomes`, `cleanup`, `cities`, `sites`, `roads` (the stages), `names`, `grid`, `noise`, `rng`, `reach` (movement classes, who gets where), `stats` (what any map measures), `check`, `validate` (the hard checks a generated map must pass), `score`, `preview` (pictures, contact sheets) |
 | `tools/mapgen/` | Its command line, a workspace member on the game's library: `gen`, `batch`, `stats`, `check` |
+| `tools/web/` | The browser build, a workspace member with no dependencies: `cargo run -p web` builds the game for `wasm32-unknown-unknown` and fills `target/web` (`index.html`, the page; `hexlords.wasm`; miniquad's `gl.js`, copied from the miniquad in use; the licences), `--serve` gives it out on localhost |
 | `tools/assetgen/` | The picture generator, a workspace member with no dependencies: `terrain` (a function for each terrain's art), `noise` and `scatter` (what repeats on the hex grid), `tile` (the image, the atlas), `overlay`, `road` and `icons` (the pictures that go over a tile), `skin` (the windows' and buttons' pictures), `preview` (maps drawn without the game), `png` (the writer) |
 | `assets/` | `layouts/main.tb.txt` (the game), `layouts/editor.tb.txt` (the editor), Turbo Badger's default skin and `skin/hexlords.tb.txt` (our changes, loaded on top), `tiles/`, `roads/`, the signs in `units/` and the `hg_*.png` of `skin/` (what `assetgen` makes, and nothing else), `units/default_unit.png` (the C++ demo's), `maps/` (`*.map` files and map directories), `mapgen/` (the generator's presets and units template) |
 | `tests/`, `tools/*/tests/` | Headless tests of the layouts, the widgets and the interaction; of the generator against the game |
@@ -98,6 +100,8 @@ cargo run -p assetgen --release -- --previews target/previews    # and maps draw
 cargo run -p mapgen --release -- batch --seeds 1..16 --size medium --out target/maps --sheet   # random maps, a contact sheet
 cargo run -p mapgen --release -- stats assets/maps/continent     # what a map measures
 cargo +1.86 check --workspace --all-targets # MSRV
+cargo run -p web -- --serve                 # the game in a browser: http://127.0.0.1:8080 (once: rustup target add wasm32-unknown-unknown)
+cargo clippy --target wasm32-unknown-unknown -p hexlords -- -D warnings   # the browser build, checked
 ```
 
 `cargo test` needs no GPU and no display. The screenshot mode needs both (on
@@ -213,6 +217,20 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
 - **Platforms:** macOS and Linux are the test targets; Windows is best effort.
   Use `std::path`, no Unix-only APIs, no `#[cfg(unix)]`-only features. Only
   miniquad's OpenGL backend is supported (the game's shaders are GLSL 100).
+- **The game also runs in a browser** (`cargo run -p web`, WebAssembly on
+  miniquad's WebGL 1), so the window's code keeps to what exists there. No
+  `std::fs` for the game's files: `crate::files` reads them (the disk, or the
+  assets inside the program), and a new place that reads one goes through
+  it. No `std::time` (`Instant` and `SystemTime` panic in a browser):
+  `platform::Clock` and `platform::clock_nanos`. No threads, and nothing that
+  waits: a frame returns. What goes wrong is said with `platform::complain`
+  (the console there), not `eprintln!`. A browser keeps Ctrl+T, Ctrl+N, F11
+  and closing for itself and passes Ctrl but not Cmd: where that changes what
+  the player is told, ask `platform::WEB` (`help::window_section_for`, the
+  Game and View menus). No JavaScript of our own beyond the page
+  (`tools/web/index.html`), and no `unsafe` for the browser: miniquad's
+  `gl.js` is all the game calls. After a change to the window, the files or
+  the input, build it and look at it in a browser.
 - **Tests:** a fix comes with a test that fails without it. Anything a player
   sees gets a screenshot, and you look at the picture.
 - **Commits:** on `main`, small, described by what changed and why.

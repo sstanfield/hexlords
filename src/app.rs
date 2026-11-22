@@ -4,7 +4,6 @@
 //! C++: src/main.cpp (the GLFW window, callbacks and main loop)
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use miniquad::conf::Conf;
 use miniquad::{
@@ -89,11 +88,15 @@ where
         high_dpi: true,
         ..Default::default()
     };
-    miniquad::start(conf, move || match App::new(spec.program, options, build) {
-        Ok(app) => Box::new(app),
-        Err(e) => {
-            eprintln!("{}: {e}", spec.program);
-            std::process::exit(1);
+    miniquad::start(conf, move || {
+        // (After miniquad's own hook, which says less.)
+        platform::report_panics();
+        match App::new(spec.program, options, build) {
+            Ok(app) => Box::new(app),
+            Err(e) => {
+                platform::complain(&format!("{}: {e}", spec.program));
+                std::process::exit(1);
+            }
         }
     });
 }
@@ -130,7 +133,12 @@ impl Wheel {
     }
 
     pub fn for_platform() -> Wheel {
-        if cfg!(target_os = "macos") {
+        if platform::WEB {
+            // A browser gives pixels of its page, whatever is under it: the
+            // fingers' way on a trackpad, about 100 for a notch of a wheel
+            // (and it turns the wheel sideways with Shift itself).
+            Wheel::new(1.0, 1.0, false, 50.0)
+        } else if cfg!(target_os = "macos") {
             // The map follows the fingers exactly; a zoom level is a short stroke.
             Wheel::new(1.0, 1.0, false, 40.0)
         } else if cfg!(target_os = "windows") {
@@ -185,7 +193,7 @@ pub struct App<S: Scene> {
     wheel: Wheel,
     /// The button that holds the map (the right or the middle one drags it).
     holding: Option<MouseButton>,
-    start: Instant,
+    clock: platform::Clock,
     frames: u64,
     fullscreen: bool,
     program: &'static str,
@@ -227,7 +235,7 @@ impl<S: Scene> App<S> {
             input: InputAdapter::new(),
             wheel: Wheel::for_platform(),
             holding: None,
-            start: Instant::now(),
+            clock: platform::Clock::start(),
             frames: 0,
             fullscreen: false,
             program,
@@ -236,7 +244,7 @@ impl<S: Scene> App<S> {
     }
 
     fn now(&self) -> u64 {
-        self.start.elapsed().as_millis() as u64
+        self.clock.millis()
     }
 
     /// The UI's clock is data: keep it current before input (click counting reads it).
@@ -248,6 +256,14 @@ impl<S: Scene> App<S> {
     /// After input: apply what the widgets recorded.
     fn after_input(&mut self) {
         self.scene.pump();
+        let toggles = self.scene.screen_mut().take_fullscreen_toggles();
+        if platform::WEB {
+            // A page in a browser has no window: it is closed with its tab,
+            // and fullscreen is the browser's own (which leaves Esc to the
+            // game, as a page's fullscreen would not). The keys do nothing.
+            self.scene.screen_mut().cancel_quit();
+            return;
+        }
         if self.scene.screen().quit_requested() {
             if self.scene.confirm_quit() {
                 window::order_quit();
@@ -255,7 +271,7 @@ impl<S: Scene> App<S> {
                 self.scene.screen_mut().cancel_quit();
             }
         }
-        if self.scene.screen_mut().take_fullscreen_toggles() % 2 == 1 {
+        if toggles % 2 == 1 {
             self.fullscreen = !self.fullscreen;
             window::set_fullscreen(self.fullscreen);
         }
@@ -280,7 +296,7 @@ impl<S: Scene> App<S> {
                 Ok(()) => self.refused = None,
                 Err(e) => {
                     // Said once; the pictures that were there stay.
-                    eprintln!("{}: the map's assets: {e}", self.program);
+                    platform::complain(&format!("{}: the map's assets: {e}", self.program));
                     self.refused = Some(dirs);
                 }
             }

@@ -32,6 +32,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --workspace
       - run: cargo test --workspace
+  # The game for a browser: it has to build, and the tool has to fill its
+  # directory. (Nothing here runs it in a browser.)
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - run: cargo clippy --target wasm32-unknown-unknown -p hexlords -- -D warnings
+      - run: cargo run -p web
+      - run: test -s target/web/hexlords.wasm && test -s target/web/gl.js && test -s target/web/index.html
   msrv:
     runs-on: ubuntu-latest
     steps:

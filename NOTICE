@@ -50,7 +50,9 @@ Public Domain (assets/skin/license.txt).
 ----------------------------------------------------------------------
 
 miniquad (https://github.com/not-fl3/miniquad), MIT or Apache-2.0, the window
-and graphics layer. It is a Cargo dependency and is not copied here.
+and graphics layer. It is a Cargo dependency and is not copied here. The
+build for a browser (cargo run -p web) puts miniquad's loader, gl.js, beside
+the game, with miniquad's MIT licence (LICENSE-miniquad.txt).
 
 ----------------------------------------------------------------------
 

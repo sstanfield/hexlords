@@ -277,8 +277,7 @@ fn game_seed(given: Option<u64>, again: bool, default: u64) -> u64 {
         if again {
             return default;
         }
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
-        now.map_or(default, |d| (d.as_nanos() as u64).max(2))
+        (hexlords::platform::clock_nanos() as u64).max(2)
     })
 }
 

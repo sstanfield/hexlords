@@ -1,0 +1,12 @@
+[package]
+name = "web"
+description = "Builds Hexlords for a browser (WebAssembly) into a directory a web server can give out, and can be that server."
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+license = "Zlib"
+publish = false
+
+# Nothing: it runs cargo, copies files and answers HTTP with the standard
+# library.
+[dependencies]
