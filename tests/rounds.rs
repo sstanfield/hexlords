@@ -1,7 +1,8 @@
 //! Rounds, the second way to play (`docs/gameplay.md`, "Rounds"; the
 //! owner's word, 2026-11-22): every side gives its orders, nothing moves;
-//! then the round plays out a tick at a time, every stack a hex in each,
-//! the sides in the round's order. The rules, without a window.
+//! then the round plays out on a clock, every stack a step at a time at
+//! its own speed, fighting who it finds on its way. The rules, without a
+//! window.
 
 use hexlords::agents::{self, Agents, describe};
 use hexlords::game::Game;
@@ -26,7 +27,8 @@ fn game_with(place: impl FnOnce(&mut Game), set: impl FnOnce(&mut Setup)) -> Gam
     let terrain = format!("30\n30\n{}\n", rows.join("\n"));
     let units = "unit soldiers\nname Soldiers\nstrength 5\nmoves 12\nenter grass 2, city 1\n\
                  unit levy\nname Levy\nstrength 1\nmoves 12\nenter grass 2, city 1\n\
-                 unit riders\nname Riders\nstrength 3\nmoves 20\nenter grass 2, city 1\n";
+                 unit riders\nname Riders\nstrength 3\nmoves 20\nenter grass 2, city 1\n\
+                 unit captain\nname Captain\nstrength 2\nmoves 12\ncommander 1\nenter grass 2, city 1\n";
     let cities = "city 5 5\nname Redhold\nside red\nincome 10\nproduce levy 1\n\
                   city 24 24\nname Bluemoor\nside blue\nincome 10\nproduce levy 1\n\
                   city 15 15\nname Midway\n";
@@ -76,6 +78,11 @@ fn battles(events: &[Event]) -> Vec<(Hex, Side, bool)> {
         .collect()
 }
 
+/// A hex beside `hex` that is none of `not`.
+fn beside(game: &Game, hex: Hex, not: &[Hex]) -> Hex {
+    game.map.neighbours(hex).find(|n| !not.contains(n)).unwrap()
+}
+
 /// Both sides have done: the round plays out.
 fn play(game: &mut Game) -> Vec<Event> {
     assert_eq!(game.player(), Side::Red);
@@ -96,13 +103,15 @@ fn an_order_to_move_is_a_plan_and_the_round_plays_it_out() {
     let unit = g.map.units().get(a).unwrap();
     assert_eq!((unit.pos(), unit.movement, unit.planned), (Hex::new(10, 5), 12, true));
     assert_eq!(unit.route, [to]);
+    // Its way is the one it will take, hex by hex.
+    assert_eq!((unit.way.len(), unit.way.last()), (4, Some(&to)));
     assert!(g.waiting_stacks(Side::Red).is_empty());
     // A hex it cannot get to this turn is refused, as a move is; farther is
     // Toward's, or Go to's.
     let far = Hex::new(10, 20);
     let refused = g.apply(Order::Move { units: vec![a], to: far });
     assert_eq!(refused, Err("Soldiers cannot get there this turn".to_string()));
-    // The round: four steps, a tick each, then it has no plan left.
+    // The round: four steps, one after the other, then it has no plan left.
     let events = play(&mut g);
     let unit = g.map.units().get(a).unwrap();
     assert_eq!((unit.pos(), unit.movement, unit.planned), (to, 12 + 2, false), "there, and a new round's moves");
@@ -232,11 +241,109 @@ fn an_empty_city_is_taken_by_the_first_there_and_the_next_attacks_it() {
     assert_eq!(g.map.city_at(midway).map(|c| c.side), Some(Side::Blue));
 }
 
+/// The owner's word, 2026-11-22: "fast units should get to spend the same
+/// MP as slower units faster than them ... if I have an enemy city 3 MP
+/// away from a Cavalry stack and the enemy has a heavy infantry stack 3 MP
+/// away the cavalry can attack and possibly take the city before the heavy
+/// infantry". Blue is second in the round's order: a hex a tick for
+/// everyone, red's soldiers were in Midway first.
 #[test]
-fn stacks_beside_the_hex_they_are_sent_against_attack_it_together() {
-    // Three levies in Bluemoor... rather: blue's soldiers hold a hex; red's
-    // two stacks of soldiers beside it are both sent against it. Alone,
-    // each stack of one loses to the two (5 against 10); together they win.
+fn the_faster_stack_is_there_first_whatever_the_order_of_the_sides() {
+    let (mut a, mut b) = (None, None);
+    let mut g = game(|g| {
+        a = Some(put(g, Side::Red, "soldiers", Hex::new(15, 12)));
+        b = Some(put(g, Side::Blue, "riders", Hex::new(15, 18)));
+    });
+    let (a, b) = (a.unwrap(), b.unwrap());
+    let midway = Hex::new(15, 15);
+    g.apply(Order::Move { units: vec![a], to: midway }).unwrap();
+    g.end_turn();
+    g.apply(Order::Move { units: vec![b], to: midway }).unwrap();
+    let events = g.end_turn();
+    let taken: Vec<(Side, Side)> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Taken { from, by, .. } => Some((*from, *by)),
+            _ => None,
+        })
+        .collect();
+    // Three hexes each, 5 points: a quarter of a round for the riders (20
+    // a turn), 5 twelfths for the soldiers (12).
+    assert_eq!(
+        taken,
+        [(Side::Grey, Side::Blue), (Side::Blue, Side::Red)],
+        "the riders take it, the soldiers retake it"
+    );
+    assert_eq!(battles(&events), [(midway, Side::Red, true)], "the soldiers attack the riders in it");
+    assert_eq!((pos(&g, a), pos(&g, b)), (Some(midway), None));
+    // The riders' three steps come before the soldiers' second.
+    let order: Vec<Side> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Moved { unit, .. } => Some(unit.side),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, [Side::Blue, Side::Red, Side::Blue, Side::Blue, Side::Red, Side::Red], "{order:?}");
+}
+
+/// A commander keeps up with those it leads: a captain (12 a turn) with
+/// riders (20) is there as soon as riders alone would be, before soldiers
+/// (12) as far away, who are first in the round's order.
+#[test]
+fn a_captain_with_riders_rides() {
+    let (mut a, mut b) = (None, Vec::new());
+    let mut g = game(|g| {
+        a = Some(put(g, Side::Red, "soldiers", Hex::new(15, 12)));
+        b = vec![put(g, Side::Blue, "captain", Hex::new(15, 18)), put(g, Side::Blue, "riders", Hex::new(15, 18))];
+    });
+    let midway = Hex::new(15, 15);
+    g.apply(Order::Move { units: vec![a.unwrap()], to: midway }).unwrap();
+    g.end_turn();
+    g.apply(Order::Move { units: b.clone(), to: midway }).unwrap();
+    let events = g.end_turn();
+    let first = events.iter().find_map(|e| match e {
+        Event::Taken { by, .. } => Some(*by),
+        _ => None,
+    });
+    assert_eq!(first, Some(Side::Blue), "the captain and the riders take Midway first");
+}
+
+/// "Stacks that run into each other should probably fight vs just block
+/// each other." Neither plan ends on the other's stack: red goes east
+/// along row 10, blue west along it. A stack stopped short of one in its
+/// way before (and went round one it saw as it set off).
+#[test]
+fn stacks_that_run_into_each_other_fight() {
+    let mut a = None;
+    let mut g = game(|g| a = Some(put(g, Side::Red, "soldiers", Hex::new(10, 5))));
+    let a = a.unwrap();
+    g.apply(Order::Move { units: vec![a], to: Hex::new(10, 9) }).unwrap();
+    // Red's way, four hexes; blue's levy stands beside the third, and is
+    // sent onto it: there long before red.
+    let way = g.map.units().get(a).unwrap().way.clone();
+    assert_eq!((way.len(), way.last()), (4, Some(&Hex::new(10, 9))));
+    let near = beside(&g, way[2], &way);
+    let b = put(&mut g, Side::Blue, "levy", near);
+    g.end_turn();
+    g.apply(Order::Move { units: vec![b], to: way[2] }).unwrap();
+    let events = g.end_turn();
+    // Red's third step is an attack: it does not go round, and it does not
+    // wait; and that is its round.
+    assert_eq!(battles(&events), [(way[2], Side::Red, true)]);
+    assert_eq!((pos(&g, a), pos(&g, b)), (Some(way[2]), None));
+    assert_eq!(g.map.units().get(a).unwrap().movement, 12, "an attack uses up its movement: the new round's");
+    assert_eq!(
+        steps(&events).iter().filter(|(_, to)| way.contains(to)).count(),
+        4,
+        "two steps, the levy's, the attack"
+    );
+}
+
+/// Each stack attacks when it gets there: two orders against a hex are two
+/// attacks, however near each other the stacks are.
+#[test]
+fn stacks_sent_against_a_hex_each_on_its_own_attack_it_one_after_the_other() {
     let mut red = Vec::new();
     let mut g = game_with(
         |g| {
@@ -255,31 +362,110 @@ fn stacks_beside_the_hex_they_are_sent_against_attack_it_together() {
     g.apply(Order::Move { units: red[..2].to_vec(), to: target }).unwrap();
     g.apply(Order::Move { units: red[2..].to_vec(), to: target }).unwrap();
     let events = play(&mut g);
-    assert_eq!(battles(&events), [(target, Side::Red, true)], "one battle, 20 against 10");
+    assert_eq!(battles(&events), [(target, Side::Red, false), (target, Side::Red, false)], "10 against 10, twice");
+}
+
+/// The owner's word, 2026-11-22: "If you want to consolidate stacks then
+/// you would order one stack to another then combine them and order them
+/// as a new stack. That would cause the stack being joined to wait for the
+/// other units before moving or attacking."
+#[test]
+fn a_stack_sent_to_another_joins_it_and_they_go_on_as_one() {
+    let (mut near, mut far) = (Vec::new(), Vec::new());
+    let (here, target) = (Hex::new(10, 9), Hex::new(10, 11));
+    let mut g = game_with(
+        |g| {
+            for _ in 0..2 {
+                put(g, Side::Blue, "soldiers", target);
+                near.push(put(g, Side::Red, "soldiers", here));
+                far.push(put(g, Side::Red, "soldiers", Hex::new(10, 6)));
+            }
+        },
+        |s| s.combat.system = hexlords::state::combat::System::Strength,
+    );
+    // The far stack is sent to the near one's hex; then all four are sent
+    // on, from there.
+    g.apply(Order::Move { units: far.clone(), to: here }).unwrap();
+    assert_eq!(g.joining(Side::Red, here), far);
+    let all: Vec<UnitId> = near.iter().chain(&far).copied().collect();
+    g.apply(Order::Move { units: all.clone(), to: target }).unwrap();
+    let unit = |id: UnitId| g.map.units().get(id).unwrap();
+    assert_eq!((unit(near[0]).route.clone(), unit(far[0]).route.clone()), (vec![target], vec![here, target]));
+    assert_eq!(unit(far[0]).way.len(), 5, "three hexes to the others, two on");
+    assert!(all.iter().all(|id| unit(*id).party == unit(all[0]).party), "one order, one stack");
+    let events = play(&mut g);
+    // The near stack waited: the first to move are the far ones, and one
+    // battle is fought, the four together (20 against 10).
+    let moved: Vec<UnitId> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Moved { unit, .. } => Some(*unit),
+            _ => None,
+        })
+        .collect();
+    assert!(moved[..6].iter().all(|id| far.contains(id)), "the far stack's three steps first: {moved:?}");
+    assert_eq!(battles(&events), [(target, Side::Red, true)]);
     let fought = events.iter().find_map(|e| match e {
         Event::Battle { attackers, defenders, .. } => Some((*attackers, *defenders)),
         _ => None,
     });
     assert_eq!(fought, Some((4, 2)));
+    assert!(all.iter().all(|id| pos(&g, *id) == Some(target)));
+}
+
+/// Those that were to be joined go on alone if the others cannot come any
+/// more; and an undo gives every one of them back what it was doing.
+#[test]
+fn a_stack_waits_for_those_that_join_it_only_while_they_can_come() {
+    let (mut near, mut far) = (None, None);
+    let (here, on) = (Hex::new(10, 9), Hex::new(10, 12));
+    let mut g = game(|g| {
+        near = Some(put(g, Side::Red, "soldiers", here));
+        far = Some(put(g, Side::Red, "levy", Hex::new(10, 6)));
+    });
+    let (near, far) = (near.unwrap(), far.unwrap());
+    g.apply(Order::Move { units: vec![far], to: here }).unwrap();
+    g.apply(Order::Move { units: vec![near, far], to: on }).unwrap();
+    g.apply(Order::Undo).unwrap();
+    let unit = |g: &Game, id: UnitId| g.map.units().get(id).unwrap().clone();
+    assert!(unit(&g, near).route.is_empty() && !unit(&g, near).planned, "the near one has no plan again");
+    assert_eq!((unit(&g, far).route.clone(), unit(&g, far).way.len()), (vec![here], 3), "the far one its way there");
+    g.apply(Order::Move { units: vec![near, far], to: on }).unwrap();
+    // Blue's soldiers come to stand on the levy's way: it runs into them,
+    // and never comes.
+    let way = unit(&g, far).way.clone();
+    let next_to = beside(&g, way[1], &way);
+    let foe = put(&mut g, Side::Blue, "soldiers", next_to);
+    g.end_turn();
+    g.apply(Order::Move { units: vec![foe], to: way[1] }).unwrap();
+    let events = g.end_turn();
+    assert_eq!(battles(&events), [(way[1], Side::Red, false)]);
+    assert_eq!(pos(&g, far), None, "the levy never came");
+    assert_eq!(pos(&g, near), Some(on), "and the soldiers went on without it");
 }
 
 #[test]
-fn a_march_stops_short_of_a_stack_in_its_way_and_a_plan_does_not() {
-    // Go to never attacks what it sees: it goes round, or stops short.
-    let (mut a, mut b) = (None, None);
-    let mut g = game(|g| {
-        a = Some(put(g, Side::Red, "soldiers", Hex::new(10, 5)));
-        b = Some(put(g, Side::Blue, "levy", Hex::new(10, 8)));
-    });
-    let (a, b) = (a.unwrap(), b.unwrap());
-    g.apply(Order::GoTo { units: vec![a], to: Hex::new(10, 8), via: Vec::new() }).unwrap();
+fn a_march_fights_who_stands_in_its_way_too() {
+    // In turns Go to never attacks. In rounds whoever is on a stack's way
+    // when it gets there is fought, a plan's or a march's.
+    let mut a = None;
+    let mut g = game(|g| a = Some(put(g, Side::Red, "soldiers", Hex::new(10, 5))));
+    let a = a.unwrap();
+    let far = Hex::new(10, 20);
+    g.apply(Order::GoTo { units: vec![a], to: far, via: Vec::new() }).unwrap();
     assert_eq!(pos(&g, a), Some(Hex::new(10, 5)), "not a step before the round");
-    let events = play(&mut g);
-    assert!(battles(&events).is_empty());
-    assert_eq!((pos(&g, a), pos(&g, b)), (Some(Hex::new(10, 7)), Some(Hex::new(10, 8))), "beside it");
-    assert!(events.iter().any(|e| matches!(e, Event::Stalled { side: Side::Red, .. })), "and it says so");
+    // Its way this round, as it finds it when it sets off; blue's levy
+    // comes to stand on it.
+    let way = g.ways_this_round(Side::Red);
+    let near = beside(&g, way[2], &way);
+    let b = put(&mut g, Side::Blue, "levy", near);
+    g.end_turn();
+    g.apply(Order::Move { units: vec![b], to: way[2] }).unwrap();
+    let events = g.end_turn();
+    assert_eq!(battles(&events), [(way[2], Side::Red, true)]);
+    assert_eq!((pos(&g, a), pos(&g, b)), (Some(way[2]), None));
     let unit = g.map.units().get(a).unwrap();
-    assert!(unit.stalled && unit.route == [Hex::new(10, 8)] && !unit.planned, "it keeps its order");
+    assert!(unit.route == [far] && !unit.planned && !unit.stalled, "it keeps its order");
 }
 
 #[test]
@@ -353,7 +539,7 @@ fn every_side_is_paid_and_builds_as_a_round_begins() {
 }
 
 #[test]
-fn a_round_watched_plays_out_a_tick_at_a_time_to_the_same_end() {
+fn a_round_watched_plays_out_a_beat_at_a_time_to_the_same_end() {
     let place = |g: &mut Game| {
         put(g, Side::Red, "soldiers", Hex::new(10, 5));
         put(g, Side::Blue, "soldiers", Hex::new(10, 12));
@@ -382,12 +568,22 @@ fn a_round_watched_plays_out_a_tick_at_a_time_to_the_same_end() {
     assert_eq!(watched.player(), Side::Grey, "nobody's turn");
     let refused = watched.apply(Order::EndTurn);
     assert_eq!(refused, Err("the round is playing out".to_string()));
-    let (mut ticks, mut events) = (0, Vec::new());
+    let (mut beats, mut events, mut clock) = (0, Vec::new(), 0);
     while watched.playing_out() {
-        events.extend(watched.play_out());
-        ticks += 1;
+        let beat = watched.play_out();
+        // A battle ends a beat: a screen shows it before the round goes on.
+        let fought = beat.iter().filter(|e| matches!(e, Event::Battle { .. })).count();
+        assert!(
+            fought <= 1 && (fought == 0 || matches!(beat.last(), Some(Event::Battle { .. } | Event::Moved { .. })))
+        );
+        if let Some(now) = watched.round_clock() {
+            assert!(now >= clock, "the clock goes on");
+            clock = now;
+        }
+        events.extend(beat);
+        beats += 1;
     }
-    assert!(ticks >= 4, "{ticks}");
+    assert!(beats >= 3, "{beats}");
     assert_eq!(events, all, "the same events");
     assert_eq!((watched.turn(), watched.player()), (2, Side::Red));
     let places = |g: &Game| g.map.units().iter().map(|u| (u.id(), u.pos(), u.movement)).collect::<Vec<_>>();
@@ -398,21 +594,30 @@ fn a_round_watched_plays_out_a_tick_at_a_time_to_the_same_end() {
     assert_eq!(journal[1..], all[..]);
 }
 
+/// The owner's word, 2026-11-22: "you should only see what the unit can
+/// see at the time and leave ghosts vs leave a lingering visibility
+/// trail".
 #[test]
-fn what_units_see_on_their_way_stays_seen_while_the_next_orders_are_given() {
+fn a_stack_sees_what_is_in_its_sight_as_it_goes_and_remembers_the_stacks_it_passed() {
     let mut a = None;
     let mut g = game_with(|g| a = Some(put(g, Side::Red, "riders", Hex::new(10, 5))), |s| s.fog = Fog::On);
     let a = a.unwrap();
     let far = Hex::new(10, 15);
     g.apply(Order::Move { units: vec![a], to: far }).unwrap();
-    let events = play(&mut g);
-    assert_eq!(pos(&g, a), Some(far));
-    // The middle of its way: out of sight of where it was and where it is.
-    let middle = steps(&events)[4].1;
-    assert!(middle.distance(far) > hexlords::game::UNIT_SIGHT && middle.distance(REDHOLD) > 4);
-    assert!(g.sight(Side::Red).sees(middle), "its way, through the next orders");
+    // The middle of its way: out of sight of where it is and where it will
+    // be. Blue's levy stands beside it.
+    let way = g.map.units().get(a).unwrap().way.clone();
+    let middle = way[4];
+    assert!(middle.distance(far) > hexlords::game::UNIT_SIGHT + 1 && middle.distance(REDHOLD) > 4);
+    let seen = beside(&g, middle, &way);
+    put(&mut g, Side::Blue, "levy", seen);
+    assert!(g.sight(Side::Red).ghost_at(seen).is_none() && !g.sight(Side::Red).sees(seen));
     play(&mut g);
-    assert!(!g.sight(Side::Red).sees(middle), "and no longer once that round has played");
+    assert_eq!(pos(&g, a), Some(far));
+    let sight = g.sight(Side::Red);
+    assert!(!sight.sees(middle) && !sight.sees(seen), "what it passed is seen no longer");
+    let ghost = sight.ghost_at(seen).expect("the levy it passed is remembered");
+    assert_eq!((ghost.side, ghost.count, ghost.round), (Side::Blue, 1, 1));
 }
 
 /// With total fog a plan could only end on land already seen, a couple of

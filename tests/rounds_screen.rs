@@ -1,9 +1,10 @@
 //! Rounds at the screen (`docs/gameplay.md`, "Rounds"; the owner's word,
 //! 2026-11-22): a click plans, the map shows the person's plans, "Orders
 //! done" passes to the next side, and once every side has done the round
-//! plays out before the person's eyes, a tick at a time, every stack of a
-//! tick at the same moment; in hotseat each person plans behind the cover,
-//! and is shown what happened.
+//! plays out before the person's eyes, a beat at a time, the stacks of a
+//! beat at the same time (a battle holds it until its window is closed);
+//! in hotseat each person plans behind the cover, and is shown what
+//! happened.
 
 mod common;
 
@@ -12,7 +13,7 @@ use hexlords::battle_window::BATTLE_CLOSE_ID;
 use hexlords::game::Game;
 use hexlords::options_window::Options;
 use hexlords::screen::Scene;
-use hexlords::session::{BEGIN_TURN_ID, END_TURN_ID, Session, UNDO_ID};
+use hexlords::session::{BEGIN_TURN_ID, END_TURN_ID, MISSION_GO_ID, Session, UNDO_ID};
 use hexlords::setup::{Fog, Mode, Setup};
 use hexlords::showing::STEP_MS;
 use hexlords::state::scenario::{self, Scenario};
@@ -257,4 +258,105 @@ fn a_round_in_one_step_for_scripts() {
     assert_eq!((s.screen.game.turn(), s.screen.game.player()), (2, Side::Red));
     assert!(!s.screen.game.playing_out());
     assert_eq!(pos(&s, a), Hex::new(10, 9));
+}
+
+/// The owner's word, 2026-11-22: "If you want to consolidate stacks then
+/// you would order one stack to another then combine them and order them
+/// as a new stack. That would cause the stack being joined to wait for the
+/// other units before moving or attacking."
+#[test]
+fn a_stack_sent_onto_another_is_offered_with_it_and_they_are_sent_on_as_one() {
+    let (mut a, mut b) = (None, None);
+    let (here, on) = (Hex::new(10, 8), Hex::new(10, 10));
+    let mut s = session(game("passive", |g| {
+        a = Some(put(g, Side::Red, "soldiers", Hex::new(10, 5)));
+        b = Some(put(g, Side::Red, "levy", here));
+    }));
+    let (a, b) = (a.unwrap(), b.unwrap());
+    click_hex(&mut s, Hex::new(10, 5));
+    // (The line under the map: a hex with their own side's stack on it is
+    // somewhere to go, not an attack with its odds.)
+    s.screen.game.set_cursor(here);
+    let line = hexlords::info::cursor_line_for(&s.screen.game, s.sight());
+    assert!(line.ends_with("1 unit  |  6 of 12 points to move here"), "{line}");
+    click_hex(&mut s, here);
+    assert!(s.asks_mission(), "join it, or take that stack?");
+    push_widget(&mut s, MISSION_GO_ID);
+    // The soldiers plan to join the levy; the levy's hex is selected, the
+    // soldiers with it, marked as on their way.
+    assert_eq!(s.screen.game.map.units().get(a).unwrap().route, [here]);
+    assert_eq!((s.shown(), pos(&s, a)), (here, Hex::new(10, 5)));
+    assert_eq!(s.screen.game.selection(), [b, a]);
+    assert_eq!(s.stack(), ["1 \u{b7} 12/12", "+ 5 \u{b7} 12"]);
+    assert!(s.unit_line().starts_with("Planned: they join this stack"), "{}", s.unit_line());
+    // Where they can go together is from the levy's hex, with what the
+    // way there leaves the soldiers: three hexes more, not four (the levy
+    // alone could).
+    let game = &s.screen.game;
+    assert!(game.can_move_to(Hex::new(10, 11)) && !game.can_move_to(Hex::new(10, 12)));
+    // A box leaves one out, or takes it along.
+    s.screen.game.toggle_unit(a);
+    assert_eq!(s.screen.game.selection(), [b]);
+    assert!(s.screen.game.can_move_to(Hex::new(10, 12)));
+    s.screen.game.toggle_unit(a);
+    assert_eq!(s.screen.game.selection(), [b, a]);
+    // (A click on their hex leaves them selected, and says what they are.)
+    click_hex(&mut s, here);
+    assert_eq!(s.screen.game.selection(), [b, a]);
+    assert!(s.unit_line().starts_with("2 units selected, 1 of them (+) on their way here"), "{}", s.unit_line());
+    // Sent on: one order for both. The levy goes from where it stands, the
+    // soldiers by way of it; the map outlines all of it.
+    click_hex(&mut s, on);
+    assert!(!s.asks_mission(), "{}", s.unit_line());
+    let unit = |s: &Session, id: UnitId| s.screen.game.map.units().get(id).unwrap().clone();
+    assert_eq!((unit(&s, b).route, unit(&s, a).route), (vec![on], vec![here, on]));
+    assert_eq!(unit(&s, a).party, unit(&s, b).party);
+    let outlined = Scene::outlined(&s).to_vec();
+    assert!(outlined.contains(&here) && outlined.contains(&on) && outlined.len() >= 5, "{outlined:?}");
+    // The round: the levy waits for the soldiers, and they get there
+    // together.
+    s.end_turn();
+    let mut together = false;
+    frames(&mut s, 0, 60_000, 20, |s| {
+        together |= pos(s, a) == here && pos(s, b) == here;
+        s.screen.game.turn() == 2
+    });
+    assert!(together, "the levy was still there when the soldiers came");
+    assert_eq!((pos(&s, a), pos(&s, b)), (on, on));
+}
+
+/// The owner's word, 2026-11-22: "when combat happens the advancement
+/// should stop, resolve the combat, and let the user dismiss the box (if
+/// using it) before moving on. The user can miss details otherwise."
+#[test]
+fn a_battle_holds_the_round_until_its_window_is_closed() {
+    let (mut a, mut c) = (None, None);
+    let mut s = session(game("passive", |g| {
+        a = Some(put(g, Side::Red, "soldiers", Hex::new(10, 5)));
+        c = Some(put(g, Side::Red, "soldiers", Hex::new(20, 5)));
+        put(g, Side::Blue, "levy", Hex::new(10, 7));
+    }));
+    let (a, c) = (a.unwrap(), c.unwrap());
+    // One stack attacks two hexes off (a third of the round); the other
+    // has six hexes to go, the whole round.
+    let far = Hex::new(20, 11);
+    click_hex(&mut s, Hex::new(10, 5));
+    click_hex(&mut s, Hex::new(10, 7));
+    click_hex(&mut s, Hex::new(20, 5));
+    click_hex(&mut s, far);
+    s.end_turn();
+    let t = frames(&mut s, 0, 60_000, 20, |s| s.battle().is_some());
+    assert!(s.battle().is_some(), "the battle's window opened");
+    assert_eq!(pos(&s, a), Hex::new(10, 7), "the battle has been fought");
+    // The round waits: the other stack is where the battle found it, for
+    // as long as the window is open, played out or not.
+    let waiting = pos(&s, c);
+    assert!(s.screen.game.playing_out() && waiting != far && waiting != Hex::new(20, 5), "{waiting:?}");
+    let t = frames(&mut s, t, t + 30_000, 50, |_| false);
+    assert!(s.battle().is_some_and(|b| b.done()), "played out, and still open");
+    assert!(s.screen.game.playing_out() && pos(&s, c) == waiting, "nothing went on behind it");
+    // Closed, the round goes on to its end.
+    push_widget(&mut s, BATTLE_CLOSE_ID);
+    frames(&mut s, t, t + 60_000, 20, |s| s.screen.game.turn() == 2);
+    assert_eq!((s.screen.game.turn(), pos(&s, c)), (2, far));
 }

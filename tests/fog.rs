@@ -166,20 +166,35 @@ fn an_order_into_the_fog_goes_and_meets_what_it_meets() {
     assert!(lines.iter().any(|l| l.contains("ran into others they had not seen")), "{lines:?}");
 }
 
+/// The owner's word, 2026-11-22: "you should only see what the unit can
+/// see at the time and leave ghosts vs leave a lingering visibility trail
+/// ... you can do the same in both modes (turn or round)". (Until then
+/// what a unit saw on its way stayed seen till its turn ended.)
 #[test]
-fn what_a_unit_saw_on_its_way_stays_seen_till_the_turn_ends() {
-    let mut game = road(false);
-    let id = game.map.units_at(REDHOLD)[0];
-    assert!(!game.sight(Side::Red).sees(Hex::new(5, 12)));
-    game.apply(Order::Move { units: vec![id], to: Hex::new(5, 15) }).unwrap();
-    // Back home: what it saw on the way out is still seen.
-    game.map.unit_mut(id).unwrap().movement = 20;
-    game.apply(Order::Move { units: vec![id], to: REDHOLD }).unwrap();
+fn a_unit_sees_what_is_in_its_sight_now_and_remembers_the_stacks_it_passed() {
+    let mut game = game(Fog::On, Controller::Person);
+    let scout = game.map.units_at(SCOUT)[0];
+    let end = Hex::new(15, 20);
+    // Its way (the same in a copy); blue's soldiers stand beside the
+    // middle of it, out of sight of both its ends.
+    let way = way_of(&game.clone().apply(Order::Move { units: vec![scout], to: end }).unwrap(), scout);
+    assert_eq!(way.len(), 6, "{way:?}");
+    let hidden = |n: &Hex| !way.contains(n) && n.distance(end) > UNIT_SIGHT && n.distance(SCOUT) > UNIT_SIGHT;
+    let off = game.map.neighbours(way[2]).chain(game.map.neighbours(way[3])).find(hidden).unwrap();
+    let kind = game.map.units().kind_named("soldiers").unwrap();
+    let blue = game.map.new_unit_of(Side::Blue, kind).unwrap();
+    game.map.place_unit(blue, off).unwrap();
+    game.apply(Order::Move { units: vec![scout], to: end }).unwrap();
+    // What it sees is what is near it now: not where it set off from, nor
+    // the hexes it passed, nor the soldiers beside them.
     let sight = game.sight(Side::Red);
-    assert!(sight.sees(Hex::new(5, 12)) && sight.sees(Hex::new(5, 17)), "the way out and two hexes beyond");
-    // Its turn over: no longer.
-    game.apply(Order::EndTurn).unwrap();
-    assert!(!game.sight(Side::Red).sees(Hex::new(5, 12)));
+    assert!(sight.sees(end) && sight.sees(way[4]));
+    assert!(!sight.sees(SCOUT) && !sight.sees(way[1]) && !sight.sees(off), "what it passed is seen no longer");
+    // It remembers the soldiers where it saw them.
+    let ghost = game.ghost_at(Side::Red, off).expect("the stack it passed is remembered");
+    assert_eq!((ghost.side, ghost.count), (Side::Blue, 1));
+    // And a move that showed them cannot be taken back.
+    assert!(!game.can_undo());
 }
 
 #[test]
@@ -463,7 +478,7 @@ fn unseen(game: &Game, way: &[Hex]) -> Vec<Hex> {
 }
 
 #[test]
-fn what_a_citys_new_unit_sees_on_its_way_at_the_turns_end_stays_seen_through_the_next_turn() {
+fn a_citys_new_unit_sent_off_sees_as_it_goes_and_no_longer_what_it_passed() {
     for fog in [Fog::On, Fog::Total] {
         let mut game = sending(fog);
         assert!(game.sight(Side::Red).knows(FAR), "{fog:?}");
@@ -476,26 +491,18 @@ fn what_a_citys_new_unit_sees_on_its_way_at_the_turns_end_stays_seen_through_the
         game.apply(Order::Build { city: redhold, what: None }).unwrap();
         let first = way_of(&game.apply(Order::EndTurn).unwrap(), rider);
         assert!(first.len() > 8, "{fog:?}: ten hexes, {first:?}");
-        // Red sees all of its way, as if a person had moved it there: while
-        // the screen shows it going, through blue's turn, and through red's
-        // next.
-        assert_eq!(unseen(&game, &first), [], "{fog:?}: in blue's turn");
-        game.apply(Order::EndTurn).unwrap();
-        assert_eq!(game.player(), Side::Red);
-        assert_eq!(unseen(&game, &first), [], "{fog:?}: in red's next turn");
-        // That turn over, the rider rides on: its new way is seen, the old
-        // one (far from Redhold and the rider) no longer; with total fog,
-        // the land stays known.
-        let second = way_of(&game.apply(Order::EndTurn).unwrap(), rider);
-        assert_eq!(unseen(&game, &second), [], "{fog:?}: the second day's ride");
+        // Red sees where the rider is now, and Redhold's own sight: not the
+        // middle of its way. With total fog the land stays known.
         let gone = unseen(&game, &first);
-        assert!(!gone.is_empty(), "{fog:?}: the first day's is no longer seen");
+        assert!(!gone.is_empty() && !gone.contains(first.last().unwrap()), "{fog:?}: {gone:?}");
+        let near = |h: &Hex| h.distance(REDHOLD) <= CITY_SIGHT || h.distance(*first.last().unwrap()) <= UNIT_SIGHT;
+        assert!(gone.iter().all(|h| !near(h)) && first.iter().all(|h| near(h) || gone.contains(h)), "{fog:?}");
         assert!(gone.iter().all(|h| game.sight(Side::Red).knows(*h)), "{fog:?}");
     }
 }
 
 #[test]
-fn what_a_patrol_sees_at_the_turns_end_stays_seen_too() {
+fn a_patrol_sees_as_it_goes_too() {
     let mut game = sending(Fog::On);
     let kind = game.map.units().kind_named("riders").unwrap();
     let rider = game.map.new_unit_of(Side::Red, kind).unwrap();
@@ -508,11 +515,12 @@ fn what_a_patrol_sees_at_the_turns_end_stays_seen_too() {
     game.apply(Order::EndTurn).unwrap();
     let way = way_of(&game.apply(Order::EndTurn).unwrap(), rider);
     assert!(way.len() > 8, "{way:?}");
-    assert_eq!(unseen(&game, &way), []);
+    let gone = unseen(&game, &way);
+    assert!(gone.contains(&way[0]) && !gone.contains(way.last().unwrap()), "where it is, not where it was: {gone:?}");
 }
 
 #[test]
-fn the_land_opens_as_a_citys_new_unit_is_shown_going_at_the_turns_end() {
+fn what_a_citys_new_unit_sees_goes_with_it_as_it_is_shown_going() {
     let mut game = sending(Fog::On);
     game.apply(Order::EndTurn).unwrap();
     game.apply(Order::EndTurn).unwrap();
@@ -523,11 +531,15 @@ fn the_land_opens_as_a_citys_new_unit_is_shown_going_at_the_turns_end() {
     let mut s = Session::with_options(&assets(), Size::new(1024, 768), 96, game, options).unwrap();
     s.end_turn();
     assert_eq!(s.screen.game.map.units().get(rider).map(|u| u.pos()), way.last().copied());
-    // As it sets off, the land at the far end is not shown yet; once it is
-    // there, all of its way is.
+    let (middle, end) = (way[way.len() / 2], *way.last().unwrap());
+    assert!(middle.distance(end) > UNIT_SIGHT && middle.distance(REDHOLD) > CITY_SIGHT);
+    // As it sets off, neither the middle of its way nor the far end is
+    // shown; half way, the middle is, where it is; once it is there, the
+    // far end, and the middle no longer.
     s.frame(1000);
-    assert!(!Scene::sight(&s).sees(*way.last().unwrap()), "not shown yet");
+    assert!(!Scene::sight(&s).sees(end) && !Scene::sight(&s).sees(middle), "not shown yet");
+    s.frame(1000 + WAY_MS / 2);
+    assert!(Scene::sight(&s).sees(middle) && !Scene::sight(&s).sees(end), "half way");
     s.frame(1000 + WAY_MS + 1);
-    let dark: Vec<Hex> = way.iter().copied().filter(|h| !Scene::sight(&s).sees(*h)).collect();
-    assert_eq!(dark, [], "its way, {way:?}");
+    assert!(Scene::sight(&s).sees(end) && !Scene::sight(&s).sees(middle), "there");
 }

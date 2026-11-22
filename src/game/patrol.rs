@@ -10,6 +10,7 @@
 
 use std::cmp::Reverse;
 
+use super::rounds::Look;
 use super::{Game, MarchState, StackState, Undo};
 use crate::orders::Event;
 use crate::state::{Hex, Map, Patrol, Side, Unit, UnitId, hostile};
@@ -408,60 +409,49 @@ impl Game {
         Some(target)
     }
 
-    /// In rounds, as the round plays out: a patrolling stack of `side`
-    /// (`ids`, on one hex) takes this tick's step, a hex: toward a stack it
-    /// attacks (`patrol_prey`; the step into it is the attack), else toward
-    /// its next waypoint, on from one at once; never into another side's
-    /// units it sees but those it attacks (one it does not see is met, in a
-    /// battle). With no step to take it waits (the round's end says if it
-    /// is stopped short). After a battle it waits for its player's word.
-    pub(super) fn patrol_tick(&mut self, side: Side, ids: &[UnitId], stepped: &mut Vec<UnitId>) -> Vec<Event> {
-        let mut events = Vec::new();
-        let mut ids = ids.to_vec();
+    /// In rounds, as the round plays out: a patrolling stack (`ids`, on one
+    /// hex) that stands on its next waypoint goes on to the one after.
+    pub(super) fn patrol_waypoints(&mut self, ids: &[UnitId]) {
         for _ in 0..PATROL_LEGS {
-            let units: Vec<&Unit> = ids.iter().filter_map(|id| self.map.units().get(*id)).collect();
-            let Some(first) = units.first() else { break };
-            let Some(patrol) = first.patrol.clone() else { break };
-            let at = first.pos();
-            ids = units.iter().filter(|u| u.pos() == at).map(|u| u.id()).collect();
-            let to = patrol.target();
-            if at == to {
-                // A waypoint: on to the next at once.
-                let mut next = patrol;
-                next.advance();
-                self.keep_patrol(&ids, &next, false);
-                continue;
-            }
-            let prey = self.patrol_prey(side, &ids, &patrol);
-            let Ok(group) = self.group(&ids) else { break };
-            let Some((lead, table)) = group.lead(&self.map) else { break };
-            if lead.movement == 0 {
-                break;
-            }
-            let sight = self.sight(side);
-            let way = self.known_path_by(lead, table, prey.unwrap_or(to), u32::MAX, &sight).unwrap_or_default();
-            let Some(hex) = self.step_along(side, &ids, &way, lead.movement) else { break };
-            if hostile(&self.map, side, hex) && sight.sees(hex) && prey != Some(hex) {
-                break;
-            }
-            let coming = self.coming(&group, hex, &sight);
-            if coming.is_empty() {
-                break;
-            }
-            let Ok(moved) = self.move_units(side, &coming, hex) else { break };
-            let met = moved.iter().any(|e| matches!(e, Event::Battle { .. }));
-            events.extend(moved);
-            // The move ended their patrol: they keep it.
-            self.keep_patrol(&coming, &patrol, met);
-            for id in &coming {
-                if let Some(unit) = self.map.unit_mut(*id) {
-                    unit.moved = false;
-                }
-            }
-            stepped.extend(coming);
-            break;
+            let Some(first) = ids.first().and_then(|id| self.map.units().get(*id)) else { break };
+            let Some(patrol) = first.patrol.clone().filter(|p| p.target() == first.pos()) else { break };
+            let mut next = patrol;
+            next.advance();
+            self.keep_patrol(ids, &next, false);
         }
-        events
+    }
+
+    /// In rounds, as the round plays out: what a patrolling stack of `side`
+    /// (`ids`, on one hex) does next (`rounds::Look`): it sets off a hex
+    /// toward a stack it attacks (`patrol_prey`; getting to it is the
+    /// attack), else toward its next waypoint; never into another side's
+    /// units it sees but those it attacks (one it does not see is met, in a
+    /// battle). With no step to take it rests, and looks again in a while
+    /// (the round's end says if it is stopped short). After a battle it
+    /// waits for its player's word.
+    pub(super) fn patrol_look(&self, side: Side, ids: &[UnitId]) -> Look {
+        let Some(first) = ids.first().and_then(|id| self.map.units().get(*id)) else { return Look::Stop };
+        let Some(patrol) = first.patrol.clone() else { return Look::Stop };
+        let (at, to) = (first.pos(), patrol.target());
+        let prey = self.patrol_prey(side, ids, &patrol);
+        let Ok(group) = self.group(ids) else { return Look::Stop };
+        let Some((lead, table)) = group.lead(&self.map) else { return Look::Stop };
+        if lead.movement == 0 {
+            return Look::Stop;
+        }
+        let sight = self.sight(side);
+        let way = self.known_path_by(lead, table, prey.unwrap_or(to), u32::MAX, &sight).unwrap_or_default();
+        let Some(hex) = self.step_along(side, ids, &way, lead.movement) else {
+            // (Too few points for the step: that is the round. No way: it
+            // may open.)
+            let short = way.first().is_some_and(|(_, cost)| *cost > lead.movement);
+            return if short { Look::Stop } else { Look::Rest };
+        };
+        if hostile(&self.map, side, hex) && sight.sees(hex) && prey != Some(hex) {
+            return Look::Rest;
+        }
+        let hexes: Vec<Hex> = way.iter().map(|(h, _)| *h).take_while(|h| *h != hex).chain([hex]).collect();
+        self.go(&group, at, &hexes)
     }
 
     /// `ids` patrol `patrol` (and are not stopped short); `fought`: they

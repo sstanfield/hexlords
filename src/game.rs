@@ -21,6 +21,8 @@ use crate::state::{
 mod patrol;
 mod rounds;
 
+pub use rounds::{BEAT, ROUND};
+
 /// The agent that passes its turns: the computer's, when nothing else is said.
 pub const PASSIVE: &str = "passive";
 
@@ -226,6 +228,7 @@ struct MarchState {
     fought: bool,
     planned: bool,
     party: u32,
+    way: Vec<Hex>,
 }
 
 impl MarchState {
@@ -242,6 +245,7 @@ impl MarchState {
             fought: unit.fought,
             planned: unit.planned,
             party: unit.party,
+            way: unit.way.clone(),
         }
     }
 
@@ -249,7 +253,7 @@ impl MarchState {
         (unit.route, unit.bound, unit.stalled, unit.moved, unit.defending, unit.done) =
             (self.route, self.bound, self.stalled, self.moved, self.defending, self.done);
         (unit.patrol, unit.marauding, unit.fought) = (self.patrol, self.marauding, self.fought);
-        (unit.planned, unit.party) = (self.planned, self.party);
+        (unit.planned, unit.party, unit.way) = (self.planned, self.party, self.way);
     }
 }
 
@@ -325,22 +329,25 @@ impl Sight {
     /// What a screen shows while a move is shown going, from `self` (what
     /// was known before it) to `after` (what is known now): `after`, but a
     /// hex it sees or knows that `self` did not only once `open` says so
-    /// (the stack has come near enough).
-    pub fn opening(&self, after: &Sight, open: &dyn Fn(Hex) -> bool) -> Sight {
+    /// (the stack has come near enough); and what `near` says is seen (it
+    /// is in sight of a stack on its way, where that is shown now: what a
+    /// stack sees goes with it). A stack remembered now that was not
+    /// before shows once its hex has been seen.
+    pub fn opening(&self, after: &Sight, open: &dyn Fn(Hex) -> bool, near: &dyn Fn(Hex) -> bool) -> Sight {
         let cols = usize::from(after.cols.max(1));
         let hex = |i: usize| Hex::new((i / cols) as u16, (i % cols) as u16);
-        let blend = |now: &Option<Vec<bool>>, then: &Option<Vec<bool>>| -> Option<Vec<bool>> {
-            let now = now.as_ref()?;
-            Some(
-                now.iter()
-                    .enumerate()
-                    .map(|(i, seen)| {
-                        *seen && (then.as_ref().is_none_or(|t| t.get(i).copied().unwrap_or(false)) || open(hex(i)))
-                    })
-                    .collect(),
-            )
-        };
-        Sight { seen: blend(&after.seen, &self.seen), known: blend(&after.known, &self.known), ..after.clone() }
+        let was = |then: &Option<Vec<bool>>, i: usize| then.as_ref().is_none_or(|t| t.get(i).copied().unwrap_or(false));
+        let seen = after.seen.as_ref().map(|now| {
+            let shown = |(i, seen): (usize, &bool)| near(hex(i)) || *seen && (was(&self.seen, i) || open(hex(i)));
+            now.iter().enumerate().map(shown).collect()
+        });
+        let known = after.known.as_ref().map(|now| {
+            let shown = |(i, known): (usize, &bool)| *known && (was(&self.known, i) || open(hex(i)));
+            now.iter().enumerate().map(shown).collect()
+        });
+        let noted = |g: &&Ghost| self.ghost_at(g.at).is_some() || self.sees(g.at) || open(g.at) || near(g.at);
+        let ghosts = after.ghosts.iter().filter(noted).copied().collect();
+        Sight { seen, known, ghosts, ..after.clone() }
     }
 
     fn at(&self, hex: Hex) -> usize {
@@ -566,14 +573,12 @@ pub struct Game {
     /// The levels the last battle brought, to be told after it.
     promoted: Vec<Event>,
     /// With fog of war, each side's (by `Side::index`): the hexes its units
-    /// saw on their way (those of its turn stay seen until it ends; those of
-    /// its standing orders at its end, until its next turn ends), and the
-    /// other sides' stacks it saw last where they were (`Ghost`).
+    /// saw on their way in the order being carried out (seen until it has
+    /// been: what was there is noted, `note_sightings`, and they are seen
+    /// no longer), and the other sides' stacks it saw last where they were
+    /// (`Ghost`).
     trail: Vec<Vec<bool>>,
     memory: Vec<Vec<Ghost>>,
-    /// While a side's standing orders go at the end of its turn: the side,
-    /// and its trail of the turn, still seen while they go.
-    fading: Option<(Side, Vec<bool>)>,
     /// With fog of war, each side's: who held each city it has seen, when it
     /// saw it last (`Sight::held`); with total fog, the hexes it has ever
     /// seen.
@@ -628,7 +633,6 @@ impl Game {
             out: Vec::new(),
             trail: vec![Vec::new(); NUM_SIDES + 1],
             memory: vec![Vec::new(); NUM_SIDES + 1],
-            fading: None,
             held: vec![Vec::new(); NUM_SIDES + 1],
             explored: vec![Vec::new(); NUM_SIDES + 1],
             winner: None,
@@ -2310,13 +2314,9 @@ impl Game {
         // with the movement its units have left (the owner's word,
         // 2026-11-21: its player could still give them other orders in the
         // turn, in a pinch): the marches, then the patrols (a patrol that
-        // fought and was left alone goes on). What its units saw on their way
-        // in the turn is still seen while they go; what they see as they go
-        // is its trail from now on, seen until its next turn ends (its
-        // player watches them go, and plays that turn knowing what they saw,
-        // as when they went at a turn's start).
-        let turns = self.trail.get_mut(ending.index()).map(std::mem::take).unwrap_or_default();
-        self.fading = Some((ending, turns));
+        // fought and was left alone goes on). What they see on their way is
+        // noted as they pass (the other sides' stacks stay as ghosts where
+        // they were seen), and seen no longer once they have passed.
         self.stand_easy(ending);
         let mut events = self.marches(ending);
         events.extend(self.patrols(ending));
@@ -2324,9 +2324,7 @@ impl Game {
         // 2026-11-21: attacked in waves in the others' turns, a stack stays
         // battered through its own, and is whole for the next waves).
         self.heal(|side| side == ending);
-        // What its units saw in the turn is noted, and then seen no longer.
         self.note_sightings();
-        self.fading = None;
         // The sides still in; the game is over before none are.
         for _ in 0..self.order.len() * 2 {
             self.current += 1;
@@ -2411,9 +2409,11 @@ impl Game {
 
     /// What `side` sees: everything without fog of war; with it, what is
     /// within [`UNIT_SIGHT`] of its units and [`CITY_SIGHT`] of its cities,
-    /// and what its units saw on their way: in its turn, until the turn
-    /// ends; as its standing orders took them at its end, until its next
-    /// turn ends. (Nobody, `Side::Grey`, sees everything.)
+    /// now (the owner's word, 2026-11-22: "you should only see what the
+    /// unit can see at the time and leave ghosts vs leave a lingering
+    /// visibility trail"; and, while an order is carried out, what its units
+    /// see on their way: what is there is noted as they pass). (Nobody,
+    /// `Side::Grey`, sees everything.)
     pub fn sight(&self, side: Side) -> Sight {
         if !self.setup.fog.on() || side == Side::Grey {
             return Sight::all();
@@ -2433,11 +2433,10 @@ impl Game {
                 }
             }
         }
-        // And what its units saw on their way (its trail; and while its
-        // standing orders go at the end of its turn, what they saw in it).
+        // And what its units see on their way, in the order being carried
+        // out.
         let size = seen.len();
-        let fading = self.fading.iter().filter(|(s, _)| *s == side).map(|(_, t)| t);
-        for trail in self.trail.get(side.index()).into_iter().chain(fading).filter(|t| t.len() == size) {
+        for trail in self.trail.get(side.index()).into_iter().filter(|t| t.len() == size) {
             for (s, t) in seen.iter_mut().zip(trail) {
                 *s |= *t;
             }
@@ -2746,11 +2745,21 @@ impl Game {
     /// What each side sees now goes into what it remembers: of the hexes it
     /// sees, the other sides' stacks there now (or none), and who holds the
     /// cities (and of its own, who took them); of those it does not, what it
-    /// saw last; with total fog, all it has seen. Called after every order.
+    /// saw last; with total fog, all it has seen. Called after every order
+    /// (in rounds, after every step as the round plays out): what the
+    /// order's units saw on their way is noted with it, and from then on a
+    /// side sees only what is in its sight now.
     fn note_sightings(&mut self) {
         if !self.setup.fog.on() {
             return;
         }
+        self.note_seen();
+        for trail in &mut self.trail {
+            trail.clear();
+        }
+    }
+
+    fn note_seen(&mut self) {
         let round = self.round;
         let sides: Vec<Side> = self.setup.seats.iter().map(|s| s.side).collect();
         for side in sides {
@@ -2788,9 +2797,9 @@ impl Game {
     }
 
     /// `side`'s units went along `way` (the hexes after where they stood):
-    /// with fog of war, what they saw on the way stays seen until its turn
-    /// ends (until its next turn ends, for its standing orders at the end of
-    /// it: `Game::next_turn`).
+    /// with fog of war, what they saw on the way is seen until the order
+    /// has been carried out and what was there has been noted
+    /// (`note_sightings`).
     fn see_along(&mut self, side: Side, way: &[Hex]) {
         if !self.setup.fog.on() || way.is_empty() {
             return;
@@ -2853,7 +2862,6 @@ impl Game {
         let mut view = self.clone();
         (view.history, view.fights, view.fought, view.undo) = (Vec::new(), Vec::new(), Vec::new(), None);
         view.watched = None;
-        view.fading = view.fading.take().filter(|(s, _)| *s == side);
         for (i, ((memory, trail), (held, explored))) in view
             .memory
             .iter_mut()
@@ -2885,6 +2893,7 @@ impl Game {
                 (unit.stalled, unit.moved, unit.done, unit.defending) = (false, false, false, false);
                 (unit.route, unit.bound) = (Vec::new(), None);
                 unit.stand_down();
+                (unit.clock, unit.step, unit.halted) = (0, None, false);
                 unit.movement = unit.base_move_points;
             }
         }
@@ -3002,7 +3011,12 @@ impl Game {
         let pos = |game: &Game, u: UnitId| game.map.units().get(u).map(|u| u.pos());
         let mut units = self.selected.clone();
         if units.first().is_some_and(|first| pos(self, *first) != pos(self, id)) {
-            units.clear();
+            // (In rounds, one that comes to join them is taken with them,
+            // or left out.)
+            let all: Vec<UnitId> = units.iter().copied().chain([id]).collect();
+            if !(self.rounds() && self.gathers(&all)) {
+                units.clear();
+            }
         }
         if let Some(i) = units.iter().position(|u| *u == id) {
             units.remove(i);
@@ -3028,7 +3042,9 @@ impl Game {
         }
         let sight = units.first().and_then(|id| map.units().get(*id)).map_or(Sight::all(), |u| self.sight(u.side()));
         // (Units that cannot go together can go nowhere: `selection_problem`.)
-        self.range = self.group_range(&units, &sight);
+        // In rounds, with those that come to join them (`rounds::plan`):
+        // from the hex they gather on, with what the way there leaves each.
+        self.range = if self.rounds() { self.joint_range(&units, &sight) } else { self.group_range(&units, &sight) };
         self.range_revision = self.map.revision();
         self.selected = units;
         true
@@ -3159,7 +3175,7 @@ impl Game {
         let waiting: Vec<UnitId> = able.iter().copied().filter(|id| units.get(*id).is_some_and(free)).collect();
         // (At sea, all of them: the ships carry who has no points left. On
         // patrol or marauding, all of them too: they go as one.)
-        let stack = if self.map.open_water(hex) || patrol::together(&self.map, &own) {
+        let mut stack = if self.map.open_water(hex) || patrol::together(&self.map, &own) {
             own
         } else if !waiting.is_empty() {
             waiting
@@ -3168,6 +3184,15 @@ impl Game {
         } else {
             own
         };
+        // In rounds, with those sent to join them here: ordered on, they
+        // all go as one stack once they are together (`rounds::plan`).
+        if self.rounds() && !stack.is_empty() {
+            let joining = self.joining(side, hex);
+            let all: Vec<UnitId> = stack.iter().copied().chain(joining).collect();
+            if self.gathers(&all) {
+                stack = all;
+            }
+        }
         match stack.first().copied() {
             Some(first) if self.select(stack) => SelectOutcome::Selected(first),
             _ => SelectOutcome::Nothing,

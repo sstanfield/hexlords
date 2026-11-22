@@ -192,6 +192,18 @@ pub struct Unit {
     /// of one order go as a stack; those of another on the same hex, with
     /// the same end, go on their own.
     pub party: u32,
+    /// In rounds: the way it goes this round, hex by hex, the next first
+    /// (`game::rounds`): a plan's as it was when ordered, a march's as it
+    /// was found when it set off. It does not go round who comes to stand
+    /// on it. Empty: none, or not found yet.
+    pub way: Vec<Hex>,
+    /// In rounds, as the round plays out: the moment up to which it has
+    /// been busy (`game::rounds::ROUND` is a round's worth of a unit's
+    /// movement); the step it is on, the hex it goes to and the moment it
+    /// gets there; and whether it takes no more steps this round.
+    pub clock: u64,
+    pub step: Option<(Hex, u64)>,
+    pub halted: bool,
     /// The hits it took that have not healed (`combat::Rules::wounds`: they
     /// heal as its side's turn ends; fewer than `combat::HITS`). Wounded, it
     /// fights at half its own strength, rounded up.
@@ -282,9 +294,17 @@ impl Unit {
     }
 
     /// It patrols and marauds no more (another order of its player's), nor
-    /// is its route a round's plan.
+    /// is its route a round's plan, with a way found for it.
     pub fn stand_down(&mut self) {
         (self.patrol, self.marauding, self.fought, self.planned, self.party) = (None, false, false, false, 0);
+        self.way.clear();
+    }
+
+    /// How fast it goes: the movement points of a turn (not what it kept
+    /// from the turn before). In rounds, what a step costs it over this is
+    /// the share of a round the step takes it.
+    pub fn speed(&self) -> u32 {
+        self.base_move_points.max(1)
     }
 
     /// True if the temple at `at` has blessed it.
@@ -407,6 +427,10 @@ impl Units {
             fought: false,
             planned: false,
             party: 0,
+            way: Vec::new(),
+            clock: 0,
+            step: None,
+            halted: false,
             wounds: 0,
         });
         id

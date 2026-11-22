@@ -306,18 +306,21 @@ fn an_agents_view_does_not_say_which_of_the_others_units_defend() {
 }
 
 /// With fog of war, what a side's units saw on their way is seen no longer
-/// once its turn is over: the screen works it out again then (in round 1
-/// nothing else changed the map, and it showed the old sight).
+/// once they have passed (the owner's word, 2026-11-22: "only see what the
+/// unit can see at the time and leave ghosts"; until then it stayed seen
+/// till the turn's end, and the screen had to work it out again then).
 #[test]
-fn the_screen_forgets_what_was_seen_on_the_way_when_the_turn_ends() {
+fn the_screen_forgets_what_was_seen_on_the_way_once_the_stack_has_passed() {
     let game = game();
     let mut setup = game.setup().clone();
     setup.fog = hexlords::setup::Fog::On;
     let mut s = session(game.with_setup(setup), Options::manual());
+    assert!(s.sight().sees(SOUTH));
     click_hex(&mut s, SOUTH);
     click_hex(&mut s, Hex::new(16, 6));
-    assert!(s.sight().sees(SOUTH), "seen on the way, this turn");
+    s.pump();
+    assert!(!s.sight().sees(SOUTH), "where it stood: no longer seen");
     s.end_turn();
     s.pump();
-    assert!(!s.sight().sees(SOUTH), "no longer");
+    assert!(!s.sight().sees(SOUTH), "nor after the turn");
 }

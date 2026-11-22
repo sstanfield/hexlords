@@ -44,7 +44,9 @@ pub fn cursor_line_for(game: &Game, sight: &Sight) -> String {
     }
     let selected = game.selected().and_then(|id| map.units().get(id));
     if let (Some(unit), Some(cost)) = (selected, game.range().and_then(|r| r.cost(hex))) {
-        match game.battle_odds(game.selection(), hex).filter(|_| seen) {
+        // (Onto another of the side's own stacks is no attack.)
+        let foes = crate::state::hostile(map, unit.side(), hex);
+        match game.battle_odds(game.selection(), hex).filter(|_| seen && foes) {
             Some(odds) => parts.push(format!("attack: {odds}% likely to win")),
             None if game.selection().len() > 1 => {
                 parts.push(format!("the {} units can move here", game.selection().len()))

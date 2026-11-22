@@ -8,6 +8,7 @@
 mod common;
 
 use common::{assets, click, pixel_of, push_widget, type_char, widget};
+use hexlords::battle_window::BATTLE_CLOSE_ID;
 use hexlords::game::Game;
 use hexlords::options_window::Options;
 use hexlords::orders::Order;
@@ -89,6 +90,10 @@ fn play_along(s: &mut Session, rounds: u32) -> u32 {
     while s.screen.game.turn() <= rounds && s.screen.game.winner().is_none() {
         t += 50;
         s.frame(t);
+        // (A battle shown holds the round until its window is closed.)
+        if s.battle().is_some_and(|b| b.done()) {
+            push_widget(s, BATTLE_CLOSE_ID);
+        }
         if s.covered() {
             push_widget(s, BEGIN_TURN_ID);
         } else {
@@ -223,6 +228,9 @@ fn soak_hotseat_rounds_with_battles_go_on() {
         s.frame(t);
         if s.covered() && s.battle().is_some() {
             over_cover += 1;
+        }
+        if s.battle().is_some_and(|b| b.done()) {
+            push_widget(&mut s, BATTLE_CLOSE_ID);
         }
         if s.covered() {
             push_widget(&mut s, BEGIN_TURN_ID);

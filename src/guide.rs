@@ -465,12 +465,12 @@ fn orders(game: &Game) -> Vec<HelpSection> {
         (false, TurnOrder::Fixed) => "The sides play one after the other, in the same order every round.",
         (false, TurnOrder::Drawn) => "The sides play one after the other, in an order drawn anew every round.",
         (true, TurnOrder::Fixed) => {
-            "Rounds: every side gives its orders, then the round plays out at once. The sides step in the same \
-             order every round."
+            "Rounds: every side gives its orders, then the round plays out at once. Of stacks that get \
+             somewhere at the same moment, the sides go in the same order every round."
         }
         (true, TurnOrder::Drawn) => {
-            "Rounds: every side gives its orders, then the round plays out at once. The sides step in an order \
-             drawn anew every round."
+            "Rounds: every side gives its orders, then the round plays out at once. Of stacks that get \
+             somewhere at the same moment, the sides go in an order drawn anew every round."
         }
     };
     // In rounds: how a round goes.
@@ -485,23 +485,41 @@ fn orders(game: &Game) -> Vec<HelpSection> {
             ),
             (
                 "The round",
-                "Once every side's orders are done the round plays out a tick at a time: in each, every stack \
-                 with somewhere to go takes one step, a hex, the sides in the round's order. It ends when \
-                 nobody moves any more; then every side's taxes come in and its cities build, together."
+                "Once every side's orders are done the round plays out, every stack along the way the map \
+                 outlined. It ends when nobody moves any more; then every side's taxes come in and its cities \
+                 build, together."
+                    .to_string(),
+            ),
+            (
+                "Speed",
+                "The faster a unit, the sooner it is there: a step takes it the share of the round that its \
+                 cost is of the unit's moves a turn. Riders with 20 moves are three hexes of grass on when \
+                 soldiers with 12 are two; a stack goes at the pace of its slowest. So riders sent to a city \
+                 are in it before foot soldiers as far away."
                     .to_string(),
             ),
             (
                 "Meeting",
-                "A stack that steps onto a hex another side stands on attacks it. So two stacks making for \
-                 the same hex fight there, the one that got there first defending; a stack sent against one \
-                 that has left finds the hex empty, and takes it; your stacks sent against the same hex \
-                 attack it together (the first there waits beside it for the others)."
+                "A stack that gets to a hex another side stands on attacks it, there and then, wherever it \
+                 was going: it does not go round who has come to stand on its way, and it does not wait. So \
+                 two stacks making for the same hex fight there, the one that got there first defending; two \
+                 that cross fight where they meet; a stack sent against one that has left finds the hex \
+                 empty, and takes it. A march (Go to) fights on its way too. A patrol goes round, and \
+                 attacks at its odds. A battle is the attackers' round: they go no further."
                     .to_string(),
             ),
             (
-                "Who attacks",
-                "Only a plan attacks a stack it sees, where it ends. A stack on a march (Go to) or a patrol on \
-                 its way stops short of one in its way, as in turns; a patrol attacks at its odds."
+                "Joining",
+                "Each stack attacks when it gets there. To have two go, and fight, as one: send one onto the \
+                 other (Join it); the stack there is then selected with those on their way to it (marked + \
+                 in their boxes); send it on. Those there wait for the others, and they go on together, at \
+                 the pace of the slowest, with what moves the way there left."
+                    .to_string(),
+            ),
+            (
+                "Battles",
+                "A battle of yours is played out in its window as the round comes to it, and the round \
+                 waits until you close the window (Close, Enter or Esc)."
                     .to_string(),
             ),
             (
@@ -701,8 +719,8 @@ fn sight(game: &Game) -> Vec<HelpSection> {
         let items: Vec<(&str, String)> = [
             (
                 "On the way",
-                "What your units see as they go stays in sight until your turn ends; what they see as \
-                 they march or patrol at its end, until your next turn ends."
+                "You see what your units see where they are: as a stack goes, what it sees goes with it, \
+                 and what it has passed is dimmed again. The stacks it passed are remembered."
                     .to_string(),
             ),
             (

@@ -153,8 +153,11 @@ build, in how many turns, at what price.
 **A new game** starts on its own screen: the map (the preview beside the
 settings can be looked over like the game's), how to play (turns, one side after the
 other; or rounds: every side gives its orders, a click being a plan the map
-outlines, and then the round plays out before you), the order of the turns
-(the same each round, or drawn anew; in rounds, who steps first), the
+outlines, and then the round plays out before you, the faster units there
+first, a stack fighting whoever it finds on its way, stacks sent to join
+each other going on as one), the order of the turns
+(the same each round, or drawn anew; in rounds, who goes first of two
+there at the same moment), the
 battles (lines, strength or dice; how much chance, from 0 to 10, or on the
 dice what a roll of exactly a side's number does; whether wounds last and
 whether the loser of an exchange may hit back; a cap of 9 on a unit's
@@ -179,7 +182,9 @@ its stack 1 stronger (or as much as its kind says). A battle is played out
 in a window: both stacks, a card for each unit with what it fights with and
 where its bonuses come from, and then the exchanges, a few a second, the two
 that fight lit, the one hit in red with an X, the dead dimmed (Skip, Watch
-again). Every battle you fought, attacking or attacked, can be watched again
+again). A battle the others fight against you is shown as it happens, and
+the game waits until you close its window (Close, Enter or Esc). Every battle
+you fought, attacking or attacked, can be watched again
 from your log for a few rounds (its Watch button). While the others play,
 your log is open and fills as they go; Start turn begins yours. When the
 last person is out, the computer plays on, a turn at a time, to the end. A side that loses its last

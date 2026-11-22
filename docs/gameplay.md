@@ -63,7 +63,8 @@ Built (2026-11-19):
   game (below, 9).
 
 - **rounds** (below, "Rounds"): every side gives its orders, then the
-  round plays out a tick at a time, on the turns' own rules.
+  round plays out on a clock, the faster units first, on the turns' own
+  rules.
 
 Not built: saved games.
 
@@ -372,20 +373,21 @@ and the rules use integers, not floats.
    the reach of a selection, an order, a march are worked out as if no unit
    were where the side does not see (`Game::known_range`); units of another
    side met on the way, unseen, stop the move there, in a battle
-   (`Event::Surprise`, and a line in the log). What a side's units see on
-   their way stays in its sight until its turn ends (its trail); what they
-   see as its standing orders take them at its end (a march, a city's new
-   units sent off, a patrol), until its next turn ends, so that the land
-   opens as they are shown going and its player plays that turn knowing
-   it, as when standing orders went at a turn's start (the owner,
-   2026-11-21, found a city's new unit sent off "leaves much of its path
-   still in the dark" when their trail ended with the turn); and it
+   (`Event::Surprise`, and a line in the log). A side sees what its units
+   and cities see where they are, and no more (the owner's word,
+   2026-11-22, in both modes: "you should only see what the unit can see
+   at the time and leave ghosts vs leave a lingering visibility trail";
+   until then what units saw on their way stayed in sight until the turn
+   ended, and through the next for standing orders): as a stack is shown
+   going, what it sees goes with it (`Showing::sight`), and what it has
+   passed is dimmed again; what was there is noted as it passes
+   (`Game::note_sightings`), so a side
    remembers the other sides' stacks it saw where it saw them last (where
    one went out of its sight, if it saw it go), until the hex is in sight
    again (`Game::ghosts`): the map shows a faint banner and the pips there,
    the line under the map how many and in which round. A move that showed
    what was not seen before (another side's units, a city's holder) cannot
-   be undone. Every side has its own trail and memory, and the computer's
+   be undone. Every side has its own memory, and the computer's
    players are shown theirs in their view (`Game::view_for`), no other's.
    While another side plays, the screen only looks: a click selects
    nothing, Next stack and the lists of cities are the person's own, and
@@ -449,62 +451,97 @@ changed.
   **plan**: `Order::Move`, `Toward` and `Roam` give the units a route to
   that hex for this round (`Unit::planned`: refused as a move is, if they
   cannot get there this turn as things stand, or there is no room for
-  them there among those of their side that stay); `GoTo` and `Patrol` are
+  them there among those of their side that stay) and **the way they will
+  take** (`Unit::way`: the way the side knows when it gives the order,
+  round the stacks it sees; the map outlines it); `GoTo` and `Patrol` are
   standing orders as in turns, and take their first step with the round.
   Another plan takes a plan's place; `Order::Undo` takes the last back.
   A side says it has done with `Order::EndTurn` ("Orders done").
-- **The round plays out** once every side has done, a **tick** at a time
-  (`Game::play_out`):
-  - In each tick every stack with somewhere to go (a plan, a march, a
-    patrol) takes one step, a hex, on the way its side knows, if the
-    slowest of it can pay for it. (A hex a tick for everyone: a rider and
-    a foot soldier three hexes from a city get there in the same tick; the
-    rider's movement takes it farther in the round, not faster.)
-  - The sides step in the round's order, so who steps first in a tick is
-    the one thing the order decides. With the order drawn anew each round
-    (the new game screen's choice) it is drawn as the round begins to
-    play out, after every side's orders are given: nobody knows. (The
-    orders are given in the order the round before was played in.)
-  - A stack that steps onto a hex another side stands on attacks it. So
-    two stacks making for the same hex fight there, the one that stepped
-    in first defending it (with the ground's bonus); two that would swap
-    hexes fight on the hex of the one that steps second (the sketch's
-    "meet halfway": there is no halfway on a hex map); a stack sent
-    against one that has left finds the hex empty, and takes it; a city
-    two sides make for is taken by the first there and attacked by the
-    next.
-  - Only a plan attacks a stack it sees, and only where it ends; a march
-    (Go to) or a patrol on its way stops short of one, as in turns, and a
-    patrol attacks at its odds (it makes for the stack it would attack, a
-    hex a tick). (Units nobody saw are not met by surprise as in turns: a
-    stack sees two hexes and steps one.)
-  - Stacks of one side sent against the same hex attack it together, as
-    one attack (as many as a hex holds): those beside it join the one that
-    steps in, and a stack that gets there first waits beside it for the
-    others that can still get there this round (if they do not come, it
-    attacks alone once nobody moves any more). The review, 2026-11-22: an
-    attack ordered from two hexes was two attacks, the nearer stack alone
-    first, and the agents order every joint attack so.
-  - A stack passes through its own side's stacks, as a move does: past a
-    hex they leave it no room on, its step is to the next with room.
+- **The round plays out** once every side has done, on a clock
+  (`Game::play_out`; the owner's word after playing it, 2026-11-22: "speed
+  will very much be a factor in these games. Racing to reinforce a city
+  before an attack or racing to take a weakened enemy position before
+  reinforcements will matter. So fast units should get to spend the same
+  MP as slower units faster than them. Also, combat should probably happen
+  on any given subtick"; until then every stack went a hex a tick):
+  - A step takes a unit the share of a round that its cost is of the
+    unit's movement a turn (`Unit::speed`, not counting points kept from
+    the turn before; `rounds::ROUND` is a round on the clock). Riders with
+    20 points are three hexes of grass on (6 points) when soldiers with
+    12 are two. A stack goes at the pace of its slowest: a step takes it
+    as long as it takes the one of them it takes longest.
+  - Each stack sets off on the next hex of its way, and is there when the
+    step's time is up; the stacks get there in the order of the clock.
+    Of those there at the same moment, the sides go in the round's
+    order: the one thing the order decides. With the order drawn anew
+    each round (the new game screen's choice) it is drawn as the round
+    begins to play out, after every side's orders are given: nobody
+    knows. (The orders are given in the order the round before was
+    played in.)
+  - A stack that gets to a hex another side stands on attacks it, there
+    and then, wherever its way was taking it (the owner: "stacks that run
+    into each other should probably fight vs just block each other. This
+    will be brutal and will punish sending powerful units out alone"):
+    its way is fixed when it sets off, and it does not go round who has
+    come to stand on it, nor wait. So the faster of two stacks sent to a
+    city is in it first, and the other attacks it there (the owner's
+    example: cavalry three points from a city take it before heavy
+    infantry three points from it get there, "leaving them attacking a
+    city or backing off"); two stacks making for the same hex fight
+    there, the one that got there first defending it (with the ground's
+    bonus); two that cross fight on the hex of the one that is slower to
+    leave; a stack sent against one that has left finds the hex empty,
+    and takes it.
+  - A march (Go to) finds its way as it sets off in the round, round the
+    stacks it sees then (through them, if there is no way round), and
+    fights who comes to stand on it as a plan does (in turns a march
+    never attacks). A patrol goes round, as in turns, and attacks at its
+    odds (it makes for the stack it would attack, a hex at a time, at its
+    speed; with no step to take it rests a twelfth of a round and looks
+    again).
+  - **Joining.** Each stack attacks when it gets there: stacks sent
+    against a hex each by its own order are so many attacks, one after
+    the other. To go, and fight, as one, stacks join first (the owner:
+    "If you want to consolidate stacks then you would order one stack to
+    another then combine them and order them as a new stack. That would
+    cause the stack being joined to wait for the other units before
+    moving or attacking"): units sent to a hex where others of their side
+    stand can be given an order with them (`Order::Move` naming all of
+    them; `Game::joining` says who is on the way to a hex). They go there
+    first, by the way they had; those that stand there wait for them (for
+    as long as they can still come: one that is killed, fights or stops
+    on its way is not waited for); then all go on as one stack, at the
+    pace of its slowest, each with the movement its way there left it
+    (where they can go together is worked out so: `Game::joint_range`).
+    One `Order::Move` for units on several hexes that are not sent to
+    join each other gathers them itself, on the one of their hexes
+    nearest to where they go that all can get on from (`rounds::muster`:
+    one order is one stack and one attack, as in turns; the agents order
+    their attacks so); if there is none, each hex's units go on their own.
+  - A stack passes through its own side's stacks that stay, as a move
+    does: past a hex they leave it no room on, its step is to the next
+    with room. Behind stacks of its side that are on their way themselves
+    it waits until they have gone. (If nobody can step any more and some
+    still wait, for others to join them or to get out of the way, they
+    wait no longer.)
   - The units of one order go as a stack; those of another order on their
     hex, with the same end, go on their own (`Unit::party`).
-  - A plan or a march that ends on a temple seeks its blessing there
+  - A plan or a march that stops on a temple seeks its blessing there
     (nobody can be asked as the round plays out).
-  - A battle ends a stack's round: an attack uses up its movement.
-- **The round ends** when a tick goes by with nobody moving. The plans
+  - A battle ends the attackers' round: an attack uses up their movement.
+    A plan ends with it, and with a city taken on the way.
+- **The round ends** when nobody is on a step any more. The plans
   end, got there or not (a stack that did not get there waits for orders
   next round). The standing orders use what movement is left as at a
   turn's end, and say if they are stopped short. Wounds heal. Then the
   next round begins for every side together: its units' movement, its
   taxes, its upkeep, what its cities built (`Event::Began` names the side
   that gives its orders first).
-- **What a side sees** (fog of war): what its units saw on their way as
-  the round played out stays seen while the next orders are given, until
-  that round plays out. (As for standing orders in turns, that is live
-  sight: a stack of another side that stands, as the round ends, where a
-  unit only passed earlier shows. Open: whether the way should be
-  remembered rather than watched.)
+- **What a side sees** (fog of war): what its units and cities see where
+  they are, as in turns; the stacks its units passed as the round played
+  out are remembered where they were seen (ghosts). (Until 2026-11-22
+  what its units saw on their way stayed seen while the next orders were
+  given.)
 - **Into the dark** (total fog of war). Land a side has never seen is
   shut to it, as in turns: no unit steps onto it. But in turns a stack
   creeps, a step and a look at a time; a round's plan is made before
@@ -513,41 +550,55 @@ changed.
   met). So in rounds a stack may be sent **toward** land its side has
   never seen (`Order::Toward`; at the screen, a click on the black): as
   the round plays out it goes over the land it has seen toward the hex
-  nearest to where it was sent, sees more, and the next tick finds the
+  nearest to where it was sent, sees more, and from there finds the
   way on (`rounds::way_toward`); each step is still onto land it has
   seen. `Move` and `GoTo` to unseen land are refused as ever.
 - **At the screen.** A click plans: the stack stays, and the map outlines
   the ways the person's stacks will take this round (their own only). The
-  End turn button reads "Orders done". The computer's sides give their
-  orders at once; then the round plays out before the person, a tick at a
-  time, every stack of a tick going at the same moment, their battles in
-  their window as the round comes to them (the round waits); the map goes
+  End turn button reads "Orders done". A stack sent onto another of the
+  person's (Join it) is then selected with that one, the units on their
+  way there after those that stand there, marked `+` in their boxes (a
+  box leaves one out, or takes it along); the reach shown is the joined
+  stack's, from that hex; a click sends them on as one. The computer's
+  sides give their orders at once; then the round plays out before the
+  person, a **beat** at a time (`rounds::BEAT`, a sixth of a round, or up
+  to a battle): the stacks that went in a beat go at the same time, each
+  all the hexes it made in it, so the faster are seen to be faster; a
+  battle of the person's is played out in its window as the round comes
+  to it, and the round waits until the person closes the window (the
+  owner's word, 2026-11-22: "the advancement should stop, resolve the
+  combat, and let the user dismiss the box (if using it) before moving
+  on. The user can miss details otherwise"; Close, Enter or Esc; so in
+  turns too, for a battle the computer fights against the person; before,
+  the game went on a moment after the battle was over). The map goes
   to the person's own stacks if none is in view, and back to where they
   were looking when it is over. (While a screen watches, the last side's
-  `EndTurn` only begins the round and the screen plays the ticks; without
+  `EndTurn` only begins the round and the screen plays the beats; without
   one it plays the round out whole. The same game either way.)
 - **Hotseat**: each person plans in turn behind the hiding screen; the
   last of them watches the round play out, and each of the others is
   shown it as their next orders begin, once their log is out of the way
   (what is still there to be shown: their own stacks going, the others'
-  where they saw them at the time, their battles). A click on the map
-  ends the moves shown (the battles still play), and nothing of it goes
-  on under the next person's cover.
+  where they saw them at the time, their battles, each held until its
+  window is closed). A click on the map ends the moves shown (the battles
+  still play), and nothing of it goes on under the next person's cover.
 - **The agents** play rounds as they are: each of their moves is a plan
   for the round, made from what they see when they plan (`docs/agents.md`;
   a program is told `mode rounds`). They do not yet think about what the
   others might do meanwhile: a first opponent, not a cunning one. To see
   more of the map they send a stack on past the edge of the land they
-  know (`planner::beyond`). Measured (the continent, the steady planners,
-  40 seeds each, 200 rounds at most): in turns every game ends, in 49
-  rounds; in rounds every game too, in 60 (66 with the order drawn);
-  with fog of war, in 60; with total fog they find each other and fight
-  (62 battles and 19 cities taken a game), and 22 of 40 games end in 200
-  rounds (in turns they all do, in about 80): they are slow to find the
-  last cities. To be made better.
-- Open: whether a tick should be a hex for everyone or a share of each
-  stack's movement (riders arriving first); whether a march should fight
-  its way through; plans of more than one leg.
+  know (`planner::beyond`). They do not yet think about who their stacks
+  will run into on the way either: on the clock, with fights on the way,
+  more of their attacks are a lone unit's (4 in 10, from 3 in 10) and
+  fewer are won (44 in 100, from 50). Measured (the continent, the
+  default planners, 40 seeds each, 200 rounds at most; before the clock
+  in brackets): every game ends, in 64 rounds (60), with 94 battles a
+  game (70); with total fog 11 of 40 games end in 200 rounds (18), with
+  133 battles a game (76). To be made better.
+- Open: whether a march should fight on its way as a plan does, or stop
+  short as in turns (it fights: one rule for every stack on its way);
+  whether a stack that would run into far worse odds should hold back;
+  plans by way of hexes of the player's choosing.
 
 ## Easy to play
 
@@ -934,8 +985,10 @@ it; the rules are written once for both modes from the first step.
 
 ## Still open
 
-1. Rounds are built ("Rounds", above); what play says of the cases of
-   the resolution (who steps first, a hex a tick for everyone) is open.
+1. Rounds are built ("Rounds", above), and changed once by play (the
+   clock, fights on the way, joining: 2026-11-22); what more play says
+   of them is open (a march that fights, the computer's players in
+   them).
 2. Combat: which system a game starts with (lines for now). Agents
    against agents without a window can compare them (`--battles`, with
    many seeds).

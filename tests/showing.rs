@@ -142,7 +142,20 @@ fn a_battle_the_computer_fights_against_the_person_is_played_out_before_it_goes_
         t += 50;
         s.frame(t);
     }
-    assert_eq!(s.screen.game.player(), Side::Blue, "a moment after it, still");
+    // It waits for the person to close the window (the owner's word,
+    // 2026-11-22: "let the user dismiss the box ... before moving on. The
+    // user can miss details otherwise"; it went on by itself after a
+    // moment before), however long that takes.
+    for _ in 0..200 {
+        t += 50;
+        s.frame(t);
+    }
+    assert!(s.battle().is_some_and(|b| b.done()));
+    assert_eq!(s.screen.game.player(), Side::Blue, "still, with the window open");
+    // Enter closes it (as Close and Esc do), and the game goes on.
+    assert!(common::press(&mut s, turbo_ferret::SpecialKey::Enter));
+    s.pump();
+    assert!(s.battle().is_none(), "closed");
     for _ in 0..200 {
         t += 50;
         s.frame(t);

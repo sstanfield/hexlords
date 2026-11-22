@@ -10,58 +10,105 @@
 //!   carried out at once (a city's work, its walls, a rally point, Defend,
 //!   Done, a blessing sought, a unit sent home). An order to move is a
 //!   **plan**: `Order::Move`, `Toward` and `Roam` give the units a route to
-//!   that hex for this round (`Unit::planned`); `GoTo` and `Patrol` are
-//!   standing orders as ever, and take their first step with the round.
-//!   With total fog of war, `Toward` may name land the side has never
-//!   seen: the units set off toward it over the land they have seen, and
-//!   find their way as they come to see more (`way_toward`).
-//!   `Order::EndTurn` says the side has done; `Order::Undo` takes a plan
-//!   back.
-//! - **The round plays out** (`Game::play_out`) once every side has done, a
-//!   **tick** at a time: in each tick, every stack with somewhere to go
-//!   takes one step, a hex, if it can pay for it; the sides step in the
-//!   round's order (drawn anew as each round begins to play out, if the
-//!   game is set up so: when the orders are given nobody knows it), so
-//!   who steps first in a tick is the one thing chance decides. A stack
-//!   that steps into a hex another side stands on attacks it: so two
-//!   stacks making for the same hex fight there, the one that got there
-//!   first defending it; two that would swap hexes fight on the hex of the
-//!   one that steps second; and a stack sent against one that has left
-//!   finds the hex empty, and takes it. Only a plan attacks a stack it sees
-//!   (where it ends); a march or a patrol on its way stops short, as in
-//!   turns (a patrol attacks at its odds). Stacks of a side sent against
-//!   the same hex attack it together: those beside it join the one that
-//!   steps in, and one that is there first waits for the others that can
-//!   still come. A stack passes through its own side's stacks, as a move
-//!   does. A battle ends a stack's round (it has no movement left).
-//! - **The round ends** when a tick goes by with nobody moving: the plans
-//!   end, got there or not; the standing orders use what movement is left
-//!   as they do at a turn's end (and say if they are stopped short); wounds
+//!   that hex for this round (`Unit::planned`) and the way they will take
+//!   (`Unit::way`: the way the side knows when it gives the order, round
+//!   the stacks it sees); `GoTo` and `Patrol` are standing orders as ever,
+//!   and take their first step with the round. With total fog of war,
+//!   `Toward` may name land the side has never seen: the units set off
+//!   toward it over the land they have seen, and find their way as they
+//!   come to see more (`way_toward`). Units sent to a hex where others of
+//!   their side stand can be ordered on with them (`Order::Move` for all of
+//!   them): they **join** there, those that stand there wait for them, and
+//!   they go on as one stack (`gathering`). `Order::EndTurn` says the side
+//!   has done; `Order::Undo` takes a plan back.
+//! - **The round plays out** (`Game::play_out`) once every side has done,
+//!   on a clock (the owner's word, 2026-11-22: "fast units should get to
+//!   spend the same MP as slower units faster than them ... combat should
+//!   probably happen on any given subtick"). A step takes a unit the share
+//!   of a round that its cost is of the unit's movement a turn
+//!   (`Unit::speed`; [`ROUND`] is a round): riders with 20 points are
+//!   three hexes of grass on when soldiers with 12 are two. A stack goes
+//!   at the pace of its slowest. Each stack sets off on the next hex of its
+//!   way, and is there when the step's time is up; the stacks get there in
+//!   the order of the clock (at the same moment: in the round's order of
+//!   the sides, drawn anew as each round begins to play out, if the game
+//!   is set up so). A stack that gets to a hex another side stands on
+//!   attacks it, there and then, wherever its way was taking it ("stacks
+//!   that run into each other should probably fight vs just block each
+//!   other"): it does not go round who has come to stand on its way. So
+//!   the faster of two stacks sent to a city is in it first, and the other
+//!   attacks it there; two that would swap hexes fight on the hex of the
+//!   one that is slower to leave; a stack sent against one that has left
+//!   finds the hex empty, and takes it. Each stack attacks when it gets
+//!   there: to attack together, stacks join first. A stack waits behind
+//!   others of its side that are on their way and leave it no room, and
+//!   goes through those that stay. A battle ends the attackers' round (they
+//!   have no movement left); a patrol goes round and attacks at its odds,
+//!   as ever.
+//! - **The round ends** when nobody is on a step any more: the plans end,
+//!   got there or not; the standing orders use what movement is left as
+//!   they do at a turn's end (and say if they are stopped short); wounds
 //!   heal; then the next round begins for every side together: its units'
 //!   movement, its taxes, its upkeep, what its cities built.
 //!
 //! Without a screen the last side's `EndTurn` plays the whole round out;
 //! while one watches (`Game::watch`) it only begins it, and the screen
-//! plays the ticks (`play_out`), showing each as it happens.
+//! plays it on a beat at a time ([`BEAT`]; a battle ends a beat), showing
+//! each as it happens.
 //!
 //! Not a port: the C++ had no turns.
 
-use super::{Game, MarchState, Sight, UNSEEN, Undo};
+use super::{Game, Group, MarchState, SEE_ALL, Sight, UNSEEN, Undo};
 use crate::orders::Event;
 use crate::setup::{Mode, TurnOrder};
-use crate::state::{Hex, MAX_STACK, MoveCostId, Side, TileType, Unit, UnitId, hostile};
+use crate::state::{Hex, MAX_STACK, MoveCostId, Passage, Side, TileType, Unit, UnitId, hostile, path_with, reach_with};
 
-/// A round plays out in at most this many ticks (a guard: movement runs out
+/// A round on the clock a round plays out by: the time a unit takes to
+/// spend a turn's movement (`Unit::speed`). A step that costs a unit `c` of
+/// its `m` points a turn takes it `c * ROUND / m`. (Every whole number up to
+/// 16 divides it, and 18 to 30 in twos.) A stack that waited, or kept
+/// points from the turn before, goes on past it: the clock says who is
+/// first, not how far anybody gets.
+pub const ROUND: u64 = 720_720;
+
+/// What `Game::play_out` plays at a time, for a screen to show: a sixth of
+/// a round, or up to a battle.
+pub const BEAT: u64 = ROUND / 6;
+
+/// How long a patrol with no step to take rests before it looks again.
+const REST: u64 = ROUND / 12;
+
+/// A round plays out in at most this many steps (a guard: movement runs out
 /// long before).
-const MAX_TICKS: u32 = 400;
+const MAX_STEPS: u32 = 200_000;
 
-/// How far a round that plays out has got: the ticks played; and whether
-/// the stacks that wait for others of their side before an attack wait no
-/// longer (a tick went by with nobody moving).
+/// How far a round that plays out has got: the clock; the steps taken; and
+/// whether the stacks that wait for others of their side wait no longer
+/// (nobody was on a step, and some waited).
 #[derive(Clone, Debug, Default)]
 pub(super) struct PlayOut {
-    tick: u32,
+    now: u64,
+    steps: u32,
     hasty: bool,
+}
+
+/// A plan's legs: for each unit, its stops and its way, hex by hex.
+type Legs = Vec<(UnitId, Vec<Hex>, Vec<Hex>)>;
+
+/// What a stack with somewhere to go does next (`Game::look`).
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Look {
+    /// It sets off for `hex` (the `passed`th of its way from here: past
+    /// hexes its own side fills), those of it that can (`coming`), and is
+    /// there `time` later.
+    Go { hex: Hex, passed: usize, coming: Vec<UnitId>, time: u64 },
+    /// It waits: for those that come to join it, or behind others of its
+    /// side on their way. It looks again when something has happened.
+    Wait,
+    /// A patrol with no step to take now: it looks again in a while.
+    Rest,
+    /// It takes no more steps this round.
+    Stop,
 }
 
 impl Game {
@@ -77,11 +124,26 @@ impl Game {
         self.playing.is_some()
     }
 
+    /// The clock of the round that plays out ([`ROUND`] is a round), if one
+    /// does.
+    pub fn round_clock(&self) -> Option<u64> {
+        self.playing.as_ref().map(|play| play.now)
+    }
+
     /// In rounds, `Order::Move` (`reach`: every one of them can get there
     /// this turn, as things stand), `Order::Toward` (as far as they get) and
     /// `Order::Roam` (`roam`: the computer's move for marauders, who maraud
     /// on): `ids` of `side` plan to go to `to` this round. Nothing moves
     /// yet. An undo gives them back what they were doing before.
+    ///
+    /// Units on one hex go from there. Units on several: if those that are
+    /// not on one of the hexes are all sent there (a plan that ends on it),
+    /// they join the ones that stand there and go on with them, who wait
+    /// for them (`gathering`); else they gather first on the one of their
+    /// hexes nearest to `to` that all of them can get on from (`muster`:
+    /// one order is one stack, and into another side's units one attack,
+    /// as in turns); if there is none, the units of each hex go on their
+    /// own.
     pub(super) fn plan(
         &mut self,
         side: Side,
@@ -108,18 +170,178 @@ impl Game {
         if !sight.knows(to) && reach {
             return Err(UNSEEN.to_string());
         }
-        // As a move is refused: who cannot go together, cannot get there, or
-        // would leave others in the water.
-        let group = self.group(&ids)?;
-        for (id, table) in &group.movers {
-            let unit = self.own_unit(side, *id)?;
-            if reach && self.known_range_by(unit, *table, &sight).cost(to).is_none() {
-                return Err(format!("{} cannot get there this turn", unit.name));
-            }
-            if !reach && unit.pos() != to && self.way_toward(unit, *table, to, &sight).is_none() {
-                return Err("there is no way there".to_string());
+        // The stacks they go as: one, from the hex they are on or gather
+        // on; or one from each of their hexes. All of them, or none: each
+        // stack's legs first.
+        let stacks = self.by_hex(&ids);
+        let together = if reach && !roam { self.gathering(&ids) } else { None };
+        let mut plans = Vec::new();
+        match together {
+            Some(from) => plans.push(self.legs(side, &ids, (from, to), reach, &sight, None)?),
+            None if stacks.len() == 1 => plans.push(self.legs(side, &ids, (stacks[0].0, to), reach, &sight, None)?),
+            None => match self.muster(side, &ids, to, &sight).filter(|_| reach && !roam) {
+                Some(legs) => plans.push(legs),
+                None => {
+                    for (from, stack) in &stacks {
+                        plans.push(self.legs(side, stack, (*from, to), reach, &sight, None)?);
+                    }
+                }
+            },
+        }
+        for legs in plans {
+            // (The units of one order are a party: they go as a stack, and
+            // those of another order on their hex do not hold them up.)
+            self.parties += 1;
+            let party = self.parties;
+            for (id, route, way) in legs {
+                if let Some(unit) = self.map.unit_mut(id) {
+                    unit.stand_down();
+                    (unit.route, unit.bound, unit.stalled, unit.defending) = (route, None, false, false);
+                    (unit.planned, unit.party, unit.moved, unit.marauding) = (true, party, true, roam);
+                    unit.way = way;
+                }
             }
         }
+        // (The computer's plans for marauders are not their player's to take
+        // back.)
+        self.undo = (!roam).then_some(Undo::Ordered { goals: before });
+        Ok(Vec::new())
+    }
+
+    /// `ids` by the hex they stand on, in their order.
+    fn by_hex(&self, ids: &[UnitId]) -> Vec<(Hex, Vec<UnitId>)> {
+        let mut stacks: Vec<(Hex, Vec<UnitId>)> = Vec::new();
+        for unit in ids.iter().filter_map(|id| self.map.units().get(*id)) {
+            match stacks.iter_mut().find(|(at, _)| *at == unit.pos()) {
+                Some((_, stack)) => stack.push(unit.id()),
+                None => stacks.push((unit.pos(), vec![unit.id()])),
+            }
+        }
+        stacks
+    }
+
+    /// The plan of `ids` (`side`'s, on several hexes) to go to `to` as one
+    /// stack: they gather on the one of their hexes nearest to `to` that
+    /// the others can all get to, with room for them, and all get on to
+    /// `to` from; those that stand there wait for the others. `None` if
+    /// there is no such hex.
+    fn muster(&self, side: Side, ids: &[UnitId], to: Hex, sight: &Sight) -> Option<Legs> {
+        let stacks = self.by_hex(ids);
+        let mut hexes: Vec<Hex> = stacks.iter().map(|(at, _)| *at).collect();
+        hexes.sort_by_key(|hex| (hex.distance(to), hex.row, hex.col));
+        hexes.into_iter().find_map(|on| {
+            let mut coming = Vec::new();
+            for (from, stack) in stacks.iter().filter(|(from, _)| *from != on) {
+                coming.extend(self.legs(side, stack, (*from, on), true, sight, None).ok()?);
+            }
+            self.legs(side, ids, (on, to), true, sight, Some(&coming)).ok()
+        })
+    }
+
+    /// Where `ids` (a side's) set off from together, if they do: the hex
+    /// they all stand on; or, on several hexes, the one some of them stand
+    /// on that all the others are sent to (a plan whose way ends there):
+    /// they join there, and go on as one stack.
+    fn gathering(&self, ids: &[UnitId]) -> Option<Hex> {
+        let units: Vec<&Unit> = ids.iter().filter_map(|id| self.map.units().get(*id)).collect();
+        let comes = |u: &Unit, hex: Hex| u.planned && u.route.last() == Some(&hex) && u.way.last() == Some(&hex);
+        let here = |hex: &Hex| units.iter().all(|u| u.pos() == *hex || comes(u, *hex));
+        units.iter().map(|u| u.pos()).find(here)
+    }
+
+    /// True if `ids` set off from one hex together (`gathering`), some of
+    /// them only once they have come there, and can go together.
+    pub(super) fn gathers(&self, ids: &[UnitId]) -> bool {
+        self.gathering(ids).is_some() && self.group(ids).is_ok()
+    }
+
+    /// The units of `side` that are sent to `hex` and are not there yet (a
+    /// plan that ends on it), in rounds while orders are given: those who
+    /// stand there can be ordered on with them (`plan`). For a screen, to
+    /// offer them with the stack.
+    pub fn joining(&self, side: Side, hex: Hex) -> Vec<UnitId> {
+        let comes =
+            |u: &&Unit| u.planned && u.pos() != hex && u.route.last() == Some(&hex) && u.way.last() == Some(&hex);
+        self.map.units().of_side(side).filter(|u| self.map.contains(u.pos())).filter(comes).map(|u| u.id()).collect()
+    }
+
+    /// What `unit` (at the prices of `table`) has left when it stands on
+    /// `from`: its movement, less the way there if it is not there yet (a
+    /// plan takes it there). `None` if it cannot get there.
+    fn left_at(&self, unit: &Unit, table: MoveCostId, from: Hex, sight: &Sight) -> Option<u32> {
+        if unit.pos() == from {
+            return Some(unit.movement);
+        }
+        let spent = self.known_range_by(unit, table, sight).cost(from)?;
+        Some(unit.movement.saturating_sub(spent))
+    }
+
+    /// Where `ids` (a side's) can all go this round, setting off from the
+    /// hex they are on or gather on (`gathering`), as their side knows the
+    /// map: for units that come to join the others first, with what the
+    /// way there leaves them. `None` if they do not go together.
+    pub(super) fn joint_range(&self, ids: &[UnitId], sight: &Sight) -> Option<crate::state::MoveRange> {
+        let from = self.gathering(ids)?;
+        let group = self.group(ids).ok()?;
+        let mut range: Option<crate::state::MoveRange> = None;
+        for (id, table) in &group.movers {
+            let unit = self.map.units().get(*id)?;
+            let left = self.left_at(unit, *table, from, sight)?;
+            let costs = self.map.units().move_cost(*table)?;
+            let (pass, steps) = self.ground(unit, costs, sight);
+            let one = reach_with(&self.map, from, &steps, left, &pass);
+            range = Some(match range {
+                Some(all) => all.both(&one),
+                None => one,
+            });
+        }
+        range
+    }
+
+    /// The plan of `ids` (`side`'s, a stack: on `from`, or sent there) to
+    /// go from `from` to `to`: for each, its stops and its way, hex by hex.
+    /// Why not, as a move is refused: who cannot go together, cannot get
+    /// there (`reach`), has no room there, or would leave others in the
+    /// water. Without `reach` (`Order::Toward`) the way is as far as it is
+    /// known. `coming`: the stops and the ways of those that come to
+    /// `from` first, if they are not the units' own yet (`muster`).
+    fn legs(
+        &self,
+        side: Side,
+        ids: &[UnitId],
+        (from, to): (Hex, Hex),
+        reach: bool,
+        sight: &Sight,
+        coming: Option<&Legs>,
+    ) -> Result<Legs, String> {
+        let group = self.group(ids)?;
+        // What each that moves has left on `from`; the way is the one of
+        // whoever has least.
+        let mut slowest: Option<(&Unit, MoveCostId, u32)> = None;
+        for (id, table) in &group.movers {
+            let unit = self.own_unit(side, *id)?;
+            let short = || format!("{} cannot get there this turn", unit.name);
+            let left = self.left_at(unit, *table, from, sight).ok_or_else(short)?;
+            if reach {
+                let costs = self.map.units().move_cost(*table).ok_or_else(short)?;
+                let (pass, steps) = self.ground(unit, costs, sight);
+                reach_with(&self.map, from, &steps, left, &pass).cost(to).ok_or_else(short)?;
+            } else if unit.pos() != to && self.way_toward(unit, *table, to, sight).is_none() {
+                return Err("there is no way there".to_string());
+            }
+            if slowest.is_none_or(|(_, _, least)| left < least) {
+                slowest = Some((unit, *table, left));
+            }
+        }
+        let (lead, table, left) = slowest.ok_or("no units")?;
+        let way: Vec<Hex> = if reach {
+            let costs = self.map.units().move_cost(table).ok_or("no units")?;
+            let (pass, steps) = self.ground(lead, costs, sight);
+            let way = path_with(&self.map, (from, to), &steps, left, &pass);
+            way.ok_or(format!("{} cannot get there this turn", lead.name))?.into_iter().map(|(hex, _)| hex).collect()
+        } else {
+            self.way_toward(lead, table, to, sight).unwrap_or_default().into_iter().map(|(hex, _)| hex).collect()
+        };
         // Nor, as things stand, where there is no room for them (their own
         // side's full stack, a ship with no room aboard): the plan would
         // be accepted and never happen.
@@ -129,38 +351,37 @@ impl Game {
             let units = self.map.units();
             let going = |id: &UnitId| units.get(*id).is_some_and(|u| !u.route.is_empty() || u.patrol.is_some());
             let staying = self.map.units_at(to).iter().filter(|id| !ids.contains(id) && !going(id));
-            let all: Vec<UnitId> = staying.chain(&ids).copied().collect();
+            let all: Vec<UnitId> = staying.chain(ids).copied().collect();
             let commanders = all.iter().filter(|id| self.map.is_commander(**id)).count();
             if commanders > 1 || all.len() - commanders > MAX_STACK {
                 return Err("there is no room there".to_string());
             }
-            if !self.afloat(to, &self.there_after(side, to, &[], &ids)) {
+            if !self.afloat(to, &self.there_after(side, to, &[], ids)) {
                 return Err("there is no room aboard for them there".to_string());
             }
         }
-        let mut origins: Vec<Hex> =
-            before.iter().filter_map(|(id, _)| self.map.units().get(*id)).map(|u| u.pos()).collect();
+        let mut origins: Vec<Hex> = ids.iter().filter_map(|id| self.map.units().get(*id)).map(|u| u.pos()).collect();
         origins.dedup();
-        for from in origins {
-            if !self.afloat(from, &self.there_after(side, from, &ids, &[])) {
+        for origin in origins {
+            if !self.afloat(origin, &self.there_after(side, origin, ids, &[])) {
                 return Err("that would leave units in the water with no ship to carry them".to_string());
             }
         }
-        // (The units of one order are a party: they go as a stack, and
-        // those of another order on their hex do not hold them up.)
-        self.parties += 1;
-        let party = self.parties;
-        for id in &ids {
-            if let Some(unit) = self.map.unit_mut(*id) {
-                unit.stand_down();
-                (unit.route, unit.bound, unit.stalled, unit.defending) = (vec![to], None, false, false);
-                (unit.planned, unit.party, unit.moved, unit.marauding) = (true, party, true, roam);
-            }
+        // Who stands on `from` goes from there; who comes there first keeps
+        // its way there, and goes on.
+        let mut legs = Vec::new();
+        for unit in ids.iter().filter_map(|id| self.map.units().get(*id)) {
+            let sent = coming.and_then(|legs| legs.iter().find(|(id, _, _)| *id == unit.id()));
+            let (mut route, mut hexes) = match sent {
+                _ if unit.pos() == from => (Vec::new(), Vec::new()),
+                Some((_, route, way)) => (route.clone(), way.clone()),
+                None => (unit.route.clone(), unit.way.clone()),
+            };
+            route.push(to);
+            hexes.extend(way.iter().copied());
+            legs.push((unit.id(), route, hexes));
         }
-        // (The computer's plans for marauders are not their player's to take
-        // back.)
-        self.undo = (!roam).then_some(Undo::Ordered { goals: before });
-        Ok(Vec::new())
+        Ok(legs)
     }
 
     /// In rounds, `Order::EndTurn`: the side whose turn it is has given its
@@ -182,17 +403,11 @@ impl Game {
             self.remember(round, side, &events);
             return events;
         }
-        // The stacks left alone after a battle on patrol or marauding go on;
-        // what each side's units saw on their way last round is seen no
-        // longer (what they see on this round's way is, until the next
-        // plays out).
+        // The stacks left alone after a battle on patrol or marauding go on.
         for side in self.order.clone() {
             self.stand_easy(side);
         }
         self.note_sightings();
-        for trail in &mut self.trail {
-            trail.clear();
-        }
         // The order the sides step in, if it is drawn, is drawn now: when
         // the orders were given nobody knew who would step first (the
         // review, 2026-11-22: drawn before, it was the order the orders
@@ -200,6 +415,8 @@ impl Game {
         if self.setup.order == TurnOrder::Drawn {
             self.rng.shuffle(&mut self.order);
         }
+        // Everybody sets off as the clock starts.
+        self.rest(false);
         self.playing = Some(PlayOut::default());
         if self.watched.is_some() {
             return Vec::new();
@@ -209,6 +426,21 @@ impl Game {
             events.extend(self.play_out());
         }
         events
+    }
+
+    /// Nobody is on a step: every unit's clock is at the round's start
+    /// (and, `ways`, the ways found for this round are forgotten).
+    fn rest(&mut self, ways: bool) {
+        let busy = |u: &Unit| u.clock != 0 || u.step.is_some() || u.halted || (ways && !u.way.is_empty());
+        let ids: Vec<UnitId> = self.map.units().iter().filter(|u| busy(u)).map(|u| u.id()).collect();
+        for id in ids {
+            if let Some(unit) = self.map.unit_mut(id) {
+                (unit.clock, unit.step, unit.halted) = (0, None, false);
+                if ways {
+                    unit.way.clear();
+                }
+            }
+        }
     }
 
     /// The way of `unit` (at the prices of `table`) toward `to`, as its
@@ -237,200 +469,456 @@ impl Game {
         self.known_path_by(unit, table, nearest, u32::MAX, sight)
     }
 
-    /// The round that plays out goes on (`playing_out`): a tick, in which
-    /// every stack with somewhere to go takes a step, the sides in the
-    /// round's order; and, once a tick goes by with nobody moving, the
-    /// round's end and the next one's beginning (`Event::Began` for the
+    /// The round that plays out goes on (`playing_out`), a beat of its
+    /// clock ([`BEAT`]), or up to a battle: the stacks that get where their
+    /// steps take them in it, in the clock's order (`arrive`), each then
+    /// setting off on its next (`set_off`); and, once nobody is on a step,
+    /// the round's end and the next one's beginning (`Event::Began` for the
     /// side that gives its orders first). What happened, in its order.
+    /// (However it is called, the round is the same: a beat is only how
+    /// much a screen is shown at a time.)
     pub fn play_out(&mut self) -> Vec<Event> {
-        let Some(play) = self.playing.clone() else { return Vec::new() };
-        let (mut events, went, waited) = self.tick(play.hasty);
-        // On while somebody moves; and once more, hastily, if nobody did
-        // but some waited for others of their side who did not come.
-        let on = went || (waited && !play.hasty);
-        if on && play.tick + 1 < MAX_TICKS && self.winner.is_none() {
-            self.playing = Some(PlayOut { tick: play.tick + 1, hasty: !went });
-            return events;
+        let Some(mut play) = self.playing.clone() else { return Vec::new() };
+        let round = self.round;
+        let mut events = Vec::new();
+        let mut end = None;
+        loop {
+            if self.winner.is_some() || play.steps >= MAX_STEPS {
+                break;
+            }
+            for (side, set_off) in self.set_off(&play) {
+                self.remember(round, side, &set_off);
+                events.extend(set_off);
+            }
+            let Some((due, side, ids, hex)) = self.next_there() else {
+                // Nobody is on a step. Those that wait for others of their
+                // side who do not come wait no longer; else the round is
+                // over.
+                if !play.hasty && self.any_waits(&play) {
+                    play.hasty = true;
+                    continue;
+                }
+                break;
+            };
+            let due = due.max(play.now);
+            if due >= *end.get_or_insert((due / BEAT + 1) * BEAT) {
+                self.playing = Some(play);
+                return events;
+            }
+            (play.now, play.steps) = (due, play.steps + 1);
+            self.fought.clear();
+            let stepped = self.arrive(side, &ids, hex, &play);
+            let battled = stepped.iter().any(|e| matches!(e, Event::Battle { .. }));
+            self.remember(round, side, &stepped);
+            self.note_sightings();
+            events.extend(stepped);
+            // A battle ends the beat: a screen shows it before the round
+            // goes on.
+            if battled && self.winner.is_none() {
+                self.playing = Some(play);
+                return events;
+            }
         }
         events.extend(self.close_round());
         events
     }
 
-    /// One tick of the round: each side in the round's order, each of its
-    /// stacks a step (`hasty`: none waits for others before an attack).
-    /// What happened, whether anybody moved or fought, and whether a stack
-    /// waited for others of its side.
-    fn tick(&mut self, hasty: bool) -> (Vec<Event>, bool, bool) {
-        let round = self.round;
-        let (mut all, mut went, mut waited) = (Vec::new(), false, false);
-        // Who has stepped this tick (in another stack's attack, it may be).
-        let mut stepped: Vec<UnitId> = Vec::new();
-        for side in self.order.clone() {
-            if self.out.contains(&side) {
-                continue;
-            }
-            for (patrols, stack) in self.stacks_going(side) {
-                if self.winner.is_some() {
-                    break;
-                }
-                let units = self.map.units();
-                let stack: Vec<UnitId> =
-                    stack.into_iter().filter(|id| !stepped.contains(id) && units.get(*id).is_some()).collect();
-                if stack.is_empty() {
-                    continue;
-                }
-                self.fought.clear();
-                let events = if patrols {
-                    self.patrol_tick(side, &stack, &mut stepped)
-                } else {
-                    self.march_tick(side, &stack, (&mut stepped, hasty, &mut waited))
-                };
-                went |= events.iter().any(|e| matches!(e, Event::Moved { .. } | Event::Battle { .. }));
-                self.remember(round, side, &events);
-                all.extend(events);
-            }
-        }
-        self.note_sightings();
-        (all, went, waited)
+    /// True if `unit` has somewhere to go as the round plays out: a route
+    /// (a plan, a march) or a patrol (not one that fought and waits for its
+    /// player's word), and has not stopped for the round.
+    fn goes(&self, unit: &Unit) -> bool {
+        self.map.contains(unit.pos())
+            && !unit.halted
+            && (!unit.route.is_empty() || unit.patrol.is_some() && !unit.fought)
     }
 
-    /// `side`'s stacks with somewhere to go: the units of a hex with the
-    /// same route (a plan, a march), then those on the same patrol (true),
-    /// not one that fought and waits for its player's word.
-    fn stacks_going(&self, side: Side) -> Vec<(bool, Vec<UnitId>)> {
-        let map = &self.map;
-        // (A plan's stack is the units of one order: `Unit::party`.)
-        let mut groups: Vec<(Hex, &[Hex], u32, Vec<UnitId>)> = Vec::new();
-        for unit in map.units().of_side(side).filter(|u| map.contains(u.pos()) && !u.route.is_empty()) {
-            let party = if unit.planned { unit.party.max(1) } else { 0 };
-            let same = |(at, route, of, _): &&mut (Hex, &[Hex], u32, Vec<UnitId>)| {
-                *at == unit.pos() && *route == unit.route.as_slice() && *of == party
-            };
-            match groups.iter_mut().find(same) {
-                Some((_, _, _, ids)) => ids.push(unit.id()),
-                None => groups.push((unit.pos(), &unit.route, party, vec![unit.id()])),
-            }
-        }
-        let mut stacks: Vec<(bool, Vec<UnitId>)> = groups.into_iter().map(|(_, _, _, ids)| (false, ids)).collect();
-        let patrolling: Vec<UnitId> =
-            map.units().of_side(side).filter(|u| u.patrol.is_some() && u.route.is_empty()).map(|u| u.id()).collect();
-        for stack in self.patrol_stacks(side, &patrolling) {
-            let waits = stack.iter().any(|id| map.units().get(*id).is_some_and(|u| u.fought));
-            if !waits {
-                stacks.push((true, stack));
+    /// The stack `unit` goes in: the units of its hex and side that go
+    /// where it goes (the same route, of the same order: `Unit::party`; or
+    /// the same patrol) and are on the same step.
+    fn stack_of(&self, unit: &Unit) -> Vec<UnitId> {
+        let party = |u: &Unit| if u.planned { u.party.max(1) } else { 0 };
+        let with = |u: &&Unit| {
+            u.side() == unit.side()
+                && self.goes(u)
+                && u.step == unit.step
+                && u.route == unit.route
+                && party(u) == party(unit)
+                && (!unit.route.is_empty() || u.patrol == unit.patrol)
+        };
+        let here = self.map.units_at(unit.pos()).iter().filter_map(|id| self.map.units().get(*id));
+        here.filter(with).map(|u| u.id()).collect()
+    }
+
+    /// The stacks with somewhere to go that are on no step, the sides in
+    /// the round's order: each side, and its stack.
+    fn idle_stacks(&self) -> Vec<(Side, Vec<UnitId>)> {
+        let mut stacks: Vec<(Side, Vec<UnitId>)> = Vec::new();
+        for side in self.order.iter().filter(|side| !self.out.contains(side)) {
+            let from = stacks.len();
+            for unit in self.map.units().of_side(*side).filter(|u| u.step.is_none() && self.goes(u)) {
+                if stacks[from..].iter().any(|(_, stack)| stack.contains(&unit.id())) {
+                    continue;
+                }
+                // (A patrol one of which fought waits for its player's word.)
+                let stack = self.stack_of(unit);
+                if !stack.is_empty() {
+                    stacks.push((*side, stack));
+                }
             }
         }
         stacks
     }
 
-    /// A stack of `side` with a route (`ids`: those of them on the first
-    /// one's hex) takes this tick's step along it: a hex, on the way its
-    /// side knows, if the slowest of them can pay for it and there is room
-    /// for all of them. At a stop it goes on to the next at once (as a
-    /// march does: a blessing sought at a temple stops it for the round).
-    /// Into another side's units it sees, only a plan goes, where it ends:
-    /// an attack, with the side's other stacks beside that hex that are
-    /// sent against it too (`company`); one that is no plan waits, and one
-    /// it does not see is met, in a battle. A battle ends a plan. Past
-    /// hexes its own side's stacks leave no room on, it goes on to the next
-    /// with room, as a move passes through them. Before an attack it waits
-    /// (unless `hasty`; `waited` says it did) for the side's other stacks
-    /// sent against the same hex that can still get there this round.
-    fn march_tick(
-        &mut self,
-        side: Side,
-        ids: &[UnitId],
-        (stepped, hasty, waited): (&mut Vec<UnitId>, bool, &mut bool),
-    ) -> Vec<Event> {
+    /// Every stack with somewhere to go that is on no step sets off on its
+    /// next (`look`), or waits, or stops for the round. First it finds its
+    /// way, if it has none (a march, as it sets off; a plan toward land
+    /// never seen, as far as it knows it), and passes the stops it is on.
+    /// What happened at the stops (a blessing sought), side by side.
+    fn set_off(&mut self, play: &PlayOut) -> Vec<(Side, Vec<Event>)> {
+        let mut happened = Vec::new();
+        for (side, stack) in self.idle_stacks() {
+            let patrols = self.map.units().get(stack[0]).is_some_and(|u| u.route.is_empty());
+            let mut stack = stack;
+            if patrols {
+                self.patrol_waypoints(&stack);
+            } else {
+                let events = self.stops(side, &stack);
+                if !events.is_empty() {
+                    happened.push((side, events));
+                }
+                // (Those whose order ended there go nowhere.)
+                stack.retain(|id| self.map.units().get(*id).is_some_and(|u| self.goes(u)));
+                if stack.is_empty() {
+                    continue;
+                }
+                self.find_way(side, &stack);
+            }
+            let look = if patrols { self.patrol_look(side, &stack) } else { self.look(side, &stack, play.hasty) };
+            let clock = stack.iter().filter_map(|id| self.map.units().get(*id)).map(|u| u.clock).max().unwrap_or(0);
+            let at = self.map.units().get(stack[0]).map(|u| u.pos());
+            for id in &stack {
+                let Some(unit) = self.map.unit_mut(*id) else { continue };
+                match &look {
+                    Look::Go { hex, time, .. } => unit.step = Some((*hex, clock + *time)),
+                    // (A rest is a step to where it stands.)
+                    Look::Rest => unit.step = at.map(|at| (at, play.now + REST)),
+                    Look::Wait => unit.clock = unit.clock.max(play.now),
+                    Look::Stop => unit.halted = true,
+                }
+            }
+        }
+        happened
+    }
+
+    /// The stack whose step is up first: when, its side, its units, and
+    /// the hex it is to get to. Of those there at the same moment, the
+    /// first in the round's order of the sides (and of a side's, in its
+    /// units' order). None if nobody is on a step (patrols that rest are
+    /// on none: they do not keep the round going).
+    fn next_there(&self) -> Option<(u64, Side, Vec<UnitId>, Hex)> {
+        let mut first: Option<(u64, &Unit, Hex)> = None;
+        let mut moving = false;
+        for side in self.order.iter().filter(|side| !self.out.contains(side)) {
+            for unit in self.map.units().of_side(*side).filter(|u| self.goes(u)) {
+                let Some((hex, due)) = unit.step else { continue };
+                moving |= hex != unit.pos();
+                if first.is_none_or(|(least, _, _)| due < least) {
+                    first = Some((due, unit, hex));
+                }
+            }
+        }
+        first.filter(|_| moving).map(|(due, unit, hex)| (due, unit.side(), self.stack_of(unit), hex))
+    }
+
+    /// True if a stack waits (for others of its side) that would not if it
+    /// were told nobody comes.
+    fn any_waits(&self, play: &PlayOut) -> bool {
+        let hasty = PlayOut { hasty: true, ..play.clone() };
+        self.idle_stacks().iter().any(|(side, stack)| {
+            let patrols = self.map.units().get(stack[0]).is_some_and(|u| u.route.is_empty());
+            !patrols
+                && self.look(*side, stack, play.hasty) == Look::Wait
+                && self.look(*side, stack, hasty.hasty) != Look::Wait
+        })
+    }
+
+    /// A stack of `side` with a route (`ids`, on a hex) passes the stops it
+    /// stands on: on to the next (none: there, and the order ends; at a
+    /// rally point that says so, they defend there). On the last leg to a
+    /// rally point that is full, its stop is beside it. A plan or a march
+    /// that stops on a temple seeks its blessing there (nobody can be asked
+    /// as the round plays out), which stops it for the round.
+    fn stops(&mut self, side: Side, ids: &[UnitId]) -> Vec<Event> {
         let mut events = Vec::new();
-        let mut ids = ids.to_vec();
         loop {
             let units: Vec<&Unit> = ids.iter().filter_map(|id| self.map.units().get(*id)).collect();
             let Some(first) = units.first() else { break };
-            let (at, mut route, bound, planned) = (first.pos(), first.route.clone(), first.bound, first.planned);
-            ids = units.iter().filter(|u| u.pos() == at).map(|u| u.id()).collect();
+            let (at, mut route, bound) = (first.pos(), first.route.clone(), first.bound);
             // On the last leg to a rally point: to the point, or beside it
             // once it is full.
             if let (Some(n), [end]) = (bound, route.as_slice()) {
-                let spot = self.rally_spot(side, n, &ids, at).unwrap_or(*end);
+                let spot = self.rally_spot(side, n, ids, at).unwrap_or(*end);
                 if spot != *end {
                     route = vec![spot];
-                    for id in &ids {
+                    for id in ids {
                         if let Some(unit) = self.map.unit_mut(*id) {
                             unit.route = route.clone();
+                            unit.way.clear();
                         }
                     }
                 }
             }
-            let Some(to) = route.first().copied() else { break };
-            if at == to {
-                // A stop: on to the next (none: there, and the order ends;
-                // at a rally point that says so, they defend there).
-                let defend = bound.and_then(|n| self.rally_point(side, n)).is_some_and(|p| p.defend);
-                let last = route.len() == 1;
-                for id in &ids {
-                    if let Some(unit) = self.map.unit_mut(*id) {
-                        (unit.route, unit.stalled) = (route[1..].to_vec(), false);
-                        if last {
-                            (unit.bound, unit.planned) = (None, false);
-                            unit.defending |= defend && bound.is_some();
-                        }
+            if route.first() != Some(&at) {
+                break;
+            }
+            let defend = bound.and_then(|n| self.rally_point(side, n)).is_some_and(|p| p.defend);
+            let last = route.len() == 1;
+            for id in ids {
+                if let Some(unit) = self.map.unit_mut(*id) {
+                    (unit.route, unit.stalled) = (route[1..].to_vec(), false);
+                    if last {
+                        (unit.bound, unit.planned) = (None, false);
+                        unit.defending |= defend && bound.is_some();
+                        unit.way.clear();
                     }
                 }
-                // (A plan that ends on a temple seeks its blessing too:
-                // nobody can be asked as the round plays out.)
-                if self.map.tile(at).is_some_and(|t| t.kind == TileType::Temple) {
-                    let blessed = self.blessings(at, &ids);
-                    if !blessed.is_empty() {
-                        events.extend(blessed);
-                        break;
-                    }
-                }
-                continue;
             }
-            let Ok(group) = self.group(&ids) else { break };
-            let Some((lead, table)) = group.lead(&self.map) else { break };
-            if lead.movement == 0 {
-                break;
-            }
-            let sight = self.sight(side);
-            let way = self.way_toward(lead, table, to, &sight).unwrap_or_default();
-            let Some(hex) = self.step_along(side, &ids, &way, lead.movement) else { break };
-            let foe = sight.sees(hex) && hostile(&self.map, side, hex);
-            if foe && !(planned && hex == to) {
-                break;
-            }
-            let mut coming = self.coming(&group, hex, &sight);
-            if coming.is_empty() {
-                break;
-            }
-            if foe {
-                if !hasty && self.company_coming(side, to, &coming, &sight) {
-                    *waited = true;
+            if self.map.tile(at).is_some_and(|t| t.kind == TileType::Temple) {
+                let blessed = self.blessings(at, ids);
+                if !blessed.is_empty() {
+                    events.extend(blessed);
                     break;
                 }
-                coming = self.company(side, hex, coming, stepped, &sight);
             }
-            let was: Vec<(UnitId, MarchState)> =
-                coming.iter().filter_map(|id| self.map.units().get(*id)).map(|u| (u.id(), MarchState::of(u))).collect();
-            let Ok(moved) = self.move_units(side, &coming, hex) else { break };
-            let battled = moved.iter().any(|e| matches!(e, Event::Battle { .. }));
-            events.extend(moved);
-            // The move ended their orders: they keep them (a plan, until it
-            // has fought; marauders maraud on, and wait for their player's
-            // word after a battle).
-            for (id, was) in was {
-                let Some(unit) = self.map.unit_mut(id) else { continue };
-                if !(was.planned && battled) {
-                    (unit.route, unit.bound) = (was.route, was.bound);
-                    (unit.planned, unit.party) = (was.planned, was.party);
-                }
-                if was.marauding {
-                    (unit.marauding, unit.fought) = (true, battled || was.fought);
+        }
+        events
+    }
+
+    /// A stack of `side` with a route (`ids`, on a hex) that has no way, or
+    /// one that does not lead on from where it stands, finds it: the way to
+    /// its next stop as its side knows the map now, round the other sides'
+    /// stacks it sees (`way_toward`); if there is none round them, the way
+    /// through them.
+    fn find_way(&mut self, side: Side, ids: &[UnitId]) {
+        let Some(first) = ids.first().and_then(|id| self.map.units().get(*id)) else { return };
+        let (at, to) = (first.pos(), first.goto());
+        if first.way.first().is_some_and(|next| next.distance(at) == 1) {
+            return;
+        }
+        let way = to.and_then(|to| {
+            let group = self.group(ids).ok()?;
+            let (lead, table) = group.lead(&self.map)?;
+            let sight = self.sight(side);
+            let round = self.way_toward(lead, table, to, &sight);
+            round.or_else(|| self.way_through(lead, table, to, &sight))
+        });
+        let way: Vec<Hex> = way.unwrap_or_default().into_iter().map(|(hex, _)| hex).collect();
+        for id in ids {
+            if let Some(unit) = self.map.unit_mut(*id) {
+                unit.way = way.clone();
+            }
+        }
+    }
+
+    /// The way of `unit` (at the prices of `table`) to `to` over the land
+    /// its side knows, whoever stands on it: for a stack with no way round
+    /// the other sides' stacks (it fights the first it comes to). Another
+    /// side's city still ends a way.
+    fn way_through(&self, unit: &Unit, table: MoveCostId, to: Hex, sight: &Sight) -> Option<Vec<(Hex, u32)>> {
+        let costs = self.map.units().move_cost(table)?;
+        let (pass, steps) = self.ground(unit, costs, sight);
+        let side = unit.side();
+        let through = |hex: Hex| match pass(hex) {
+            Passage::Stop if hostile(&self.map, side, hex) && self.map.city_at(hex).is_none_or(|c| c.side == side) => {
+                Passage::Open
+            }
+            other => other,
+        };
+        path_with(&self.map, (unit.pos(), to), &steps, u32::MAX, &through)
+    }
+
+    /// This step of `side`'s stack `ids` along `way` (each hex and what it
+    /// costs to get there), with `movement` to pay for it: the next hex;
+    /// or, past hexes where the side's own units leave no room for them,
+    /// the first with room (a move passes through its side's stacks). None
+    /// if it cannot pay for it, or there is none.
+    pub(super) fn step_along(&self, side: Side, ids: &[UnitId], way: &[(Hex, u32)], movement: u32) -> Option<Hex> {
+        way.iter()
+            .take_while(|(_, cost)| *cost <= movement)
+            .find(|(hex, _)| hostile(&self.map, side, *hex) || self.fits(*hex, ids))
+            .map(|(hex, _)| *hex)
+    }
+
+    /// What going from `at` over `hexes`, one after the other, costs each
+    /// of `movers` as things stand (into another side's units: an attack's
+    /// price); `None` for one that cannot go that way.
+    pub(super) fn costs_along(&self, movers: &[(UnitId, MoveCostId)], at: Hex, hexes: &[Hex]) -> Vec<Option<u32>> {
+        let cost = |(id, table): &(UnitId, MoveCostId)| {
+            let unit = self.map.units().get(*id)?;
+            let costs = self.map.units().move_cost(*table)?;
+            let (_, steps) = self.ground(unit, costs, &SEE_ALL);
+            let mut from = at;
+            let mut all = 0u32;
+            for hex in hexes {
+                all += u32::from(steps(from, *hex)?);
+                from = *hex;
+            }
+            Some(all)
+        };
+        movers.iter().map(cost).collect()
+    }
+
+    /// `group` (a stack on `at`) sets off over `hexes` (the last is where
+    /// it gets to): those of it that can pay for it come, if the one with
+    /// the fewest points can (with ships, all or none), and it takes them
+    /// as long as the slowest of them: what the way costs each over its
+    /// movement a turn, of a [`ROUND`] (not counting a commander among
+    /// others: it keeps up with them). It stops if none can.
+    pub(super) fn go(&self, group: &Group, at: Hex, hexes: &[Hex]) -> Look {
+        let (Some(hex), Some((lead, _))) = (hexes.last().copied(), group.lead(&self.map)) else { return Look::Stop };
+        let costs = self.costs_along(&group.movers, at, hexes);
+        let units = self.map.units();
+        let able = |((id, _), cost): (&(UnitId, MoveCostId), &Option<u32>)| {
+            let unit = units.get(*id)?;
+            cost.filter(|c| *c <= unit.movement).map(|c| (unit, c))
+        };
+        let able: Vec<(&Unit, u32)> = group.movers.iter().zip(&costs).filter_map(able).collect();
+        if !able.iter().any(|(unit, _)| unit.id() == lead.id()) {
+            return Look::Stop;
+        }
+        if !group.carried.is_empty() && able.len() < group.movers.len() {
+            return Look::Stop;
+        }
+        // (A commander goes at the pace of those it leads: a captain with
+        // riders rides, as its movement says.)
+        let led = able.iter().any(|(unit, _)| !self.map.is_commander(unit.id()));
+        let paced = able.iter().filter(|(unit, _)| !(led && self.map.is_commander(unit.id())));
+        let time = paced.map(|(unit, cost)| (u64::from(*cost) * ROUND).div_ceil(u64::from(unit.speed()))).max();
+        let coming = able.iter().map(|(unit, _)| unit.id()).chain(group.carried.iter().copied()).collect();
+        Look::Go { hex, passed: hexes.len(), coming, time: time.unwrap_or(0) }
+    }
+
+    /// What a stack of `side` with a route (`ids`, on a hex, with its way)
+    /// does next: it sets off on the next hex of its way, whoever of
+    /// another side stands there (getting there is an attack). Past hexes
+    /// its own side's stacks leave it no room on, it goes on to the first
+    /// with room, as a move passes through them; but behind those that are
+    /// on their way themselves it waits. It waits, too, for the units of
+    /// its order that come to join it where it stands (`awaited`). `hasty`:
+    /// it waits for nobody. It stops for the round if it cannot pay for the
+    /// step, or has no way.
+    pub(super) fn look(&self, side: Side, ids: &[UnitId], hasty: bool) -> Look {
+        let Some(first) = ids.first().and_then(|id| self.map.units().get(*id)) else { return Look::Stop };
+        let at = first.pos();
+        if first.way.first().is_none_or(|next| next.distance(at) != 1) {
+            return Look::Stop;
+        }
+        if !hasty && self.awaited(first, ids) {
+            return Look::Wait;
+        }
+        let Ok(group) = self.group(ids) else { return Look::Stop };
+        if group.lead(&self.map).is_none_or(|(lead, _)| lead.movement == 0) {
+            return Look::Stop;
+        }
+        for (i, hex) in first.way.iter().enumerate() {
+            if hostile(&self.map, side, *hex) || self.fits(*hex, ids) {
+                return self.go(&group, at, &first.way[..=i]);
+            }
+            // Its own side's stack, and no room: it follows one that is on
+            // its way, and goes through one that stays.
+            let leaving = |id: &UnitId| self.map.units().get(*id).is_some_and(|u| self.goes(u) && !ids.contains(id));
+            if !hasty && self.map.units_at(*hex).iter().any(leaving) {
+                return Look::Wait;
+            }
+        }
+        Look::Stop
+    }
+
+    /// True if units of the order of `first` (which stands on a hex with
+    /// `ids`) are still to come there, to go on with it: they have a stop
+    /// on that hex, are not on it, and have not stopped for the round.
+    fn awaited(&self, first: &Unit, ids: &[UnitId]) -> bool {
+        let at = first.pos();
+        if !first.planned || first.party == 0 {
+            return false;
+        }
+        let comes = |u: &Unit| {
+            u.planned
+                && u.party == first.party
+                && u.pos() != at
+                && self.goes(u)
+                && u.route.contains(&at)
+                && !ids.contains(&u.id())
+        };
+        self.map.units().of_side(first.side()).any(comes)
+    }
+
+    /// The step of a stack of `side` (`ids`) to `hex` is up, at the moment
+    /// of `play`: if that is still its step as things stand now, it is
+    /// there: a move, or, onto a hex another side stands on, an attack (a
+    /// battle ends a plan, and uses up the attackers' movement). If it is
+    /// not (the hex is its own side's now, and full; its patrol has other
+    /// prey), it looks again from now. A stack that cannot make the step
+    /// after all stops for the round. What happened.
+    fn arrive(&mut self, side: Side, ids: &[UnitId], hex: Hex, play: &PlayOut) -> Vec<Event> {
+        let Some(first) = ids.first().and_then(|id| self.map.units().get(*id)) else { return Vec::new() };
+        let (at, patrol, way) =
+            (first.pos(), first.patrol.clone().filter(|_| first.route.is_empty()), first.way.clone());
+        let look = match &patrol {
+            // (A rest is over.)
+            _ if hex == at => Look::Wait,
+            Some(_) => self.patrol_look(side, ids),
+            None => self.look(side, ids, play.hasty),
+        };
+        let mut events = Vec::new();
+        let (mut halt, mut came) = (false, Vec::new());
+        match look {
+            Look::Go { hex: next, passed, coming, .. } if next == hex => {
+                let was: Vec<(UnitId, MarchState)> = coming
+                    .iter()
+                    .filter_map(|id| self.map.units().get(*id))
+                    .map(|u| (u.id(), MarchState::of(u)))
+                    .collect();
+                match self.move_units(side, &coming, hex) {
+                    Ok(moved) => {
+                        let battled = moved.iter().any(|e| matches!(e, Event::Battle { .. }));
+                        let took = moved.iter().any(|e| matches!(e, Event::Taken { .. }));
+                        events.extend(moved);
+                        // The move ended their orders: they keep them (a
+                        // plan, until it has fought or taken a city;
+                        // marauders maraud on, and wait for their player's
+                        // word after a battle; a patrol as ever).
+                        for (id, was) in was {
+                            let Some(unit) = self.map.unit_mut(id) else { continue };
+                            let there = unit.pos() == hex;
+                            if was.patrol.is_some() {
+                                (unit.patrol, unit.stalled, unit.moved) = (was.patrol, false, false);
+                                unit.fought |= battled;
+                            } else if !(was.planned && (battled || took)) {
+                                (unit.route, unit.bound) = (was.route, was.bound);
+                                (unit.planned, unit.party) = (was.planned, was.party);
+                                unit.way = if there { way[passed.min(way.len())..].to_vec() } else { way.clone() };
+                            }
+                            if was.marauding {
+                                (unit.marauding, unit.fought) = (true, battled || was.fought);
+                            }
+                        }
+                        came = coming;
+                    }
+                    Err(_) => halt = true,
                 }
             }
-            stepped.extend(coming);
-            break;
+            Look::Stop => halt = true,
+            _ => {}
+        }
+        for id in ids {
+            if let Some(unit) = self.map.unit_mut(*id) {
+                (unit.step, unit.clock) = (None, unit.clock.max(play.now));
+                unit.halted |= halt;
+            }
+        }
+        if patrol.is_none() {
+            events.extend(self.stops(side, &came));
         }
         events
     }
@@ -442,88 +930,44 @@ impl Game {
     pub fn ways_this_round(&self, side: Side) -> Vec<Hex> {
         let sight = self.sight(side);
         let mut hexes: Vec<Hex> = Vec::new();
-        for (patrols, ids) in self.stacks_going(side) {
-            let Some(first) = ids.first().and_then(|id| self.map.units().get(*id)) else { continue };
-            let to = if patrols { first.patrol.as_ref().map(|p| p.target()) } else { first.goto() };
+        let mut seen: Vec<UnitId> = Vec::new();
+        for unit in self.map.units().of_side(side).filter(|u| self.goes(u)) {
+            if seen.contains(&unit.id()) {
+                continue;
+            }
+            let ids = self.stack_of(unit);
+            seen.extend(ids.iter().copied());
+            let patrols = unit.route.is_empty();
+            let to = if patrols { unit.patrol.as_ref().map(|p| p.target()) } else { unit.goto() };
             let Some(to) = to else { continue };
             // (A march's later stops too.)
-            let stops: Vec<Hex> = if patrols { vec![to] } else { first.route.clone() };
+            let stops: Vec<Hex> = if patrols { vec![to] } else { unit.route.clone() };
             let Ok(group) = self.group(&ids) else { continue };
             let Some((lead, table)) = group.lead(&self.map) else { continue };
-            let way = self.way_toward(lead, table, to, &sight).unwrap_or_default();
-            let near = way.into_iter().take_while(|(_, cost)| *cost <= lead.movement).map(|(hex, _)| hex);
-            for hex in near.chain(stops) {
+            // A plan's way is the one it was given; a march's and a
+            // patrol's, as it would be found now.
+            let way: Vec<Hex> = if unit.way.is_empty() {
+                self.way_toward(lead, table, to, &sight).unwrap_or_default().into_iter().map(|(hex, _)| hex).collect()
+            } else {
+                unit.way.clone()
+            };
+            // As far as the one with the fewest points gets: with what the
+            // way to a stop where it joins others leaves it.
+            let mut near = 0;
+            for i in 0..way.len() {
+                let cost = self.costs_along(&[(lead.id(), table)], unit.pos(), &way[..=i]);
+                if cost.first().copied().flatten().is_none_or(|cost| cost > lead.movement) {
+                    break;
+                }
+                near = i + 1;
+            }
+            for hex in way[..near].iter().copied().chain(stops) {
                 if !hexes.contains(&hex) {
                     hexes.push(hex);
                 }
             }
         }
         hexes
-    }
-
-    /// This tick's step of `side`'s stack `ids` along `way` (each hex and
-    /// what it costs to get there), with `movement` to pay for it: the next
-    /// hex; or, past hexes where the side's own units leave no room for
-    /// them, the first with room (a move passes through its side's stacks:
-    /// the review, 2026-11-22, two stacks of a side stopped face to face on
-    /// a road, and an army never got through its own city). None if it
-    /// cannot pay for it, or there is none.
-    pub(super) fn step_along(&self, side: Side, ids: &[UnitId], way: &[(Hex, u32)], movement: u32) -> Option<Hex> {
-        way.iter()
-            .take_while(|(_, cost)| *cost <= movement)
-            .find(|(hex, _)| hostile(&self.map, side, *hex) || self.fits(*hex, ids))
-            .map(|(hex, _)| *hex)
-    }
-
-    /// True if others of `side`, not among `ids`, are sent against `target`
-    /// too (a plan that ends there), are not yet beside it, and can still
-    /// get there this round: an attack waits for them (the review,
-    /// 2026-11-22: one order to attack from two hexes was two attacks, the
-    /// nearer stack alone first; the agents order every joint attack so).
-    fn company_coming(&self, side: Side, target: Hex, ids: &[UnitId], sight: &Sight) -> bool {
-        let map = &self.map;
-        map.units().of_side(side).any(|u| {
-            u.planned
-                && u.movement > 0
-                && map.contains(u.pos())
-                && u.route.as_slice() == [target]
-                && !ids.contains(&u.id())
-                && u.pos().distance(target) > 1
-                && self.known_range(u, sight).cost(target).is_some()
-        })
-    }
-
-    /// Who attacks `target` with `ids` (a stack of `side`'s that steps into
-    /// it now): the side's other stacks beside it whose plan ends there,
-    /// that have not stepped this tick and can attack it now, a stack at a
-    /// time for as long as all of them make one attack (`Game::fits`).
-    fn company(&self, side: Side, target: Hex, ids: Vec<UnitId>, stepped: &[UnitId], sight: &Sight) -> Vec<UnitId> {
-        let map = &self.map;
-        let mut stacks: Vec<(Hex, Vec<UnitId>)> = Vec::new();
-        let beside = |u: &&Unit| {
-            map.contains(u.pos())
-                && u.pos().distance(target) == 1
-                && u.planned
-                && u.route.as_slice() == [target]
-                && !ids.contains(&u.id())
-                && !stepped.contains(&u.id())
-        };
-        for unit in map.units().of_side(side).filter(beside) {
-            match stacks.iter_mut().find(|(at, _)| *at == unit.pos()) {
-                Some((_, stack)) => stack.push(unit.id()),
-                None => stacks.push((unit.pos(), vec![unit.id()])),
-            }
-        }
-        let mut all = ids;
-        for (_, stack) in stacks {
-            let Ok(group) = self.group(&stack) else { continue };
-            let coming = self.coming(&group, target, sight);
-            let with: Vec<UnitId> = all.iter().chain(&coming).copied().collect();
-            if !coming.is_empty() && self.group(&with).is_ok() && self.fits(Hex::new(u16::MAX, u16::MAX), &with) {
-                all = with;
-            }
-        }
-        all
     }
 
     /// The round has played out: its plans end; the standing orders use
@@ -535,6 +979,7 @@ impl Game {
     fn close_round(&mut self) -> Vec<Event> {
         let round = self.round;
         let mut all = Vec::new();
+        self.rest(true);
         let planned: Vec<UnitId> = self.map.units().iter().filter(|u| u.planned).map(|u| u.id()).collect();
         for id in planned {
             if let Some(unit) = self.map.unit_mut(id) {

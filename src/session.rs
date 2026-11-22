@@ -349,6 +349,10 @@ fn help_section() -> Vec<HelpSection> {
                 ("T", "Tasks: what you have left to do, stacks with no orders and idle cities first"),
                 ("L", "Your log: your battles, who won and who died, the cities you took and lost"),
                 ("Watch, in the log", "A battle you fought, played out again: both stacks, a hit at a time"),
+                (
+                    "Enter, on a battle shown",
+                    "End it, then close its window (Close and Esc close it too): what happens next waits for that",
+                ),
                 ("H", "Your capital (in hotseat, each turn starts there)"),
             ],
         ),
@@ -521,9 +525,8 @@ pub struct Session {
     given: usize,
     pass_due: bool,
     /// The battles told by the order that fought them (`tell_battle`), not
-    /// to be told again; and when the battle in the window was over.
+    /// to be told again.
     told: Vec<usize>,
-    battle_over_at: Option<u64>,
     /// In rounds: the ways the person's stacks take as the round plays out,
     /// as things stand (outlined on the map), and what they were worked out
     /// for (the map's revision, whose they are).
@@ -546,9 +549,6 @@ pub struct Session {
     looked: Option<[f32; 2]>,
 }
 
-/// How long a battle's window shows how it ended before the computer goes
-/// on, in ms.
-const BATTLE_LINGER_MS: u64 = 1500;
 /// How many orders the computer gives in a frame, at most, looking for one
 /// to show.
 const STEPS_PER_FRAME: usize = 25;
@@ -688,7 +688,6 @@ impl Session {
             given: 0,
             pass_due: false,
             told: Vec::new(),
-            battle_over_at: None,
             plans: Vec::new(),
             plans_of: None,
             round_shown: Vec::new(),
@@ -1328,11 +1327,29 @@ impl Session {
     /// Only the person at the screen's own units are shown in full: of
     /// another side's stack, how many there are (the hex's heading) and no
     /// more.
+    /// In rounds, while the person gives their orders: after them, the
+    /// units sent to join them there (`Game::joining`), to be sent on with
+    /// them.
     fn stack_units(&self) -> Vec<UnitId> {
-        let map = &self.screen.game.map;
+        let game = &self.screen.game;
+        let map = &game.map;
         let viewer = self.seer();
         let mine = |id: &UnitId| map.units().get(*id).is_some_and(|u| viewer == Side::Grey || u.side() == viewer);
-        map.units_at(self.shown).iter().copied().filter(mine).collect()
+        let mut units: Vec<UnitId> = map.units_at(self.shown).iter().copied().filter(mine).collect();
+        if !units.is_empty() {
+            units.extend(self.joining_here());
+        }
+        units
+    }
+
+    /// In rounds, while the person gives their orders: the units of theirs
+    /// sent to the hex the panels are about, on their way there.
+    fn joining_here(&self) -> Vec<UnitId> {
+        let game = &self.screen.game;
+        if !game.rounds() || game.playing_out() || !self.can_act() {
+            return Vec::new();
+        }
+        game.joining(game.player(), self.shown)
     }
 
     /// Work out what the person at the screen knows, if the map, the round
@@ -1424,18 +1441,10 @@ impl Session {
         if shown.iter().any(|s| matches!(s, Shown::Going(_))) {
             self.shown_sight = None;
         }
-        // In rounds, a tick of the round that plays out: its stacks go at
-        // the same moment (those between two battles, together).
+        // In rounds, a beat of the round that plays out: its stacks go at
+        // the same time (those between two battles, together).
         if self.together {
-            let mut ticks: Vec<Shown> = Vec::new();
-            for next in shown {
-                match (ticks.last_mut(), next) {
-                    (Some(Shown::Together(all)), Shown::Going(going)) => all.push(going),
-                    (_, Shown::Going(going)) => ticks.push(Shown::Together(vec![going])),
-                    (_, other) => ticks.push(other),
-                }
-            }
-            shown = ticks;
+            shown = crate::showing::beats(shown);
         }
         for shown in shown {
             self.showing.push(shown, before);
@@ -1471,14 +1480,13 @@ impl Session {
                 }
                 Now::Battle(record, first) => {
                     if first {
-                        self.battle_over_at = None;
                         self.open_battle(record);
                         if let Some(at) = self.screen.game.fight(record).map(|f| f.at) {
                             self.bring_into_view(&[at]);
                         }
                         break;
                     }
-                    if self.battle_playing(now_ms) {
+                    if self.battle_holds() {
                         break;
                     }
                     self.showing.battle_over();
@@ -1499,15 +1507,14 @@ impl Session {
         self.screen.redraw_minimap();
     }
 
-    /// True while the battle in the window is being played out, or has just
-    /// been (its end shows a moment before the game goes on).
-    fn battle_playing(&mut self, now_ms: u64) -> bool {
-        let Some(battle) = self.battle.as_ref().filter(|b| b.is_open(&self.screen.ui)) else { return false };
-        if !battle.done() {
-            return true;
-        }
-        let over = *self.battle_over_at.get_or_insert(now_ms);
-        now_ms < over + BATTLE_LINGER_MS
+    /// True while the battle shown is in its window: being played out, or
+    /// over and still open. What happens next waits until the person
+    /// closes it (the owner's word, 2026-11-22: "the advancement should
+    /// stop, resolve the combat, and let the user dismiss the box ... before
+    /// moving on. The user can miss details otherwise"): Close, Enter or
+    /// Esc.
+    fn battle_holds(&self) -> bool {
+        self.battle.as_ref().is_some_and(|b| b.is_open(&self.screen.ui))
     }
 
     /// Bring the hexes of `way` the person sees into view, if they are not
@@ -1633,12 +1640,20 @@ impl Session {
         // The units of the selected hex in their boxes: each one's icon and
         // numbers, and which of them are selected.
         let ids = self.boxes();
+        // (One on its way to join the stack: marked.)
+        let joining = self.joining_here();
         let units: Vec<Option<(IconKey, String)>> = ids
             .iter()
             .map(|id| {
                 let unit = map.units().get((*id)?)?;
                 let image = map.units().kind_of(unit).map_or(DEFAULT_UNIT_IMAGE, |kind| kind.image.as_str());
-                Some(((image.to_string(), unit.side(), unit.level, unit.defending), info::unit_numbers(unit)))
+                let numbers = info::unit_numbers(unit);
+                // (Shorter, to fit its box with the mark.)
+                let numbers = match joining.contains(&unit.id()) {
+                    true => format!("+ {}", numbers.split('/').next().unwrap_or(&numbers)),
+                    false => numbers,
+                };
+                Some(((image.to_string(), unit.side(), unit.level, unit.defending), numbers))
             })
             .collect();
         let chosen: Vec<bool> = ids.iter().map(|id| id.is_some_and(|id| game.selection().contains(&id))).collect();
@@ -1688,6 +1703,15 @@ impl Session {
                 }
             }
             _ if self.notice.is_some() => self.notice.clone().unwrap_or_default(),
+            // In rounds: with units on their way to join them.
+            Some(_) if game.selection().iter().any(|id| joining.contains(id)) => {
+                let coming = game.selection().iter().filter(|id| joining.contains(id)).count();
+                format!(
+                    "{} units selected, {coming} of them (+) on their way here: sent on, they go as one stack \
+                     (click one to leave it out).",
+                    game.selection().len()
+                )
+            }
             Some(unit) if unit.on_duty() => info::duty_line(map, unit, game.selection().len()),
             Some(unit) if !unit.route.is_empty() && unit.planned => {
                 format!(
@@ -1717,7 +1741,14 @@ impl Session {
         // the sidebar can build, whose button it is on.
         let hovered = self.screen.ui.hovered();
         let tipped = (0..=STACK_SLOTS).find(|i| Some(self.slot(*i).button) == hovered);
-        let unit_tip = tipped.and_then(|i| map.units().get(ids[i]?)).map(|unit| info::unit_details(map, unit));
+        let unit_tip = tipped.and_then(|i| map.units().get(ids[i]?)).map(|unit| {
+            let mut lines = info::unit_details(map, unit);
+            if joining.contains(&unit.id()) {
+                let at = unit.pos();
+                lines.push(format!("On its way here from row {}, column {}: it joins this stack.", at.row, at.col));
+            }
+            lines
+        });
         let city_tip = self.city_panel.as_ref().and_then(|panel| {
             let (button, what) = panel.hovered(&self.screen.ui)?;
             let city = map.cities().get(panel.city())?;
@@ -2319,6 +2350,7 @@ impl Session {
             n => (format!("These {n} units are"), "them", "Their", "they go"),
         };
         let place = info::place(&self.screen.game.map, hex);
+        let rounds = self.screen.game.rounds();
         let ui = &mut self.screen.ui;
         let title = if join.is_some() { "Join, or take that stack?" } else { "New orders?" };
         let parts = build::window(ui, root, MISSION_ASK_ID, title);
@@ -2334,6 +2366,12 @@ impl Session {
             }
             None => format!("Send {them}"),
         };
+        // (In rounds nothing moves yet: what joining is for.)
+        if rounds && matches!(join, Some((None, _))) {
+            let text = "They join it as the round plays out. Send that stack on afterwards and it waits for them: \
+                        they go, and fight, as one.";
+            build::text(ui, parts.content, text);
+        }
         match (mission, join) {
             (Some(mission), Some(_)) => {
                 build::text(ui, parts.content, &format!("{who} {mission}: that ends if {they_go}."));
@@ -2762,12 +2800,32 @@ impl Session {
             // does, unasked.)
             // In rounds, a plan: nothing has moved.
             SelectOutcome::Moved { .. } if self.screen.game.rounds() => {
+                let game = &self.screen.game;
+                let side = game.player();
+                let stands =
+                    |id: &UnitId| !sent.contains(id) && game.map.units().get(*id).is_some_and(|u| u.side() == side);
+                let joins = game.map.units_at(hex).iter().any(stands) && !game.joining(side, hex).is_empty();
+                if joins {
+                    // Onto a stack of their own: they join it, and the
+                    // stack is selected with them, to be sent on as one
+                    // (the owner's word, 2026-11-22: "order one stack to
+                    // another then combine them and order them as a new
+                    // stack").
+                    self.screen.game.deselect();
+                    self.screen.game.select_hex(hex);
+                    self.shown = hex;
+                    self.auto_selection.clear();
+                    self.notice = Some(
+                        "Planned: they join this stack as the round plays out. Sent on, it waits for them \
+                         (Ctrl+Z: not after all)."
+                            .to_string(),
+                    );
+                    return;
+                }
                 self.notice = Some(
-                    "Planned: they go there as the round plays out, and attack who stands there (Ctrl+Z: not after \
-                     all)."
+                    "Planned: they go there as the round plays out, fighting who they meet (Ctrl+Z: not after all)."
                         .to_string(),
                 );
-                let game = &self.screen.game;
                 let at = sent.iter().find_map(|id| game.map.units().get(*id)).map_or(hex, |u| u.pos());
                 self.shown = at;
                 self.after_move(at, &sent);
@@ -3924,6 +3982,20 @@ impl Session {
                 }
             }
             self.screen.navigate(command);
+            // While a battle shown holds what happens next, Enter ends it
+            // if it is still being played out, and closes it once it is
+            // over.
+            if command == MapCommand::Key(MapKey::Enter) && self.battle_holds() && !self.showing.is_idle() {
+                match self.battle.take() {
+                    Some(mut battle) if !battle.done() => {
+                        battle.skip(&mut self.screen.ui);
+                        self.battle = Some(battle);
+                    }
+                    Some(battle) => battle.close(&mut self.screen.ui),
+                    None => {}
+                }
+                continue;
+            }
             // While a window asks about a stack's orders, Enter is its first
             // button.
             if command == MapCommand::Key(MapKey::Enter) && self.asks_mission() {

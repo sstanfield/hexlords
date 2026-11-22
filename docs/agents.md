@@ -209,13 +209,19 @@ end
 - `mode rounds`: only in a game played in rounds (`--mode rounds`,
   `docs/gameplay.md`, "Rounds"): the program's orders to move are plans
   (nothing moves until every side has given its orders; then the round
-  plays out, every stack a hex at a time), so the game it is shown is the
-  one at the round's start, whatever it has ordered. In turns the line is
+  plays out on a clock: each stack goes the way it was given, the faster
+  ones are there first, and a stack that gets to a hex another side
+  stands on attacks it, wherever it was going), so the game it is shown
+  is the one at the round's start, whatever it has ordered. A `move`
+  naming units on several hexes is one stack: they gather first on the
+  one of their hexes nearest to where they go, and go on together; to
+  have stacks attack one after the other, order each by itself. In turns
+  the line is
   not there. In rounds `toward` may name land the side has never seen
   (total fog of war): the units set off toward it and find their way as
   they come to see more. With `--order drawn` the `order` line is the
-  order the orders are given in; who steps first as the round plays out
-  is drawn after them.
+  order the orders are given in; who goes first of stacks that get
+  somewhere at the same moment is drawn after them.
 - `order`: this round's order of turns.
 - `battles <lines, strength or dice> chance <0 to 10>`: how the game's
   battles go (`docs/gameplay.md`, "Fighting"; on the dice the chance plays
