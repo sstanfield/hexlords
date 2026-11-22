@@ -182,8 +182,12 @@ its stack 1 stronger (or as much as its kind says). A battle is played out
 in a window: both stacks, a card for each unit with what it fights with and
 where its bonuses come from, and then the exchanges, a few a second, the two
 that fight lit, the one hit in red with an X, the dead dimmed (Skip, Watch
-again). A battle the others fight against you is shown as it happens, and
-the game waits until you close its window (Close, Enter or Esc). Every battle
+again). A battle the others fight against you is shown as it happens, its
+hex ringed and flashing, and
+the game waits until you close its window (Close, Enter or Esc). What
+happened since your last turn can be looked at again: Replay (W) under the
+turn's button plays it, and the slider beside it goes back to any moment of
+it, where the map can be looked over but no orders given. Every battle
 you fought, attacking or attacked, can be watched again
 from your log for a few rounds (its Watch button). While the others play,
 your log is open and fills as they go; Start turn begins yours. When the

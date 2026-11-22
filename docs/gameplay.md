@@ -590,6 +590,28 @@ changed.
   the map moved if need be). With battles told in a line (Options) the map
   goes to the hex all the same and it flashes a moment before the game
   goes on.
+- **What happened, again** (the owner, 2026-11-22: "It is also hard to
+  follow all the action but this is the nature of everything happening at
+  once. I am thinking that a 'replay' feature of the previous turn would
+  help. Maybe a slider on the side bar that would allow the user to 'go
+  back' in time and examine movement, battles, etc. You can not give
+  orders when 'in the past'"). The screen keeps what happened since the
+  person's last turn (`replay::Replay`: the game as it was, and what was
+  done to it since): in rounds the round that played out, a beat a step;
+  in turns everything from the end of their turn to the start of their
+  next (their own marches as it ended, the others' turns), an order a
+  step. Under the turn's button, once their turn has started: **Replay**
+  (W) plays it again from its start, every move and battle shown as it
+  was (pressed again, it stops there); the **slider** beside it goes back
+  to any step of it (all the way right: now). In the past the map and the
+  panels are the game as it was then: stacks and cities can be looked at,
+  nothing can be ordered (the copy takes no orders: `Game::freeze`), the
+  turn's button reads "Back to now" (Esc goes back too), and the game as
+  it is, the orders already given this turn with it, is as it was left.
+  (It works because the rules are deterministic: the steps done again to
+  a copy make the same game. The orders are kept by the game itself,
+  `Game::record`; a saved game can be made of the same record: the setup,
+  the map and the orders from the start. Not built.)
 - **Hotseat**: each person plans in turn behind the hiding screen; the
   last of them watches the round play out, and each of the others is
   shown it as their next orders begin, once their log is out of the way

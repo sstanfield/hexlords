@@ -57,6 +57,7 @@ pub mod planner;
 pub mod platform;
 pub mod rally_window;
 pub mod render;
+pub mod replay;
 pub mod screen;
 pub mod script;
 pub mod session;

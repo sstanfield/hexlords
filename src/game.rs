@@ -598,6 +598,13 @@ pub struct Game {
     /// and how many plans have been made this round (`Unit::party`).
     playing: Option<rounds::PlayOut>,
     parties: u32,
+    /// The orders carried out since they were last taken (`take_orders`),
+    /// while they are kept (`record`): with the game as it was before
+    /// them, they are what happened since (a seed and a set of orders
+    /// always make the same game). `None`: not kept.
+    journal: Option<Vec<Order>>,
+    /// It is a copy of the game as it was (`freeze`): it takes no orders.
+    frozen: bool,
 }
 
 impl Game {
@@ -638,6 +645,8 @@ impl Game {
             winner: None,
             playing: None,
             parties: 0,
+            journal: None,
+            frozen: false,
             undo: None,
             undo_mark: 0,
             history: Vec::new(),
@@ -773,6 +782,19 @@ impl Game {
     /// both come here. (In rounds, an order to move is a plan, carried out
     /// when the round plays out: `game::rounds`.)
     pub fn apply(&mut self, order: Order) -> Result<Vec<Event>, String> {
+        if self.frozen {
+            return Err("that is how it was: orders are given in the game as it is now".to_string());
+        }
+        // (Kept, if it is carried out: `record`.)
+        let kept = self.journal.is_some().then(|| order.clone());
+        let done = self.obey(order);
+        if let (Ok(_), Some(order), Some(journal)) = (&done, kept, &mut self.journal) {
+            journal.push(order);
+        }
+        done
+    }
+
+    fn obey(&mut self, order: Order) -> Result<Vec<Event>, String> {
         if let Some(side) = self.winner {
             return Err(format!("the game is over: {} won", side_name(side)));
         }
@@ -857,6 +879,37 @@ impl Game {
         if on != self.watched.is_some() {
             self.watched = on.then(Vec::new);
         }
+    }
+
+    /// Keep the orders carried out from now on (`take_orders`), or no
+    /// longer. With a copy of the game as it is now, they are a record of
+    /// what happens next: carried out on the copy in their order (and, in
+    /// rounds, `play_out` after the last side's `EndTurn` until the round
+    /// has played out), they make the same game again. For a screen that
+    /// shows a turn again; a saved game can be made of the same.
+    pub fn record(&mut self, on: bool) {
+        if on != self.journal.is_some() {
+            self.journal = on.then(Vec::new);
+        }
+    }
+
+    /// The orders carried out since this was last asked, while they are
+    /// kept (`record`), in their order.
+    pub fn take_orders(&mut self) -> Vec<Order> {
+        self.journal.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
+    /// The game is a copy of how it was (or no longer): it takes no orders
+    /// (`apply` refuses them), though it can still be looked at, selections
+    /// and all. A round that was playing out in it can still be played on
+    /// (`play_out`): that is no order.
+    pub fn freeze(&mut self, on: bool) {
+        self.frozen = on;
+    }
+
+    /// True if the game is a copy of how it was (`freeze`).
+    pub fn frozen(&self) -> bool {
+        self.frozen
     }
 
     /// What has happened since this was last asked, while watched (`watch`):
@@ -2869,7 +2922,7 @@ impl Game {
     pub fn view_for(&self, side: Side) -> Game {
         let mut view = self.clone();
         (view.history, view.fights, view.fought, view.undo) = (Vec::new(), Vec::new(), Vec::new(), None);
-        view.watched = None;
+        (view.watched, view.journal, view.frozen) = (None, None, false);
         for (i, ((memory, trail), (held, explored))) in view
             .memory
             .iter_mut()

@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use turbo_ferret::widgets::ImageWidget;
+use turbo_ferret::widgets::{ImageWidget, Slider};
 use turbo_ferret::{ImageHandle, LayoutParams, Modifiers, Point, Rect, Size, TbId, Visibility, WidgetId};
 
 use crate::agents::{self, Agents};
@@ -42,6 +42,7 @@ use crate::patrol_window::{self, PatrolClick, PatrolWindow};
 use crate::platform::WEB;
 use crate::rally_window::{self, RallyClick, RallyWindow};
 use crate::render::{AssetDirs, BATTLE_BORDER, BATTLE_FLASH, OWN_WAY_BORDER, SELECTED_BORDER, coin_icon, unit_icon};
+use crate::replay::{Replay, Step};
 use crate::screen::{FULLSCREEN_ID, HELP_KEYS_ID, MapScreen, QUIT_ID, Scene, ZOOM_IN_ID, ZOOM_OUT_ID};
 use crate::setup::Controller;
 use crate::showing::{Going, Now, Showing, Shown};
@@ -108,6 +109,9 @@ pub const ALL_CITIES_ID: &str = "all_cities";
 /// Take back the last order; go to the next stack that can move, the next
 /// city.
 pub const UNDO_ID: &str = "undo";
+/// The sidebar's Replay button and the slider beside it (`replay::Replay`).
+pub const REPLAY_ID: &str = "replay";
+pub const REPLAY_SLIDER_ID: &str = "replay_slider";
 pub const NEXT_STACK_ID: &str = "next_stack";
 pub const NEXT_CITY_ID: &str = "next_city";
 /// How long the computer takes over a turn at least, in ms, so that the log
@@ -239,6 +243,17 @@ type IconKey = (String, Side, u8, bool);
 /// person who did not watch saw after it.
 type RoundTick = (Vec<(Option<usize>, Event)>, Vec<(Side, Sight)>);
 
+/// The game as it is, put by while the screen shows how it was
+/// (`Session::go_back`): whose record is shown (a person's since their
+/// last turn; `None`: the round that played out, everyone's), how many of
+/// its steps have been done, and whether it is being played on.
+struct Past {
+    present: Game,
+    whose: Option<Side>,
+    at: usize,
+    playing: bool,
+}
+
 /// A unit's place in the stack: a button with the unit's icon and its numbers.
 struct Slot {
     button: WidgetId,
@@ -358,6 +373,7 @@ fn help_section() -> Vec<HelpSection> {
                 ),
                 ("H", "Your capital (in hotseat, each turn starts there)"),
                 ("V", "In rounds: outline all your stacks' orders, or the selected stack's only"),
+                ("W,  or  Replay", "What happened since your last turn, again (its slider: back into it; Esc: now)"),
             ],
         ),
     ]
@@ -405,6 +421,9 @@ pub struct Session {
     sidebar: WidgetId,
     turn_row: WidgetId,
     undo: WidgetId,
+    replay_row: WidgetId,
+    replay_button: Line,
+    replay_slider: WidgetId,
     go_to: WidgetId,
     done: WidgetId,
     /// What the next click on the map (or Enter) picks, instead of choosing
@@ -558,6 +577,17 @@ pub struct Session {
     /// In rounds: where the person was looking when their orders were done
     /// (the map goes back there once the round has played out).
     looked: Option<[f32; 2]>,
+    /// What happened since each person here last gave orders, to be looked
+    /// at again (`replay`): theirs (in turns: from the end of their turn
+    /// to the start of their next), or everyone's (`None`; in rounds: the
+    /// round that played out). And those still being kept.
+    replays: Vec<(Option<Side>, Replay)>,
+    recording: Vec<(Option<Side>, Replay)>,
+    /// While the screen shows how the game was: the game as it is.
+    past: Option<Box<Past>>,
+    /// Where the replay's slider was put last (anywhere else: the person
+    /// moved it).
+    slider_at: usize,
 }
 
 /// How long the hex a battle is fought on takes to flash on and off, in ms.
@@ -644,6 +674,9 @@ impl Session {
             sidebar: find(&screen, "main_sidebar")?,
             turn_row: find(&screen, "turn_row")?,
             undo: find(&screen, UNDO_ID)?,
+            replay_row: find(&screen, "replay_row")?,
+            replay_button: Line::find(&screen, REPLAY_ID)?,
+            replay_slider: find(&screen, REPLAY_SLIDER_ID)?,
             go_to: find(&screen, GO_TO_ID)?,
             done: find(&screen, DONE_ID)?,
             picking: None,
@@ -712,10 +745,15 @@ impl Session {
             replay_after: None,
             together: false,
             looked: None,
+            replays: Vec::new(),
+            recording: Vec::new(),
+            past: None,
+            slider_at: 0,
             screen,
         };
         // What happens is kept for the screen to show.
         session.screen.game.watch(true);
+        session.screen.game.record(true);
         session.apply_layout_sizes();
         // The computer's turns that come before the first person's are
         // played by the frames; or the first person is handed the game.
@@ -731,7 +769,8 @@ impl Session {
     /// `pass_due`: the screen is still the last person's).
     fn persons_turn(&self) -> bool {
         let game = &self.screen.game;
-        game.controller(game.player()) == Some(&Controller::Person) && !self.pass_due
+        // (The past is nobody's turn: it is looked at.)
+        game.controller(game.player()) == Some(&Controller::Person) && !self.pass_due && self.past.is_none()
     }
 
     /// True if the person at the screen can give orders now: their turn
@@ -752,6 +791,13 @@ impl Session {
         }
         (self.picking, self.refused) = (None, None);
         let side = self.screen.game.player();
+        // In turns: what happens from here to their next turn is kept, to
+        // be looked at again then. (In rounds: the round, as it plays out.)
+        self.take_orders();
+        self.recording.retain(|(whose, _)| *whose != Some(side));
+        if !self.screen.game.rounds() {
+            self.recording.push((Some(side), Replay::begin(&self.screen.game)));
+        }
         let length = self.screen.game.history().len();
         match self.seen.iter_mut().find(|(s, _)| *s == side) {
             Some((_, seen)) => *seen = length,
@@ -815,6 +861,11 @@ impl Session {
     /// asks while stacks or cities wait for orders or the gold will not pay
     /// the upkeep.
     fn turn_button(&mut self) {
+        // (In the past the button goes back to now.)
+        if self.past.is_some() {
+            self.back_to_now();
+            return;
+        }
         if self.between {
             self.start_turn();
             return;
@@ -963,9 +1014,19 @@ impl Session {
             self.round_shown.clear();
             self.round_seen = self.last_person.into_iter().collect();
             self.round_before = self.others_sights();
+            // The round is kept, a beat at a time, to be looked at again.
+            self.take_orders();
+            self.recording.retain(|(whose, _)| whose.is_some());
+            self.recording.push((None, Replay::begin(&self.screen.game)));
         }
         while self.screen.game.playing_out() {
             self.screen.game.play_out();
+            if let Some((_, replay)) = self.recording.iter_mut().find(|(whose, _)| whose.is_none()) {
+                replay.push(Step::Beat);
+            }
+            if !self.screen.game.playing_out() {
+                self.keep_replay(None);
+            }
             let happened = self.screen.game.take_happened();
             let sights = self.others_sights();
             self.round_shown.push((happened.clone(), sights));
@@ -1028,8 +1089,11 @@ impl Session {
     /// nobody here is in the game): what the frames do a turn at a time. For
     /// tests and scripts.
     pub fn wait_for_turn(&mut self) {
-        // (Nothing is shown: what was being shown is where it went.)
+        // (Nothing is shown: what was being shown is where it went. Nor is
+        // a round played so kept to be looked at again.)
+        self.back_to_now();
         self.stop_showing();
+        self.recording.retain(|(whose, _)| whose.is_some());
         for _ in 0..self.screen.game.order().len() + 1 {
             // (In rounds: the round plays out, all of it.)
             if self.screen.game.playing_out() {
@@ -1130,6 +1194,9 @@ impl Session {
         }
         if person {
             self.last_person = Some(side);
+            // What happened since their last turn is theirs to look at
+            // again (turns).
+            self.keep_replay(Some(side));
         }
         // The panels are about the hex the cursor is on.
         self.shown = self.screen.game.map.cursor;
@@ -1307,6 +1374,12 @@ impl Session {
         // would make it only as tall as they are).
         ui.set_layout_params(self.sidebar, Some(LayoutParams { max_h: Some(h), ..narrow }));
         ui.set_layout_params(self.turn_row, Some(narrow));
+        ui.set_layout_params(self.replay_row, Some(narrow));
+        // (The replay's slider has what its button leaves of the row.)
+        let button_w = ui.preferred_size_free(self.replay_button.widget).pref.w;
+        let slider_h = ui.preferred_size_free(self.replay_slider).pref.h;
+        let slider_w = (side_w - button_w - 3 * spacing).max(4 * spacing);
+        ui.set_layout_params(self.replay_slider, Some(LayoutParams::fixed(slider_w, slider_h)));
         ui.set_layout_params(self.city_box, Some(narrow));
         // The panel is as tall as its lines and its slots (an empty slot keeps
         // its room), and the map has the rest.
@@ -1316,7 +1389,8 @@ impl Session {
         // The city's box has what the minimap and the turn's buttons leave
         // of the sidebar (and scrolls if the city needs more).
         let turn_h = ui.preferred_size_free(self.turn_row).pref.h;
-        let city_h = (h - minimap_h - turn_h - 2 * spacing).max(0);
+        let replay_h = ui.preferred_size_free(self.replay_row).pref.h;
+        let city_h = (h - minimap_h - turn_h - replay_h - 3 * spacing).max(0);
         ui.set_layout_params(self.city_scroll, Some(LayoutParams::fixed(side_w, city_h)));
         self.screen.set_map_sizes(Size::new(map_w, map_h), Size::new(side_w, minimap_h.min(h)));
     }
@@ -1371,8 +1445,205 @@ impl Session {
     /// or the person changed; and draw the minimap again if what it shows of
     /// it changed (the cities' holders, the land seen).
     fn see(&mut self) {
+        self.take_orders();
         let happened = self.screen.game.take_happened();
         self.see_what(happened);
+    }
+
+    /// The orders carried out since this was last done (`Game::record`) go
+    /// into what is being kept of each person's time between two turns.
+    fn take_orders(&mut self) {
+        let orders = self.screen.game.take_orders();
+        if self.past.is_some() {
+            return;
+        }
+        for (_, replay) in self.recording.iter_mut().filter(|(whose, _)| whose.is_some()) {
+            for order in &orders {
+                replay.push(Step::Order(order.clone()));
+            }
+        }
+    }
+
+    /// What was being kept for `whose` is whole: it is what they can look
+    /// at again, in place of what they could before.
+    fn keep_replay(&mut self, whose: Option<Side>) {
+        self.take_orders();
+        let Some(i) = self.recording.iter().position(|(of, _)| *of == whose) else { return };
+        let kept = self.recording.remove(i);
+        self.replays.retain(|(of, _)| *of != whose);
+        if !kept.1.is_empty() {
+            self.replays.push(kept);
+        }
+    }
+
+    /// What the person at the screen can look at again: what happened
+    /// since their last turn (in rounds: the round that played out); or,
+    /// in the past, what is being shown.
+    fn replay(&self) -> Option<&(Option<Side>, Replay)> {
+        let whose = match &self.past {
+            Some(past) => past.whose,
+            None if self.screen.game.rounds() => None,
+            None => Some(self.viewer()),
+        };
+        self.replays.iter().find(|(of, _)| *of == whose)
+    }
+
+    /// True if the person at the screen has something to look at again, and
+    /// may: in the past already, or on their turn with nothing in the way.
+    fn can_replay(&self) -> bool {
+        self.replay().is_some() && (self.past.is_some() || (self.can_act() && !self.between))
+    }
+
+    /// True while the screen shows how the game was, not how it is.
+    pub fn in_the_past(&self) -> bool {
+        self.past.is_some()
+    }
+
+    /// How many steps of what can be looked at again have been done where
+    /// the screen is (all of them: now), and how many there are.
+    pub fn replay_at(&self) -> Option<(usize, usize)> {
+        let (_, replay) = self.replay()?;
+        Some((self.past.as_ref().map_or(replay.len(), |past| past.at), replay.len()))
+    }
+
+    /// The screen shows another state of the game than it did (the past, or
+    /// the present again): what it worked out for the old one goes.
+    fn another_state(&mut self) {
+        self.showing.clear();
+        if let Some(battle) = self.battle.take() {
+            battle.close(&mut self.screen.ui);
+        }
+        (self.sight_of, self.shown_sight, self.waiting_of, self.plans_of, self.battle_mark) =
+            (None, None, None, None, None);
+        (self.picking, self.refused, self.notice) = (None, None, None);
+        self.plans.clear();
+        self.own_way.clear();
+        self.close_mission_ask();
+        self.screen.game.deselect();
+        self.screen.redraw_minimap();
+        self.see();
+        self.shown = self.screen.game.map.cursor;
+        self.refresh();
+    }
+
+    /// Go back: the screen shows the game as it was after `at` steps of
+    /// what the person can look at again (the slider; all of them: now).
+    /// The game as it is is put by; in the past everything can be looked
+    /// at, and nothing ordered.
+    pub fn go_back(&mut self, at: usize) {
+        if !self.can_replay() {
+            return;
+        }
+        let Some((whose, replay)) = self.replay() else { return };
+        if at >= replay.len() {
+            self.back_to_now();
+            return;
+        }
+        let (whose, mut state) = (*whose, replay.state(at));
+        state.map.cursor = self.screen.game.map.cursor;
+        match &mut self.past {
+            Some(past) => {
+                (past.at, past.playing) = (at, false);
+                self.screen.game = state;
+            }
+            None => {
+                let present = std::mem::replace(&mut self.screen.game, state);
+                self.past = Some(Box::new(Past { present, whose, at, playing: false }));
+            }
+        }
+        self.another_state();
+    }
+
+    /// Back to the game as it is.
+    pub fn back_to_now(&mut self) {
+        let Some(past) = self.past.take() else { return };
+        let cursor = self.screen.game.map.cursor;
+        self.screen.game = past.present;
+        self.screen.game.set_cursor(cursor);
+        self.another_state();
+    }
+
+    /// Replay (the button, W): what the person can look at again is played
+    /// from where the screen is in it (from its start, from now), every
+    /// move and battle shown as it was; pressed while it plays, it stops
+    /// there.
+    pub fn play_replay(&mut self) {
+        if !self.can_replay() {
+            return;
+        }
+        match &mut self.past {
+            Some(past) if past.playing => past.playing = false,
+            Some(past) => past.playing = true,
+            None => {
+                self.go_back(0);
+                if let Some(past) = &mut self.past {
+                    past.playing = true;
+                }
+            }
+        }
+        self.refresh();
+    }
+
+    /// The replay being played goes on a step: what happened then is shown
+    /// (the next step waits for it); after the last, back to now.
+    fn replay_step(&mut self) {
+        let Some(past) = &self.past else { return };
+        let (whose, at) = (past.whose, past.at);
+        let Some((_, replay)) = self.replays.iter().find(|(of, _)| *of == whose) else { return };
+        if at >= replay.len() {
+            self.back_to_now();
+            return;
+        }
+        let beat = replay.step(at) == Some(&Step::Beat);
+        let happened = replay.advance(&mut self.screen.game, at);
+        if let Some(past) = &mut self.past {
+            past.at = at + 1;
+        }
+        self.together = beat;
+        self.see_what(happened);
+        self.together = false;
+    }
+
+    /// What the line under the stack says in the past: where in what
+    /// happened the screen is, and how to get back.
+    fn past_line(&self) -> String {
+        let (at, steps) = self.replay_at().unwrap_or((0, 0));
+        let round = self.past.as_ref().is_some_and(|past| past.whose.is_none());
+        let what = if round { "The round as it went" } else { "The others' turns as they went" };
+        let playing = self.past.as_ref().is_some_and(|past| past.playing);
+        let then = if playing { "W stops it" } else { "W plays it on" };
+        format!("{what}, step {at} of {steps}: look, but give no orders. {then}; Esc: back to now.")
+    }
+
+    /// The replay's row in the sidebar: there when the person has something
+    /// to look at again; its button says what it does, and its slider is
+    /// where the screen is in it (moved by the person: the screen goes
+    /// there).
+    fn refresh_replay(&mut self) {
+        let shows = self.can_replay() && self.cover.is_none();
+        set_visibility(
+            &mut self.screen,
+            self.replay_row,
+            if shows { Visibility::Visible } else { Visibility::Invisible },
+        );
+        let Some((at, steps)) = self.replay_at().filter(|_| shows) else { return };
+        let label = if self.past.as_ref().is_some_and(|past| past.playing) { "Stop" } else { "Replay" };
+        self.replay_button.set(&mut self.screen, label);
+        // The slider: moved by the person since it was last put somewhere?
+        let slider = self.replay_slider;
+        let value = self.screen.ui.value(slider).as_float().round().max(0.0) as usize;
+        let limits = self.screen.ui.with_widget::<Slider, _>(slider, |w, _| w.limits());
+        let moved = value != self.slider_at && limits.is_some_and(|(_, max)| max as usize == steps);
+        if moved {
+            self.slider_at = value.min(steps);
+            self.go_back(self.slider_at);
+            return;
+        }
+        self.slider_at = at;
+        self.screen.ui.with_widget::<Slider, _>(slider, |w, cx| {
+            w.set_limits(cx, 0.0, steps as f64);
+            w.set_value_f(cx, at as f64);
+        });
     }
 
     /// As `see`, with what happened (`Game::take_happened`) already taken.
@@ -1683,6 +1954,7 @@ impl Session {
             map.units().kinds().iter().find(|k| k.commander > 0).map_or("Leader", |k| k.name.as_str()).to_string();
         // The selected unit in a line, wherever it stands; a stack in a word.
         let line = match game.selected().and_then(|id| map.units().get(id)) {
+            _ if self.past.is_some() && self.notice.is_none() => self.past_line(),
             _ if matches!(self.picking, Some(Pick::RallyPoint(_))) => {
                 let n = match self.picking {
                     Some(Pick::RallyPoint(n)) => n,
@@ -1844,6 +2116,7 @@ impl Session {
         let (person, side) = (self.persons_turn(), game.player());
         let theirs = person && game.winner().is_none();
         let label = match side {
+            _ if self.past.is_some() => "Back to now".to_string(),
             _ if game.winner().is_some() => "Game over".to_string(),
             Side::Grey if game.playing_out() => "Playing the round".to_string(),
             Side::Grey => "End turn".to_string(),
@@ -1858,8 +2131,10 @@ impl Session {
             side => format!("End {}'s turn", side_name(side)),
         };
         self.end_turn.set(&mut self.screen, &label);
-        // It is a person's to press, on their turn.
-        self.screen.ui.set_disabled(self.end_turn.widget, !theirs);
+        // It is a person's to press, on their turn (or to come back from
+        // the past).
+        self.screen.ui.set_disabled(self.end_turn.widget, !theirs && self.past.is_none());
+        self.refresh_replay();
         // The treasury of the person at the screen (none on a map without
         // sides): "34", "+40", "-32".
         let viewer = self.viewer();
@@ -2803,6 +3078,22 @@ impl Session {
     /// time with moves shown (Options), else a whole turn.
     pub fn frame(&mut self, now_ms: u64) {
         self.now = now_ms;
+        // In the past nothing goes on but what is shown of it: a replay
+        // being played, a step once the one before has been shown.
+        if self.past.is_some() {
+            self.see();
+            self.show(now_ms);
+            if self.past.as_ref().is_some_and(|past| past.playing) && self.showing.is_idle() {
+                self.replay_step();
+                self.show(now_ms);
+            }
+            if let Some(battle) = &mut self.battle {
+                battle.tick(&mut self.screen.ui, now_ms);
+            }
+            self.screen.frame(now_ms);
+            self.refresh();
+            return;
+        }
         self.see();
         self.show(now_ms);
         if self.pass_due && self.showing.is_idle() {
@@ -4020,6 +4311,7 @@ impl Session {
                 .item(TASKS_ID, "Tasks", "T", people)
                 .item(LOG_ID, "Log", "L", true)
                 .item(ORDERS_SHOWN_ID, orders_shown, "V", people && self.screen.game.rounds())
+                .item(REPLAY_ID, "Replay what happened", "W", self.can_replay())
                 .separator()
                 .item(CAPITAL_ID, "Your capital", "H", people)
                 .item(ZOOM_IN_ID, "Zoom in", "2", true)
@@ -4123,6 +4415,10 @@ impl Session {
                     // (A window that made way for the pick is back.)
                     self.come_back();
                 } else if !self.close_top_window() {
+                    // (From the past, with nothing selected: back to now.)
+                    if self.past.is_some() && self.screen.game.selected().is_none() {
+                        self.back_to_now();
+                    }
                     self.screen.game.deselect();
                 }
             }
@@ -4275,6 +4571,7 @@ impl Session {
                 }
                 RootCommand::Click(id) if id == TbId::new(TASKS_ID) => self.toggle_tasks(),
                 RootCommand::Click(id) if id == TbId::new(ORDERS_SHOWN_ID) => self.toggle_orders_shown(),
+                RootCommand::Click(id) if id == TbId::new(REPLAY_ID) => self.play_replay(),
                 RootCommand::Click(id) if id == TbId::new(OPTIONS_ID) => self.toggle_options(),
                 RootCommand::Click(id) if id == TbId::new(RALLY_POINTS_ID) => self.toggle_rally_window(),
                 RootCommand::Click(id) if id == TbId::new(rally_window::RALLY_CLOSE_ID) => {
@@ -4346,6 +4643,7 @@ impl Session {
                         'p' | 'P' => self.start_patrol(),
                         'u' | 'U' => self.toggle_maraud(),
                         'v' | 'V' => self.toggle_orders_shown(),
+                        'w' | 'W' => self.play_replay(),
                         _ => {}
                     }
                 }

@@ -47,6 +47,12 @@ TBLayout: id: main_layout, axis: y, distribution-position: left top, position: l
 			TBLayout: id: turn_row, axis: x, spacing: 5
 				TBButton: id: end_turn, text: End turn, is-focusable: 0, squeezable: 1
 				TBButton: id: undo, text: Undo, is-focusable: 0, squeezable: 1
+			# What happened since the person's last turn, to be looked at
+			# again (`replay::Replay`): Replay plays it, the slider goes back
+			# into it (all the way right: now). Session fills and hides them.
+			TBLayout: id: replay_row, axis: x, spacing: 5
+				TBButton: id: replay, text: Replay, is-focusable: 0, squeezable: 1
+				TBSlider: id: replay_slider, axis: x, min: 0, max: 1, is-focusable: 0
 			# The selected hex's city. One of the player's own: all of it, built
 			# by Session in `city_box` (`city_windows::CityPanel`: what it builds,
 			# where its new units go, a button for its window). Another's: what
