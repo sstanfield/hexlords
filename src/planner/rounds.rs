@@ -10,16 +10,11 @@
 //! because it won games against the planner playing rounds as it plays
 //! turns (`<style>/turns`; `docs/agents.md` has the numbers):
 //!
-//! - **The others' reach.** Every stack of another side it sees could be
-//!   anywhere a turn's movement takes it, at the moment its speed gets it
-//!   there ([`Foe`]). A hex one of them can be on by the time its own stack
-//!   passes, or come to once its stack stands there, is where that stack
-//!   may have to fight it.
-//! - **It does not walk into what it cannot beat.** A stack on its way to
-//!   gather, to look, to a temple or toward a city stops short of where a
-//!   stack it fears could meet it (`wary`; how much it fears is its
-//!   style's `nerve`), and one that would have nowhere better to stand
-//!   stays where it is. An attack is another matter: that, it means.
+//!
+//! - **It keeps clear of what it cannot beat** (`super::wary`, as in
+//!   turns), and here, where everyone moves at once, that is a matter of
+//!   time: a stack it fears could be on a hex of its way by the moment its
+//!   own stack passes, and it stops short of that.
 //! - **An attack arrives as one.** Each stack attacks when it gets there,
 //!   so it sends the units of one hex if they are enough, the nearest
 //!   first; units of several hexes only where the game makes one stack of
@@ -32,12 +27,11 @@
 //!   to it, it has gone where it was going: it is attacked only at odds
 //!   well above those a city is attacked at, and one near its cities is
 //!   left to come to their walls.
-//! - **It sets out sooner, and spends what it has.** Waiting is dear when
-//!   everyone moves at once: an army marches a unit smaller than in turns
-//!   (`Planner::muster`), goes to a temple only when half of it has a
-//!   blessing to get there, and its treasury is not a hoard: what it
-//!   holds pays for more units than its taxes keep, a twelfth of it a
-//!   round (`SPEND_ROUNDS`).
+//!
+//! (What it first did in rounds only, and now does in turns too, for
+//! winning there as well: marching with an army a unit smaller, going to a
+//! temple only for half of it, spending its treasury, `Planner::reserve`,
+//! and the wariness itself.)
 //!
 //! Tried and left out, for winning nothing: holding an attack back for
 //! the units of a city's holder that could be in it first; sending a
@@ -46,158 +40,16 @@
 //!
 //! Not a port: the C++ had no players.
 
-use super::{Planner, advance, daring, strongest_stack, worth};
+use super::wary::{Foe, room};
+use super::{Planner, advance, daring, strongest_stack};
 use crate::game::{Game, ROUND, Sight};
 use crate::orders::Order;
-use crate::state::{Hex, MAX_STACK, MoveRange, Side, TileType, Unit, UnitId, compute_range};
+use crate::state::{Hex, MAX_STACK, MoveRange, Side, TileType, Unit, UnitId};
 
 /// How far above the odds it attacks a city at it attacks a stack in the
 /// field, in percent: the stack may not be there any more.
 const FIELD_ODDS: u32 = 15;
-/// How much braver a long game makes it, in percent of its nerve a round
-/// after `LATE`: two that fear each other would wait for ever.
-const LATE: u32 = 40;
-const LATE_NERVE: u32 = 2;
-
-/// Over how many rounds it would spend its treasury on upkeep: in rounds
-/// its cities build what its taxes keep and a share of its gold besides
-/// (`Planner::reserve`). (Played out: 6 and 12 win alike, 20 less.)
-pub(super) const SPEND_ROUNDS: u32 = 12;
-
-/// Another side's stack it sees, and where it could be this round.
-pub(super) struct Foe {
-    at: Hex,
-    /// What its units are worth in battle (`worth`), together.
-    worth: f64,
-    /// Where the slowest of it gets with a turn's movement (and what it may
-    /// have kept), and how fast that one is.
-    range: MoveRange,
-    speed: u32,
-}
-
-impl Foe {
-    /// When it could be on `hex` at the earliest (`ROUND` is a round), if it
-    /// can get there this round.
-    fn there_by(&self, hex: Hex) -> Option<u64> {
-        if hex == self.at {
-            return Some(0);
-        }
-        self.range.cost(hex).map(|cost| u64::from(cost) * ROUND / u64::from(self.speed.max(1)))
-    }
-}
-
-/// The other sides' stacks `side` sees (not nobody's: those stay where they
-/// are), each with its reach.
-fn foes(game: &Game, side: Side) -> Vec<Foe> {
-    let map = &game.map;
-    let mut stacks: Vec<(Hex, Vec<&Unit>)> = Vec::new();
-    for unit in map.units().iter().filter(|u| u.side() != side && u.side() != Side::Grey && map.contains(u.pos())) {
-        match stacks.iter_mut().find(|(at, _)| *at == unit.pos()) {
-            Some((_, units)) => units.push(unit),
-            None => stacks.push((unit.pos(), vec![unit])),
-        }
-    }
-    let foe = |(at, units): (Hex, Vec<&Unit>)| {
-        // At the pace of its slowest (a commander keeps up with the rest).
-        let soldiers = units.iter().filter(|u| !map.is_commander(u.id())).min_by_key(|u| u.base_move_points);
-        let slowest = soldiers.or(units.first())?;
-        let mut fresh = (*slowest).clone();
-        fresh.movement = fresh.base_move_points.saturating_add(2);
-        let worth = units.iter().map(|u| worth(u.fighting_power(), game)).sum();
-        Some(Foe { at, worth, range: compute_range(map, &fresh), speed: fresh.speed() })
-    };
-    stacks.into_iter().filter_map(foe).collect()
-}
-
-/// What the strongest of `foes` that could be on `hex` is worth: by the
-/// moment `by`, or at any time this round.
-fn menace(foes: &[Foe], hex: Hex, by: Option<u64>) -> f64 {
-    let there = |foe: &&Foe| foe.there_by(hex).is_some_and(|when| by.is_none_or(|by| when <= by));
-    foes.iter().filter(there).map(|foe| foe.worth).fold(0.0, f64::max)
-}
-
-/// What `ids` are worth in battle, together.
-fn force(game: &Game, ids: &[UnitId]) -> f64 {
-    ids.iter().filter_map(|id| game.map.units().get(*id)).map(|u| worth(u.fighting_power(), game)).sum()
-}
-
-/// How fast `ids` go as a stack: as their slowest (a commander keeps up
-/// with the rest).
-fn pace(game: &Game, ids: &[UnitId]) -> u32 {
-    let map = &game.map;
-    let units = || ids.iter().filter_map(|id| map.units().get(*id));
-    let soldiers = units().filter(|u| !map.is_commander(u.id())).map(|u| u.speed()).min();
-    soldiers.or_else(|| units().map(|u| u.speed()).min()).unwrap_or(1)
-}
-
-/// True if there is room on `hex` for `ids` among those of their side that
-/// are there (a stack's worth, and one commander), and nobody else's.
-fn room(game: &Game, side: Side, ids: &[UnitId], hex: Hex) -> bool {
-    let map = &game.map;
-    let there = map.units_at(hex);
-    if there.iter().any(|id| id.side != side) {
-        return false;
-    }
-    let leaders = there.iter().chain(ids).filter(|id| map.is_commander(**id)).count();
-    there.iter().all(|id| ids.contains(id)) || (there.len() + ids.len() - leaders <= MAX_STACK && leaders <= 1)
-}
-
 impl Planner {
-    /// How much a stack of another side may be worth, in percent of its
-    /// own stack's worth, for that stack to go where the other could meet
-    /// it: its style's nerve, and more as a long game goes on.
-    fn nerve(&self, game: &Game) -> f64 {
-        let late = game.turn().saturating_sub(LATE) * LATE_NERVE;
-        f64::from(self.style.nerve + late)
-    }
-
-    /// The other sides' stacks it sees and their reach, worked out once a
-    /// round.
-    fn spot(&mut self, game: &Game, side: Side) {
-        let turn = (game.turn(), side);
-        if self.foes.as_ref().is_none_or(|(of, _)| *of != turn) {
-            self.foes = Some((turn, foes(game, side)));
-        }
-    }
-
-    /// An order to move (not an attack), made wary: the stack goes along
-    /// its way only as far as it may stand: not past a hex where a stack it
-    /// fears could be by the time it gets there (it would run into it), and
-    /// to stand on one a stack it fears could come to only if where it
-    /// stands now is no better (in one of its own cities it is better).
-    /// `None` if it had better stay where it is.
-    fn wary(&self, game: &Game, (side, sight): (Side, &Sight), foes: &[Foe], order: Order) -> Option<Order> {
-        let Order::Move { units, to } = order else { return Some(order) };
-        let map = &game.map;
-        let lead = units.iter().filter_map(|id| map.units().get(*id)).min_by_key(|u| u.movement)?;
-        let here = lead.pos();
-        let way = game.known_way(lead, to, sight)?;
-        let (mine, pace) = (force(game, &units), u64::from(pace(game, &units)));
-        let fears = |worth: f64| worth * 100.0 > mine * self.nerve(game);
-        let home = map.city_at(here).is_some_and(|c| c.side == side);
-        let now = if home { 0.0 } else { menace(foes, here, None) };
-        let mut stop = None;
-        for (hex, cost) in &way {
-            let by = u64::from(*cost) * ROUND / pace.max(1);
-            if fears(menace(foes, *hex, Some(by))) {
-                break;
-            }
-            let standing = menace(foes, *hex, None);
-            if (!fears(standing) || standing <= now) && room(game, side, &units, *hex) {
-                stop = Some(*hex);
-            }
-        }
-        let stop = stop?;
-        if stop == to {
-            return Some(Order::Move { units, to });
-        }
-        let coming: Vec<UnitId> = units
-            .into_iter()
-            .filter(|id| map.units().get(*id).is_some_and(|u| game.known_range(u, sight).cost(stop).is_some()))
-            .collect();
-        (!coming.is_empty()).then_some(Order::Move { units: coming, to: stop })
-    }
-
     /// A game of rounds: this round's next plan (`decide` has seen to the
     /// treasury, the cities' work and their walls). `staying`: who stays
     /// home; `short`: its cities short of defenders.
@@ -207,11 +59,8 @@ impl Planner {
         (side, sight): (Side, &Sight),
         (staying, short): (&[UnitId], &[Hex]),
     ) -> Order {
-        self.spot(game, side);
-        let foes = self.foes.take().map(|(_, foes)| foes).unwrap_or_default();
-        let order = self.plan(game, (side, sight), (staying, short), &foes);
-        self.foes = Some(((game.turn(), side), foes));
-        order
+        let foes = self.spot(game, side);
+        self.plan(game, (side, sight), (staying, short), &foes)
     }
 
     fn plan(
@@ -427,7 +276,7 @@ impl Planner {
                 map.city_at(t).is_some_and(|c| c.side == Side::Grey)
                     && (map.units_at(t).is_empty() || game.battle_forecast(&ids, t).is_some_and(|f| f.odds >= dare))
             };
-            let small = ids.len() < self.muster(game) && !target.is_some_and(|t| sight.sees(t) && takes(t));
+            let small = ids.len() < style.muster && !target.is_some_and(|t| sight.sees(t) && takes(t));
             if small && hub == Some(here) {
                 continue;
             }
@@ -484,7 +333,8 @@ impl Planner {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{STEADY, Style};
+    use super::super::wary::{foes, menace};
+    use super::super::{STEADY, STYLES};
     use super::*;
     use crate::agents::Agent;
     use crate::setup::{Mode, Setup};
@@ -564,37 +414,40 @@ mod tests {
         game.map.units().get(unit).filter(|u| u.planned).and_then(|u| u.route.last().copied())
     }
 
-    /// Played in rounds as in turns, an army on its way to a city went to
-    /// the end of its movement, into the reach of a stack twice its
-    /// strength, to be run into there. In its way for rounds it stops
-    /// where that stack cannot come this round.
+    /// An army on its way to a city went to the end of its movement, into
+    /// the reach of a stack twice its strength, to be run into there (in
+    /// turns: to be attacked there on the other's turn). It stops where
+    /// that stack cannot come.
     #[test]
     fn an_army_stops_short_of_where_a_stack_it_fears_could_meet_it() {
         let foe = Hex::new(15, 17);
-        let ends = |mut planner: Planner| {
-            let mut game = world(Mode::Rounds);
+        // How near the foe red's army ends, with `foes` of blue's `kind`
+        // there: where its plans end (rounds), or where it stands (turns).
+        let ends = |mode: Mode, kind: &str, foes: usize| {
+            let mut game = world(mode);
             // (Three in the capital besides its own, free to go for
             // Midway, which nobody holds; the temple has blessed them.)
             blessed(&mut game, 3);
-            put(&mut game, Side::Blue, "soldiers", foe, 6);
+            put(&mut game, Side::Blue, kind, foe, foes);
             // (Whichever three of the five it sends.)
             let all = game.map.units_at(REDHOLD).to_vec();
-            let given = orders(&mut game, &mut planner);
-            let ends: Vec<Hex> = all.iter().filter_map(|id| bound(&game, *id)).collect();
+            let given = orders(&mut game, &mut Planner::new(STEADY));
+            let ends: Vec<Hex> = match mode {
+                Mode::Rounds => all.iter().filter_map(|id| bound(&game, *id)).collect(),
+                Mode::Turns => {
+                    let at = |id: &UnitId| game.map.units().get(*id).map(|u| u.pos());
+                    all.iter().filter_map(at).filter(|hex| *hex != REDHOLD).collect()
+                }
+            };
             assert_eq!(ends.len(), 3, "three set out: {given:?}");
             ends.into_iter().map(|hex| hex.distance(foe)).min().unwrap()
         };
-        // Blue's six go seven hexes with what they may have kept.
-        assert!(ends(Planner::turnwise(STEADY)) <= 7, "as in turns: into their reach");
-        assert!(ends(Planner::new(STEADY)) > 7, "in rounds: short of it");
-        // A stack it does not fear does not stop it.
-        let mut game = world(Mode::Rounds);
-        blessed(&mut game, 3);
-        put(&mut game, Side::Blue, "levy", foe, 1);
-        let all = game.map.units_at(REDHOLD).to_vec();
-        orders(&mut game, &mut Planner::new(STEADY));
-        let nearest = all.iter().filter_map(|id| bound(&game, *id)).map(|hex| hex.distance(foe)).min();
-        assert!(nearest.is_some_and(|d| d <= 7), "{nearest:?}");
+        for mode in [Mode::Rounds, Mode::Turns] {
+            // Blue's six go seven hexes with what they may have kept.
+            assert!(ends(mode, "soldiers", 6) > 7, "{mode:?}: short of their reach");
+            // A stack it does not fear does not stop it.
+            assert!(ends(mode, "levy", 1) <= 7, "{mode:?}: on, to the end of its movement");
+        }
     }
 
     /// Two stacks either side of a city that together take it, and cannot
@@ -669,8 +522,8 @@ mod tests {
     #[test]
     fn an_army_goes_to_a_temple_only_for_half_of_it() {
         let (temple, camp) = (Hex::new(10, 5), Hex::new(10, 8));
-        let to_temple = |blessed: usize| {
-            let mut game = world(Mode::Rounds);
+        let to_temple = |mode: Mode, blessed: usize| {
+            let mut game = world(mode);
             let army = put(&mut game, Side::Red, "soldiers", camp, 4);
             for id in &army[..blessed] {
                 game.map.unit_mut(*id).unwrap().blessings.push((temple, crate::state::Blessing::Strength));
@@ -678,26 +531,25 @@ mod tests {
             let given = orders(&mut game, &mut Planner::new(STEADY));
             given.iter().any(|order| matches!(order, Order::Move { to, .. } if *to == temple))
         };
-        assert!(to_temple(0) && to_temple(2), "half of it or more: it goes");
-        assert!(!to_temple(3), "for one of four it does not");
+        for mode in [Mode::Rounds, Mode::Turns] {
+            assert!(to_temple(mode, 0) && to_temple(mode, 2), "{mode:?}: half of it or more: it goes");
+            assert!(!to_temple(mode, 3), "{mode:?}: for one of four it does not");
+        }
     }
 
-    /// In rounds it marches a unit sooner, and its treasury pays for more
-    /// than its taxes keep; in turns, and in rounds played as turns, as
-    /// ever.
+    /// It marches with three (the careful with four), and its treasury
+    /// pays for more than its taxes keep: in rounds first, and in turns
+    /// too since that won there as well.
     #[test]
-    fn in_rounds_it_sets_out_sooner_and_spends_its_gold() {
-        let (rounds, turns) = (world(Mode::Rounds), world(Mode::Turns));
-        let gold = i64::from(rounds.gold(Side::Red));
-        assert!(gold >= 24, "{gold}");
-        let planner = Planner::new(STEADY);
-        assert_eq!((planner.muster(&rounds), planner.muster(&turns)), (3, 4));
-        assert_eq!((planner.reserve(&rounds, Side::Red), planner.reserve(&turns, Side::Red)), (gold / 12, 0));
-        let as_turns = Planner::turnwise(STEADY);
-        assert_eq!((as_turns.muster(&rounds), as_turns.reserve(&rounds, Side::Red)), (4, 0));
-        // Never fewer than three, whatever the style.
-        let hasty = Planner::new(Style { muster: 2, ..STEADY });
-        assert_eq!(hasty.muster(&rounds), 3);
+    fn it_sets_out_with_few_and_spends_its_gold() {
+        assert_eq!(STYLES.map(|style| style.muster), [3, 3, 4]);
+        for mode in [Mode::Rounds, Mode::Turns] {
+            let game = world(mode);
+            let gold = i64::from(game.gold(Side::Red));
+            assert!(gold >= 24, "{gold}");
+            assert_eq!(Planner::new(STEADY).reserve(&game, Side::Red), gold / 12, "{mode:?}");
+            assert_eq!(Planner::turnwise(STEADY).reserve(&game, Side::Red), gold / 12);
+        }
         // The agents' names: a planner, and a planner that plays rounds as
         // turns.
         assert!(crate::agents::by_name("steady/turns").is_ok() && crate::agents::by_name("bold/turns").is_ok());

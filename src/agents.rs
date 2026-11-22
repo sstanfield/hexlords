@@ -388,7 +388,7 @@ impl Agent for Simple {
                     // In rounds: on past the edge, as far as they get this
                     // round (one plan a round).
                     if game.rounds() {
-                        let to = crate::planner::beyond(game, &sight, to);
+                        let to = crate::planner::outward(game, &sight, lead, to);
                         return Order::Toward { units: ids, to };
                     }
                     let steps = self.explored.iter().filter(|(id, _)| *id == lead.id()).count() as u32;

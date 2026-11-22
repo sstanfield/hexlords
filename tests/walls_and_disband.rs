@@ -214,7 +214,9 @@ fn the_city_window_raises_the_walls() {
 /// it cannot keep that one besides.
 #[test]
 fn the_planner_disbands_its_weakest_to_make_room_for_the_strong() {
-    let mut game = game("garrison levy 8\n", "garrison levy\n", 200);
+    // (With next to no gold: a twelfth of its treasury a turn pays for
+    // upkeep too, and 200 gold would keep the knights for a while.)
+    let mut game = game("garrison levy 8\n", "garrison levy\n", 10);
     let levy = game.map.units().kind_named("levy").unwrap();
     for row in [2, 3] {
         for _ in 0..8 {
@@ -222,8 +224,9 @@ fn the_planner_disbands_its_weakest_to_make_room_for_the_strong() {
             game.map.place_unit(id, Hex::new(row, 2)).unwrap();
         }
     }
-    // Taxes 20, upkeep 24 a turn: it cannot keep the knights besides.
-    assert!(game.income(Side::Red) < game.upkeep(Side::Red) + 7);
+    // Taxes 30 and none of its gold, upkeep 24 a turn: it cannot keep the
+    // knights (7) besides.
+    assert!(game.income(Side::Red) + game.gold(Side::Red) / 12 < game.upkeep(Side::Red) + 7);
     let mut planner = hexlords::planner::Planner::new(hexlords::planner::STEADY);
     let order = hexlords::agents::Agent::next_order(&mut planner, &game.view_for(Side::Red), Side::Red);
     let Order::Disband { units } = order else { panic!("{order:?}") };
@@ -358,7 +361,8 @@ fn the_planner_raises_low_walls_a_level_at_a_time() {
 /// sends its weakest home first (it once stopped the work at once).
 #[test]
 fn the_planner_late_sends_its_weakest_home_before_stopping_work() {
-    let mut game = game("garrison levy 8\n", "", 200);
+    // (Next to no gold, as above: its treasury would pay for them otherwise.)
+    let mut game = game("garrison levy 8\n", "", 10);
     for row in [2, 3] {
         for _ in 0..8 {
             new_unit(&mut game, Side::Red, "levy", Hex::new(row, 2));
@@ -367,7 +371,8 @@ fn the_planner_late_sends_its_weakest_home_before_stopping_work() {
     let redhold = game.map.city_at(REDHOLD).unwrap().id;
     let knights = game.map.city_at(REDHOLD).unwrap().units.iter().position(|p| p.basename == "knights").unwrap();
     game.apply(Order::Build { city: redhold, what: Some(knights) }).unwrap();
-    assert!(game.income(Side::Red) < game.upkeep(Side::Red) + 7, "it cannot keep the knights");
+    let pays = game.income(Side::Red) + game.gold(Side::Red) / 12;
+    assert!(pays < game.upkeep(Side::Red) + 7, "it cannot keep the knights");
     let mut planner = hexlords::planner::Planner::new(hexlords::planner::STEADY);
     let order = hexlords::agents::Agent::next_order(&mut planner, &game.view_for(Side::Red), Side::Red);
     assert!(matches!(order, Order::Disband { .. }), "{order:?}");

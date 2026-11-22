@@ -2,7 +2,8 @@
 //! (`steady`, `bold`, `careful`). Each turn, order by order, it:
 //!
 //! 1. keeps its treasury in hand: what its cities build is what it can keep
-//!    (their upkeep within its taxes) and what is worth most *under the rules
+//!    (their upkeep within its taxes, and a share of its gold a turn: the
+//!    treasury is not a hoard) and what is worth most *under the rules
 //!    of this game* (with little chance in battle a strong unit is worth far
 //!    more than a weak one; with much, or with stacks that fight as one, the
 //!    numbers count), and it keeps a commander;
@@ -12,8 +13,9 @@
 //!    game's own, so the rules in effect are in them), waves at walls when
 //!    more follow, and stacks it can beat in the field;
 //! 4. gathers the rest into armies around its commander, blessed at the
-//!    temples on the way, and sends each toward the city most worth taking
-//!    for the trouble.
+//!    temples on the way (when half of a stack has a blessing to get), and
+//!    sends each toward the city most worth taking for the trouble, never
+//!    to stand where a stack it could not beat can come to it (`wary`).
 //!
 //! It is given its side's view of the game (`Game::view_for`) and knows no
 //! more than a person would: with fog of war, a city it cannot see is one it
@@ -35,6 +37,7 @@ use crate::state::{
 };
 
 mod rounds;
+mod wary;
 
 /// What makes one style of play another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,29 +53,31 @@ pub struct Style {
     /// threat's strength.
     pub guard: u32,
     /// Units it gathers before it marches on a city it cannot see, or that is
-    /// held.
+    /// held. (One fewer than it was, for each style and never under three:
+    /// waiting is dear. With four, the steady planner won far fewer games
+    /// than with three, in rounds and in turns.)
     pub muster: usize,
     /// What its cities' work weighs, in percent: speed (a unit's moves), and
     /// price (against what it is worth).
     pub speed: u32,
     pub thrift: u32,
-    /// In rounds (`rounds`): how much a stack of another side may be worth,
-    /// in percent of its own stack's worth, for that stack to go where the
-    /// other could meet it this round.
+    /// How much a stack of another side may be worth, in percent of its own
+    /// stack's worth, for that stack to go where the other could come to
+    /// it (`wary`).
     pub nerve: u32,
 }
 
 /// Balanced: armies around a commander, cities defended as they are
 /// threatened, attacks at fair odds.
 pub const STEADY: Style =
-    Style { name: "steady", keep: 1, dare: 60, wear: 25, guard: 100, muster: 4, speed: 30, thrift: 100, nerve: 100 };
+    Style { name: "steady", keep: 1, dare: 60, wear: 25, guard: 100, muster: 3, speed: 30, thrift: 100, nerve: 100 };
 /// Fast and many: grabs the empty and weak cities first, few defenders,
 /// attacks at lower odds.
 pub const BOLD: Style =
     Style { name: "bold", keep: 1, dare: 55, wear: 18, guard: 70, muster: 3, speed: 20, thrift: 140, nerve: 130 };
 /// Slow and sure: strong defenders, big armies, high odds.
 pub const CAREFUL: Style =
-    Style { name: "careful", keep: 1, dare: 68, wear: 30, guard: 150, muster: 5, speed: 10, thrift: 70, nerve: 80 };
+    Style { name: "careful", keep: 1, dare: 68, wear: 30, guard: 150, muster: 4, speed: 10, thrift: 70, nerve: 80 };
 
 pub const STYLES: [Style; 3] = [STEADY, BOLD, CAREFUL];
 
@@ -80,6 +85,11 @@ pub const STYLES: [Style; 3] = [STEADY, BOLD, CAREFUL];
 pub fn style(name: &str) -> Option<Style> {
     STYLES.into_iter().find(|s| s.name == name)
 }
+
+/// Over how many turns it would spend its treasury on upkeep: its cities
+/// build what its taxes keep and a share of its gold besides
+/// (`Planner::reserve`). (Played out: 6, 8 and 12 win alike, 24 less.)
+const SPEND: u32 = 12;
 
 /// What threatens each of a side's cities (see [`threat`]).
 type Threats = Vec<(CityId, f64)>;
@@ -116,9 +126,10 @@ pub struct Planner {
     /// It plays a game of rounds as it plays turns (`<style>/turns`: to
     /// play the two against each other).
     turnwise: bool,
-    /// In rounds: the other sides' stacks it sees and where each could be
-    /// this round, worked out once a round.
-    foes: Option<((u32, Side), Vec<rounds::Foe>)>,
+    /// The other sides' stacks it sees and where each could be, as last
+    /// worked out (`spot`: the round, the side, and in turns the map's
+    /// revision then).
+    foes: Option<wary::Spotted>,
 }
 
 impl Planner {
@@ -153,19 +164,12 @@ impl Planner {
         game.rounds() && !self.turnwise
     }
 
-    /// Units it gathers before it marches: its style's, and in rounds one
-    /// fewer (waiting is dear when everyone moves at once: with four, the
-    /// steady planner won far fewer games of rounds than with three).
-    fn muster(&self, game: &Game) -> usize {
-        if self.in_rounds(game) { self.style.muster.saturating_sub(1).max(3) } else { self.style.muster }
-    }
-
-    /// What of its treasury pays for upkeep its taxes do not, a round: in
-    /// turns nothing (its cities build what its taxes keep, and the gold
-    /// piles up); in rounds a share of it (`rounds::SPEND_ROUNDS`), so that
-    /// it fields what it can pay for while the gold lasts.
+    /// What of its treasury pays for upkeep its taxes do not, a turn: a
+    /// share of it (`SPEND`), so that it fields what it can pay for while
+    /// the gold lasts. (Its cities built what its taxes kept, and the gold
+    /// piled up: two hundred and more, with small armies.)
     fn reserve(&self, game: &Game, side: Side) -> i64 {
-        if self.in_rounds(game) { i64::from(game.gold(side) / rounds::SPEND_ROUNDS) } else { 0 }
+        i64::from(game.gold(side) / SPEND)
     }
 
     /// True while it leaves `hex` be (the game refused to send it there).
@@ -252,6 +256,42 @@ pub fn beyond(game: &Game, sight: &Sight, edge: Hex) -> Hex {
         }
     }
     to
+}
+
+/// In rounds, where a stack led by `lead` (its slowest) that goes to see
+/// more by way of `edge` is sent: past the edge ([`beyond`]) if it gets to
+/// the edge this round and its way past is by the edge; else to the edge
+/// itself. The game sends a stack toward land not seen by the hex it knows
+/// and can get to that is nearest to it as the crow flies, and refuses if
+/// the stack is as near already. Three ways a stack sent past an edge never
+/// got to it, round after round, while the armies of a side that held
+/// eight cities of nine looked for the ninth for a hundred rounds:
+///
+/// - It stood as near to what lay past the edge as the edge is (across a
+///   strip not seen): refused.
+/// - The edge was rounds away: it went north round a lake one round,
+///   toward the hex nearest to what lay past one edge, and back south the
+///   next, toward the hex nearest to what lay past another. The way to an
+///   edge it knows is a way it knows: each round along it is a round
+///   nearer.
+/// - The hex nearest to what lay past the edge was not the edge (the far
+///   side of a range of mountains it cannot enter): it went there, saw
+///   nothing new, and the edge was still the nearest the round after.
+pub fn outward(game: &Game, sight: &Sight, lead: &Unit, edge: Hex) -> Hex {
+    if game.known_range(lead, sight).cost(edge).is_none() {
+        return edge;
+    }
+    let far = beyond(game, sight, edge);
+    // Where the game would send it: as `Game::way_toward` chooses.
+    let mut tireless = lead.clone();
+    tireless.movement = u32::MAX / 2;
+    let range = game.known_range(&tireless, sight);
+    let by = range
+        .reachable()
+        .filter(|(hex, _)| !hostile(&game.map, lead.side(), *hex))
+        .min_by_key(|(hex, cost)| (hex.distance(far), *cost, hex.row, hex.col))
+        .map(|(hex, _)| hex);
+    if by == Some(edge) && edge.distance(far) < lead.pos().distance(far) { far } else { edge }
 }
 
 /// `x` to the `n`th, by multiplying.
@@ -543,6 +583,10 @@ impl Planner {
             }
         }
 
+        // What is left goes somewhere, and not where it would be beaten
+        // (`wary`).
+        let foes = self.spot(game, side);
+        let heed = |p: &Planner, order: Order| p.wary(game, (side, &sight), &foes, order);
         // The rest: a stack at a time.
         let temples: Vec<Hex> = (0..map.rows())
             .flat_map(|row| (0..map.cols()).map(move |col| Hex::new(row, col)))
@@ -587,14 +631,22 @@ impl Planner {
                     && there.len() + ids.len() <= MAX_STACK
             };
             if let Some(temple) = temples.iter().copied().find(|t| {
+                let unblessed = stack.iter().filter(|u| !u.blessed_at(*t)).count();
                 *t != here
-                    && stack.iter().any(|u| !u.blessed_at(*t))
+                    && unblessed > 0
+                    && 2 * unblessed >= stack.len()
                     && all_reach(*t)
                     && room(*t)
                     && !self.is_blocked(*t, game)
             }) {
-                self.pilgrims.extend(ids.iter().copied());
-                return Order::Move { units: ids, to: temple };
+                match heed(self, Order::Move { units: ids.clone(), to: temple }) {
+                    Some(Order::Move { units, to }) if to == temple => {
+                        self.pilgrims.extend(units.iter().copied());
+                        return Order::Move { units, to };
+                    }
+                    Some(order) => return order,
+                    None => continue,
+                }
             }
             let lead = stack.iter().copied().min_by_key(|u| u.movement).unwrap_or(unit);
             if lost {
@@ -621,7 +673,10 @@ impl Planner {
             if let Some(hub) = hub.filter(|h| *h != here && small && h.distance(here) <= 12) {
                 let room = map.units_at(hub).len() + ids.len() <= MAX_STACK + 1;
                 let blocked = |h: Hex| self.is_blocked(h, game);
-                if let Some(order) = room.then(|| advance(game, (side, &sight), (&ids, lead), hub, &blocked)).flatten()
+                if let Some(order) = room
+                    .then(|| advance(game, (side, &sight), (&ids, lead), hub, &blocked))
+                    .flatten()
+                    .and_then(|o| heed(self, o))
                 {
                     return order;
                 }
@@ -653,12 +708,17 @@ impl Planner {
                     .filter(|h| map.units_at(*h).len() + ids.len() <= MAX_STACK && !self.is_blocked(*h, game))
                     .min_by_key(|h| (h.distance(here), h.row, h.col));
                 if let Some(look) = look {
-                    return Order::Move { units: ids, to: look };
+                    match heed(self, Order::Move { units: ids, to: look }) {
+                        Some(order) => return order,
+                        None => continue,
+                    }
                 }
                 if all_reach(target) {
                     continue;
                 }
-                match advance(game, (side, &sight), (&ids, lead), target, &|h| self.is_blocked(h, game)) {
+                match advance(game, (side, &sight), (&ids, lead), target, &|h| self.is_blocked(h, game))
+                    .and_then(|o| heed(self, o))
+                {
                     Some(order) => return order,
                     None => continue,
                 }
@@ -668,7 +728,9 @@ impl Planner {
             if all_reach(target) {
                 continue;
             }
-            if let Some(order) = advance(game, (side, &sight), (&ids, lead), target, &|h| self.is_blocked(h, game)) {
+            if let Some(order) = advance(game, (side, &sight), (&ids, lead), target, &|h| self.is_blocked(h, game))
+                .and_then(|o| heed(self, o))
+            {
                 return order;
             }
         }
@@ -761,12 +823,27 @@ impl Planner {
             return None;
         }
         // The nearest it can get to, by the way over the land it knows.
-        let edge: Vec<Hex> = game
+        let mut edge: Vec<Hex> = game
             .frontier_for(lead, sight)
             .into_iter()
             .map(|(h, _)| h)
             .filter(|h| !self.scouted.iter().any(|s| s.distance(*h) <= SCOUT_SPREAD) && !self.is_blocked(*h, game))
             .collect();
+        // All of it: those of the stack that go at other prices (riders
+        // with foot, who do not climb where foot does) can get there too.
+        // (A commander goes as those it leads.) A stack of riders and foot
+        // was sent, round after round, where only the foot could go: the
+        // game refused, and what it had claimed to look at nobody else
+        // went to see.
+        let map = &game.map;
+        let mut tables = vec![lead.move_cost];
+        for unit in ids.iter().filter_map(|id| map.units().get(*id)).filter(|u| !map.is_commander(u.id())) {
+            if !tables.contains(&unit.move_cost) {
+                tables.push(unit.move_cost);
+                let theirs: Vec<Hex> = game.frontier_for(unit, sight).into_iter().map(|(h, _)| h).collect();
+                edge.retain(|h| theirs.contains(h));
+            }
+        }
         let blocked = |h: Hex| self.is_blocked(h, game);
         let (to, order) = edge
             .into_iter()
@@ -776,7 +853,9 @@ impl Planner {
         // In rounds: on past the edge, as far as it gets this round (one
         // plan a round).
         if game.rounds() {
-            return Some(Order::Toward { units: ids.to_vec(), to: beyond(game, sight, to) });
+            let far = outward(game, sight, lead, to);
+            let out = if self.is_blocked(far, game) { to } else { far };
+            return Some(Order::Toward { units: ids.to_vec(), to: out });
         }
         // Those that go may go on, seeing more, a few steps a turn.
         let steps = match self.explored.iter_mut().find(|(id, _)| *id == lead.id()) {
@@ -1045,6 +1124,47 @@ mod tests {
         }
         // With nothing unseen beside it, a hex is where it is sent.
         assert_eq!(beyond(&game, &Sight::all(), home), home);
+    }
+
+    /// A stack that goes to see more is sent past an edge only if it gets
+    /// to the edge this round and its way past is by the edge (see
+    /// [`outward`]): else to the edge itself, along the way it knows.
+    #[test]
+    fn a_stack_is_sent_past_an_edge_only_when_that_gets_it_to_the_edge() {
+        let terrain = format!("30\n30\n{}\n", vec!["g".repeat(30); 30].join("\n"));
+        let units = "unit soldiers\nname Soldiers\nstrength 3\nmoves 12\nenter grass 2\n";
+        let (map, warnings) = scenario::parse(&terrain, Some(units), None).unwrap();
+        let mut game = Game::from_scenario(Scenario { map, assets: None, warnings });
+        let here = Hex::new(13, 15);
+        let kind = game.map.units().kind_named("soldiers").unwrap();
+        let id = game.map.new_unit_of(Side::Red, kind).unwrap();
+        game.map.place_unit(id, here).unwrap();
+        let lead = game.map.units().get(id).unwrap().clone();
+        // The band of land it stands on, and one to the north that it
+        // knows too, joined to its own in the west; between them three
+        // rows it has not seen, and to the south nothing it has.
+        let known = |h: Hex| (12..=14).contains(&h.row) || h.row == 8 || (h.col <= 3 && (9..=11).contains(&h.row));
+        let sight = Sight::by_hand(&game.map, &|_| true, Some(&known), Vec::new());
+        // The edge to the south, a step off: what lies past it is nearest
+        // by the edge, and there it is sent.
+        let south = Hex::new(14, 15);
+        let far = beyond(&game, &sight, south);
+        assert!(!sight.knows(far) && south.distance(far) == SCOUT_REACH);
+        assert_eq!(outward(&game, &sight, &lead, south), far);
+        // An edge along its band that it does not get to this round (six
+        // hexes are its round): the edge itself, by the way it knows.
+        let along = Hex::new(14, 25);
+        assert!(game.known_range(&lead, &sight).cost(along).is_none());
+        assert_eq!(outward(&game, &sight, &lead, along), along);
+        // The edge to the north, a step off: what lies past it is nearer
+        // to the other band, which it can get to round by the west. Sent
+        // past the edge it would go there, and see nothing new: the edge
+        // itself.
+        let north = Hex::new(12, 15);
+        let far = beyond(&game, &sight, north);
+        assert!(!sight.knows(far) && north.distance(far) < here.distance(far), "{far:?}");
+        assert!((0..30).any(|col| Hex::new(8, col).distance(far) < north.distance(far)));
+        assert_eq!(outward(&game, &sight, &lead, north), north);
     }
 
     /// The review (2026-11-21): the planner weighed a wounded unit as whole

@@ -636,16 +636,18 @@ changed.
   planner in rounds"; the owner's word, 2026-11-22: "Round based games
   probably need their own AI"): they go by where the other sides' stacks
   could be this round and when, do not walk a stack into one it cannot
-  beat, attack as one stack (stacks join first for an assault), set out
-  sooner and spend their gold. Their plans are made from what they see
-  when they plan (a program is told `mode rounds`); to see more of the
-  map they send a stack on past the edge of the land they know
-  (`planner::beyond`). `simple` plays rounds as it plays turns. Measured
-  (the continent, the steady planners on every seat, 40 seeds, 200 rounds
-  at most): every game ends, in 58 rounds, with 57 battles a game; with
-  total fog 13 of 40 games end in 200 rounds: they are slow to find the
-  last cities in the dark. Against the planner playing rounds as it plays
-  turns (`steady/turns`), two seats each, steady wins 3 games in 4.
+  beat, and attack as one stack (stacks join first for an assault). (Much
+  of what was first made for rounds, they now do in turns too: setting
+  out sooner, spending their gold, keeping clear of stacks they could not
+  beat.) Their plans are made from what they see when they plan (a
+  program is told `mode rounds`); to see more of the map they send a
+  stack to the edge of the land they know, and on past it when its way
+  there is by the edge (`planner::outward`). `simple` plays rounds as it
+  plays turns. Measured (the continent, the steady planners on every
+  seat, 40 seeds, 200 rounds at most): every game ends, in 61 rounds;
+  with total fog too, in 88 (once, 13 of 40 did: sent past the edge, the
+  armies never got to it). Against the planner playing rounds as it plays
+  turns (`steady/turns`), two seats each, steady wins 261 games of 480.
 - Open: whether a march should fight on its way as a plan does, or stop
   short as in turns (it fights: one rule for every stack on its way);
   whether a stack that would run into far worse odds should hold back;

@@ -234,6 +234,26 @@ fn under_total_fog_it_goes_to_see_and_finds_what_to_take() {
     }
 }
 
+/// In rounds, under total fog, the planners' armies went looking for the
+/// last city and never got to the edge of the land they knew (sent past
+/// it, the game took them elsewhere, or refused: `planner::outward`): of
+/// forty games on the continent thirteen ended in 200 rounds; this one
+/// stood at eight cities to one, the ninth never seen. Now all forty end.
+#[test]
+fn in_rounds_under_total_fog_the_last_city_is_found() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/maps/continent");
+    let (game, _) = Game::load(&dir).unwrap();
+    let mut setup = Setup::solo(&game.map, None, "steady");
+    setup.set_players("red=steady,blue=steady,green=steady,yellow=steady").unwrap();
+    (setup.mode, setup.fog, setup.seed) = (hexlords::setup::Mode::Rounds, Fog::Total, 5);
+    let mut game = game.with_setup(setup);
+    let mut refused = 0;
+    let outcome =
+        headless::play(&mut game, 200, &mut |_, line| refused += usize::from(line.starts_with("refused"))).unwrap();
+    assert!(outcome.winner.is_some(), "after {} rounds: {:?}", outcome.rounds, outcome.standing);
+    assert!(refused <= 5, "{refused} orders refused");
+}
+
 #[test]
 fn a_stack_it_saw_near_its_city_keeps_its_defenders_home() {
     // Six militia in Redhold; six blue riders, seen four hexes off (or

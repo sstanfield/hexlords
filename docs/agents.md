@@ -55,7 +55,7 @@ done
 | `steady` | The computer's player unless another is chosen (`src/planner.rs`, below): armies around a commander, cities defended as they are threatened, attacks at fair odds |
 | `bold` | The planner, fast and many: grabs the empty and weak cities first, attacks at lower odds |
 | `careful` | The planner, slow and sure: answers threats with more defenders, big armies, high odds |
-| `steady/turns`, `bold/turns`, `careful/turns` | The planner playing a game of rounds as it plays turns, not in its way for rounds (below): for playing the two against each other |
+| `steady/turns`, `bold/turns`, `careful/turns` | The planner playing a game of rounds as it plays turns, without what is its own in rounds (below): for playing the two against each other |
 | `cmd:<program> [<argument> ...]` | A program that plays (below) |
 
 A side's turn played by an agent (`agents::play_turn`) ends with the
@@ -80,7 +80,9 @@ how much of a threat it answers, how big an army it gathers, what its
 cities' work weighs). Each turn, order by order, it:
 
 1. keeps its treasury in hand: what its cities build is what it can keep
-   and pay for, and what is worth most under the rules of this game; late
+   (within its taxes, and a twelfth of its gold a turn besides: the
+   treasury is not a hoard) and pay for, and what is worth most under the
+   rules of this game; late
    (with two stacks' worth of soldiers, more than it fields at once) the
    strongest it can keep (a city that builds only what it would send home
    for the best waits), and it disbands its weakest (never a siege
@@ -108,12 +110,50 @@ cities' work weighs). Each turn, order by order, it:
    price;
 4. gathers the rest around its commander (where it stood at the turn's
    start), sends small stacks to the army or keeps them home until there is
-   a force (but a city of nobody's it is likely to take as it is, it goes
-   for), stops at temples on the way that have not blessed some of the
-   stack (free of others, with room) and seeks their blessing there, and
-   sends each army toward the city most worth the trouble (its taxes
-   against the way there and what defends it), a step at a time as far as
-   it knows the way (never into a stack it has not chosen to attack).
+   a force (three units; the careful, four; but a city of nobody's it is
+   likely to take as it is, it goes for), stops at temples on the way that
+   have a blessing for half of the stack or more (free of others, with
+   room) and seeks it there, and sends each army toward the city most
+   worth the trouble (its taxes against the way there and what defends
+   it), a step at a time as far as it knows the way (never into a stack it
+   has not chosen to attack);
+5. and on its way **keeps clear of what it could not beat**
+   (`src/planner/wary.rs`): every stack of another side it sees could be
+   anywhere a turn's movement takes it, and a stack of its own that
+   gathers, looks, goes to a temple or marches on a city does not end its
+   move where one it fears could come to it, unless where it stands is no
+   better (it fears a stack worth more than its own, by its style: careful
+   80 in 100 of its own worth, steady 100, bold 130; more as a long game
+   goes on). An attack is another matter: that, it means.
+
+The treasury spent, the smaller army, the temple for half a stack and the
+wariness were made for rounds (below) and tried in turns after (the owner,
+2026-11-22: "you mentioned some AI improvements that would help turn mode,
+you can do them"). Measured in turns on the continent (2026-11-22; the
+planner with them on two seats against the planner as it was on the other
+two, both ways round, 240 seeds, 480 games): steady won 356 and lost 124,
+careful 326 and 146 (8 not ended in 200 rounds), bold 285 and 195; steady
+with fog of war 293 and 187, with total fog 162 and 76 of 240. One at a
+time, steady against steady as it was: the smaller army 292 to 188, the
+gold spent 270 to 210 (a sixth of it a turn 286, a twenty-fourth 259), the
+wariness 261 to 219, the temple rule 243 to 237 (nothing either way: it is
+kept for being the same in both modes); the first three and the temple
+rule without the wariness, 303 to 177. Among themselves in turns now,
+steady beats careful (326 to 154) and edges bold (255 to 225).
+
+Against `simple`, the other yardstick (the same day, the continent, steady
+on two seats and `simple` on two, both ways round): in turns the planner
+as it was lost, 102 games to 138 of 240; it now wins 133 to 107, and with
+fog of war 181 to 59; in rounds 82 to 38 of 120, with fog of war the
+same. **Under total fog `simple` still wins**: 74 to 46 of 120 in turns
+(it was 92 to 28), 68 to 52 in rounds. Why is not known. Tried for it and
+left out: small stacks going to look instead of waiting at home (nothing
+either way; with the army's own doing it too, worse); an army of two
+(nothing against `simple`; 259 to 221 of 480 against the army of three
+with no fog, not enough to tell); attacking a city it knows of and cannot
+see (as `simple` does: it lost 154 to 86 against itself; only with more
+units than it remembers there, 131 to 109 against itself and nothing
+against `simple`).
 
 With fog of war it never attacks a city it cannot see: it goes where it can
 see it first, and weighs it by the garrison it saw there last. A stack it
@@ -122,8 +162,18 @@ a threat to that city still. A place the game refuses to send it, it leaves
 be for three rounds, and a way that is shut shows itself as it goes. With
 total fog it goes by the land it has seen: while it knows of no city to go
 for, every stack goes to see more, a few steps a turn, toward the nearest
-edge of that land it can get to and away from where its others went; and
-while there is land it has not seen, its fastest spare unit goes on looking.
+edge of that land that all of it can get to (riders do not climb where
+foot does) and away from where its others went; and while there is land it
+has not seen, its fastest spare unit goes on looking. In rounds, where a
+stack has one plan a round, it is sent on past an edge it gets to that
+round, into the land not seen, if its way there is by the edge; else to
+the edge itself, along the way it knows (`planner::outward`). (It was sent
+past the edge whatever the way, and the game, which takes a stack toward
+land not seen by the nearest hex it knows as the crow flies, took it
+elsewhere or refused: of forty games of rounds under total fog thirteen
+ended in 200 rounds, most of the others at eight cities to one with the
+ninth never seen. All forty end now, in 88 rounds on average; in turns,
+in 81.)
 Under total fog its styles won 76 to 80 games in 100 against `simple`
 (which explores too), and games lasted half again as long (on the
 continent, before the rules of 2026-11-20). On generated maps of four
@@ -164,15 +214,13 @@ based games probably need their own AI since they are very different from
 turn based"): every side's orders are given before anything moves, the
 faster stacks are there first, and a stack fights whoever it finds on its
 way. In one the planner plays in a way of its own (`src/planner/rounds.rs`;
-what its cities build, who stays home and what its armies go for are as in
-turns):
+what its cities build, who stays home, what its armies go for and what
+they keep clear of are as in turns):
 
-- It works out where every stack of another side it sees **could be this
-  round, and when** (a turn's movement, at the stack's speed), and a stack
-  of its own on its way to gather, to look, to a temple or toward a city
-  **stops short of where a stack it fears could meet it** (it fears one
-  worth more than its own, by its style: careful 80 in 100 of its own
-  worth, steady 100, bold 130; more as a long game goes on).
+- Its wariness is **a matter of time**: a stack of another side could be
+  on a hex at the moment its speed gets it there, and a stack of its own
+  does not pass a hex where one it fears could be by then (in turns
+  nobody else moves while it does).
 - **An attack is one stack**: the units of one hex if they are enough (the
   hex that gets them there first), units of several hexes only where the
   game makes one stack of them (they gather on the way). Stacks around a
@@ -180,40 +228,37 @@ turns):
   first**, and attack as one the round after.
 - A stack in the field has moved on by the time anyone gets to it: it is
   attacked only at odds 15 in 100 above those a city is attacked at.
-- It **sets out sooner** (an army marches at three units, where the steady
-  planner waits for four in turns), goes to a temple only when half the
-  stack has a blessing to get there, and **spends its gold**: in turns its
-  cities build what its taxes keep and the treasury piles up; in rounds a
-  twelfth of the treasury a round pays for upkeep besides.
 
-Each of these is there because it won games. Measured on the continent
-(2026-11-22; a style in its way for rounds on two seats against a planner
-playing rounds as turns on the other two, both ways round, 240 seeds, 480
-games): steady won 367 against `steady/turns` (113), careful 324 against
-`careful/turns` (139, 17 not ended in 200 rounds), bold 305 against
-`bold/turns` (175); against `bold/turns`, the best of the three at rounds
-played as turns, steady won 355 (125), bold 305 (175), careful 224 (255).
-With fog of war steady won 171 of 240 against `steady/turns`; with the
-order drawn each round, 187 of 240; with total fog 30 against 8, and 82 of
-120 games not ended in 200 rounds (the planners are still slow to find the
-last cities in the dark). What the parts are worth, steady against
-`bold/turns` over 480 games, as they were put together: setting out at
-three, wary, its attacks one stack, 242; with stacks joining for an
-assault, 270 (256 of those without the wariness); with the gold spent,
-318, and 328 with the temple left to half a stack; with the attack tried
-in its order (one stack that is enough, else join, else a wave), 355. Its
-battles: it wins 61 in 100 of its attacks (the planner playing rounds as
-turns, 47), and 20 in 100 of them are one unit's (36). Among themselves in
-rounds, steady beats careful (187 to 52 of 240) and bold (138 to 102).
+`steady/turns`, `bold/turns` and `careful/turns` play a game of rounds
+without these, as the planner plays turns. Measured on the continent
+(2026-11-22; a style in its way for rounds on two seats against the same
+style playing rounds as turns on the other two, both ways round, 240
+seeds, 480 games): steady won 261 and lost 219, bold 274 and 206, careful
+263 and 206 (11 not ended in 200 rounds); steady with fog of war 127 and
+113 of 240, with total fog 66 and 54 of 120. Among themselves in rounds,
+steady beats careful (187 to 52 of 240) and bold (138 to 102). Four steady
+planners end every game of forty, in 61 rounds on average (in turns, 52).
+
+How it came to this. The way for rounds was made first, against the
+planner as it then played turns, and it won far more: steady 367 of 480,
+careful 324, bold 305. Most of that was not about rounds at all: what the
+parts were worth then, steady against the best of the old three over 480
+games, as they were put together: setting out at three, wary, its attacks
+one stack, 242; with stacks joining for an assault, 270 (256 of those
+without the wariness); with the gold spent, 318, and 328 with the temple
+left to half a stack; with the attack tried in its order (one stack that
+is enough, else join, else a wave), 355. The smaller army, the gold, the
+temple rule and the wariness then went into the planner in turns (above),
+where they win as much, and so into `<style>/turns`: what is left between
+the two is what is the rounds' own. Its battles, measured then: it won 61
+in 100 of its attacks (the planner playing rounds as turns, 47), and 20 in
+100 of them were one unit's (36).
 
 Tried and left out, for winning nothing over 480 games: holding an attack
 on a city back for the stacks of its holder that could be in it first;
 sending a threatened city only the units that get in before the others
 could; more defenders at home (a second unit kept in every city lost two
 games in three).
-
-The planner in turns is as it was. (Spending the treasury would likely
-help it there too: not tried.)
 
 ## A program that plays: the text protocol
 
