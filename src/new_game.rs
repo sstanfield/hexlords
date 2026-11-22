@@ -21,7 +21,7 @@ use crate::mapgen::config::{Config, DENSITIES, PRESETS, SIZES, Size as MapSize, 
 use crate::mapgen::reach::{MoveClass, movement_class};
 use crate::screen::{MapScreen, Scene};
 use crate::setup::{Controller, Fog, Mode, Setup, TurnOrder};
-use crate::state::combat::{MAX_CHANCE, System};
+use crate::state::combat::{Exact, MAX_CHANCE, System};
 use crate::state::scenario::side_name;
 use crate::state::{Hex, Map, Side, TileType};
 
@@ -36,9 +36,15 @@ pub const ORDER_FIXED_ID: &str = "order_fixed";
 pub const ORDER_DRAWN_ID: &str = "order_drawn";
 pub const BATTLES_LINES_ID: &str = "battles_lines";
 pub const BATTLES_STRENGTH_ID: &str = "battles_strength";
+pub const BATTLES_DICE_ID: &str = "battles_dice";
+/// On the dice, what a roll of exactly a side's number is.
+pub const EXACT_HITS_ID: &str = "exact_hits";
+pub const EXACT_MISSES_ID: &str = "exact_misses";
+pub const EXACT_DEFENDERS_ID: &str = "exact_defenders";
 pub const CHANCE_LESS_ID: &str = "chance_less";
 pub const CHANCE_MORE_ID: &str = "chance_more";
 pub const WOUNDS_ID: &str = "wounds";
+pub const BLOWS_BACK_ID: &str = "blows_back";
 pub const FOG_OFF_ID: &str = "fog_off";
 pub const FOG_ON_ID: &str = "fog_on";
 pub const FOG_TOTAL_ID: &str = "fog_total";
@@ -184,7 +190,7 @@ impl NewGame {
                 ("Drag on the map", "Move it"),
                 ("Turns, Rounds", "How to play: one side after the other (rounds are to come)"),
                 ("Order of turns", "The same each round, or drawn anew"),
-                ("Battles", "Lines of duels, or strength against strength; how much chance, 0 to 10; whether wounds last until a side's turn ends"),
+                ("Battles", "Lines of duels, strength against strength, or dice; how much chance, 0 to 10 (on the dice, what a roll of exactly a side's number does); whether wounds last until a side's turn ends; whether the loser of an exchange may hit back"),
                 ("Gold", "What each side's treasury holds at the start"),
                 ("Fog of war", "Each side sees only what is near its units and cities"),
                 ("Fog: Total", "And the land a side has never seen is black, shut to its units"),
@@ -485,12 +491,30 @@ impl NewGame {
         press(ui, lines, "battles", self.setup.combat.system == System::Lines);
         let strength = build::button(ui, row, BATTLES_STRENGTH_ID, "Strength");
         press(ui, strength, "battles", self.setup.combat.system == System::Strength);
+        let dice = build::button(ui, row, BATTLES_DICE_ID, "Dice");
+        press(ui, dice, "battles", self.setup.combat.system == System::Dice);
         let row = build::row(ui, c, space);
-        build::button(ui, row, CHANCE_LESS_ID, "-");
-        build::text(ui, row, &format!("Chance {} of {MAX_CHANCE}", self.setup.combat.chance));
-        build::button(ui, row, CHANCE_MORE_ID, "+");
+        if self.setup.combat.system == System::Dice {
+            // The dice are the chance: what a roll of exactly a number does.
+            build::text(ui, row, "Exact roll");
+            for (id, word, exact) in [
+                (EXACT_HITS_ID, "Wins", Exact::Hits),
+                (EXACT_MISSES_ID, "Misses", Exact::Misses),
+                (EXACT_DEFENDERS_ID, "Wins defending", Exact::Defenders),
+            ] {
+                let button = build::button(ui, row, id, word);
+                press(ui, button, "exact", self.setup.combat.exact == exact);
+            }
+        } else {
+            build::button(ui, row, CHANCE_LESS_ID, "-");
+            build::text(ui, row, &format!("Chance {} of {MAX_CHANCE}", self.setup.combat.chance));
+            build::button(ui, row, CHANCE_MORE_ID, "+");
+        }
+        let row = build::row(ui, c, space);
         let wounds = build::button(ui, row, WOUNDS_ID, "Wounds last");
         press(ui, wounds, "wounds", self.setup.combat.wounds);
+        let back = build::button(ui, row, BLOWS_BACK_ID, "Losers hit back");
+        press(ui, back, "blows_back", self.setup.combat.blows_back);
 
         // The gold and the fog of war, each a row that says what it is.
         build::gap(ui, c, space);
@@ -605,11 +629,28 @@ impl NewGame {
                 self.rebuild();
             } else if id == TbId::new(MODE_TURNS_ID) {
                 self.setup.mode = Mode::Turns;
-            } else if id == TbId::new(BATTLES_LINES_ID) || id == TbId::new(BATTLES_STRENGTH_ID) {
-                let lines = id == TbId::new(BATTLES_LINES_ID);
-                self.setup.combat.system = if lines { System::Lines } else { System::Strength };
+            } else if let Some(system) = [
+                (BATTLES_LINES_ID, System::Lines),
+                (BATTLES_STRENGTH_ID, System::Strength),
+                (BATTLES_DICE_ID, System::Dice),
+            ]
+            .into_iter()
+            .find_map(|(button, system)| (id == TbId::new(button)).then_some(system))
+            {
+                self.setup.combat.system = system;
+                self.rebuild();
+            } else if let Some(exact) =
+                [(EXACT_HITS_ID, Exact::Hits), (EXACT_MISSES_ID, Exact::Misses), (EXACT_DEFENDERS_ID, Exact::Defenders)]
+                    .into_iter()
+                    .find_map(|(button, exact)| (id == TbId::new(button)).then_some(exact))
+            {
+                self.setup.combat.exact = exact;
+                self.rebuild();
             } else if id == TbId::new(WOUNDS_ID) {
                 self.setup.combat.wounds = !self.setup.combat.wounds;
+                self.rebuild();
+            } else if id == TbId::new(BLOWS_BACK_ID) {
+                self.setup.combat.blows_back = !self.setup.combat.blows_back;
                 self.rebuild();
             } else if id == TbId::new(CHANCE_LESS_ID) || id == TbId::new(CHANCE_MORE_ID) {
                 let chance = &mut self.setup.combat.chance;

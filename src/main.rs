@@ -10,9 +10,12 @@
 //!   it, one from the clock in a window, each game its own; 1 headless, or
 //!   with a script or a screenshot, so a run can be made again);
 //! - `--chance <0-10>`: how much chance there is in a battle (5); `--battles
-//!   lines|strength`: how a battle goes (lines); `--wounds`: a unit's hits
-//!   last until its side's turn ends, and it fights at half strength while
-//!   wounded (they do not); `--gold <n>`: the gold each
+//!   lines|strength|dice`: how a battle goes (lines); `--dice-exact
+//!   hits|misses|defenders`: on the dice, what a roll of exactly a side's
+//!   number is (hits); `--wounds`: a unit's hits last until its side's turn
+//!   ends, and it fights at half strength while wounded (they do not);
+//!   `--blows-back`: the loser of an exchange may hit back (it does not);
+//!   `--gold <n>`: the gold each
 //!   side starts with (50); `--fog`: fog of war; `--total-fog`: fog of war,
 //!   and the land a side has never seen is black;
 //! - `--headless`: no window: the computer plays every side of `--map` until
@@ -37,7 +40,7 @@ use hexlords::script;
 use hexlords::session::Session;
 use hexlords::setup::{Controller, Fog, Setup, TurnOrder};
 use hexlords::shell::Shell;
-use hexlords::state::combat::{MAX_CHANCE, System};
+use hexlords::state::combat::{Exact, MAX_CHANCE, System};
 
 /// The command line.
 #[derive(Clone, Debug, Default)]
@@ -57,7 +60,9 @@ struct Args {
     log: bool,
     chance: Option<u8>,
     battles: Option<System>,
+    exact: Option<Exact>,
     wounds: bool,
+    blows_back: bool,
     gold: Option<u32>,
     fog: Fog,
 }
@@ -65,7 +70,7 @@ struct Args {
 fn usage() -> String {
     format!(
         "usage: hexlords [--map <file.map or map directory>] [--players <side>=<person|agent>,...] [--order fixed|drawn] \
-         [--seed <n>] [--chance <0-10>] [--battles lines|strength] [--wounds] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] \
+         [--seed <n>] [--chance <0-10>] [--battles lines|strength|dice] [--dice-exact hits|misses|defenders] [--wounds] [--blows-back] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] \
          [--log]] \
          [--script <steps>] {OPTIONS_USAGE}"
     )
@@ -101,6 +106,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             "--headless" => parsed.headless = true,
             "--fog" => parsed.fog = parsed.fog.max(Fog::On),
             "--wounds" => parsed.wounds = true,
+            "--blows-back" => parsed.blows_back = true,
             "--total-fog" => parsed.fog = Fog::Total,
             "--chance" => {
                 let n = value("a number from 0 to 10")?;
@@ -112,9 +118,15 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
                 parsed.gold = Some(n.parse().map_err(|_| format!("--gold: \"{n}\" is not a number"))?);
             }
             "--battles" => {
-                let name = value("lines or strength")?;
-                parsed.battles =
-                    Some(System::named(&name).ok_or(format!("--battles: \"{name}\" is not lines or strength"))?);
+                let name = value("lines, strength or dice")?;
+                let system =
+                    System::named(&name).ok_or(format!("--battles: \"{name}\" is not lines, strength or dice"));
+                parsed.battles = Some(system?);
+            }
+            "--dice-exact" => {
+                let name = value("hits, misses or defenders")?;
+                let exact = Exact::named(&name);
+                parsed.exact = Some(exact.ok_or(format!("--dice-exact: \"{name}\" is not hits, misses or defenders"))?);
             }
             "--log" => parsed.log = true,
             "-h" | "--help" => return Err(String::new()),
@@ -135,8 +147,24 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let Args { window, map, script, players, order, seed, headless, rounds, log, chance, battles, wounds, gold, fog } =
-        args;
+    let Args {
+        window,
+        map,
+        script,
+        players,
+        order,
+        seed,
+        headless,
+        rounds,
+        log,
+        chance,
+        battles,
+        exact,
+        wounds,
+        blows_back,
+        gold,
+        fog,
+    } = args;
     // A map that cannot be read ends the run before a window opens.
     let game = match &map {
         Some(path) => match Game::load(path) {
@@ -174,7 +202,9 @@ fn main() {
             setup.seed = game_seed(seed, again, setup.seed);
             setup.combat.chance = chance.unwrap_or(setup.combat.chance);
             setup.combat.system = battles.unwrap_or(setup.combat.system);
+            setup.combat.exact = exact.unwrap_or(setup.combat.exact);
             setup.combat.wounds |= wounds;
+            setup.combat.blows_back |= blows_back;
             setup.gold = gold.unwrap_or(setup.gold);
             if fog.on() {
                 setup.fog = fog;
@@ -280,8 +310,13 @@ mod tests {
         let o = parse(&["--chance", "0", "--battles", "strength"]).unwrap();
         assert_eq!((o.chance, o.battles), (Some(0), Some(System::Strength)));
         assert_eq!(parse(&["--chance", "11"]).unwrap_err(), "--chance: \"11\" is not a number from 0 to 10");
-        assert_eq!(parse(&["--battles", "dice"]).unwrap_err(), "--battles: \"dice\" is not lines or strength");
+        let o = parse(&["--battles", "dice", "--dice-exact", "defenders"]).unwrap();
+        assert_eq!((o.battles, o.exact), (Some(System::Dice), Some(Exact::Defenders)));
+        let lances = "--battles: \"lances\" is not lines, strength or dice";
+        assert_eq!(parse(&["--battles", "lances"]).unwrap_err(), lances);
+        assert_eq!(parse(&["--dice-exact", "x"]).unwrap_err(), "--dice-exact: \"x\" is not hits, misses or defenders");
         assert!(parse(&["--wounds"]).unwrap().wounds && !parse(&[]).unwrap().wounds);
+        assert!(parse(&["--blows-back"]).unwrap().blows_back && !parse(&[]).unwrap().blows_back);
         assert_eq!(parse(&["--gold", "120"]).unwrap().gold, Some(120));
         assert_eq!(parse(&["--gold", "lots"]).unwrap_err(), "--gold: \"lots\" is not a number");
     }

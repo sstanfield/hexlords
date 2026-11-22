@@ -44,6 +44,8 @@ fn a_unit_is_worth_what_the_rules_make_it() {
     assert!(at(0, System::Lines) > 10.0, "{}", at(0, System::Lines));
     assert!(at(10, System::Lines) < 1.5, "{}", at(10, System::Lines));
     assert!((at(5, System::Strength) - 2.0).abs() < 1e-9);
+    // On the dice too, whatever the chance (it plays no part).
+    assert!((at(0, System::Dice) - 2.0).abs() < 1e-9 && (at(10, System::Dice) - 2.0).abs() < 1e-9);
 }
 
 #[test]

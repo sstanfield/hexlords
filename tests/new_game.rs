@@ -8,14 +8,15 @@ mod common;
 use common::{assets, click, widget};
 use hexlords::game::Game;
 use hexlords::new_game::{
-    BATTLES_STRENGTH_ID, CHANCE_LESS_ID, CHANCE_MORE_ID, FOG_ON_ID, FOG_TOTAL_ID, GOLD_LESS_ID, GOLD_MORE_ID,
-    MODE_ROUNDS_ID, ORDER_DRAWN_ID, START_ID, map_id, map_name, seat_id,
+    BATTLES_DICE_ID, BATTLES_STRENGTH_ID, BLOWS_BACK_ID, CHANCE_LESS_ID, CHANCE_MORE_ID, EXACT_DEFENDERS_ID,
+    EXACT_MISSES_ID, FOG_ON_ID, FOG_TOTAL_ID, GOLD_LESS_ID, GOLD_MORE_ID, MODE_ROUNDS_ID, ORDER_DRAWN_ID, START_ID,
+    map_id, map_name, seat_id,
 };
 use hexlords::screen::Scene;
 use hexlords::session::{BEGIN_TURN_ID, COVER_ID, END_TURN_ID, GAME_OVER_ID, NEW_GAME_ID, Session};
 use hexlords::setup::{Controller, Fog, Setup, TurnOrder};
 use hexlords::shell::Shell;
-use hexlords::state::combat::{Rules, System};
+use hexlords::state::combat::{Exact, Rules, System};
 use hexlords::state::scenario::{self, Scenario};
 use hexlords::state::{Hex, Side};
 use turbo_ferret::{Point, Size, TbId};
@@ -110,7 +111,7 @@ fn start_hands_the_window_to_the_game_set_up_as_chosen() {
 fn the_battles_are_set_up_on_the_screen_and_carried_into_the_game() {
     let mut shell = shell();
     assert_eq!(shell.new_game_screen().unwrap().setup().combat, Rules::default());
-    assert_eq!(Rules::default(), Rules { chance: 5, system: System::Lines, wounds: false });
+    assert_eq!(Rules::default(), Rules { chance: 5, system: System::Lines, wounds: false, ..Rules::default() });
     // Strength against strength, and less chance; never below none.
     push(&mut shell, BATTLES_STRENGTH_ID);
     for _ in 0..3 {
@@ -118,7 +119,7 @@ fn the_battles_are_set_up_on_the_screen_and_carried_into_the_game() {
     }
     assert_eq!(
         shell.new_game_screen().unwrap().setup().combat,
-        Rules { chance: 2, system: System::Strength, wounds: false }
+        Rules { chance: 2, system: System::Strength, wounds: false, ..Rules::default() }
     );
     for _ in 0..3 {
         push(&mut shell, CHANCE_LESS_ID);
@@ -149,9 +150,37 @@ fn the_battles_are_set_up_on_the_screen_and_carried_into_the_game() {
     push(&mut shell, FOG_TOTAL_ID);
     push(&mut shell, START_ID);
     let game = &shell.session().unwrap().screen.game;
-    assert_eq!(game.setup().combat, Rules { chance: 10, system: System::Strength, wounds: false });
+    assert_eq!(game.setup().combat, Rules { chance: 10, system: System::Strength, wounds: false, ..Rules::default() });
     assert_eq!((game.setup().gold, game.gold(Side::Red)), (gold, gold));
     assert_eq!(game.setup().fog, Fog::Total);
+}
+
+/// The dice and the loser hitting back (the owner's word, 2026-11-21): on
+/// the dice the chance has no say, and what a roll of exactly a side's
+/// number does is chosen instead.
+#[test]
+fn the_dice_and_hitting_back_are_chosen_on_the_screen() {
+    let mut shell = shell();
+    let says = |shell: &Shell| descendants_of(shell, "new_game_settings");
+    assert!(says(&shell).iter().any(|t| t == "Chance 5 of 10"));
+    push(&mut shell, BATTLES_DICE_ID);
+    assert!(!says(&shell).iter().any(|t| t.starts_with("Chance")), "{:?}", says(&shell));
+    assert!(says(&shell).iter().any(|t| t == "Exact roll"));
+    push(&mut shell, EXACT_MISSES_ID);
+    push(&mut shell, BLOWS_BACK_ID);
+    let combat = shell.new_game_screen().unwrap().setup().combat;
+    let dice = Rules { system: System::Dice, exact: Exact::Misses, blows_back: true, ..Rules::default() };
+    assert_eq!(combat, dice);
+    // Pressed again, it is off; and back to strength, the chance again.
+    push(&mut shell, BLOWS_BACK_ID);
+    push(&mut shell, BLOWS_BACK_ID);
+    push(&mut shell, EXACT_DEFENDERS_ID);
+    push(&mut shell, BATTLES_STRENGTH_ID);
+    assert!(says(&shell).iter().any(|t| t == "Chance 5 of 10"));
+    push(&mut shell, BATTLES_DICE_ID);
+    push(&mut shell, START_ID);
+    let game = &shell.session().unwrap().screen.game;
+    assert_eq!(game.setup().combat, Rules { exact: Exact::Defenders, ..dice });
 }
 
 fn descendants_of(shell: &Shell, name: &str) -> Vec<String> {

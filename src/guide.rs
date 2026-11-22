@@ -11,7 +11,7 @@ use crate::game::{CITY_SIGHT, Game, HARD_ODDS, UNIT_SIGHT, emerge_chance};
 use crate::help::HelpSection;
 use crate::info;
 use crate::setup::{Fog, TurnOrder};
-use crate::state::combat::{HITS, MAX_CHANCE, System, walls_bonus};
+use crate::state::combat::{BLOW_BACK_MOST, DICE_MOST, Exact, HITS, MAX_CHANCE, System, dice_odds, walls_bonus};
 use crate::state::{Blessing, LEVEL_EXPERIENCE, MAX_STACK, Travel, WALL_PRICE, WALLS_CAP};
 
 /// How long a line of a topic's words is, at most, in characters.
@@ -91,11 +91,41 @@ fn battles(game: &Game) -> Vec<HelpSection> {
                              and the loser takes the hit on one of its units drawn by chance: cheap units do not \
                              shield the dear ones."
             .to_string(),
+        System::Dice => format!(
+            "On the dice. Each exchange the two stacks' whole strengths are brought to numbers from 1 to \
+             {DICE_MOST} (as they are when neither is over {DICE_MOST}; else the greater to {DICE_MOST}, the \
+             other as much down), and each side rolls a ten-sided die: the side that rolls under its number \
+             while the other rolls over wins the exchange (else they roll again), and the loser takes the hit \
+             on one of its units drawn by chance."
+        ),
     };
-    let chance = match rules.chance {
-        0 => "0 of 10: the stronger always wins (a tie is the defender's).".to_string(),
-        c if c >= MAX_CHANCE => format!("{c} of 10: strength counts for nothing; every exchange is a coin toss."),
-        c => format!(
+    let chance = match (rules.system, rules.chance) {
+        (System::Dice, _) => {
+            let exact = match rules.exact {
+                Exact::Hits => "a roll of exactly its number is under it",
+                Exact::Misses => "a roll of exactly its number is over it",
+                Exact::Defenders => {
+                    "a roll of exactly its number is under it for the defenders, over it for \
+                                     the attackers"
+                }
+            };
+            let wins = |x, y| {
+                let (a, b) = dice_odds(x, y, rules.exact);
+                (100 * a + (a + b) / 2) / (a + b)
+            };
+            format!(
+                "The dice: the chance set with the game plays no part. For each side, {exact}: 9 against 1 \
+                 wins {}% of the exchanges, 9 against 8 {}%, 5 against 5 {}%.",
+                wins(9, 1),
+                wins(9, 8),
+                wins(5, 5)
+            )
+        }
+        (_, 0) => "0 of 10: the stronger always wins (a tie is the defender's).".to_string(),
+        (_, c) if c >= MAX_CHANCE => {
+            format!("{c} of 10: strength counts for nothing; every exchange is a coin toss.")
+        }
+        (_, c) => format!(
             "{c} of 10. Only the ratio of the strengths counts: one twice as strong as the other wins {}% of \
              the exchanges. (Less chance: strength counts more.)",
             twice_wins(c)
@@ -175,6 +205,19 @@ fn battles(game: &Game) -> Vec<HelpSection> {
                             "one that lives is whole again after the battle."
                         }
                     ),
+                ),
+                (
+                    "Hitting back",
+                    if rules.blows_back {
+                        format!(
+                            "The loser of an exchange may hit back: one of the winner's units (in lines, the \
+                             one it fought) takes a hit too, with a chance of the loser's share of the \
+                             strengths that fought, never more than {BLOW_BACK_MOST}%. A side the exchange \
+                             left with nobody does not."
+                        )
+                    } else {
+                        "The winner of an exchange is never hit in it.".to_string()
+                    },
                 ),
                 ("The odds", "Before you attack, the line under the map says how likely you are to win.".to_string()),
                 (

@@ -170,6 +170,61 @@ and the rules use integers, not floats.
        loser drawn by chance, so that cheap units in front do not shield the
        dear ones behind. Many weak units beat one strong one here, where in
        lines they lose one by one.
+     - *Dice* (`dice`, the owner's design 2026-11-21, to try): each
+       exchange the two stacks' whole strengths are brought to numbers from
+       1 to 9 (`combat::dice_numbers`: as they are when neither is over 9;
+       else the greater to 9 and the other in the same measure, to the
+       nearest, never under 1), and each side rolls a ten-sided die: the
+       side whose roll is under its number while the other's is over wins
+       the exchange (both under or both over: they roll again; drawn at once
+       as their odds, `p (10 - q) : q (10 - p)`), and the loser takes the
+       hit on one of its units drawn by chance, as by strength. The game's
+       chance plays no part. A roll of exactly a side's number (the owner's
+       three, `combat::Exact`, chosen with the game, `--dice-exact`): it
+       wins (9 against 1, 99 in 100; 9 against 8, 69; even, even), it
+       misses (a 1 never wins a roll), or it wins for the defenders only
+       (even numbers are theirs: 5 against 5, 60 in 100; 9 against 9, 69).
+   - **Losers hit back** (built, a choice made with the game, off unless
+     chosen: the new game screen's Losers hit back, `--blows-back`; the
+     owner's word 2026-11-21: "the strong stack taking some hits is
+     probably the right idea but we also dont want a small or weak stack
+     leaving a strong stack in ruins", and, since an even battle would
+     have its loser hit back every other exchange, at most a quarter of the
+     time): in any system, after an exchange the loser hits back with a
+     chance of its share of the strengths that fought (in lines, the two at
+     the front), at most `BLOW_BACK_MOST` (25) in 100, and one of the
+     winner's units takes a hit (in lines, the one at the front); not if the
+     exchange left the loser with nobody. A weak stack has few hits to
+     spend and a small share, so it lands few: a pair of 2s against eight
+     5s, never a death in 20,000 battles. The battle window shows each
+     ("Blue hits back.").
+   - **Measured** (2026-11-21; single battles, 20,000 each, at chance 5:
+     the winner's units lost when the attackers win, of 8):
+
+     | Battle | Lines | Strength | + hit back | Dice | + hit back |
+     |---|---|---|---|---|---|
+     | 8×5 against a pair of 2s | 0.16 | 0 | 0 | 0 | 0 |
+     | 8×5 against 8×2 | 1.05 | 0.12 | 0.92 | 0.03 | 0.67 |
+     | 8×3 against 8×3 (wins half) | 5.5 | 1.8 | 3.1 | 0.8 | 2.1 |
+     | 8×4 against 8×3: wins | 95% | 90% | 86% | 99% | 98% |
+     | 3×6 against 8×2: wins | 99% | 14% | 3% | 48% | 13% |
+
+     On the dice the greater side is always a 9 and misses one roll in
+     ten, so a lead runs away: an even battle ends one-sided, and quality
+     counts more than by strength (three 6s against eight 2s, about even;
+     lines 99 in 100, strength 14). A roll of exactly the number winning for
+     the defenders only makes an even battle the attackers' 9 times in 100.
+     Whole games (the continent, the steady planners, 100 seeds each; with
+     wounds that last in brackets): by strength, the winner of a battle
+     loses 5 in 100 of its units (4), with losers hitting back 11 (9); cities
+     taken 14.8 a game (15.3), with hitting back 17.4 (18.0), and taken back
+     7.5 (7.8) and 9.9 (10.3); 33.6 rounds (35.0), with hitting back 34.9
+     (39.4). On the dice: the winner loses 2 in 100 (1), with hitting back
+     6 (6); 31.6 rounds, 2 games of 100 unended after 200 (exact rolls
+     missing: 35.5 rounds, all ended; winning for the defenders: 41.8, 8
+     unended). In lines, hitting back shortens the games (49.8 rounds to
+     33.1): the strong unit at the front is worn down by the weak ones
+     before it.
    - **Bonuses**, in either system: a defender is 1 stronger on hills and
      in forests, 2 on mountains, and in a city by its walls
      (`combat::walls_bonus`, the owner's table of 2026-11-20): nothing

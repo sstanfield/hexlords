@@ -17,7 +17,7 @@ use turbo_ferret::{ImageHandle, LayoutParams, Rect, TbId, Ui, WidgetId};
 
 use crate::game::{Combatant, Fight, describe_terrain};
 use crate::gui::build::{self, WindowParts};
-use crate::state::combat::{HITS, QUARTER, System};
+use crate::state::combat::{Exact, HITS, QUARTER, System, dice_numbers};
 use crate::state::scenario::side_name;
 
 /// The window and its buttons.
@@ -166,18 +166,27 @@ impl BattleWindow {
         } else {
             side_name(fight.defender).to_string()
         };
-        let system = match fight.rules.system {
-            System::Lines => "in lines",
-            System::Strength => "strength against strength",
+        let rules = fight.rules;
+        let system = match rules.system {
+            System::Lines => format!("in lines, chance {} of 10", rules.chance),
+            System::Strength => format!("strength against strength, chance {} of 10", rules.chance),
+            System::Dice => format!(
+                "on the dice (a roll of exactly its number {})",
+                match rules.exact {
+                    Exact::Hits => "wins",
+                    Exact::Misses => "misses",
+                    Exact::Defenders => "wins for the defenders",
+                }
+            ),
         };
         build::heading(ui, c, &format!("{} attacks {defender} at {place}", title(fight.attacker)));
         build::text(
             ui,
             c,
             &format!(
-                "Fought {system}, chance {} of 10; each unit takes {HITS} hits{}.",
-                fight.rules.chance,
-                if fight.rules.wounds { ", and its wounds last until its side's turn ends" } else { "" }
+                "Fought {system}; each unit takes {HITS} hits{}{}.",
+                if rules.wounds { ", and its wounds last until its side's turn ends" } else { "" },
+                if rules.blows_back { "; the loser of an exchange may hit back" } else { "" }
             ),
         );
         build::gap(ui, c, dp(ui, SPACING_DP));
@@ -344,8 +353,9 @@ impl BattleWindow {
         }
     }
 
-    /// An exchange in two lines: who fought with what, and who was hit
-    /// (whose, since both sides may have the same kinds).
+    /// An exchange in two lines: who fought with what (or that the loser
+    /// hits back), and who was hit (whose, since both sides may have the
+    /// same kinds).
     fn blow_line(&self, blow: crate::state::combat::Exchange) -> (String, String) {
         let unit = |which: usize, i: usize| -> Option<&Combatant> {
             if which == ATTACKERS { self.fight.attackers.get(i) } else { self.fight.defenders.get(i) }
@@ -356,6 +366,7 @@ impl BattleWindow {
         };
         let hit_side = if blow.hit_attacker { ATTACKERS } else { DEFENDERS };
         let (which, i) = (hit_side, blow.unit);
+        let loser = if blow.hit_attacker { DEFENDERS } else { ATTACKERS };
         let hit = format!("{}'s {}", whose(which), unit(which, i).map_or("", |u| u.name.as_str()));
         let dead = self.hits[which].get(i).is_some_and(|h| *h >= HITS);
         let fate = if dead { format!("{}: out of the battle.", capital(&hit)) } else { format!("A hit on {hit}.") };
@@ -366,15 +377,24 @@ impl BattleWindow {
             now.saturating_sub(u32::from(which == hit_side && i == blow.unit))
         };
         let with = |which: usize, i: usize, u: &Combatant| if before(which, i) > 0 { u.hurt } else { u.quarters };
+        let name = |which: usize, i: usize| {
+            unit(which, i)
+                .map_or(String::new(), |u| format!("{}'s {} ({})", whose(which), u.name, points(with(which, i, u))))
+        };
         let fought = match (blow.attacker, blow.defender) {
-            (Some(a), Some(d)) => {
-                let name = |which: usize, i: usize| {
-                    unit(which, i).map_or(String::new(), |u| {
-                        format!("{}'s {} ({})", whose(which), u.name, points(with(which, i, u)))
-                    })
-                };
-                format!("{} against {}.", capital(&name(ATTACKERS, a)), name(DEFENDERS, d))
+            // The loser hits back (blows back): the one it fought, in lines.
+            (Some(a), Some(d)) if blow.back => {
+                format!("{} hits back.", capital(&name(loser, if loser == ATTACKERS { a } else { d })))
             }
+            _ if blow.back => {
+                let side = if loser == ATTACKERS { self.fight.attacker } else { self.fight.defender };
+                if side == crate::state::Side::Grey {
+                    "Nobody's units hit back.".to_string()
+                } else {
+                    format!("{} hits back.", title(side))
+                }
+            }
+            (Some(a), Some(d)) => format!("{} against {}.", capital(&name(ATTACKERS, a)), name(DEFENDERS, d)),
             _ => {
                 // By strength: the stacks' totals, of those standing when it
                 // was fought.
@@ -383,7 +403,15 @@ impl BattleWindow {
                     units.iter().enumerate().filter(standing).map(|(i, u)| with(which, i, u)).sum()
                 };
                 let (a, d) = (total(ATTACKERS, &self.fight.attackers), total(DEFENDERS, &self.fight.defenders));
-                format!("{} {} against {} {}.", capital(&whose(ATTACKERS)), points(a), whose(DEFENDERS), points(d))
+                // On the dice, and the numbers they were brought to.
+                let dice = if self.fight.rules.system == System::Dice {
+                    let (x, y) = dice_numbers(a, d);
+                    format!(": {x} against {y} on the dice")
+                } else {
+                    String::new()
+                };
+                let (a, d) = (points(a), points(d));
+                format!("{} {a} against {} {d}{dice}.", capital(&whose(ATTACKERS)), whose(DEFENDERS))
             }
         };
         (fought, fate)

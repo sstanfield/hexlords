@@ -16,6 +16,7 @@ use std::process::{Command, Stdio};
 use crate::game::Game;
 use crate::orders::{Event, Order, RALLY_POINTS, RallyPoint};
 use crate::setup::Controller;
+use crate::state::combat::System;
 use crate::state::scenario::{side_name, side_named};
 use crate::state::{Hex, MAX_STACK, QueueEnd, QueueItem, Sends, Side, UnitId};
 
@@ -520,8 +521,10 @@ pub fn describe(game: &Game, side: Side) -> String {
     let mut out = format!("turn {} {}\n", game.turn(), side_name(side));
     out.push_str(&format!("order {}\n", game.order().iter().map(|s| side_name(*s)).collect::<Vec<_>>().join(" ")));
     let combat = game.setup().combat;
+    let exact = if combat.system == System::Dice { format!(" exact {}", combat.exact.name()) } else { String::new() };
     let wounds = if combat.wounds { " wounds last" } else { "" };
-    out.push_str(&format!("battles {} chance {}{wounds}\n", combat.system.name(), combat.chance));
+    let back = if combat.blows_back { " blows back" } else { "" };
+    out.push_str(&format!("battles {} chance {}{exact}{wounds}{back}\n", combat.system.name(), combat.chance));
     out.push_str(&format!("fog {}\n", game.setup().fog.word()));
     out.push_str(&format!("gold {} income {} upkeep {}\n", game.gold(side), game.income(side), game.upkeep(side)));
     // With total fog of war, a hex the side has never seen is a `?`.

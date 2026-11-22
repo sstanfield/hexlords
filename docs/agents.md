@@ -205,9 +205,13 @@ end
 
 - `turn <round> <side>`: whose turn it is, which is the side the program plays.
 - `order`: this round's order of turns.
-- `battles <lines or strength> chance <0 to 10>`: how the game's battles go
-  (`docs/gameplay.md`, "Fighting"); `wounds last` at its end when a unit's
-  hits stay with it until its side's turn ends (`--wounds`).
+- `battles <lines, strength or dice> chance <0 to 10>`: how the game's
+  battles go (`docs/gameplay.md`, "Fighting"; on the dice the chance plays
+  no part); then, on the dice, `exact <hits, misses or defenders>`: what a
+  roll of exactly a side's number does (`--dice-exact`); `wounds last` when
+  a unit's hits stay with it until its side's turn ends (`--wounds`); and
+  `blows back` when the loser of an exchange may hit back (`--blows-back`):
+  `battles dice chance 5 exact hits wounds last blows back`.
 - `fog <off, on or total>`: fog of war (`docs/gameplay.md`).
 - `gold <n> income <n> upkeep <n>`: the side's treasury, what its cities
   bring in a turn, what its units cost a turn.
