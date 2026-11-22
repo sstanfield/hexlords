@@ -559,10 +559,14 @@ pub struct Game {
     /// The levels the last battle brought, to be told after it.
     promoted: Vec<Event>,
     /// With fog of war, each side's (by `Side::index`): the hexes its units
-    /// saw on their way this turn (they stay seen until its turn ends), and
-    /// the other sides' stacks it saw last where they were (`Ghost`).
+    /// saw on their way (those of its turn stay seen until it ends; those of
+    /// its standing orders at its end, until its next turn ends), and the
+    /// other sides' stacks it saw last where they were (`Ghost`).
     trail: Vec<Vec<bool>>,
     memory: Vec<Vec<Ghost>>,
+    /// While a side's standing orders go at the end of its turn: the side,
+    /// and its trail of the turn, still seen while they go.
+    fading: Option<(Side, Vec<bool>)>,
     /// With fog of war, each side's: who held each city it has seen, when it
     /// saw it last (`Sight::held`); with total fog, the hexes it has ever
     /// seen.
@@ -613,6 +617,7 @@ impl Game {
             out: Vec::new(),
             trail: vec![Vec::new(); NUM_SIDES + 1],
             memory: vec![Vec::new(); NUM_SIDES + 1],
+            fading: None,
             held: vec![Vec::new(); NUM_SIDES + 1],
             explored: vec![Vec::new(); NUM_SIDES + 1],
             winner: None,
@@ -2264,7 +2269,13 @@ impl Game {
         // with the movement its units have left (the owner's word,
         // 2026-11-21: its player could still give them other orders in the
         // turn, in a pinch): the marches, then the patrols (a patrol that
-        // fought and was left alone goes on).
+        // fought and was left alone goes on). What its units saw on their way
+        // in the turn is still seen while they go; what they see as they go
+        // is its trail from now on, seen until its next turn ends (its
+        // player watches them go, and plays that turn knowing what they saw,
+        // as when they went at a turn's start).
+        let turns = self.trail.get_mut(ending.index()).map(std::mem::take).unwrap_or_default();
+        self.fading = Some((ending, turns));
         self.stand_easy(ending);
         let mut events = self.marches(ending);
         events.extend(self.patrols(ending));
@@ -2272,12 +2283,9 @@ impl Game {
         // 2026-11-21: attacked in waves in the others' turns, a stack stays
         // battered through its own, and is whole for the next waves).
         self.heal(|side| side == ending);
-        // What its units saw on their way (the marches' too) is noted, and
-        // then seen no longer.
+        // What its units saw in the turn is noted, and then seen no longer.
         self.note_sightings();
-        if let Some(trail) = self.trail.get_mut(ending.index()) {
-            trail.clear();
-        }
+        self.fading = None;
         // The sides still in; the game is over before none are.
         for _ in 0..self.order.len() * 2 {
             self.current += 1;
@@ -2361,8 +2369,10 @@ impl Game {
     }
 
     /// What `side` sees: everything without fog of war; with it, what is
-    /// within [`UNIT_SIGHT`] of its units and [`CITY_SIGHT`] of its cities.
-    /// (Nobody, `Side::Grey`, sees everything.)
+    /// within [`UNIT_SIGHT`] of its units and [`CITY_SIGHT`] of its cities,
+    /// and what its units saw on their way: in its turn, until the turn
+    /// ends; as its standing orders took them at its end, until its next
+    /// turn ends. (Nobody, `Side::Grey`, sees everything.)
     pub fn sight(&self, side: Side) -> Sight {
         if !self.setup.fog.on() || side == Side::Grey {
             return Sight::all();
@@ -2382,8 +2392,11 @@ impl Game {
                 }
             }
         }
-        // And what its units saw on their way this turn.
-        if let Some(trail) = self.trail.get(side.index()).filter(|t| t.len() == seen.len()) {
+        // And what its units saw on their way (its trail; and while its
+        // standing orders go at the end of its turn, what they saw in it).
+        let size = seen.len();
+        let fading = self.fading.iter().filter(|(s, _)| *s == side).map(|(_, t)| t);
+        for trail in self.trail.get(side.index()).into_iter().chain(fading).filter(|t| t.len() == size) {
             for (s, t) in seen.iter_mut().zip(trail) {
                 *s |= *t;
             }
@@ -2735,7 +2748,8 @@ impl Game {
 
     /// `side`'s units went along `way` (the hexes after where they stood):
     /// with fog of war, what they saw on the way stays seen until its turn
-    /// ends.
+    /// ends (until its next turn ends, for its standing orders at the end of
+    /// it: `Game::next_turn`).
     fn see_along(&mut self, side: Side, way: &[Hex]) {
         if !self.setup.fog.on() || way.is_empty() {
             return;
@@ -2798,6 +2812,7 @@ impl Game {
         let mut view = self.clone();
         (view.history, view.fights, view.fought, view.undo) = (Vec::new(), Vec::new(), Vec::new(), None);
         view.watched = None;
+        view.fading = view.fading.take().filter(|(s, _)| *s == side);
         for (i, ((memory, trail), (held, explored))) in view
             .memory
             .iter_mut()

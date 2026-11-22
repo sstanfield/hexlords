@@ -623,7 +623,12 @@ fn sight(game: &Game) -> Vec<HelpSection> {
             )
         });
         let items: Vec<(&str, String)> = [
-            ("On the way", "What your units see as they go stays in sight until your turn ends.".to_string()),
+            (
+                "On the way",
+                "What your units see as they go stays in sight until your turn ends; what they see as \
+                 they march or patrol at its end, until your next turn ends."
+                    .to_string(),
+            ),
             (
                 "Remembered",
                 "Another side's stack you saw stays on the map, faint, where you saw it last (or where it \

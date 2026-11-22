@@ -10,12 +10,14 @@ use common::{assets, choose, click, pixel_of};
 use hexlords::agents;
 use hexlords::game::{CITY_SIGHT, Game, UNIT_SIGHT, UNSEEN};
 use hexlords::info;
+use hexlords::options_window::Options;
 use hexlords::orders::{Event, Order};
 use hexlords::screen::Scene;
 use hexlords::session::{ALL_CITIES_ID, MENU_CITIES_ID, Session};
 use hexlords::setup::{Controller, Fog, Setup};
+use hexlords::showing::WAY_MS;
 use hexlords::state::scenario::{self, Scenario};
-use hexlords::state::{Hex, Sends, Side, TileType};
+use hexlords::state::{Hex, Sends, Side, TileType, UnitId};
 use turbo_ferret::Size;
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -402,4 +404,130 @@ fn on_the_screen_land_never_seen_says_nothing() {
     assert!(s.city().is_empty(), "no city panel: it is not known to be there");
     choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     assert_eq!(s.city_list().map(|l| l.rows().len()), Some(1), "Redhold only");
+}
+
+// What units see as they go at the end of their side's turn (the owner, of
+// a city's new unit sent off: "it leaves much of its path still in the
+// dark").
+
+/// Where Redhold sends its riders: 30 hexes east, three turns' ride.
+const FAR: Hex = Hex::new(5, 35);
+
+/// 20 x 40 grass: red's Redhold (5, 5) building riders (a turn each; they
+/// go 10 hexes a turn) and gold for them; blue's Bluemoor far to the south
+/// east. With total fog, red has seen the land along row 5 to FAR (its
+/// lookouts there are gone before the game goes on).
+fn sending(fog: Fog) -> Game {
+    let mut rows = vec!["g".repeat(40); 20];
+    rows[5] = format!("{}c{}", "g".repeat(5), "g".repeat(34));
+    rows[18] = format!("{}c{}", "g".repeat(35), "g".repeat(4));
+    let terrain = format!("20\n40\n{}\n", rows.join("\n"));
+    let units = "unit riders\nname Riders\nstrength 3\nmoves 20\nprice 5\nenter grass 2, city 1\n";
+    let cities = "city 5 5\nname Redhold\nside red\nproduce riders 1\ncity 18 35\nname Bluemoor\nside blue\n";
+    let (mut map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+    let kind = map.units().kind_named("riders").unwrap();
+    let lookouts: Vec<_> = (9..=FAR.col)
+        .step_by(4)
+        .map(|col| {
+            let id = map.new_unit_of(Side::Red, kind).unwrap();
+            map.place_unit(id, Hex::new(5, col)).unwrap();
+            id
+        })
+        .collect();
+    let game = Game::from_scenario(Scenario { map, assets: None, warnings });
+    let mut setup = Setup::solo(&game.map, Some(Side::Red), "passive");
+    (setup.fog, setup.gold) = (fog, 100);
+    let mut game = game.with_setup(setup);
+    for id in lookouts {
+        game.map.kill_unit(id);
+    }
+    let redhold = game.map.city_at(REDHOLD).unwrap().id;
+    game.apply(Order::Build { city: redhold, what: Some(0) }).unwrap();
+    game.apply(Order::Rally { city: redhold, to: Sends::Route(vec![FAR]) }).unwrap();
+    game
+}
+
+/// The way `unit` went, of what happened.
+fn way_of(events: &[Event], unit: UnitId) -> Vec<Hex> {
+    let way = events.iter().rev().find_map(|e| match e {
+        Event::Moved { unit: u, way, .. } if *u == unit => Some(way.clone()),
+        _ => None,
+    });
+    way.unwrap_or_else(|| panic!("it went nowhere: {events:?}"))
+}
+
+/// The hexes of `way` red does not see.
+fn unseen(game: &Game, way: &[Hex]) -> Vec<Hex> {
+    let sight = game.sight(Side::Red);
+    way.iter().copied().filter(|h| !sight.sees(*h)).collect()
+}
+
+#[test]
+fn what_a_citys_new_unit_sees_on_its_way_at_the_turns_end_stays_seen_through_the_next_turn() {
+    for fog in [Fog::On, Fog::Total] {
+        let mut game = sending(fog);
+        assert!(game.sight(Side::Red).knows(FAR), "{fog:?}");
+        // Built as red's second turn begins, the rider waits in Redhold
+        // through it (the city builds no more), and goes as it ends.
+        game.apply(Order::EndTurn).unwrap();
+        game.apply(Order::EndTurn).unwrap();
+        let rider = game.map.units_at(REDHOLD)[0];
+        let redhold = game.map.city_at(REDHOLD).unwrap().id;
+        game.apply(Order::Build { city: redhold, what: None }).unwrap();
+        let first = way_of(&game.apply(Order::EndTurn).unwrap(), rider);
+        assert!(first.len() > 8, "{fog:?}: ten hexes, {first:?}");
+        // Red sees all of its way, as if a person had moved it there: while
+        // the screen shows it going, through blue's turn, and through red's
+        // next.
+        assert_eq!(unseen(&game, &first), [], "{fog:?}: in blue's turn");
+        game.apply(Order::EndTurn).unwrap();
+        assert_eq!(game.player(), Side::Red);
+        assert_eq!(unseen(&game, &first), [], "{fog:?}: in red's next turn");
+        // That turn over, the rider rides on: its new way is seen, the old
+        // one (far from Redhold and the rider) no longer; with total fog,
+        // the land stays known.
+        let second = way_of(&game.apply(Order::EndTurn).unwrap(), rider);
+        assert_eq!(unseen(&game, &second), [], "{fog:?}: the second day's ride");
+        let gone = unseen(&game, &first);
+        assert!(!gone.is_empty(), "{fog:?}: the first day's is no longer seen");
+        assert!(gone.iter().all(|h| game.sight(Side::Red).knows(*h)), "{fog:?}");
+    }
+}
+
+#[test]
+fn what_a_patrol_sees_at_the_turns_end_stays_seen_too() {
+    let mut game = sending(Fog::On);
+    let kind = game.map.units().kind_named("riders").unwrap();
+    let rider = game.map.new_unit_of(Side::Red, kind).unwrap();
+    game.map.place_unit(rider, Hex::new(12, 5)).unwrap();
+    let (west, east) = (Hex::new(12, 5), Hex::new(12, 25));
+    // Its first ride is at once, in red's turn; the next as red's next turn
+    // ends.
+    game.apply(Order::Patrol { units: vec![rider], waypoints: vec![west, east], attack: None }).unwrap();
+    game.apply(Order::EndTurn).unwrap();
+    game.apply(Order::EndTurn).unwrap();
+    let way = way_of(&game.apply(Order::EndTurn).unwrap(), rider);
+    assert!(way.len() > 8, "{way:?}");
+    assert_eq!(unseen(&game, &way), []);
+}
+
+#[test]
+fn the_land_opens_as_a_citys_new_unit_is_shown_going_at_the_turns_end() {
+    let mut game = sending(Fog::On);
+    game.apply(Order::EndTurn).unwrap();
+    game.apply(Order::EndTurn).unwrap();
+    let rider = game.map.units_at(REDHOLD)[0];
+    // (The rules' chance is the game's: its way is the same in a copy.)
+    let way = way_of(&game.clone().apply(Order::EndTurn).unwrap(), rider);
+    let options = Options { show_moves: true, ..Options::manual() };
+    let mut s = Session::with_options(&assets(), Size::new(1024, 768), 96, game, options).unwrap();
+    s.end_turn();
+    assert_eq!(s.screen.game.map.units().get(rider).map(|u| u.pos()), way.last().copied());
+    // As it sets off, the land at the far end is not shown yet; once it is
+    // there, all of its way is.
+    s.frame(1000);
+    assert!(!Scene::sight(&s).sees(*way.last().unwrap()), "not shown yet");
+    s.frame(1000 + WAY_MS + 1);
+    let dark: Vec<Hex> = way.iter().copied().filter(|h| !Scene::sight(&s).sees(*h)).collect();
+    assert_eq!(dark, [], "its way, {way:?}");
 }

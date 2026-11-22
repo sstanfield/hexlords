@@ -370,7 +370,13 @@ and the rules use integers, not floats.
    were where the side does not see (`Game::known_range`); units of another
    side met on the way, unseen, stop the move there, in a battle
    (`Event::Surprise`, and a line in the log). What a side's units see on
-   their way stays in its sight until its turn ends (its trail); and it
+   their way stays in its sight until its turn ends (its trail); what they
+   see as its standing orders take them at its end (a march, a city's new
+   units sent off, a patrol), until its next turn ends, so that the land
+   opens as they are shown going and its player plays that turn knowing
+   it, as when standing orders went at a turn's start (the owner,
+   2026-11-21, found a city's new unit sent off "leaves much of its path
+   still in the dark" when their trail ended with the turn); and it
    remembers the other sides' stacks it saw where it saw them last (where
    one went out of its sight, if it saw it go), until the hex is in sight
    again (`Game::ghosts`): the map shows a faint banner and the pips there,
