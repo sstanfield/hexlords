@@ -32,7 +32,8 @@ pub const UNSEEN: &str = "nobody of the side has seen that land yet";
 pub enum SelectOutcome {
     /// Nothing was selected and the hex had a unit: it is selected now.
     Selected(UnitId),
-    /// The selected unit's own hex was chosen: nothing is selected now.
+    /// The selected units are not the side's whose turn it is (selected in
+    /// another's turn) and were sent nowhere: nothing is selected now.
     Deselected,
     /// The selected units attacked the hex: what happened (the battle, and
     /// the moves and the city taken if they won).
@@ -46,8 +47,9 @@ pub enum SelectOutcome {
     /// there (`Order::GoTo`, over as many turns as it takes): what came of
     /// it this turn. They are no longer selected.
     Sent(Vec<Event>),
-    /// The selected units could not reach the hex, nor be sent there: why.
-    /// They stay selected.
+    /// The selected units could not go there, now (a move refused: no room
+    /// there, say) or over turns (they could not be sent there): why. They
+    /// stay selected.
     Refused(String),
 }
 
@@ -501,6 +503,13 @@ pub struct Fight {
     pub defenders: Vec<Combatant>,
     pub trace: Vec<combat::Exchange>,
     pub won: bool,
+}
+
+/// True if `unit`'s orders have stopped and it waits for its player's
+/// word: a march stopped short, a patrol or marauders that fought, a patrol
+/// that could not go on (it waits for orders: `Game::waiting_stacks`).
+pub fn waits_for_word(unit: &Unit) -> bool {
+    patrol::needs_word(unit) || !unit.route.is_empty() && unit.stalled
 }
 
 #[derive(Clone)]
@@ -1636,12 +1645,15 @@ impl Game {
     }
 
     /// Which of `side`'s rally points units sent to `hex` would be bound
-    /// to: the one there, if another side's units or city are not (onto
-    /// those a click is an attack, as anywhere; the owner's report,
-    /// 2026-11-21: "I don't seem to be able to attack an enemy stack at one
-    /// of my rally points").
+    /// to: the one there, unless another side's units stand there that
+    /// `side` sees (onto those a click is an attack, as anywhere; the
+    /// owner's report, 2026-11-21: "I don't seem to be able to attack an
+    /// enemy stack at one of my rally points"). One it does not see (fog of
+    /// war) changes nothing: the click says nothing of it.
     pub fn rally_target(&self, side: Side, hex: Hex) -> Option<u8> {
-        self.rally_point_at(side, hex).filter(|_| !hostile(&self.map, side, hex))
+        let point = self.rally_point_at(side, hex)?;
+        let seen_foe = hostile(&self.map, side, hex) && self.sight(side).sees(hex);
+        (!seen_foe).then_some(point)
     }
 
     /// Put `side`'s rally point `n` somewhere, move it, or take it away
@@ -2989,7 +3001,12 @@ impl Game {
     /// - Units are selected and this is their hex: they stay selected.
     /// - Units are selected and all of them can reach the hex: they move there
     ///   (`Order::Move`: each pays its cost; into another side's units it is a
-    ///   battle; a city may be taken) and are deselected.
+    ///   battle; a city may be taken) and are deselected; if the move is
+    ///   refused, they stay selected and the outcome says why.
+    /// - Units are selected and the hex is one of the side's rally points
+    ///   with no other side's units it sees on it (`rally_target`): they are
+    ///   sent there bound to the point, whether they reach it this turn or
+    ///   not.
     /// - Units are selected and they cannot get there this turn: the hex's
     ///   own units, if it has any, are selected instead; else they are sent
     ///   there (`Order::GoTo`, over as many turns as it takes), or, if they

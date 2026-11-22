@@ -449,8 +449,10 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                 (
                     "Moving",
                     "Click your stack, then where it goes (or click its units under the map to take some \
-                            of them). Undo takes back the last move, a city's work or its walls, unless chance \
-                            had a say in it."
+                            of them). Onto another of your stacks in reach, it asks: join it, or take that \
+                            stack. A stack with orders of its own (marching, defending, on patrol) asks before \
+                            new ones end them. An order refused says why. Undo takes back the last move, a \
+                            city's work or its walls, unless chance had a say in it."
                         .to_string(),
                 ),
                 (

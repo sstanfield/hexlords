@@ -7,14 +7,16 @@
 
 mod common;
 
-use common::{assets, click, pixel_of, press, push_widget};
+use common::{assets, click, pixel_of, press, push_widget, type_char};
+use hexlords::city_windows::CITY_RALLY_ID;
 use hexlords::game::Game;
 use hexlords::options_window::Options;
 use hexlords::orders::{Event, Order, RallyPoint};
-use hexlords::session::{MISSION_ASK_ID, MISSION_GO_ID, MISSION_KEEP_ID, MISSION_TAKE_ID, Session};
-use hexlords::setup::Setup;
+use hexlords::patrol_window::PATROL_OK_ID;
+use hexlords::session::{MISSION_ASK_ID, MISSION_GO_ID, MISSION_KEEP_ID, MISSION_TAKE_ID, Session, unit_button_id};
+use hexlords::setup::{Fog, Setup};
 use hexlords::state::scenario::{self, Scenario};
-use hexlords::state::{Hex, Side, UnitId};
+use hexlords::state::{Hex, Sends, Side, TileType, UnitId};
 use turbo_ferret::{Size, SpecialKey};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -176,4 +178,150 @@ fn an_enemy_stack_on_a_rally_point_is_attacked_by_a_click() {
     assert!(fought, "a battle (it stood beside the point instead)");
     assert!(s.screen.game.map.units().get(levy).is_none(), "the levy fell");
     assert_eq!(pos(&s, a), POINT);
+}
+
+/// The review (2026-11-21): a city's Send to begun while the window asked
+/// about a stack's orders left it open, and Enter (the pick's) sent the
+/// stack instead.
+#[test]
+fn a_pick_ends_the_question_about_a_stacks_orders() {
+    let mut game = game();
+    let a = put(&mut game, Side::Red, "soldiers", REDHOLD);
+    let b = put(&mut game, Side::Red, "soldiers", REDHOLD);
+    game.apply(Order::Defend { units: vec![a, b], on: true }).unwrap();
+    let mut s = session(game, Options::manual());
+    click_hex(&mut s, REDHOLD);
+    click_hex(&mut s, Hex::new(8, 5));
+    assert!(s.asks_mission());
+    type_char(&mut s, 'o');
+    push_widget(&mut s, CITY_RALLY_ID);
+    assert!(s.picking().is_some() && !s.asks_mission(), "the pick's, not the question's");
+    s.screen.game.set_cursor(Hex::new(9, 9));
+    press(&mut s, SpecialKey::Enter);
+    assert_eq!(pos(&s, a), REDHOLD, "the defenders stay");
+    // (The pick's: the city sends there, or says why not: it builds nothing.)
+    let sends = s.screen.game.map.city_at(REDHOLD).unwrap().sends.clone();
+    let city_refused = s.refusal().is_some_and(|r| r[0] == "The city's new units cannot go there.");
+    assert!(sends != Sends::Stay || city_refused, "{sends:?} {:?}", s.refusal());
+}
+
+/// The review (2026-11-21): the question outlived a change of selection
+/// (Undo, a unit's box, Done), and then took Enter, meant for the stack
+/// selected now.
+#[test]
+fn another_selection_ends_the_question_about_a_stacks_orders() {
+    // Undo: the stack moved before is selected again.
+    let mut g = game();
+    let a = put(&mut g, Side::Red, "soldiers", REDHOLD);
+    g.apply(Order::Defend { units: vec![a], on: true }).unwrap();
+    let w = put(&mut g, Side::Red, "soldiers", Hex::new(15, 15));
+    let mut s = session(g, Options::manual());
+    click_hex(&mut s, Hex::new(15, 15));
+    click_hex(&mut s, Hex::new(15, 17));
+    click_hex(&mut s, REDHOLD);
+    click_hex(&mut s, Hex::new(8, 5));
+    assert!(s.asks_mission());
+    s.undo();
+    s.pump();
+    assert!(!s.asks_mission(), "undo: gone");
+    s.screen.game.set_cursor(Hex::new(16, 15));
+    press(&mut s, SpecialKey::Enter);
+    assert_eq!(pos(&s, w), Hex::new(16, 15), "Enter moves the stack selected now");
+
+    // A unit's box: some of the stack.
+    let mut g = game();
+    let a = put(&mut g, Side::Red, "soldiers", REDHOLD);
+    let b = put(&mut g, Side::Red, "soldiers", REDHOLD);
+    g.apply(Order::Defend { units: vec![a, b], on: true }).unwrap();
+    let mut s = session(g, Options::manual());
+    click_hex(&mut s, REDHOLD);
+    click_hex(&mut s, Hex::new(8, 5));
+    assert!(s.asks_mission());
+    push_widget(&mut s, &unit_button_id(0));
+    assert!(!s.asks_mission(), "a box: gone");
+
+    // Done: the next stack is selected.
+    let mut g = game();
+    let a = put(&mut g, Side::Red, "soldiers", REDHOLD);
+    g.apply(Order::Defend { units: vec![a], on: true }).unwrap();
+    let b = put(&mut g, Side::Red, "soldiers", Hex::new(15, 15));
+    let mut s = session(g, Options::default());
+    click_hex(&mut s, REDHOLD);
+    click_hex(&mut s, Hex::new(8, 5));
+    assert!(s.asks_mission());
+    type_char(&mut s, 'd');
+    assert_eq!(s.screen.game.selection(), [b]);
+    assert!(!s.asks_mission(), "Done: gone");
+    s.screen.game.set_cursor(Hex::new(15, 17));
+    press(&mut s, SpecialKey::Enter);
+    assert_eq!(pos(&s, b), Hex::new(15, 17));
+}
+
+/// The review (2026-11-21): a stack the screen chose, dropped (Esc) and
+/// chosen again by the person, was still the screen's choice: Enter took
+/// the other stack instead of joining it.
+#[test]
+fn a_stack_chosen_again_by_the_person_is_theirs() {
+    let mut game = game();
+    let a = put(&mut game, Side::Red, "soldiers", Hex::new(10, 5));
+    let b = put(&mut game, Side::Red, "soldiers", Hex::new(10, 8));
+    let mut s = session(game, Options::default());
+    assert_eq!(s.screen.game.selection(), [a], "the screen chose a");
+    press(&mut s, SpecialKey::Esc);
+    click_hex(&mut s, Hex::new(10, 5));
+    click_hex(&mut s, Hex::new(10, 8));
+    assert!(s.asks_mission());
+    press(&mut s, SpecialKey::Enter);
+    assert_eq!((pos(&s, a), pos(&s, b)), (Hex::new(10, 8), Hex::new(10, 8)), "joined");
+}
+
+/// The review (2026-11-21): a march stopped short waits for orders, and yet
+/// a click asked whether to end them.
+#[test]
+fn a_march_stopped_short_is_given_new_orders_without_a_question() {
+    let mut game = game();
+    let a = put(&mut game, Side::Red, "soldiers", Hex::new(10, 5));
+    put(&mut game, Side::Blue, "levy", Hex::new(10, 7));
+    game.apply(Order::GoTo { units: vec![a], to: Hex::new(10, 7), via: Vec::new() }).unwrap();
+    assert!(game.map.units().get(a).unwrap().stalled);
+    let mut s = session(game, Options::manual());
+    click_hex(&mut s, Hex::new(10, 5));
+    click_hex(&mut s, Hex::new(12, 5));
+    assert!(!s.asks_mission());
+    assert_eq!(pos(&s, a), Hex::new(12, 5));
+}
+
+/// The review (2026-11-21): a patrol the game refused after its window was
+/// left with nothing selected; it stays selected, to try again.
+#[test]
+fn a_patrol_refused_stays_selected() {
+    let mut game = game();
+    let a = put(&mut game, Side::Red, "soldiers", Hex::new(10, 5));
+    let mut s = session(game, Options::manual());
+    click_hex(&mut s, Hex::new(10, 5));
+    type_char(&mut s, 'p');
+    click_hex(&mut s, Hex::new(10, 8));
+    assert!(s.patrol_window().is_some());
+    // Its waypoint is under water meanwhile (as by another hand): the
+    // patrol is refused.
+    s.screen.game.map.tile_mut(Hex::new(10, 8)).unwrap().kind = TileType::Water;
+    push_widget(&mut s, PATROL_OK_ID);
+    assert!(s.refusal().is_some(), "said why");
+    assert_eq!(s.screen.game.selection(), [a], "still selected");
+}
+
+/// The review (2026-11-21): under fog of war, an enemy on a rally point the
+/// side cannot see decided what a click there did (a march bound to the
+/// point, or not), which gave it away.
+#[test]
+fn an_enemy_unseen_on_a_rally_point_changes_nothing() {
+    let game = game();
+    let mut setup = game.setup().clone();
+    setup.fog = Fog::On;
+    let mut game = game.with_setup(setup);
+    let far = Hex::new(25, 5);
+    game.apply(Order::RallyPoint { n: 0, point: Some(RallyPoint { at: far, defend: false }) }).unwrap();
+    put(&mut game, Side::Blue, "levy", far);
+    assert!(!game.sight(Side::Red).sees(far));
+    assert_eq!(game.rally_target(Side::Red, far), Some(0));
 }

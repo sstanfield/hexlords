@@ -453,19 +453,17 @@ pub fn duty_words(unit: &Unit) -> Option<String> {
 /// words after "This unit is" or "These units are": "defending rally point
 /// 0", "on the way to rally point 0 (row 25, column 5)", "patrolling 3
 /// waypoints, ...", "marauding", "defending Redhold". `None` if none of them
-/// is on one.
+/// is on one that goes on (one whose orders stopped and that waits for
+/// orders, `game::waits_for_word`, has none to lose).
 pub fn mission(game: &Game, units: &[&Unit]) -> Option<String> {
     let map = &game.map;
+    // (One whose orders stopped waits for orders: it has none to lose.)
+    let units: Vec<&Unit> = units.iter().copied().filter(|u| !crate::game::waits_for_word(u)).collect();
     if let Some(unit) = units.iter().find(|u| u.on_duty()) {
         return duty_words(unit).map(|w| w.replace(": the computer leads it", ", led by the computer"));
     }
     if let Some(unit) = units.iter().find(|u| !u.route.is_empty()) {
-        let to = route_words_to(map, &unit.route, unit.bound);
-        return Some(if unit.stalled {
-            format!("on the way to {to} (stopped short)")
-        } else {
-            format!("on the way to {to}")
-        });
+        return Some(format!("on the way to {}", route_words_to(map, &unit.route, unit.bound)));
     }
     let unit = units.iter().find(|u| u.defending)?;
     let at = unit.pos();

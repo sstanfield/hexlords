@@ -552,8 +552,17 @@ thing to happen. Ideas to try, as the rules grow:
   terrain costs it).
 - **Mistakes cost little** (built): Esc drops the selection (a click on
   the selected stack keeps it; a click on another of the player's stacks
-  selects that one: the review of 2026-11-21, since the screen selects
-  stacks by itself; stacks join by Go to), a drag moves the map rather
+  beyond the selection's reach selects that one; one in reach asks, join
+  it or take it, the first button the likelier: take it if the screen
+  chose the selected stack, join it if the person did, the owner's word
+  2026-11-21: "switching stacks is legit but so is combining them"); a
+  click that would end a stack's standing orders (a march, defending, a
+  patrol, marauding; not one stopped short, which waits for orders) asks
+  first, saying what they do ("New orders?": Enter sends, Esc keeps); an
+  order refused says why in a window ("Not done": OK, Enter, Esc or a
+  click on the map closes it), and the stack stays selected to try again;
+  a question that is no longer the question (another stack selected, a
+  pick begun, another window over it) goes. A drag moves the map rather
   than a unit, a click beyond the selection's reach (a Go
   to) can be taken back until the stack has gone more than a leg, and the
   last order can be taken back (`Order::Undo`), unless chance had a say in
@@ -596,8 +605,8 @@ thing to happen. Ideas to try, as the rules grow:
   While it asks the stack is not selected, so that a click or Enter on the
   map gives it no order; Never mind (or Esc) selects it again. A stack on
   patrol or marauding that is selected is not sent elsewhere by one stray
-  click: a click that would give it an order (and so end its duty) says
-  so, and a second click on the same hex sends it. It takes this turn's
+  click: a click that would give it an order (and so end its duty) asks
+  first ("New orders?", above). It takes this turn's
   part at once, and goes on at the end of each of its side's turns, after
   the marches, with the movement it has left (`Game::patrols`): as far as the slowest of it gets,
   on from a waypoint at once with what movement is left (a short patrol

@@ -274,7 +274,15 @@ fn help_section() -> Vec<HelpSection> {
                 ("Click a hex,  or  Enter", "Choose it: select its stack, or send the selected units there"),
                 (
                     "Click one of your stacks",
-                    "Select it, even with another selected (to join stacks: G, then click the other)",
+                    "Select it; one the selected units can reach: asks, join it or take it (Enter: the first)",
+                ),
+                (
+                    "Click for a stack with orders",
+                    "Asks first, saying what it does (defends, marches...): Enter sends it, Esc keeps its orders",
+                ),
+                (
+                    "An order refused",
+                    "A window says why (OK, Enter, Esc or a click closes it); the stack stays selected",
                 ),
                 (
                     "Click a hex beyond their reach",
@@ -392,6 +400,9 @@ pub struct Session {
     /// sends them, and the units; and the click it lets through.
     mission_ask: Option<(WindowParts, Hex, Vec<UnitId>)>,
     mission_takes: bool,
+    /// The windows open when it asked (`open_windows`): one opened after it
+    /// ends the question.
+    mission_windows: u32,
     overriding: bool,
     /// (A stop on the way refused, for the words of `refuse_pick`.)
     refused_stop: bool,
@@ -592,6 +603,7 @@ impl Session {
             stops: Vec::new(),
             rally_item: None,
             auto_selection: Vec::new(),
+            mission_windows: 0,
             mission_ask: None,
             mission_takes: false,
             overriding: false,
@@ -1434,6 +1446,7 @@ impl Session {
     /// Bring the panels up to date with the game.
     fn refresh(&mut self) {
         self.see();
+        self.forget_stale_questions();
         let game = &self.screen.game;
         let map = &game.map;
         let status = info::cursor_line_for(game, &self.sight);
@@ -2109,6 +2122,7 @@ impl Session {
         (mission, join): (Option<&str>, Option<(Option<u8>, bool)>),
     ) {
         self.close_mission_ask();
+        self.mission_windows = self.open_windows();
         let (root, area) = (self.screen.root_window(), self.window_area());
         let (who, them, their, they_go) = match units.len() {
             1 => ("This unit is".to_string(), "it", "Its", "it goes"),
@@ -2175,6 +2189,49 @@ impl Session {
         self.screen.game.deselect();
         self.auto_selection.clear();
         self.choose(hex);
+    }
+
+    /// Which of the screen's windows are open, a bit each (the window that
+    /// asks about a stack's orders goes when another opens over it).
+    fn open_windows(&self) -> u32 {
+        let ui = &self.screen.ui;
+        let parts = |p: &Option<WindowParts>| p.as_ref().is_some_and(|p| build::is_open(ui, p.window));
+        let open = [
+            self.tasks.as_ref().is_some_and(|w| w.is_open(ui)),
+            self.temple.as_ref().is_some_and(|w| w.is_open(ui)),
+            self.disband.as_ref().is_some_and(|w| w.is_open(ui)),
+            self.patrol_window.as_ref().is_some_and(|w| w.is_open(ui)),
+            self.options_window.as_ref().is_some_and(|w| w.is_open(ui)),
+            self.rally_window.as_ref().is_some_and(|w| w.is_open(ui)),
+            self.city_window.as_ref().is_some_and(|w| w.is_open(ui)),
+            self.city_list.as_ref().is_some_and(|w| w.is_open(ui)),
+            self.log.as_ref().is_some_and(|w| w.is_open(ui)),
+            self.battle.as_ref().is_some_and(|w| w.is_open(ui)),
+            parts(&self.end_ask),
+            parts(&self.refusal),
+            parts(&self.cover),
+            parts(&self.game_over),
+            parts(&self.ask_new),
+        ];
+        open.iter().enumerate().fold(0, |bits, (i, open)| bits | (u32::from(*open) << i))
+    }
+
+    /// The window that asks about a stack's orders goes once it is not the
+    /// question: the selection is another, a pick is under way, or another
+    /// window has opened over it. And the screen's choice of a stack is
+    /// forgotten once the selection is anything else (the person's choice
+    /// from then on, even of the same stack again).
+    fn forget_stale_questions(&mut self) {
+        let selection = self.screen.game.selection();
+        if let Some((_, _, units)) = &self.mission_ask {
+            let same = selection.len() == units.len() && units.iter().all(|u| selection.contains(u));
+            if !same || self.picking.is_some() || self.open_windows() & !self.mission_windows != 0 {
+                self.close_mission_ask();
+            }
+        }
+        if self.screen.game.selection() != self.auto_selection.as_slice() {
+            self.auto_selection.clear();
+        }
     }
 
     /// The window that asked about a stack's orders goes, if it is open.
@@ -2992,7 +3049,17 @@ impl Session {
                     self.after_move(at);
                 }
             }
-            Err(why) => self.refuse("They cannot patrol there", &why),
+            Err(why) => {
+                // (They stay selected, to try again.)
+                for (i, id) in units.iter().enumerate() {
+                    if i == 0 {
+                        self.screen.game.select_unit(*id);
+                    } else {
+                        self.screen.game.toggle_unit(*id);
+                    }
+                }
+                self.refuse("They cannot patrol there", &why);
+            }
         }
     }
 
@@ -3233,6 +3300,8 @@ impl Session {
     /// its city.
     fn see_to(&mut self, task: Task) {
         self.drop_pick();
+        // (A stack chosen from the list is the person's choice.)
+        self.auto_selection.clear();
         let mine = self.persons_turn();
         match task {
             Task::Stack { at, .. } => {
