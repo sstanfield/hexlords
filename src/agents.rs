@@ -95,23 +95,44 @@ pub struct TurnReport {
 /// orders are carried out in the game itself, where something it could not
 /// see may be in the way (it hears of a refusal: `Agent::refused`).
 pub fn play_turn(game: &mut Game, agent: &mut dyn Agent) -> TurnReport {
-    let side = game.player();
     let mut report = TurnReport::default();
-    for _ in 0..MAX_ORDERS {
-        if game.winner().is_some() || game.player() != side {
+    let mut given = 0;
+    loop {
+        let (step, over) = play_step(game, agent, given);
+        given += 1;
+        report.events.extend(step.events);
+        report.refused.extend(step.refused);
+        if over {
             return report;
         }
+    }
+}
+
+/// A step of the turn of the side whose turn it is, played by `agent`, for
+/// a screen that shows it as it goes (`play_turn` plays them all): the
+/// agent's next order, carried out (or refused); or, when it ends its turn
+/// (or has given `MAX_ORDERS`, `given` being how many it has), the
+/// computer leading its marauding stacks and the turn's end. True once the
+/// turn is over.
+pub fn play_step(game: &mut Game, agent: &mut dyn Agent, given: usize) -> (TurnReport, bool) {
+    let side = game.player();
+    let mut report = TurnReport::default();
+    if game.winner().is_some() {
+        return (report, true);
+    }
+    if given < MAX_ORDERS {
         let view = game.view_for(side);
         let order = agent.next_order(&view, side);
-        if order == Order::EndTurn {
-            break;
-        }
-        match game.apply(order.clone()) {
-            Ok(events) => report.events.extend(events),
-            Err(why) => {
-                agent.refused(&order, &why);
-                report.refused.push((order, why));
+        if order != Order::EndTurn {
+            match game.apply(order.clone()) {
+                Ok(events) => report.events.extend(events),
+                Err(why) => {
+                    agent.refused(&order, &why);
+                    report.refused.push((order, why));
+                }
             }
+            let over = game.winner().is_some() || game.player() != side;
+            return (report, over);
         }
     }
     // Its marauding stacks last (`marauder`), whoever plays the side.
@@ -120,10 +141,10 @@ pub fn play_turn(game: &mut Game, agent: &mut dyn Agent) -> TurnReport {
         report.events.extend(led.events);
         report.refused.extend(led.refused);
     }
-    if game.winner().is_none() {
+    if game.winner().is_none() && game.player() == side {
         report.events.extend(game.end_turn());
     }
-    report
+    (report, true)
 }
 
 /// The computer's turns, one side after the other, until it is a person's

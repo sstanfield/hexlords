@@ -294,6 +294,7 @@ impl<S: Scene> App<S> {
         let (r, g, b, a) = CLEAR_COLOR;
         ctx.begin_pass(target, PassAction::clear_color(r, g, b, a));
         if set_viewport(ctx, screen.map_rect(), framebuffer) {
+            let moving = scene.moving();
             let marks = Marks {
                 color: scene.mark_color(),
                 marked: &|hex| scene.marked(hex),
@@ -302,6 +303,7 @@ impl<S: Scene> App<S> {
                 sight,
                 outlined: scene.outlined(),
                 flags: scene.flags(),
+                moving: &moving,
             };
             self.map_renderer.draw(ctx, &self.pipelines, &screen.game.map, &screen.view, &marks);
         }

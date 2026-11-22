@@ -15,6 +15,7 @@ pub const OPTIONS_CLOSE_ID: &str = "options_close";
 pub const NEXT_AFTER_MOVE_ID: &str = "option_next_after_move";
 pub const QUICK_BATTLES_ID: &str = "option_quick_battles";
 pub const FAST_BATTLES_ID: &str = "option_fast_battles";
+pub const SHOW_MOVES_ID: &str = "option_show_moves";
 pub const ALWAYS_BLESS_ID: &str = "option_always_bless";
 pub const ASK_END_TURN_ID: &str = "option_ask_end_turn";
 
@@ -36,6 +37,11 @@ pub struct Options {
     /// A battle played out goes at twice the pace (at first it goes at
     /// the slower: the owner's word, 2026-11-21, "more tension").
     pub fast_battles: bool,
+    /// Moves are shown as they happen: stacks go from hex to hex, the
+    /// person's own and the others' they can see, the land opens up as
+    /// theirs go, and the computer plays an order at a time with the map on
+    /// what it does (the owner's word, 2026-11-21).
+    pub show_moves: bool,
     /// A stack moved onto a temple seeks its blessing without being asked.
     pub always_bless: bool,
     /// End turn asks first while stacks wait for orders or cities build
@@ -49,6 +55,7 @@ impl Default for Options {
             next_after_move: true,
             quick_battles: false,
             fast_battles: false,
+            show_moves: true,
             always_bless: false,
             ask_end_turn: true,
         }
@@ -63,13 +70,14 @@ impl Options {
             next_after_move: false,
             quick_battles: false,
             fast_battles: false,
+            show_moves: false,
             always_bless: false,
             ask_end_turn: false,
         }
     }
 
     /// Each option's box: its id, its words, and the option.
-    fn boxes() -> [OptionBox; 5] {
+    fn boxes() -> [OptionBox; 6] {
         [
             (
                 NEXT_AFTER_MOVE_ID,
@@ -80,6 +88,7 @@ impl Options {
                 &mut o.quick_battles
             }),
             (FAST_BATTLES_ID, "Play battles out fast (twice the pace)", |o| &mut o.fast_battles),
+            (SHOW_MOVES_ID, "Show moves as they happen, and the computer's an order at a time", |o| &mut o.show_moves),
             (ALWAYS_BLESS_ID, "On a temple, seek its blessing without asking", |o| &mut o.always_bless),
             (ASK_END_TURN_ID, "Ask before ending a turn with stacks or cities that need orders", |o| {
                 &mut o.ask_end_turn

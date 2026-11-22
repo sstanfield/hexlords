@@ -313,6 +313,27 @@ impl Sight {
         }
     }
 
+    /// What a screen shows while a move is shown going, from `self` (what
+    /// was known before it) to `after` (what is known now): `after`, but a
+    /// hex it sees or knows that `self` did not only once `open` says so
+    /// (the stack has come near enough).
+    pub fn opening(&self, after: &Sight, open: &dyn Fn(Hex) -> bool) -> Sight {
+        let cols = usize::from(after.cols.max(1));
+        let hex = |i: usize| Hex::new((i / cols) as u16, (i % cols) as u16);
+        let blend = |now: &Option<Vec<bool>>, then: &Option<Vec<bool>>| -> Option<Vec<bool>> {
+            let now = now.as_ref()?;
+            Some(
+                now.iter()
+                    .enumerate()
+                    .map(|(i, seen)| {
+                        *seen && (then.as_ref().is_none_or(|t| t.get(i).copied().unwrap_or(false)) || open(hex(i)))
+                    })
+                    .collect(),
+            )
+        };
+        Sight { seen: blend(&after.seen, &self.seen), known: blend(&after.known, &self.known), ..after.clone() }
+    }
+
     fn at(&self, hex: Hex) -> usize {
         usize::from(hex.row) * usize::from(self.cols) + usize::from(hex.col)
     }
@@ -512,6 +533,11 @@ pub struct Game {
     /// the order being carried out fought, until it is kept.
     fights: Vec<(usize, u32, Fight)>,
     fought: Vec<Fight>,
+    /// What a screen shows happening (`Game::watch`): every event of the
+    /// orders carried out since it last took them, each with its record in
+    /// the history if it has one; `None` while nobody watches (without a
+    /// window, nothing is kept).
+    watched: Option<Vec<(Option<usize>, Event)>>,
     /// After a battle won by a stack with no commander against the odds:
     /// its side, and the hex its captain would rise on.
     emerging: Option<(Side, Hex)>,
@@ -581,6 +607,7 @@ impl Game {
             treasury: [setup.gold; NUM_SIDES + 1],
             fights: Vec::new(),
             fought: Vec::new(),
+            watched: None,
             emerging: None,
             promoted: Vec::new(),
             setup,
@@ -755,7 +782,12 @@ impl Game {
             if let Event::Began { side, round: began } = event {
                 (round, turn) = (*began, *side);
             }
-            if matches!(event, Event::Moved { .. } | Event::Began { .. } | Event::Undone) {
+            let kept = !matches!(event, Event::Moved { .. } | Event::Began { .. } | Event::Undone);
+            let record = self.history.len();
+            if let Some(watched) = &mut self.watched {
+                watched.push((kept.then_some(record), event.clone()));
+            }
+            if !kept {
                 continue;
             }
             // A battle's fight is kept beside its record.
@@ -765,6 +797,21 @@ impl Game {
             }
             self.history.push(Record { round, turn, event: event.clone() });
         }
+    }
+
+    /// Keep what happens, for a screen to show it as it happens
+    /// (`take_happened`), or no longer. (It changes nothing in the game.)
+    pub fn watch(&mut self, on: bool) {
+        if on != self.watched.is_some() {
+            self.watched = on.then(Vec::new);
+        }
+    }
+
+    /// What has happened since this was last asked, while watched (`watch`):
+    /// the events of each order carried out, in their order, each with its
+    /// record in the history (`history`) if it has one.
+    pub fn take_happened(&mut self) -> Vec<(Option<usize>, Event)> {
+        self.watched.as_mut().map(std::mem::take).unwrap_or_default()
     }
 
     /// The battle of the history's record `record`, to be watched again, if
@@ -2679,6 +2726,7 @@ impl Game {
     pub fn view_for(&self, side: Side) -> Game {
         let mut view = self.clone();
         (view.history, view.fights, view.fought, view.undo) = (Vec::new(), Vec::new(), Vec::new(), None);
+        view.watched = None;
         for (i, ((memory, trail), (held, explored))) in view
             .memory
             .iter_mut()

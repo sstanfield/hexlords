@@ -120,12 +120,26 @@ pub struct Marks<'a> {
     /// The flags on the map, each with its number (0 to 9): in the game, the
     /// viewer's rally points (`push_flag`).
     pub flags: &'a [(Hex, u8)],
+    /// The stacks shown going from hex to hex (moves being shown): drawn
+    /// where they are on their way, and not on their hexes.
+    pub moving: &'a [Moving],
+}
+
+/// A stack shown going from hex to hex: its units, the point of the map it
+/// is at (between two hexes' middles, `MapView::hex_center`), and the hex
+/// it is nearest (what the fog says of it: another side's shows where the
+/// viewer sees).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Moving {
+    pub units: Vec<UnitId>,
+    pub at: [f32; 2],
+    pub hex: Hex,
 }
 
 impl Marks<'_> {
     /// Marks of a map seen whole, everyone's units shown: a tool's.
     pub fn plain(color: [f32; 4], marked: &dyn Fn(Hex) -> bool, front: Option<UnitId>) -> Marks<'_> {
-        Marks { color, marked, front, viewer: None, sight: &SEE_ALL, outlined: &[], flags: &[] }
+        Marks { color, marked, front, viewer: None, sight: &SEE_ALL, outlined: &[], flags: &[], moving: &[] }
     }
 }
 
@@ -410,6 +424,7 @@ impl MapGeometry {
         self.unknown.clear();
 
         let (rows, cols) = (map.rows(), map.cols());
+        let hidden: Vec<UnitId> = marks.moving.iter().flat_map(|m| m.units.iter().copied()).collect();
         for visible in view.visible_hexes() {
             let hex = visible.hex;
             let Some(tile) = map.tile(hex) else { continue };
@@ -458,10 +473,13 @@ impl MapGeometry {
                 self.roads[roads::picture(shape, tile.kind == TileType::Water)].push(&road, &HEX_INDICES);
             }
 
+            // The units here (not those shown going: they are drawn where
+            // they are on their way).
+            let here: Vec<UnitId> = tile.units().iter().copied().filter(|id| !hidden.contains(id)).collect();
             // A city's garrison: its pips.
             if tile.kind == TileType::City && seen {
                 let garrison: Vec<(UnitId, Side)> =
-                    tile.units().iter().filter_map(|id| map.units().get(*id).map(|unit| (*id, unit.side()))).collect();
+                    here.iter().filter_map(|id| map.units().get(*id).map(|unit| (*id, unit.side()))).collect();
                 for (i, (id, side)) in garrison.iter().enumerate() {
                     let Some(at) = pip_at(i, garrison.len()) else { break };
                     let ring = if marks.front == Some(*id) { SELECTED_RING } else { RING_COLOR };
@@ -471,36 +489,9 @@ impl MapGeometry {
                 }
             }
 
-            // Elsewhere the unit that shows (the selected one if it stands
-            // here, else the first): a disc of its side's color, and on it the
-            // picture of its kind.
-            let shown = marks.front.filter(|id| tile.units().contains(id)).or(tile.units().first().copied());
-            let shown = shown.filter(|_| tile.kind != TileType::City && seen);
-            let theirs =
-                shown.and_then(|id| map.units().get(id)).filter(|u| marks.viewer.is_some_and(|v| v != u.side()));
-            if let Some(unit) = theirs {
-                // Another side's stack: a banner, and how many there are.
-                push_banner(&mut self.signs, view, visible.center, variant, side_color(unit.side()), 1.0);
-                push_size(&mut self.signs, view, visible.center, variant, tile.units().len(), unit.side(), 1.0);
-            }
-            if let Some(unit) = shown.and_then(|id| map.units().get(id)).filter(|_| theirs.is_none()) {
-                let [r, g, b] = side_color(unit.side());
-                let middle = [0.0, 0.0];
-                let (ring, width) = level_ring(unit.level);
-                push_disc(&mut self.discs, view, visible.center, variant, middle, DISC_RADIUS + width, ring);
-                push_disc(&mut self.discs, view, visible.center, variant, middle, DISC_RADIUS, [r, g, b, 1.0]);
-                push_size(&mut self.signs, view, visible.center, variant, tile.units().len(), unit.side(), 1.0);
-                let image = map.units().kind_of(unit).map_or(UNIT_IMAGE, |kind| kind.image.as_str());
-                let sign: [HexVertex; HEX_VERTICES] =
-                    std::array::from_fn(|i| HexVertex { border: NO_BORDER, ..vertices[i] });
-                let layer = match self.units.iter().position(|(name, _)| name == image) {
-                    Some(i) => i,
-                    None => {
-                        self.units.push((image.to_string(), MeshList::new()));
-                        self.units.len() - 1
-                    }
-                };
-                self.units[layer].1.push(&sign, &HEX_INDICES);
+            // Elsewhere the stack (`push_stack`).
+            if tile.kind != TileType::City && seen && !here.is_empty() {
+                self.push_stack(map, view, (visible.center, variant), &here, marks);
             }
 
             // The rally points' flags, over the units, in the viewer's color
@@ -529,6 +520,64 @@ impl MapGeometry {
                 self.overlay.push(&flat, &HEX_INDICES);
             }
         }
+        // The stacks shown going, where they are: the viewer's, and another
+        // side's where the viewer sees.
+        for moving in marks.moving {
+            let theirs = moving
+                .units
+                .first()
+                .and_then(|id| map.units().get(*id))
+                .is_some_and(|u| marks.viewer.is_some_and(|v| v != u.side()));
+            let shows = if theirs { marks.sight.sees(moving.hex) } else { marks.sight.knows(moving.hex) };
+            if shows && map.contains(moving.hex) {
+                self.push_stack(map, view, (moving.at, HexVariant::Full), &moving.units, marks);
+            }
+        }
+    }
+
+    /// A stack at `center` (a hex's middle; or, going, a point between two),
+    /// the unit that shows the selected one if it is among `units`, else
+    /// the first: of the viewer's (or with no viewer), a disc of its side's
+    /// color with the picture of its kind on it, and a pip for each unit;
+    /// of another side's, a banner and the pips.
+    fn push_stack(
+        &mut self,
+        map: &Map,
+        view: &MapView,
+        (center, variant): ([f32; 2], HexVariant),
+        units: &[UnitId],
+        marks: &Marks,
+    ) {
+        let shown = marks.front.filter(|id| units.contains(id)).or(units.first().copied());
+        let Some(unit) = shown.and_then(|id| map.units().get(id)) else { return };
+        if marks.viewer.is_some_and(|v| v != unit.side()) {
+            // Another side's stack: a banner, and how many there are.
+            push_banner(&mut self.signs, view, center, variant, side_color(unit.side()), 1.0);
+            push_size(&mut self.signs, view, center, variant, units.len(), unit.side(), 1.0);
+            return;
+        }
+        let [r, g, b] = side_color(unit.side());
+        let middle = [0.0, 0.0];
+        let (ring, width) = level_ring(unit.level);
+        push_disc(&mut self.discs, view, center, variant, middle, DISC_RADIUS + width, ring);
+        push_disc(&mut self.discs, view, center, variant, middle, DISC_RADIUS, [r, g, b, 1.0]);
+        push_size(&mut self.signs, view, center, variant, units.len(), unit.side(), 1.0);
+        let image = map.units().kind_of(unit).map_or(UNIT_IMAGE, |kind| kind.image.as_str());
+        let (positions, uvs) = (variant.positions(), variant.uvs());
+        let sign: [HexVertex; HEX_VERTICES] = std::array::from_fn(|i| HexVertex {
+            pos: view.to_ndc([positions[i][0] + center[0], positions[i][1] + center[1]]),
+            uv: uvs[i],
+            bary: HEX_BARY[i],
+            border: NO_BORDER,
+        });
+        let layer = match self.units.iter().position(|(name, _)| name == image) {
+            Some(i) => i,
+            None => {
+                self.units.push((image.to_string(), MeshList::new()));
+                self.units.len() - 1
+            }
+        };
+        self.units[layer].1.push(&sign, &HEX_INDICES);
     }
 
     /// The hexes never seen (total fog of war), drawn in [`UNKNOWN`].

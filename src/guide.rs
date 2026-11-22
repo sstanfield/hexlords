@@ -422,8 +422,10 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                 (
                     "Options",
                     "The Game menu's Options: whether the next stack that waits is selected after each \
-                     move, whether a battle is told in a line or played out, whether a temple asks, \
-                     whether End turn asks while something waits for orders."
+                     move, whether a battle is told in a line or played out (and how fast), whether \
+                     moves are shown as they happen (the computer's an order at a time, the map on \
+                     what it does), whether a temple asks, whether End turn asks while something \
+                     waits for orders."
                         .to_string(),
                 ),
                 (

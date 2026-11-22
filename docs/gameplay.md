@@ -484,9 +484,25 @@ thing to happen. Ideas to try, as the rules grow:
   gold and the taxes will not pay next turn's upkeep (units would leave);
   its window can show the tasks. The third tells a battle of the
   person's in a line under the stack instead of playing it out in its
-  window (the log's Watch plays it); the fourth has a stack moved onto a
-  temple seek its blessing unasked, and says in that line what each was
-  given. The shell carries them from one game to the next.
+  window (the log's Watch plays it); another plays battles out at twice
+  the pace (off at first: the slower pace has more tension). The next
+  shows moves as they happen (on at first; the owner's word 2026-11-21:
+  "the player should see them moving and visibility opening up ... not
+  super slow", "the map should center on the action"): the game's state
+  changes at once, and the screen shows the stacks that went going from
+  hex to hex (`showing`, a step in `showing::STEP_MS`, a way in
+  `showing::WAY_MS` at most), the person's own and the others' where the
+  person sees them, the land opening up as the person's own go; the
+  computer plays a turn an order at a time (`agents::play_step`), the map
+  brought to what it does; and a battle the person's side is in that no
+  order of theirs told (the computer attacking them, a march or a patrol
+  at a turn's end) is played out in its window, everything else waiting
+  for it, unless battles are told in a line. The window that says who won
+  waits for the battle that won it. Without a window nothing is kept for
+  this (`Game::watch`): the headless games pay nothing. Another option
+  has a stack moved onto a temple seek its blessing unasked, and says in
+  that line what each was given. The shell carries them from one game to
+  the next.
 - **A log** (built): every battle a side fought, attacking or attacked,
   with who won and who died; the cities it took and lost; the units that
   left it unpaid; the sides out. The game keeps the history

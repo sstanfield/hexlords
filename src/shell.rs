@@ -136,6 +136,10 @@ impl Scene for Shell {
         self.scene().flags()
     }
 
+    fn moving(&self) -> Vec<crate::render::Moving> {
+        self.scene().moving()
+    }
+
     fn confirm_quit(&mut self) -> bool {
         self.scene_mut().confirm_quit()
     }

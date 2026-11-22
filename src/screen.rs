@@ -749,6 +749,12 @@ pub trait Scene {
         &[]
     }
 
+    /// The stacks shown going from hex to hex: in the game, the moves being
+    /// shown.
+    fn moving(&self) -> Vec<crate::render::Moving> {
+        Vec::new()
+    }
+
     /// The tint of the marked hexes: red, green, blue and how much of it.
     fn mark_color(&self) -> [f32; 4] {
         RANGE_OVERLAY

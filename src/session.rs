@@ -43,6 +43,7 @@ use crate::rally_window::{self, RallyClick, RallyWindow};
 use crate::render::{AssetDirs, coin_icon, unit_icon};
 use crate::screen::{FULLSCREEN_ID, HELP_KEYS_ID, MapScreen, QUIT_ID, Scene, ZOOM_IN_ID, ZOOM_OUT_ID};
 use crate::setup::Controller;
+use crate::showing::{Going, Now, Showing, Shown};
 use crate::state::scenario::side_name;
 use crate::state::{
     CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_QUEUE, MAX_STACK, Patrol, QueueEnd, QueueItem, Sends, Side, UnitId,
@@ -483,7 +484,29 @@ pub struct Session {
     patrol_odds: Option<u32>,
     /// The turn (round and side) whose marauders the computer has led.
     marauded: Option<(u32, Side)>,
+    /// What the screen shows happening (Options: moves shown), the time of
+    /// the last frame, and what the person is shown to know meanwhile (how
+    /// many hexes their stacks had been to when it was worked out).
+    showing: Showing,
+    now: u64,
+    shown_sight: Option<(Sight, usize)>,
+    /// How many orders the computer has given in the turn it is playing an
+    /// order at a time; and the turn it ended, still being shown, before
+    /// the next is handed over (`turn_passed`).
+    given: usize,
+    pass_due: bool,
+    /// The battles told by the order that fought them (`tell_battle`), not
+    /// to be told again; and when the battle in the window was over.
+    told: Vec<usize>,
+    battle_over_at: Option<u64>,
 }
+
+/// How long a battle's window shows how it ended before the computer goes
+/// on, in ms.
+const BATTLE_LINGER_MS: u64 = 1500;
+/// How many orders the computer gives in a frame, at most, looking for one
+/// to show.
+const STEPS_PER_FRAME: usize = 25;
 
 impl Session {
     /// Set up the UI for a window of `viewport` pixels at `dpi` with the skin and
@@ -613,8 +636,17 @@ impl Session {
             patrol_window: None,
             patrol_odds: None,
             marauded: None,
+            showing: Showing::default(),
+            now: 0,
+            shown_sight: None,
+            given: 0,
+            pass_due: false,
+            told: Vec::new(),
+            battle_over_at: None,
             screen,
         };
+        // What happens is kept for the screen to show.
+        session.screen.game.watch(true);
         session.apply_layout_sizes();
         // The computer's turns that come before the first person's are
         // played by the frames; or the first person is handed the game.
@@ -634,7 +666,7 @@ impl Session {
     /// True if the person at the screen can give orders now: their turn, no
     /// cover over it, and the game not over.
     fn can_act(&self) -> bool {
-        self.persons_turn() && !self.covered() && self.screen.game.winner().is_none()
+        self.persons_turn() && !self.covered() && self.screen.game.winner().is_none() && !self.pass_due
     }
 
     /// The person whose turn it is has done (End turn): the next side's
@@ -807,13 +839,46 @@ impl Session {
         }
         let Some(agent) = self.agents.get_mut(side) else { return };
         agents::play_turn(&mut self.screen.game, agent);
+        self.given = 0;
         self.turn_passed();
+    }
+
+    /// The computer plays the turn of the side whose turn it is an order at
+    /// a time (Options: moves shown), until one of them is to be shown, or
+    /// the turn is over (handed over once what it did has been shown).
+    fn play_steps(&mut self, now_ms: u64) {
+        let side = self.screen.game.player();
+        for _ in 0..STEPS_PER_FRAME {
+            let game = &self.screen.game;
+            if game.winner().is_some() || !matches!(game.controller(side), Some(Controller::Computer(_))) {
+                return;
+            }
+            let Some(agent) = self.agents.get_mut(side) else { return };
+            let (_, over) = agents::play_step(&mut self.screen.game, agent, self.given);
+            self.given += 1;
+            self.see();
+            if over {
+                self.given = 0;
+                self.last_play = Some(now_ms);
+                if self.showing.is_idle() {
+                    self.turn_passed();
+                } else {
+                    self.pass_due = true;
+                }
+                return;
+            }
+            if !self.showing.is_idle() {
+                return;
+            }
+        }
     }
 
     /// Play the computer's turns now, up to a person's (a turn at most, once
     /// nobody here is in the game): what the frames do a turn at a time. For
     /// tests and scripts.
     pub fn wait_for_turn(&mut self) {
+        // (Nothing is shown: what was being shown is where it went.)
+        self.stop_showing();
         for _ in 0..self.screen.game.order().len() + 1 {
             let before = (self.screen.game.player(), self.screen.game.turn());
             if self.cover.is_some() || self.persons_turn() {
@@ -824,7 +889,21 @@ impl Session {
                 break;
             }
         }
+        self.screen.game.take_happened();
         self.refresh();
+    }
+
+    /// Show nothing more: what was being shown is where it went, and the
+    /// turn that was being shown is handed over.
+    fn stop_showing(&mut self) {
+        self.see();
+        self.showing.clear();
+        if self.shown_sight.take().is_some() {
+            self.screen.redraw_minimap();
+        }
+        if std::mem::take(&mut self.pass_due) {
+            self.turn_passed();
+        }
     }
 
     /// End the turn, play the others', and start the next: a round in one
@@ -1099,13 +1178,18 @@ impl Session {
     /// or the person changed; and draw the minimap again if what it shows of
     /// it changed (the cities' holders, the land seen).
     fn see(&mut self) {
+        let happened = self.screen.game.take_happened();
         let game = &self.screen.game;
         let key = (game.map.revision(), game.turn(), self.seer(), game.player());
         if self.sight_of == Some(key) {
+            self.show_happened(happened, None);
             return;
         }
         self.sight_of = Some(key);
-        self.sight = game.sight(key.2);
+        let now = game.sight(key.2);
+        let before = std::mem::replace(&mut self.sight, now);
+        self.show_happened(happened, Some(before));
+        let game = &self.screen.game;
         let sight = &self.sight;
         let holders = game.map.cities().iter().map(|c| sight.knows(c.pos).then(|| sight.holder(c))).collect();
         let shown = (holders, sight.known_count());
@@ -1118,6 +1202,119 @@ impl Session {
     /// What the person at the screen sees.
     pub fn sight(&self) -> &Sight {
         &self.sight
+    }
+
+    /// What happened (`Game::take_happened`) to be shown: the stacks that
+    /// went, the person's own and those of the others' they see go (Options:
+    /// moves shown), and the battles their side is in that no order of theirs
+    /// told (unless battles are told in a line). `before`: what the person
+    /// knew before it, if it has changed.
+    fn show_happened(&mut self, happened: Vec<(Option<usize>, Event)>, before: Option<Sight>) {
+        let told = std::mem::take(&mut self.told);
+        if happened.is_empty() || self.cover.is_some() {
+            return;
+        }
+        let before = before.unwrap_or_else(|| self.sight.clone());
+        // An order of the person's own, in their turn: what was being shown
+        // of the ones before is where it went.
+        if self.can_act() {
+            self.showing.clear();
+        }
+        let seer = self.seer();
+        let mut shown: Vec<Shown> = Vec::new();
+        for (record, event) in happened {
+            match event {
+                Event::Moved { unit, way, .. } if self.options.show_moves && way.len() > 1 => {
+                    let Some(side) = self.screen.game.map.units().get(unit).map(|u| u.side()) else { continue };
+                    // The units of a stack went together, one event each.
+                    if let Some(Shown::Going(going)) = shown.last_mut() {
+                        if going.way == way && going.side == side {
+                            going.units.push(unit);
+                            continue;
+                        }
+                    }
+                    let own = side == seer;
+                    let seen = |h: &Hex| before.sees(*h) || self.sight.sees(*h);
+                    if own || seer == Side::Grey || way.iter().any(seen) {
+                        shown.push(Shown::Going(Going { units: vec![unit], side, way, own }));
+                    }
+                }
+                Event::Battle { attacker, defender, .. } if !self.options.quick_battles => {
+                    let theirs = seer != Side::Grey && [attacker, defender].contains(&seer);
+                    if let Some(record) = record.filter(|r| theirs && !told.contains(r)) {
+                        shown.push(Shown::Battle(record));
+                    }
+                }
+                _ => {}
+            }
+        }
+        for shown in shown {
+            self.showing.push(shown, &before);
+        }
+    }
+
+    /// Show what is to be shown at `now_ms` (Options: moves shown): the
+    /// stacks going (the map brought to them, when the computer plays), the
+    /// land opening up as the person's go, a battle in its window.
+    fn show(&mut self, now_ms: u64) {
+        loop {
+            match self.showing.tick(now_ms) {
+                Now::Idle | Now::Going(None) => break,
+                Now::Going(Some(way)) => {
+                    if !self.can_act() {
+                        self.bring_into_view(&way);
+                    }
+                    break;
+                }
+                Now::Battle(record, first) => {
+                    if first {
+                        self.battle_over_at = None;
+                        self.open_battle(record);
+                        if let Some(at) = self.screen.game.fight(record).map(|f| f.at) {
+                            self.bring_into_view(&[at]);
+                        }
+                        break;
+                    }
+                    if self.battle_playing(now_ms) {
+                        break;
+                    }
+                    self.showing.battle_over();
+                }
+            }
+        }
+        // The land the person's stacks have come to see so far.
+        let opened = self.showing.opened_count(now_ms);
+        let shown = match self.showing.sight(&self.sight, now_ms) {
+            Some(_) if self.shown_sight.as_ref().is_some_and(|(_, n)| *n == opened) => return,
+            Some(sight) => Some((sight, opened)),
+            None if self.shown_sight.is_none() => return,
+            None => None,
+        };
+        self.shown_sight = shown;
+        self.screen.redraw_minimap();
+    }
+
+    /// True while the battle in the window is being played out, or has just
+    /// been (its end shows a moment before the game goes on).
+    fn battle_playing(&mut self, now_ms: u64) -> bool {
+        let Some(battle) = self.battle.as_ref().filter(|b| b.is_open(&self.screen.ui)) else { return false };
+        if !battle.done() {
+            return true;
+        }
+        let over = *self.battle_over_at.get_or_insert(now_ms);
+        now_ms < over + BATTLE_LINGER_MS
+    }
+
+    /// Bring the hexes of `way` the person sees into view, if they are not
+    /// (the middle of them in the middle of the map).
+    fn bring_into_view(&mut self, way: &[Hex]) {
+        let sight = self.shown_sight.as_ref().map_or(&self.sight, |(s, _)| s);
+        let seen: Vec<Hex> = way.iter().copied().filter(|h| sight.sees(*h)).collect();
+        let hexes = if seen.is_empty() { way.to_vec() } else { seen };
+        if hexes.is_empty() || hexes.iter().all(|h| self.screen.view.shows(*h)) {
+            return;
+        }
+        self.screen.view.center_on(hexes[hexes.len() / 2]);
     }
 
     /// The numbers under the icons of the selected hex's units, the first unit
@@ -1425,7 +1622,8 @@ impl Session {
             }
         }
         // (Once the battle that ended it has been played out.)
-        let playing = self.battle.as_ref().is_some_and(|b| b.is_open(&self.screen.ui) && !b.done());
+        let playing =
+            self.battle.as_ref().is_some_and(|b| b.is_open(&self.screen.ui) && !b.done()) || !self.showing.is_idle();
         if let (Some(winner), None, false) = (self.screen.game.winner(), self.game_over, playing) {
             self.open_game_over(winner);
         }
@@ -2151,12 +2349,25 @@ impl Session {
     /// One frame of host work before drawing (see `MapScreen::frame`). On the
     /// computer's turns, it plays one, [`COMPUTER_TURN_MS`] after the last.
     pub fn frame(&mut self, now_ms: u64) {
+        self.now = now_ms;
+        self.see();
+        self.show(now_ms);
+        if self.pass_due && self.showing.is_idle() {
+            self.pass_due = false;
+            self.turn_passed();
+        }
         let due = self.last_play.is_none_or(|last| now_ms >= last.saturating_add(COMPUTER_TURN_MS));
-        if !self.persons_turn() && self.cover.is_none() && due {
-            let before = (self.screen.game.player(), self.screen.game.turn());
-            self.play_one();
-            if (self.screen.game.player(), self.screen.game.turn()) != before {
-                self.last_play = Some(now_ms);
+        let idle = self.showing.is_idle() && !self.pass_due;
+        if !self.persons_turn() && self.cover.is_none() && due && idle {
+            if self.options.show_moves {
+                self.play_steps(now_ms);
+                self.show(now_ms);
+            } else {
+                let before = (self.screen.game.player(), self.screen.game.turn());
+                self.play_one();
+                if (self.screen.game.player(), self.screen.game.turn()) != before {
+                    self.last_play = Some(now_ms);
+                }
             }
         }
         if let Some(battle) = &mut self.battle {
@@ -2263,6 +2474,7 @@ impl Session {
         let history = self.screen.game.history();
         let battle = (before..history.len()).find(|i| matches!(history[*i].event, Event::Battle { .. }));
         if let Some(record) = battle {
+            self.told.push(record);
             if self.options.quick_battles {
                 let side = self.screen.game.player();
                 let lines = info::battle_outcome(&self.screen.game, record, side);
@@ -2600,6 +2812,7 @@ impl Session {
         if self.covered() || self.screen.game.apply(Order::Undo).is_err() {
             return;
         }
+        self.showing.clear();
         self.order_given();
         let game = &mut self.screen.game;
         if let Some(pos) = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos()) {
@@ -3654,7 +3867,11 @@ impl Scene for Session {
     }
 
     fn sight(&self) -> &Sight {
-        &self.sight
+        self.shown_sight.as_ref().map_or(&self.sight, |(sight, _)| sight)
+    }
+
+    fn moving(&self) -> Vec<crate::render::Moving> {
+        self.showing.moving(&self.screen.game.map, &self.screen.view, self.now)
     }
 }
 
