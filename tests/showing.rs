@@ -8,12 +8,13 @@
 
 mod common;
 
-use common::{assets, click, pixel_of};
+use common::{assets, click, pixel_of, push_widget};
+use hexlords::battle_window::BATTLE_CLOSE_ID;
 use hexlords::game::Game;
 use hexlords::options_window::Options;
 use hexlords::orders::{Event, Order};
 use hexlords::screen::Scene;
-use hexlords::session::Session;
+use hexlords::session::{BEGIN_TURN_ID, END_TURN_ID, GAME_OVER_ID, Session};
 use hexlords::setup::{Fog, Setup};
 use hexlords::showing::{STEP_MS, WAY_MS};
 use hexlords::state::scenario::{self, Scenario};
@@ -164,4 +165,166 @@ fn a_game_keeps_what_happens_only_when_watched() {
     let way = vec![Hex::new(10, 6), Hex::new(10, 7)];
     assert!(matches!(&happened[..], [(None, Event::Moved { way: w, .. })] if *w == way), "{happened:?}");
     assert!(game.view_for(Side::Red).take_happened().is_empty(), "nor does an agent's view");
+}
+
+/// 30 x 30 grass: red's Redhold and Greenwood's and Bluemoor's levies;
+/// `players` says who plays each side.
+fn three_sides(players: &str, place: impl FnOnce(&mut Game)) -> Game {
+    let mut rows = vec!["g".repeat(30); 30];
+    rows[5] = format!("{}c{}c{}", "g".repeat(5), "g".repeat(14), "g".repeat(9));
+    rows[25] = format!("{}c{}", "g".repeat(25), "g".repeat(4));
+    let terrain = format!("30\n30\n{}\n", rows.join("\n"));
+    let units = "unit soldiers\nname Soldiers\nstrength 3\nmoves 12\nenter grass 2, city 1\n\
+                 unit levy\nname Levy\nstrength 1\nmoves 12\nenter grass 2, city 1\n";
+    let cities = "city 5 5\nname Redhold\nside red\ngarrison levy\n\
+                  city 25 25\nname Greenwood\nside green\ngarrison levy\n\
+                  city 5 20\nname Bluemoor\nside blue\ngarrison levy\n";
+    let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+    let mut game = Game::from_scenario(Scenario { map, assets: None, warnings });
+    place(&mut game);
+    let mut setup = Setup::solo(&game.map, Some(Side::Red), "passive");
+    setup.set_players(players).unwrap();
+    setup.combat.chance = 0;
+    game.with_setup(setup)
+}
+
+/// The review (2026-11-21): in hotseat, the next person's turn began, with
+/// no cover over it, while the computer's last moves were still being
+/// shown: the map showed it as that side knows it, and the person at the
+/// screen could end its turn. The screen stays the last person's until the
+/// turn is handed over.
+#[test]
+fn a_turn_is_handed_over_once_the_one_before_has_been_shown() {
+    let mut s = session(three_sides("red=person,green=passive,blue=person", |g| {
+        let id = put(g, Side::Green, "soldiers", Hex::new(15, 15));
+        g.map.unit_mut(id).unwrap().marauding = true;
+    }));
+    // (In hotseat the first person is handed the game too.)
+    push_widget(&mut s, BEGIN_TURN_ID);
+    assert!(!s.covered());
+    s.end_turn();
+    let (mut t, mut held) = (0, false);
+    while !s.covered() && t < 20_000 {
+        t += 16;
+        s.frame(t);
+        if s.screen.game.player() == Side::Blue && !s.covered() {
+            held = true;
+            assert_eq!(s.seer(), Side::Red, "still the last person's screen");
+            push_widget(&mut s, END_TURN_ID);
+            push_widget(&mut s, END_TURN_ID);
+            assert_eq!(s.screen.game.player(), Side::Blue, "blue's turn is not the screen's to end yet");
+        }
+    }
+    assert!(held, "green's marauders were shown going in blue's turn");
+    assert!(s.covered() && s.screen.game.player() == Side::Blue, "then blue's turn, covered");
+}
+
+/// The review (2026-11-21): played an order at a time, the computer's last
+/// order could be taken back by the person's Undo.
+#[test]
+fn undo_takes_back_nothing_in_the_computers_turn() {
+    let mut blue = Vec::new();
+    let mut s = session(three_sides("red=person,green=passive,blue=simple", |g| {
+        blue.push(put(g, Side::Blue, "soldiers", Hex::new(12, 20)));
+        blue.push(put(g, Side::Blue, "soldiers", Hex::new(12, 20)));
+    }));
+    s.end_turn();
+    let (mut t, mut tried) = (0, false);
+    while s.screen.game.player() != Side::Red && t < 60_000 {
+        t += 16;
+        s.frame(t);
+        let game = &s.screen.game;
+        if game.player() == Side::Blue && game.can_undo() {
+            let at = |s: &Session| -> Vec<Hex> {
+                blue.iter().filter_map(|id| s.screen.game.map.units().get(*id)).map(|u| u.pos()).collect()
+            };
+            let before = at(&s);
+            s.undo();
+            assert_eq!(at(&s), before, "blue's move stands");
+            tried = true;
+        }
+    }
+    assert!(tried, "blue moved");
+}
+
+/// The review (2026-11-21): the battle that put the person out (and ended
+/// the game) was never played out: they were out, so nobody's battles were.
+#[test]
+fn the_battle_that_puts_the_person_out_is_played_out() {
+    let mut rows = vec!["g".repeat(30); 30];
+    rows[5] = format!("{}c{}c{}", "g".repeat(5), "g".repeat(14), "g".repeat(9));
+    let terrain = format!("30\n30\n{}\n", rows.join("\n"));
+    let units = "unit soldiers\nname Soldiers\nstrength 3\nmoves 12\nenter grass 2, city 1\n\
+                 unit levy\nname Levy\nstrength 1\nmoves 12\nenter grass 2, city 1\n";
+    let cities =
+        "city 5 5\nname Redhold\nside red\ngarrison levy\ncity 5 20\nname Bluemoor\nside blue\ngarrison levy\n";
+    let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+    let mut game = Game::from_scenario(Scenario { map, assets: None, warnings });
+    for _ in 0..3 {
+        put(&mut game, Side::Blue, "soldiers", Hex::new(5, 8));
+    }
+    let mut setup = Setup::solo(&game.map, Some(Side::Red), "passive");
+    setup.set_players("blue=simple").unwrap();
+    (setup.fog, setup.combat.chance) = (Fog::On, 0);
+    let mut s = session(game.with_setup(setup));
+    s.end_turn();
+    let (mut t, mut seen) = (0, false);
+    let over = |s: &Session| s.screen.ui.find(s.screen.ui.root(), turbo_ferret::TbId::new(GAME_OVER_ID)).is_some();
+    while t < 60_000 && !over(&s) {
+        t += 16;
+        s.frame(t);
+        seen |= s.battle().is_some();
+    }
+    assert_eq!(s.screen.game.winner(), Some(Side::Blue));
+    assert!(seen, "the battle was played out before the game's end was said");
+}
+
+/// The review (2026-11-21): with moves not shown, the battles against the
+/// person still to be played out were dropped by the person's first order.
+#[test]
+fn an_order_of_the_persons_leaves_the_battles_still_to_be_played_out() {
+    // Red's Redhold and Redfar each with a levy, blue's soldiers beside
+    // each; Redrest, out of reach, and a red unit far off.
+    let mut rows = vec!["g".repeat(30); 30];
+    rows[5] = format!("{}c{}c{}", "g".repeat(5), "g".repeat(14), "g".repeat(9));
+    rows[15] = format!("{}c{}", "g".repeat(2), "g".repeat(27));
+    rows[25] = format!("{}c{}", "g".repeat(25), "g".repeat(4));
+    let terrain = format!("30\n30\n{}\n", rows.join("\n"));
+    let units = "unit soldiers\nname Soldiers\nstrength 3\nmoves 12\nenter grass 2, city 1\n\
+                 unit levy\nname Levy\nstrength 1\nmoves 12\nenter grass 2, city 1\n";
+    let cities = "city 5 5\nname Redhold\nside red\ngarrison levy\ncity 25 25\nname Redfar\nside red\ngarrison levy\n\
+                  city 15 2\nname Redrest\nside red\ncity 5 20\nname Bluemoor\nside blue\n";
+    let (map, warnings) = scenario::parse(&terrain, Some(units), Some(cities)).unwrap();
+    let mut game = Game::from_scenario(Scenario { map, assets: None, warnings });
+    for _ in 0..3 {
+        put(&mut game, Side::Blue, "soldiers", Hex::new(5, 8));
+        put(&mut game, Side::Blue, "soldiers", Hex::new(25, 22));
+    }
+    let red = put(&mut game, Side::Red, "soldiers", Hex::new(0, 29));
+    let mut setup = Setup::solo(&game.map, Some(Side::Red), "passive");
+    setup.set_players("blue=simple").unwrap();
+    setup.combat.chance = 0;
+    let game = game.with_setup(setup);
+    let options = Options { show_moves: false, ..Options::manual() };
+    let mut s = Session::with_options(&assets(), Size::new(1024, 768), 96, game, options).unwrap();
+    let before = s.screen.game.history().len();
+    s.end_turn();
+    let mut t = 0;
+    while s.battle().is_none() && t < 20_000 {
+        t += 16;
+        s.frame(t);
+    }
+    let history = s.screen.game.history();
+    let battles = (before..history.len()).filter(|i| matches!(history[*i].event, Event::Battle { .. })).count();
+    assert!(battles >= 2, "two battles against red ({battles})");
+    push_widget(&mut s, BATTLE_CLOSE_ID);
+    s.start_turn();
+    s.screen.game.apply(Order::Move { units: vec![red], to: Hex::new(1, 29) }).unwrap();
+    let mut again = false;
+    for _ in 0..200 {
+        t += 16;
+        s.frame(t);
+        again |= s.battle().is_some();
+    }
+    assert!(again, "the second battle is played out");
 }

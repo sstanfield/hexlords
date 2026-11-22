@@ -101,13 +101,30 @@ impl Showing {
 
     /// Show `shown` after what is to be shown already. `before`: what the
     /// person at the screen knew before it happened (kept from the first of
-    /// a run of things shown).
+    /// a run of moves shown).
     pub fn push(&mut self, shown: Shown, before: &Sight) {
-        if self.is_idle() {
+        if self.before.is_none() {
             self.before = Some(before.clone());
             self.reached.clear();
         }
         self.queue.push_back(shown);
+    }
+
+    /// The moves still to be shown are where they went (the person gave an
+    /// order); the battles to be shown are still to be.
+    pub fn finish_moves(&mut self) {
+        self.queue.retain(|shown| matches!(shown, Shown::Battle(_)));
+        if matches!(self.current, Some((Shown::Going(_), _))) {
+            self.current = None;
+        }
+        self.before = None;
+        self.reached.clear();
+    }
+
+    /// True while what the person is shown to know is not what they know
+    /// (`sight`).
+    pub fn has_sight(&self) -> bool {
+        self.before.is_some()
     }
 
     /// Show nothing more: everything is where it is.

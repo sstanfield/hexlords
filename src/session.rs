@@ -657,14 +657,16 @@ impl Session {
         Ok(session)
     }
 
-    /// True if it is the turn of a person at this screen.
+    /// True if it is the turn of a person at this screen: in the game, and
+    /// handed over to them (not while the turn before is still being shown,
+    /// `pass_due`: the screen is still the last person's).
     fn persons_turn(&self) -> bool {
         let game = &self.screen.game;
-        game.controller(game.player()) == Some(&Controller::Person)
+        game.controller(game.player()) == Some(&Controller::Person) && !self.pass_due
     }
 
-    /// True if the person at the screen can give orders now: their turn, no
-    /// cover over it, and the game not over.
+    /// True if the person at the screen can give orders now: their turn
+    /// (handed over), no cover over it, and the game not over.
     fn can_act(&self) -> bool {
         self.persons_turn() && !self.covered() && self.screen.game.winner().is_none() && !self.pass_due
     }
@@ -856,7 +858,10 @@ impl Session {
             let Some(agent) = self.agents.get_mut(side) else { return };
             let (_, over) = agents::play_step(&mut self.screen.game, agent, self.given);
             self.given += 1;
-            self.see();
+            // (What the person sees is worked out once a frame: the
+            // computer's moves do not open it up.)
+            let happened = self.screen.game.take_happened();
+            self.show_happened(happened, None);
             if over {
                 self.given = 0;
                 self.last_play = Some(now_ms);
@@ -1214,13 +1219,17 @@ impl Session {
         if happened.is_empty() || self.cover.is_some() {
             return;
         }
-        let before = before.unwrap_or_else(|| self.sight.clone());
+        let before = before.as_ref().unwrap_or(&self.sight);
         // An order of the person's own, in their turn: what was being shown
-        // of the ones before is where it went.
+        // of the moves before is where it went (the battles still play).
         if self.can_act() {
-            self.showing.clear();
+            self.showing.finish_moves();
         }
         let seer = self.seer();
+        // Whose battles are played out: the person at the screen's, or, in
+        // the computer's turns, the last person's (even once they are out:
+        // the battle that put them out).
+        let watcher = if self.persons_turn() { Some(self.screen.game.player()) } else { self.last_person };
         let mut shown: Vec<Shown> = Vec::new();
         for (record, event) in happened {
             match event {
@@ -1240,7 +1249,7 @@ impl Session {
                     }
                 }
                 Event::Battle { attacker, defender, .. } if !self.options.quick_battles => {
-                    let theirs = seer != Side::Grey && [attacker, defender].contains(&seer);
+                    let theirs = watcher.is_some_and(|w| [attacker, defender].contains(&w));
                     if let Some(record) = record.filter(|r| theirs && !told.contains(r)) {
                         shown.push(Shown::Battle(record));
                     }
@@ -1248,8 +1257,12 @@ impl Session {
                 _ => {}
             }
         }
+        // (What the person is shown to know is worked out again.)
+        if shown.iter().any(|s| matches!(s, Shown::Going(_))) {
+            self.shown_sight = None;
+        }
         for shown in shown {
-            self.showing.push(shown, &before);
+            self.showing.push(shown, before);
         }
     }
 
@@ -1282,15 +1295,17 @@ impl Session {
                 }
             }
         }
-        // The land the person's stacks have come to see so far.
+        // The land the person's stacks have come to see so far, worked out
+        // again when they have been to more of it.
         let opened = self.showing.opened_count(now_ms);
-        let shown = match self.showing.sight(&self.sight, now_ms) {
-            Some(_) if self.shown_sight.as_ref().is_some_and(|(_, n)| *n == opened) => return,
-            Some(sight) => Some((sight, opened)),
-            None if self.shown_sight.is_none() => return,
-            None => None,
-        };
-        self.shown_sight = shown;
+        if self.showing.has_sight() {
+            if self.shown_sight.as_ref().is_some_and(|(_, n)| *n == opened) {
+                return;
+            }
+            self.shown_sight = self.showing.sight(&self.sight, now_ms).map(|sight| (sight, opened));
+        } else if self.shown_sight.take().is_none() {
+            return;
+        }
         self.screen.redraw_minimap();
     }
 
@@ -1609,8 +1624,9 @@ impl Session {
                 self.open_menu(title);
             }
         }
-        // Undo is there while there is something to take back.
-        let undo = self.screen.game.can_undo();
+        // Undo is there while there is something of the person's to take
+        // back (in the computer's turn, the last order is the computer's).
+        let undo = self.can_act() && self.screen.game.can_undo();
         self.screen.ui.set_disabled(self.undo, !undo);
         // Go to and Done are about the person's selected units.
         let game = &self.screen.game;
@@ -2346,8 +2362,11 @@ impl Session {
         }
     }
 
-    /// One frame of host work before drawing (see `MapScreen::frame`). On the
-    /// computer's turns, it plays one, [`COMPUTER_TURN_MS`] after the last.
+    /// One frame of host work before drawing (see `MapScreen::frame`): what
+    /// is being shown goes on (`show`); a turn shown to its end is handed
+    /// over; and on the computer's turns, once nothing is being shown, it
+    /// plays on ([`COMPUTER_TURN_MS`] after its last turn): an order at a
+    /// time with moves shown (Options), else a whole turn.
     pub fn frame(&mut self, now_ms: u64) {
         self.now = now_ms;
         self.see();
@@ -2778,9 +2797,8 @@ impl Session {
     /// Whose log the screen shows: the person whose turn it is, or, in the
     /// computer's turns, the person who played last.
     fn viewer(&self) -> Side {
-        let game = &self.screen.game;
-        let side = game.player();
-        if game.controller(side) == Some(&Controller::Person) { side } else { self.last_person.unwrap_or(side) }
+        let side = self.screen.game.player();
+        if self.persons_turn() { side } else { self.last_person.unwrap_or(side) }
     }
 
     /// Who gives the orders at this screen now: the side whose turn it is, if
@@ -2809,10 +2827,10 @@ impl Session {
     /// Take back the last order (the Undo button, Ctrl+Z): the units go back
     /// where they were, selected, and the panels are about them.
     pub fn undo(&mut self) {
-        if self.covered() || self.screen.game.apply(Order::Undo).is_err() {
+        if !self.can_act() || self.screen.game.apply(Order::Undo).is_err() {
             return;
         }
-        self.showing.clear();
+        self.showing.finish_moves();
         self.order_given();
         let game = &mut self.screen.game;
         if let Some(pos) = game.selected().and_then(|id| game.map.units().get(id)).map(|u| u.pos()) {

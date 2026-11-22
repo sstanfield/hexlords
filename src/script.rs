@@ -30,8 +30,10 @@
 //! - `turn`: in a game, a round in one step: the turn ends, the others play
 //!   theirs at once, and the next starts (`turn*30` for thirty rounds);
 //! - `wait:MS`: MS milliseconds of frames go by (the computer's turns, a
-//!   battle being watched), on the script's own clock, which starts at 0
-//!   (the window's frames after the script do not move what it moved);
+//!   battle being watched, moves being shown), on the script's own clock,
+//!   which starts at 0 (the window's frames after the script do not move
+//!   what it moved; but a move still being shown when the script ends goes
+//!   on in them: end with `wait:1500` to see where it went);
 //! - any step may end in `*N` to run it N times: `left*12`.
 //!
 //! The keys and the pointer go through the UI exactly as the window sends them,
