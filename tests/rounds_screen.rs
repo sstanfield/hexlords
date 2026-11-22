@@ -289,6 +289,10 @@ fn a_stack_sent_onto_another_is_offered_with_it_and_they_are_sent_on_as_one() {
     assert_eq!((s.shown(), pos(&s, a)), (here, Hex::new(10, 5)));
     assert_eq!(s.screen.game.selection(), [b, a]);
     assert_eq!(s.stack(), ["1 \u{b7} 12/12", "+ 5 \u{b7} 12"]);
+    // ("use some color coding to make it clearer what is happening (there
+    // now vs will be there soon)": the box of the one on its way is in
+    // another color; both are selected.)
+    assert_eq!(s.stack_looks(), [(false, true), (true, true)]);
     assert!(s.unit_line().starts_with("Planned: they join this stack"), "{}", s.unit_line());
     // Where they can go together is from the levy's hex, with what the
     // way there leaves the soldiers: three hexes more, not four (the levy
@@ -298,13 +302,15 @@ fn a_stack_sent_onto_another_is_offered_with_it_and_they_are_sent_on_as_one() {
     // A box leaves one out, or takes it along.
     s.screen.game.toggle_unit(a);
     assert_eq!(s.screen.game.selection(), [b]);
+    s.pump();
+    assert_eq!(s.stack_looks(), [(false, true), (true, false)], "left out: still on its way");
     assert!(s.screen.game.can_move_to(Hex::new(10, 12)));
     s.screen.game.toggle_unit(a);
     assert_eq!(s.screen.game.selection(), [b, a]);
     // (A click on their hex leaves them selected, and says what they are.)
     click_hex(&mut s, here);
     assert_eq!(s.screen.game.selection(), [b, a]);
-    assert!(s.unit_line().starts_with("2 units selected, 1 of them (+) on their way here"), "{}", s.unit_line());
+    assert!(s.unit_line().starts_with("2 units selected, 1 of them (+, blue) on their way here"), "{}", s.unit_line());
     // Sent on: one order for both. The levy goes from where it stands, the
     // soldiers by way of it; the map outlines all of it.
     click_hex(&mut s, on);
@@ -363,6 +369,9 @@ fn a_battle_holds_the_round_until_its_window_is_closed() {
         flashed
     });
     assert!(flashed, "the hex flashes");
+    // The minimap marks it too ("Marking the battle locations on the
+    // minimap is a good idea"), lit while it flashes.
+    assert!(matches!(Scene::battles(&s)[..], [(at, lit)] if at == field && lit > 0.0), "{:?}", Scene::battles(&s));
     // The round waits: the other stack is where the battle found it, for
     // as long as the window is open, played out or not.
     let waiting = pos(&s, c);
@@ -376,6 +385,16 @@ fn a_battle_holds_the_round_until_its_window_is_closed() {
     assert!(!Scene::rings(&s).iter().any(|(_, color)| *color == BATTLE_BORDER));
     frames(&mut s, t, t + 60_000, 20, |s| s.screen.game.turn() == 2);
     assert_eq!((s.screen.game.turn(), pos(&s, c)), (2, far));
+    // The minimap keeps the round's battle marked, at rest, until the
+    // person's next orders are done.
+    assert_eq!(Scene::battles(&s), [(field, 0.0)]);
+    frames(&mut s, t + 60_000, t + 70_000, 20, |s| button(s) == "Start turn" || button(s).starts_with("Orders"));
+    if button(&s) == "Start turn" {
+        push_widget(&mut s, END_TURN_ID);
+    }
+    assert_eq!(Scene::battles(&s), [(field, 0.0)]);
+    s.end_turn();
+    assert_eq!(Scene::battles(&s), [], "the next round's are its own");
 }
 
 /// With battles told in a line (Options) no window opens, but the map

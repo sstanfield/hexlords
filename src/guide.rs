@@ -512,7 +512,7 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                 "Joining",
                 "Each stack attacks when it gets there. To have two go, and fight, as one: send one onto the \
                  other (Join it); the stack there is then selected with those on their way to it (marked + \
-                 in their boxes); send it on. Those there wait for the others, and they go on together, at \
+                 in their boxes, which are blue); send it on. Those there wait for the others, and they go on together, at \
                  the pace of the slowest, with what moves the way there left."
                     .to_string(),
             ),

@@ -140,6 +140,10 @@ impl Scene for Shell {
         self.scene().flash()
     }
 
+    fn battles(&self) -> Vec<(Hex, f32)> {
+        self.scene().battles()
+    }
+
     fn flags(&self) -> &[(Hex, u8)] {
         self.scene().flags()
     }

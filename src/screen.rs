@@ -781,6 +781,13 @@ pub trait Scene {
         None
     }
 
+    /// Where the minimap marks a battle, and how bright (0 to 1: the one
+    /// being shown now): in the game, the battles of the person at the
+    /// screen since they last ended a turn.
+    fn battles(&self) -> Vec<(Hex, f32)> {
+        Vec::new()
+    }
+
     /// The flags on the main map, each with its number: in the game, the
     /// rally points of the person at the screen.
     fn flags(&self) -> &[(Hex, u8)] {

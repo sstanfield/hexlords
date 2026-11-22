@@ -272,6 +272,29 @@ fn a_road_drawn_on_the_games_map_leaves_through_the_sides_the_map_says() {
     }
 }
 
+/// A selected unit's box in the stack is in the green the map rings the
+/// selected hex with.
+#[test]
+fn the_selected_slots_green_is_the_selected_hexs() {
+    let ring = hexlords::render::SELECTED_BORDER;
+    for (ours, theirs) in assetgen::skin::SELECTED.iter().zip(ring) {
+        assert!((ours - theirs).abs() < 0.005, "{:?} and {ring:?}", assetgen::skin::SELECTED);
+    }
+    let selected: Vec<_> = assetgen::skin::PLATES.iter().filter(|p| p.name.ends_with("selected")).collect();
+    assert_eq!(selected.len(), 2);
+    // Told apart without the color: a thick line, and a lighter plate.
+    let button = assetgen::skin::PLATES.iter().find(|p| p.name == "hg_button").unwrap();
+    for plate in selected {
+        assert!(plate.border_color == assetgen::skin::SELECTED && plate.border >= 2.0 * button.border);
+    }
+    let light = |name: &str| {
+        let plate = assetgen::skin::PLATES.iter().find(|p| p.name == name).unwrap();
+        plate.top.iter().sum::<f32>()
+    };
+    assert!(light("hg_slot_selected") > light("hg_button") + 0.25);
+    assert!(light("hg_slot_coming_selected") > light("hg_slot_coming") + 0.25);
+}
+
 /// The skin's windows and buttons (`hg_*.png`, at its four sizes) are what
 /// the generator draws, and the game's skin names each of them.
 #[test]

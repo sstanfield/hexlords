@@ -261,14 +261,23 @@ struct Slot {
     numbers: Line,
     /// The icon it shows now.
     shows: Option<IconKey>,
+    /// Its unit is not on the hex yet (in rounds: on its way to join the
+    /// stack), and the box is in the color of those (`COMING_SKIN`).
+    coming: bool,
 }
+
+/// The look of a unit's box in the stack: of one on the hex, and of one on
+/// its way there (the owner's word, 2026-11-22: "use some color coding to
+/// make it clearer what is happening (there now vs will be there soon)").
+const SLOT_SKIN: &str = "UnitSlot";
+const COMING_SKIN: &str = "UnitComing";
 
 impl Slot {
     /// The resource the slot with the id `id` is made from (`Session` makes
     /// them, so that their number is a constant, not a list in the layout).
     fn resource(id: &str) -> String {
         format!(
-            "TBButton: id: {id}, skin: UnitSlot, is-focusable: 0\n\
+            "TBButton: id: {id}, skin: {SLOT_SKIN}, is-focusable: 0\n\
              \tTBLayout: axis: y, spacing: 2\n\
              \t\tTBImageWidget: id: {id}_icon\n\
              \t\tTBTextField: id: {id}_text, text-align: center\n"
@@ -279,7 +288,7 @@ impl Slot {
     fn make(screen: &mut MapScreen, row: WidgetId, id: &str) -> Result<Slot, String> {
         screen.ui.inflate(row, &Slot::resource(id)).map_err(|e| format!("a box of the stack: {e}"))?;
         let (button, icon) = (find(screen, id)?, find(screen, &format!("{id}_icon"))?);
-        Ok(Slot { button, icon, numbers: Line::find(screen, &format!("{id}_text"))?, shows: None })
+        Ok(Slot { button, icon, numbers: Line::find(screen, &format!("{id}_text"))?, shows: None, coming: false })
     }
 }
 
@@ -592,6 +601,38 @@ pub struct Session {
 
 /// How long the hex a battle is fought on takes to flash on and off, in ms.
 const BATTLE_FLASH_MS: u64 = 700;
+
+/// Where a window of `size` can go on a map screen, the best first: at the
+/// top of the map in its middle, at its bottom, in the map's corners (the
+/// left ones first), and, last, at the screen's right edge over the sidebar
+/// (top and bottom). Never above the map's top, where the menus are; a
+/// window taller than the map reaches below it. `edge`: how far in from an
+/// edge it stays.
+fn window_places(map: Rect, screen: Rect, (w, h): (i32, i32), edge: i32) -> [Rect; 8] {
+    let (top, left) = (map.y + edge, map.x + edge);
+    let bottom = (map.y + map.h - h - edge).max(top);
+    let (middle, right) = ((map.x + (map.w - w) / 2).max(left), (map.x + map.w - w - edge).max(left));
+    let far = (screen.x + screen.w - w - edge).max(left);
+    [
+        (middle, top),
+        (middle, bottom),
+        (left, top),
+        (right, top),
+        (left, bottom),
+        (right, bottom),
+        (far, top),
+        (far, bottom),
+    ]
+    .map(|(x, y)| Rect::new(x, y, w, h))
+}
+
+/// How far a pixel is from a rectangle, along the axis it is farther along:
+/// negative inside it, by how deep.
+fn apart(rect: Rect, p: Point) -> i32 {
+    let x = (rect.x - p.x).max(p.x - (rect.x + rect.w));
+    let y = (rect.y - p.y).max(p.y - (rect.y + rect.h));
+    x.max(y)
+}
 /// How many orders the computer gives in a frame, at most, looking for one
 /// to show.
 const STEPS_PER_FRAME: usize = 25;
@@ -1832,6 +1873,19 @@ impl Session {
             .collect()
     }
 
+    /// Of each unit [`Session::stack`] lists: whether its box is in the
+    /// color of those on their way to the hex, and whether it is selected
+    /// (pressed in: lighter, in a green line).
+    pub fn stack_looks(&self) -> Vec<(bool, bool)> {
+        let boxes = self.boxes();
+        std::iter::once(&self.leader)
+            .chain(&self.slots)
+            .zip(boxes)
+            .filter(|(_, unit)| unit.is_some())
+            .map(|(slot, _)| (slot.coming, self.screen.ui.value(slot.button).as_int() != 0))
+            .collect()
+    }
+
     /// The picture the `i`th unit's box shows: the image of the unit's kind
     /// and its side (`None` for an empty box). The leader's: [`Session::leader_icon`].
     pub fn slot_icon(&self, i: usize) -> Option<(&str, Side)> {
@@ -1948,6 +2002,7 @@ impl Session {
             })
             .collect();
         let chosen: Vec<bool> = ids.iter().map(|id| id.is_some_and(|id| game.selection().contains(&id))).collect();
+        let coming: Vec<bool> = ids.iter().map(|id| id.is_some_and(|id| joining.contains(&id))).collect();
         // The empty leader's box says whose it is (the map's first kind of
         // commander).
         let leader_word =
@@ -1999,8 +2054,8 @@ impl Session {
             Some(_) if game.selection().iter().any(|id| joining.contains(id)) => {
                 let coming = game.selection().iter().filter(|id| joining.contains(id)).count();
                 format!(
-                    "{} units selected, {coming} of them (+) on their way here: sent on, they go as one stack \
-                     (click one to leave it out).",
+                    "{} units selected, {coming} of them (+, blue) on their way here: sent on, they go as one \
+                     stack (click one to leave it out).",
                     game.selection().len()
                 )
             }
@@ -2079,7 +2134,14 @@ impl Session {
             if screen.ui.node(button).is_some_and(|n| n.is_disabled() != unit.is_none()) {
                 screen.ui.set_disabled(button, unit.is_none());
             }
-            // The selected units' boxes are pressed in.
+            // One on its way to the hex has a box of another color.
+            let on_its_way = coming.get(i).copied().unwrap_or(false);
+            if slot.coming != on_its_way {
+                slot.coming = on_its_way;
+                screen.ui.set_skin(button, TbId::new(if on_its_way { COMING_SKIN } else { SLOT_SKIN }));
+            }
+            // The selected units' boxes are pressed in: lighter, in a green
+            // line.
             let pressed = i32::from(chosen.get(i).copied().unwrap_or(false));
             if screen.ui.value(button).as_int() != pressed {
                 screen.ui.set_value(button, pressed);
@@ -2808,11 +2870,15 @@ impl Session {
     /// to tell where ... open the combat window above the location (so you
     /// can see it) and do something to highlight the stacks fighting"),
     /// for `ms` (`None`: while the battle's window is open); and the hex is
-    /// in view, clear of the battle's window if one is open: the window
-    /// goes to the top of the map and the hex shows below it; or, where
-    /// the window leaves too little of the map below it, the window goes
-    /// to the left and the hex shows beside it. (At the map's edge, where
-    /// the hex cannot be brought there, the window goes to the other side.)
+    /// in view, clear of the battle's window if one is open. The window
+    /// goes to the first of its places (`window_places`: the top of the
+    /// map first) that leaves the hex clear with the map as it is; if none
+    /// does, the map moves to show the hex below the window at the top, or
+    /// beside it at a side; and where the map cannot move so (its edge, a
+    /// map all in view), the window goes where the hex is clear all the
+    /// same, over the sidebar if it must. (The owner, 2026-11-22: "a
+    /// battle at the top of the map has the battle hex covered by the
+    /// combat dialog".)
     fn mark_battle(&mut self, at: Hex, ms: Option<u64>) {
         self.battle_mark = Some((at, self.now, ms.map(|ms| self.now + ms)));
         if !self.screen.view.shows(at) {
@@ -2822,33 +2888,39 @@ impl Session {
             return;
         };
         let (rect, map) = (self.screen.ui.rect(window), self.screen.map_rect());
+        let screen = self.screen.ui.rect(self.screen.ui.root());
         let edge = self.screen.ui.dimension_converter().dp_to_px(SPACING_DP);
-        // (A hex's height, in pixels: room for the hex and those around it.)
-        let hex_h = (map.h as f32 * self.screen.view.to_ndc([0.0, 1.0])[1].abs()) as i32;
-        let room = 3 * hex_h.max(1);
-        let covered = |s: &Session, rect: Rect| {
-            let (p, near) = (s.pixel_of(at), hex_h);
-            p.x > rect.x - near && p.x < rect.x + rect.w + near && p.y > rect.y - near && p.y < rect.y + rect.h + near
-        };
-        // Where the window goes, where it goes if the hex cannot be brought
-        // clear of it there, and where the hex is to show.
-        let (first, second, shows) = if map.h - rect.h >= room || map.h - rect.h >= map.w - rect.w {
-            let top = Rect::new(map.x + (map.w - rect.w) / 2, map.y + edge, rect.w, rect.h);
-            let bottom = Rect::new(top.x, map.y + map.h - rect.h - edge, rect.w, rect.h);
-            (top, bottom, Point::new(map.x + map.w / 2, (top.y + top.h + map.y + map.h) / 2))
-        } else {
-            let left = Rect::new(map.x + edge, rect.y, rect.w, rect.h);
-            let right = Rect::new(map.x + map.w - rect.w - edge, rect.y, rect.w, rect.h);
-            (left, right, Point::new((left.x + left.w + map.x + map.w) / 2, map.y + map.h / 2))
-        };
-        self.screen.ui.set_rect(window, first);
-        if !covered(self, first) {
-            return;
+        // (A hex's height, in pixels: the hex and half of one around it
+        // are to show.)
+        let near = (map.h as f32 * self.screen.view.to_ndc([0.0, 1.0])[1].abs()) as i32;
+        let places = window_places(map, screen, (rect.w, rect.h), edge);
+        let clear = |s: &Session| places.iter().copied().find(|place| apart(*place, s.pixel_of(at)) >= near);
+        let mut place = clear(self);
+        // The map moves: the hex in the middle of what a window at the
+        // top, at the left or over the sidebar leaves of the map.
+        let (top, left, far) = (places[0], places[2], places[6]);
+        let room = 3 * near.max(1);
+        let (mid_x, mid_y) = (map.x + map.w / 2, map.y + map.h / 2);
+        let shown = [
+            (map.y + map.h - (top.y + top.h), Point::new(mid_x, (top.y + top.h + map.y + map.h) / 2)),
+            (map.x + map.w - (left.x + left.w), Point::new((left.x + left.w + map.x + map.w) / 2, mid_y)),
+            (far.x - map.x, Point::new((map.x + far.x) / 2, mid_y)),
+        ];
+        for (space, to) in shown {
+            if place.is_none() && space >= room {
+                let before = self.screen.view.middle();
+                self.put_hex_at(at, to);
+                place = clear(self);
+                if place.is_none() {
+                    self.screen.view.set_middle(before[0], before[1]);
+                }
+            }
         }
-        self.put_hex_at(at, shows);
-        if covered(self, first) && !covered(self, second) {
-            self.screen.ui.set_rect(window, second);
-        }
+        // (A window as big as the map and more: where it covers the hex
+        // least.)
+        let p = self.pixel_of(at);
+        let place = place.or_else(|| places.iter().copied().max_by_key(|place| apart(*place, p))).unwrap_or(rect);
+        self.screen.ui.set_rect(window, place);
     }
 
     /// The hex a battle shown is fought on, while it is marked; and how
@@ -4791,6 +4863,33 @@ impl Scene for Session {
             rings.push((at, BATTLE_BORDER));
         }
         rings
+    }
+
+    /// The owner's word, 2026-11-22: "Marking the battle locations on the
+    /// minimap is a good idea, make sure replay also does it." The battles
+    /// the person at the screen was in since they last ended a turn (what
+    /// their log has as new: in rounds, the round that played out), and
+    /// the one being shown now, which flashes there as on the map. In the
+    /// past (the replay), those up to where it has got to.
+    fn battles(&self) -> Vec<(Hex, f32)> {
+        if self.cover.is_some() {
+            return Vec::new();
+        }
+        let now = self.battle_marked();
+        let game = &self.screen.game;
+        let mut battles: Vec<(Hex, f32)> = Vec::new();
+        if let Some(side) = Scene::viewer(self) {
+            for record in game.history().iter().skip(self.seen_by(side)) {
+                if let Event::Battle { at, attacker, defender, .. } = &record.event {
+                    let shown = now.is_some_and(|(hex, _)| hex == *at);
+                    if (*attacker == side || *defender == side) && !shown && !battles.iter().any(|(b, _)| b == at) {
+                        battles.push((*at, 0.0));
+                    }
+                }
+            }
+        }
+        battles.extend(now);
+        battles
     }
 
     fn flash(&self) -> Option<(Hex, [f32; 4])> {

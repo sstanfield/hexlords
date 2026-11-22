@@ -107,6 +107,8 @@ fn the_round_that_played_out_can_be_gone_back_into() {
     push_widget(&mut s, END_TURN_ID);
     s.pump();
     assert!(button(&s).starts_with("Orders done"), "{}", button(&s));
+    // (The minimap marks where the round's battle was.)
+    assert_eq!(Scene::battles(&s), [(to, 0.0)]);
     let (at, steps) = s.replay_at().expect("the round is kept");
     assert!(at == steps && steps >= 3 && shows_replay(&s) && !s.in_the_past(), "{at} of {steps}");
     // This round's first order, given before going back: it is the
@@ -120,6 +122,12 @@ fn the_round_that_played_out_can_be_gone_back_into() {
     assert!(s.in_the_past() && s.replay_at() == Some((0, steps)));
     assert_eq!((pos(&s, a), pos(&s, b)), (Some(from), Some(to)));
     assert_eq!((s.screen.game.turn(), button(&s).as_str()), (1, "Back to now"));
+    // ("Marking the battle locations on the minimap is a good idea, make
+    // sure replay also does it": in the past, the battles up to then.)
+    assert_eq!(Scene::battles(&s), [], "not fought yet");
+    s.go_back(steps);
+    assert_eq!(Scene::battles(&s), [(to, 0.0)], "fought by the round's end");
+    s.go_back(0);
     assert!(s.unit_line().starts_with("The round as it went, step 0 of"), "{}", s.unit_line());
     // A step on: the soldiers have gone a hex or two.
     s.go_back(1);
@@ -160,6 +168,7 @@ fn the_round_that_played_out_can_be_gone_back_into() {
         s.battle().is_some()
     });
     assert!(moved && s.battle().is_some() && s.in_the_past(), "the stacks go again, and fight again");
+    assert!(Scene::battles(&s).iter().any(|(at, _)| *at == to), "and the minimap marks it again");
     push_widget(&mut s, BATTLE_CLOSE_ID);
     frames(&mut s, t, t + 60_000, 20, |s| !s.in_the_past());
     assert!(!s.in_the_past() && s.screen.game.turn() == 2);

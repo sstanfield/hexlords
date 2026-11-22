@@ -73,9 +73,11 @@ elements
 	TBButton.pressed
 		text-color #ffd24a
 	# A unit's slot in the stack under the map: a button with less padding,
-	# so that nine of them fit under the map. The selected unit's is pressed.
+	# so that nine of them fit under the map. A selected unit's is lighter,
+	# inside a thick green line (the green of the selected hex's ring), its
+	# numbers white; the others' numbers are grey.
 	UnitSlot
-		text-color #fefefe
+		text-color #aeb4bd
 		bitmap hg_button.png
 		cut 9
 		expand 1
@@ -84,8 +86,26 @@ elements
 			element UnitSlot.pressed
 				state pressed
 	UnitSlot.pressed
-		text-color #ffd24a
-		bitmap hg_button_pressed.png
+		text-color #ffffff
+		bitmap hg_slot_selected.png
+		cut 9
+		expand 1
+		content-ofs-x 1
+		content-ofs-y 1
+	# The slot of a unit that is not there yet (in rounds: on its way to
+	# join the stack): blue.
+	UnitComing
+		text-color #a9c4ea
+		bitmap hg_slot_coming.png
+		cut 9
+		expand 1
+		padding 4 4
+		overrides
+			element UnitComing.pressed
+				state pressed
+	UnitComing.pressed
+		text-color #ffffff
+		bitmap hg_slot_coming_selected.png
 		cut 9
 		expand 1
 		content-ofs-x 1

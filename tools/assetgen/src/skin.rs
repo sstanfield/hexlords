@@ -36,8 +36,11 @@ const fn hex(rgb: u32) -> Rgb {
 /// The bronze of the borders, and the gold of the titles (the skin's text).
 pub const BRONZE: Rgb = hex(0xa0_80_46);
 pub const BRONZE_LIGHT: Rgb = hex(0xe0_c0_78);
+/// The green of what is selected: the map's ring round the selected hex
+/// (the game's `SELECTED_BORDER`; a test holds the two together).
+pub const SELECTED: Rgb = hex(0x40_ff_59);
 
-pub const PLATES: [Plate; 6] = [
+pub const PLATES: [Plate; 9] = [
     // A window, a menu, the box over a unit: dark, a bronze line round it.
     Plate {
         name: "hg_window",
@@ -107,6 +110,46 @@ pub const PLATES: [Plate; 6] = [
         border_color: BRONZE_LIGHT,
         top: hex(0x8a_6a_2e),
         bottom: hex(0xa8_84_42),
+        shadow: 0.0,
+    },
+    // A selected unit's box in the stack under the map: lighter than a
+    // button, inside a thick line of the green the map rings the selected
+    // hex with. (Thick and light, not a color alone: it has to show to
+    // eyes that do not tell the colors apart.)
+    Plate {
+        name: "hg_slot_selected",
+        size: 32,
+        margin: 1.0,
+        radius: 5.0,
+        border: 2.5,
+        border_color: SELECTED,
+        top: hex(0x6c_76_82),
+        bottom: hex(0x52_5a_66),
+        shadow: 0.0,
+    },
+    // The box of a unit that is not on the hex yet (in rounds, one sent to
+    // join the stack): blue, where one that is there is grey.
+    Plate {
+        name: "hg_slot_coming",
+        size: 32,
+        margin: 1.0,
+        radius: 5.0,
+        border: 1.0,
+        border_color: hex(0x4f_78_b0),
+        top: hex(0x2c_44_6a),
+        bottom: hex(0x1f_30_4c),
+        shadow: 0.35,
+    },
+    // And selected: lighter, inside the same thick green line.
+    Plate {
+        name: "hg_slot_coming_selected",
+        size: 32,
+        margin: 1.0,
+        radius: 5.0,
+        border: 2.5,
+        border_color: SELECTED,
+        top: hex(0x44_6c_a8),
+        bottom: hex(0x30_50_82),
         shadow: 0.0,
     },
 ];

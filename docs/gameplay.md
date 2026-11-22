@@ -585,11 +585,23 @@ changed.
   shows the commander's sign, whoever of it is selected, and a commander
   in one of its side's cities has its pip ringed light. A battle shown as
   it happens rings its hex in orange, which flashes red while the battle
-  is played out; the battle's window goes clear of the hex (to the top of
-  the map with the hex below it, or to the left with the hex beside it,
-  the map moved if need be). With battles told in a line (Options) the map
-  goes to the hex all the same and it flashes a moment before the game
-  goes on.
+  is played out; the battle's window goes clear of the hex: to the first
+  of its places that leaves the hex in sight with the map as it is (the
+  top of the map, its bottom, its corners), the map moved under it only if
+  none does, and at the map's edge or on a map all in view, where the map
+  cannot move, to wherever the hex shows, over the sidebar if it must
+  (the owner, 2026-11-22: "a battle at the top of the map has the battle
+  hex covered by the combat dialog"). With battles told in a line
+  (Options) the map goes to the hex all the same and it flashes a moment
+  before the game goes on. The **minimap** marks each battle the person
+  was in since they last ended a turn (what their log has as new: in
+  rounds, the round that played out) with an orange cross, bigger while
+  the battle is being shown; in the replay, those fought up to where it
+  has got to. In the **stack's boxes** under the map a selected unit's
+  box is lighter, inside a thick line of the selected hex's green (told
+  by its weight, not its color alone), and the others' numbers are grey;
+  the box of a unit that is not on the hex yet (in rounds: one sent to
+  join the stack, marked +) is blue ("there now vs will be there soon").
 - **What happened, again** (the owner, 2026-11-22: "It is also hard to
   follow all the action but this is the nature of everything happening at
   once. I am thinking that a 'replay' feature of the previous turn would

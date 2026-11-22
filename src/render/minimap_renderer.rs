@@ -13,7 +13,7 @@
 use miniquad::{PassAction, RenderPass, RenderingBackend, TextureId};
 
 use super::hex_mesh::{HEX_INDICES, HEX_VERTICES, HexVariant};
-use super::map_renderer::{RING_COLOR, side_color};
+use super::map_renderer::{BATTLE_BORDER, RING_COLOR, side_color};
 use super::mesh::{BufferPool, MAX_VERTICES, Mesh};
 use super::shaders::{BlitVertex, FlatVertex, Pipelines};
 use super::textures::texture_params;
@@ -72,6 +72,40 @@ pub fn city_marks(map: &Map, view: &MiniMapView, sight: &Sight) -> Vec<FlatVerte
         let [r, g, b] = side_color(sight.holder(city));
         quads.extend(quad_corners(view.city_mark(city.pos, edge)).map(|pos| FlatVertex { pos, color: RING_COLOR }));
         quads.extend(quad_corners(view.city_mark(city.pos, 0.0)).map(|pos| FlatVertex { pos, color: [r, g, b, 1.0] }));
+    }
+    quads
+}
+
+/// Where battles were fought, on the minimap: for each a cross, dark and
+/// over it one a little thinner in the color the main map rings a battle's
+/// hex with (`BATTLE_BORDER`), bigger than a city's mark so that it shows
+/// beside one, and bigger still the brighter it is (0 to 1: the battle
+/// being shown now, as its hex flashes). Quads of four vertices, four for
+/// each battle. (A cross, where a city is a square: a shape of its own,
+/// not a color alone.)
+pub fn battle_marks(view: &MiniMapView, battles: &[(Hex, f32)]) -> Vec<FlatVertex> {
+    let (w, h) = view.size();
+    let (w, h) = (w.max(1) as f32, h.max(1) as f32);
+    let [r, g, b] = BATTLE_BORDER;
+    let mut quads = Vec::with_capacity(battles.len() * 16);
+    for (hex, bright) in battles {
+        let [x, y] = view.to_ndc(view.hex_center(*hex));
+        let reach = view.city_mark_reach() * (1.5 + 0.7 * bright.clamp(0.0, 1.0));
+        let thick = (reach * 0.28).max(1.0);
+        for (more, color) in [(thick * 0.6 + 0.5, RING_COLOR), (0.0, [r, g, b, 1.0])] {
+            // The two bars of the cross, each from corner to corner: its
+            // ends, and half its width across.
+            for way in [1.0, -1.0] {
+                let (along, across) = (reach + more, (thick + more) * std::f32::consts::FRAC_1_SQRT_2);
+                let corners = [
+                    [-along - across, -along * way + across * way],
+                    [-along + across, -along * way - across * way],
+                    [along + across, along * way - across * way],
+                    [along - across, along * way + across * way],
+                ];
+                quads.extend(corners.map(|[dx, dy]| FlatVertex { pos: [x + dx * 2.0 / w, y + dy * 2.0 / h], color }));
+            }
+        }
     }
     quads
 }
@@ -196,7 +230,14 @@ impl MiniMapRenderer {
     /// minimap widget's rectangle: the cached picture, then the marker (`[left,
     /// bottom, right, top]` in normalized device coordinates).
     /// C++: MiniMapRenderer::renderMap (the cached branch), miniMapLocMarker
-    pub fn draw(&mut self, ctx: &mut dyn RenderingBackend, pipelines: &Pipelines, marker: [f32; 4]) {
+    /// Over both, `marks`: quads of four vertices (`battle_marks`).
+    pub fn draw(
+        &mut self,
+        ctx: &mut dyn RenderingBackend,
+        pipelines: &Pipelines,
+        marker: [f32; 4],
+        marks: &[FlatVertex],
+    ) {
         let Some(target) = &self.target else { return };
         self.quad_buffers.rewind();
 
@@ -218,6 +259,15 @@ impl MiniMapRenderer {
         ctx.apply_pipeline(&pipelines.flat);
         ctx.apply_bindings_from_slice(&[vb], ib, &[]);
         ctx.draw(0, 6, 1);
+
+        for batch in marks.chunks(MAX_VERTICES / 4 * 4) {
+            let quads = batch.len() / 4;
+            let indices = (0..quads as u16).flat_map(|q| QUAD_INDICES.map(|i| q * 4 + i)).collect();
+            let mesh = Mesh { vertices: batch[..quads * 4].to_vec(), indices };
+            let (vb, ib) = self.quad_buffers.upload(ctx, &mesh);
+            ctx.apply_bindings_from_slice(&[vb], ib, &[]);
+            ctx.draw(0, quads as i32 * 6, 1);
+        }
     }
 
     /// How many times the picture has been drawn since the start.
@@ -329,6 +379,42 @@ mod tests {
         assert!(quad.iter().all(|v| v.color == [0.0, 0.0, 0.0, 0.3]));
         // Two triangles that share the diagonal.
         assert_eq!(QUAD_INDICES, [0, 1, 2, 0, 2, 3]);
+    }
+
+    /// The owner's word, 2026-11-22: "Marking the battle locations on the
+    /// minimap is a good idea".
+    #[test]
+    fn a_battle_is_a_cross_in_the_battles_color_on_a_dark_one() {
+        let mut view = MiniMapView::new(30, 40);
+        view.resize(200, 231);
+        let hex = Hex::new(12, 20);
+        let marks = battle_marks(&view, &[(hex, 0.0)]);
+        assert_eq!(marks.len(), 16, "two bars, each dark and then in color");
+        let [r, g, b] = BATTLE_BORDER;
+        let colors: Vec<[f32; 4]> = marks.chunks(4).map(|q| q[0].color).collect();
+        assert_eq!(colors, [RING_COLOR, RING_COLOR, [r, g, b, 1.0], [r, g, b, 1.0]]);
+        // Each bar goes through the hex's middle, from corner to corner,
+        // as far across as up; the two cross.
+        let [x, y] = view.to_ndc(view.hex_center(hex));
+        let px = |v: &FlatVertex| [(v.pos[0] - x) * 100.0, (v.pos[1] - y) * 115.5];
+        for bar in marks.chunks(4) {
+            let mean: [f32; 2] = std::array::from_fn(|k| bar.iter().map(|v| px(v)[k]).sum::<f32>() / 4.0);
+            assert!(mean[0].abs() < 1e-3 && mean[1].abs() < 1e-3, "{mean:?}");
+        }
+        let end = |bar: &[FlatVertex]| {
+            let (a, b) = (px(&bar[2]), px(&bar[3]));
+            [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]
+        };
+        let (up, down) = (end(&marks[8..12]), end(&marks[12..16]));
+        assert!((up[0] - up[1]).abs() < 1e-3 && (down[0] + down[1]).abs() < 1e-3, "{up:?} {down:?}");
+        // Bigger than a city's mark, and the dark one shows round the color.
+        assert!(up[0] > view.city_mark_reach() * 1.4, "{up:?}");
+        assert!(end(&marks[0..4])[0] > up[0]);
+        // The battle being shown is bigger.
+        let lit = battle_marks(&view, &[(hex, 1.0)]);
+        assert!(end(&lit[8..12])[0] > up[0] * 1.3);
+        // Every mark is of finite numbers, with no size too.
+        assert!(battle_marks(&MiniMapView::new(20, 20), &[(hex, 0.5)]).iter().all(|v| v.pos[0].is_finite()));
     }
 
     #[test]
