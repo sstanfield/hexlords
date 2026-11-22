@@ -170,6 +170,8 @@ const WALLS_GOAL: u32 = 3;
 /// machine, so a seed plays the same game everywhere.)
 pub fn worth(strength: u32, game: &Game) -> f64 {
     let rules = game.setup().combat;
+    // No more than the game's cap lets it fight with.
+    let strength = rules.cap.map_or(strength, |cap| strength.min(cap));
     // k = m / 5.
     let m = 2 * u32::from(10u8.saturating_sub(rules.chance));
     let s = f64::from(strength.max(1));

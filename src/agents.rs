@@ -524,7 +524,8 @@ pub fn describe(game: &Game, side: Side) -> String {
     let exact = if combat.system == System::Dice { format!(" exact {}", combat.exact.name()) } else { String::new() };
     let wounds = if combat.wounds { " wounds last" } else { "" };
     let back = if combat.blows_back { " blows back" } else { "" };
-    out.push_str(&format!("battles {} chance {}{exact}{wounds}{back}\n", combat.system.name(), combat.chance));
+    let cap = combat.cap.map_or(String::new(), |cap| format!(" cap {cap}"));
+    out.push_str(&format!("battles {} chance {}{exact}{wounds}{back}{cap}\n", combat.system.name(), combat.chance));
     out.push_str(&format!("fog {}\n", game.setup().fog.word()));
     out.push_str(&format!("gold {} income {} upkeep {}\n", game.gold(side), game.income(side), game.upkeep(side)));
     // With total fog of war, a hex the side has never seen is a `?`.

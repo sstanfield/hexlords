@@ -125,7 +125,8 @@ settings can be looked over like the game's), how to play (turns; rounds are
 to come), the order of the turns (the same each round, or drawn anew), the
 battles (lines, strength or dice; how much chance, from 0 to 10, or on the
 dice what a roll of exactly a side's number does; whether wounds last and
-whether the loser of an exchange may hit back), the gold
+whether the loser of an exchange may hit back; a cap of 9 on a unit's
+strength), the gold
 each side starts with, and who plays each side, a person or the computer. Several people take turns at
 one screen (hotseat): between two people's turns a screen hides the map
 until the next one says they are there.
@@ -173,7 +174,7 @@ waits in the city until there is enough ([docs/gameplay.md](docs/gameplay.md)).
 ```
 hexlords [--map <file.map or map directory>] [--players <side>=<who>,...] [--order fixed|drawn] [--seed <n>]
         [--chance <0-10>] [--battles lines|strength|dice] [--dice-exact hits|misses|defenders] [--wounds] [--blows-back]
-        [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] [--log]]
+        [--cap <n>] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] [--log]]
         [--script <steps>]
         [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
 ```
@@ -197,7 +198,8 @@ Without `--map` the window opens on the new game screen.
   exactly a side's number does (hits unless it is said). `--wounds`: a unit's
   hits stay with it until its side's turn ends, and it fights at half
   strength while wounded. `--blows-back`: the loser of an exchange may hit
-  back, a quarter of the time at most. `--gold <n>`: the gold
+  back, a quarter of the time at most. `--cap <n>`: no unit fights stronger
+  than `n`, all its bonuses counted. `--gold <n>`: the gold
   each side starts with (50). `--fog`: fog of war: each side sees only what
   is near its units and cities. `--total-fog`: that, and the land a side has
   never seen is black, and shut to its units, until it has seen it.

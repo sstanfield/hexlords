@@ -239,6 +239,21 @@ and the rules use integers, not floats.
      (`siege 2`) makes the walls of a city its stack attacks count that much
      less (`Game::siege_of`; never below nothing). (A battle's strengths are
      in quarter points, `combat::QUARTER`.)
+   - **A cap** on a unit's strength (built, a choice made with the game,
+     none unless chosen: the new game screen's Cap 9, `--cap <n>`; the
+     owner's idea 2026-11-21, "cap each individual unit (with bonusses) to 9
+     in strength ... That might control stacks a bit but still allow a strong
+     stack to shine"): no unit fights stronger than the cap, all its bonuses
+     counted (`combat::Rules::capped`; wounded, what is left of it, no more
+     than the cap either). The odds, the planners' weighing of a unit and
+     the battle window ("9 (cap)") count it. Measured (the continent, the
+     steady planners, 100 seeds, strength against strength with losers
+     hitting back and wounds that last): its units are 2 to 6, and with
+     every bonus a unit fought over 9 one time in a thousand (by a point), so
+     a cap of 9 changes nothing there (39.4 rounds, 38.9 with it; the
+     winner of a battle loses 9 in 100 of its units either way); caps of 8
+     and 7 hardly more (36.2 and 39.0 rounds; 10 in 100). It is for maps
+     whose kinds are stronger.
    - **The odds** before an attack (`Game::battle_odds`) are 200 battles
      fought with a chance of their own, so asking does not change the game;
      the line under the map shows them ("attack: 82% likely to win").

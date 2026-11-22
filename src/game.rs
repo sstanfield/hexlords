@@ -454,7 +454,8 @@ pub struct Combatant {
     /// The walls' bonus, in quarters (a defender's in a city), less what
     /// the attackers' siege engines broke.
     pub walls: u32,
-    /// All of it, in quarters: what it fought with.
+    /// All of it, in quarters: what it fought with (no more than the
+    /// game's cap, `combat::Rules::cap`).
     pub quarters: u32,
     /// The hits it came with (wounds that last, `combat::Rules::wounds`),
     /// and what it fights with once wounded, in quarters (as `quarters`
@@ -1920,8 +1921,9 @@ impl Game {
     /// it defends, the ground's bonus and the walls' of a city there
     /// (`combat::walls_bonus`); see `strength_parts`, which also counts what
     /// siege engines break.
+    /// No more than the game's cap, if it has one (`combat::Rules::cap`).
     pub fn battle_strength(&self, unit: &Unit, at: Hex, defending: bool, stack: &[UnitId]) -> u32 {
-        self.strength_parts(unit, at, defending, stack, 0).quarters()
+        self.setup.combat.capped(self.strength_parts(unit, at, defending, stack, 0).quarters())
     }
 
     /// What `battle_strength` is made of (`StrengthParts`), against
@@ -1992,10 +1994,11 @@ impl Game {
                 .filter(|unit| self.fights_at(unit, at))
                 .map(|unit| {
                     let parts = self.strength_parts(unit, at, defending, ids, siege);
-                    let strength = parts.quarters();
+                    let rules = self.setup.combat;
+                    let strength = rules.capped(parts.quarters());
                     // As strong wounded, unless wounds last.
-                    let hurt = if self.setup.combat.wounds {
-                        StrengthParts { own: combat::wounded(unit.power()), ..parts }.quarters()
+                    let hurt = if rules.wounds {
+                        rules.capped(StrengthParts { own: combat::wounded(unit.power()), ..parts }.quarters())
                     } else {
                         strength
                     };
@@ -2156,10 +2159,11 @@ impl Game {
             .filter_map(|id| units.get(*id))
             .map(|unit| {
                 let parts = self.strength_parts(unit, at, defending, stack, siege);
-                let hurt = if self.setup.combat.wounds {
-                    StrengthParts { own: combat::wounded(unit.power()), ..parts }.quarters()
+                let rules = self.setup.combat;
+                let hurt = if rules.wounds {
+                    rules.capped(StrengthParts { own: combat::wounded(unit.power()), ..parts }.quarters())
                 } else {
-                    parts.quarters()
+                    rules.capped(parts.quarters())
                 };
                 Combatant {
                     unit: unit.id(),
@@ -2179,7 +2183,7 @@ impl Game {
                     ground: parts.ground,
                     home: parts.home,
                     walls: parts.walls,
-                    quarters: parts.quarters(),
+                    quarters: rules.capped(parts.quarters()),
                     wounds: unit.wounds,
                     hurt,
                 }

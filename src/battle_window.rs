@@ -180,11 +180,12 @@ impl BattleWindow {
             ),
         };
         build::heading(ui, c, &format!("{} attacks {defender} at {place}", title(fight.attacker)));
+        let cap = rules.cap.map_or(String::new(), |cap| format!(" No unit fights stronger than {cap}."));
         build::text(
             ui,
             c,
             &format!(
-                "Fought {system}; each unit takes {HITS} hits{}{}.",
+                "Fought {system}; each unit takes {HITS} hits{}{}.{cap}",
                 if rules.wounds { ", and its wounds last until its side's turn ends" } else { "" },
                 if rules.blows_back { "; the loser of an exchange may hit back" } else { "" }
             ),
@@ -471,9 +472,17 @@ fn card(ui: &mut Ui, row: WidgetId, id: &str, unit: &Combatant, icon: ImageHandl
         );
     }
     ui.set_text(name, &unit.title);
-    // Its strength, and what of it is bonus.
+    // Its strength, and what of it is bonus; or, held down by the game's
+    // cap, what it fights with.
+    let whole = (unit.strength + unit.growth + unit.led + unit.ground + unit.home) * QUARTER + unit.walls;
     let bonus = unit.quarters.saturating_sub(unit.strength * QUARTER);
-    let text = if bonus > 0 { format!("{} +{}", unit.strength, points(bonus)) } else { unit.strength.to_string() };
+    let text = if unit.quarters < whole {
+        format!("{} (cap)", points(unit.quarters))
+    } else if bonus > 0 {
+        format!("{} +{}", unit.strength, points(bonus))
+    } else {
+        unit.strength.to_string()
+    };
     ui.set_text(strength, &text);
     // Room for the marks, none yet.
     ui.set_text(hits, " ");

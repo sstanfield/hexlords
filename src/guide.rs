@@ -175,6 +175,15 @@ fn battles(game: &Game) -> Vec<HelpSection> {
                 ("Walls", format!("A defender in a city is stronger by its walls: {walls}.")),
                 ("Their own ground", knacks),
                 (
+                    "At the most",
+                    match rules.cap {
+                        Some(cap) => {
+                            format!("No unit fights stronger than {cap} in this game, all its bonuses counted.")
+                        }
+                        None => "No cap: a unit fights with all its bonuses, however many.".to_string(),
+                    },
+                ),
+                (
                     "Attacking",
                     "Attackers get neither the ground's bonus nor walls; their kind's own bonus on the \
                      ground they attack, they do."

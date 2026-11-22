@@ -21,7 +21,7 @@ use crate::mapgen::config::{Config, DENSITIES, PRESETS, SIZES, Size as MapSize, 
 use crate::mapgen::reach::{MoveClass, movement_class};
 use crate::screen::{MapScreen, Scene};
 use crate::setup::{Controller, Fog, Mode, Setup, TurnOrder};
-use crate::state::combat::{Exact, MAX_CHANCE, System};
+use crate::state::combat::{Exact, MAX_CHANCE, System, UNIT_CAP};
 use crate::state::scenario::side_name;
 use crate::state::{Hex, Map, Side, TileType};
 
@@ -45,6 +45,7 @@ pub const CHANCE_LESS_ID: &str = "chance_less";
 pub const CHANCE_MORE_ID: &str = "chance_more";
 pub const WOUNDS_ID: &str = "wounds";
 pub const BLOWS_BACK_ID: &str = "blows_back";
+pub const CAP_ID: &str = "unit_cap";
 pub const FOG_OFF_ID: &str = "fog_off";
 pub const FOG_ON_ID: &str = "fog_on";
 pub const FOG_TOTAL_ID: &str = "fog_total";
@@ -190,7 +191,7 @@ impl NewGame {
                 ("Drag on the map", "Move it"),
                 ("Turns, Rounds", "How to play: one side after the other (rounds are to come)"),
                 ("Order of turns", "The same each round, or drawn anew"),
-                ("Battles", "Lines of duels, strength against strength, or dice; how much chance, 0 to 10 (on the dice, what a roll of exactly a side's number does); whether wounds last until a side's turn ends; whether the loser of an exchange may hit back"),
+                ("Battles", "Lines of duels, strength against strength, or dice; how much chance, 0 to 10 (on the dice, what a roll of exactly a side's number does); whether wounds last until a side's turn ends; whether the loser of an exchange may hit back; whether a unit fights at 9 at the most, its bonuses counted"),
                 ("Gold", "What each side's treasury holds at the start"),
                 ("Fog of war", "Each side sees only what is near its units and cities"),
                 ("Fog: Total", "And the land a side has never seen is black, shut to its units"),
@@ -515,6 +516,8 @@ impl NewGame {
         press(ui, wounds, "wounds", self.setup.combat.wounds);
         let back = build::button(ui, row, BLOWS_BACK_ID, "Losers hit back");
         press(ui, back, "blows_back", self.setup.combat.blows_back);
+        let cap = build::button(ui, row, CAP_ID, &format!("Cap {UNIT_CAP}"));
+        press(ui, cap, "unit_cap", self.setup.combat.cap.is_some());
 
         // The gold and the fog of war, each a row that says what it is.
         build::gap(ui, c, space);
@@ -651,6 +654,10 @@ impl NewGame {
                 self.rebuild();
             } else if id == TbId::new(BLOWS_BACK_ID) {
                 self.setup.combat.blows_back = !self.setup.combat.blows_back;
+                self.rebuild();
+            } else if id == TbId::new(CAP_ID) {
+                let cap = &mut self.setup.combat.cap;
+                *cap = if cap.is_some() { None } else { Some(UNIT_CAP) };
                 self.rebuild();
             } else if id == TbId::new(CHANCE_LESS_ID) || id == TbId::new(CHANCE_MORE_ID) {
                 let chance = &mut self.setup.combat.chance;

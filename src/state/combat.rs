@@ -100,6 +100,9 @@ pub const DIE: u32 = 10;
 /// The most a loser hits back, in percent (`Rules::blows_back`).
 pub const BLOW_BACK_MOST: u32 = 25;
 
+/// The cap the new game screen offers (`Rules::cap`), in points.
+pub const UNIT_CAP: u32 = 9;
+
 /// What a battle's strengths are counted in: quarters of a point.
 pub const QUARTER: u32 = 4;
 
@@ -149,11 +152,29 @@ pub struct Rules {
     pub blows_back: bool,
     /// On the dice, what a roll of exactly a side's number is.
     pub exact: Exact,
+    /// The most a unit fights with, in points, all its bonuses counted
+    /// (the owner's idea, 2026-11-21: cap each unit at 9, to keep stacks in
+    /// check and still let a strong stack shine); `None`, no cap.
+    pub cap: Option<u32>,
+}
+
+impl Rules {
+    /// A strength in quarters, as the cap leaves it.
+    pub fn capped(&self, quarters: u32) -> u32 {
+        self.cap.map_or(quarters, |cap| quarters.min(cap.saturating_mul(QUARTER)))
+    }
 }
 
 impl Default for Rules {
     fn default() -> Rules {
-        Rules { chance: DEFAULT_CHANCE, system: System::Lines, wounds: false, blows_back: false, exact: Exact::Hits }
+        Rules {
+            chance: DEFAULT_CHANCE,
+            system: System::Lines,
+            wounds: false,
+            blows_back: false,
+            exact: Exact::Hits,
+            cap: None,
+        }
     }
 }
 
@@ -675,8 +696,11 @@ mod tests {
             assert_eq!(Exact::named(exact.name()), Some(exact));
         }
         assert_eq!((System::named("lances"), Exact::named("lances")), (None, None));
-        let default = Rules { chance: 5, system: System::Lines, wounds: false, blows_back: false, exact: Exact::Hits };
+        let default =
+            Rules { chance: 5, system: System::Lines, wounds: false, blows_back: false, exact: Exact::Hits, cap: None };
         assert_eq!(Rules::default(), default);
+        let capped = Rules { cap: Some(9), ..default };
+        assert_eq!((capped.capped(40), capped.capped(36), capped.capped(13), default.capped(40)), (36, 36, 13, 40));
     }
 
     /// The owner's dice (2026-11-21): the stacks' strengths brought to 1

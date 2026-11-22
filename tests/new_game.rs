@@ -8,7 +8,7 @@ mod common;
 use common::{assets, click, widget};
 use hexlords::game::Game;
 use hexlords::new_game::{
-    BATTLES_DICE_ID, BATTLES_STRENGTH_ID, BLOWS_BACK_ID, CHANCE_LESS_ID, CHANCE_MORE_ID, EXACT_DEFENDERS_ID,
+    BATTLES_DICE_ID, BATTLES_STRENGTH_ID, BLOWS_BACK_ID, CAP_ID, CHANCE_LESS_ID, CHANCE_MORE_ID, EXACT_DEFENDERS_ID,
     EXACT_MISSES_ID, FOG_ON_ID, FOG_TOTAL_ID, GOLD_LESS_ID, GOLD_MORE_ID, MODE_ROUNDS_ID, ORDER_DRAWN_ID, START_ID,
     map_id, map_name, seat_id,
 };
@@ -178,9 +178,14 @@ fn the_dice_and_hitting_back_are_chosen_on_the_screen() {
     push(&mut shell, BATTLES_STRENGTH_ID);
     assert!(says(&shell).iter().any(|t| t == "Chance 5 of 10"));
     push(&mut shell, BATTLES_DICE_ID);
+    // A cap on a unit's strength: 9, or none.
+    push(&mut shell, CAP_ID);
+    assert_eq!(shell.new_game_screen().unwrap().setup().combat.cap, Some(9));
+    push(&mut shell, CAP_ID);
+    push(&mut shell, CAP_ID);
     push(&mut shell, START_ID);
     let game = &shell.session().unwrap().screen.game;
-    assert_eq!(game.setup().combat, Rules { exact: Exact::Defenders, ..dice });
+    assert_eq!(game.setup().combat, Rules { exact: Exact::Defenders, cap: Some(9), ..dice });
 }
 
 fn descendants_of(shell: &Shell, name: &str) -> Vec<String> {

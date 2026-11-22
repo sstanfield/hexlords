@@ -15,6 +15,8 @@
 //!   number is (hits); `--wounds`: a unit's hits last until its side's turn
 //!   ends, and it fights at half strength while wounded (they do not);
 //!   `--blows-back`: the loser of an exchange may hit back (it does not);
+//!   `--cap <n>`: no unit fights stronger than `n`, its bonuses counted
+//!   (none);
 //!   `--gold <n>`: the gold each
 //!   side starts with (50); `--fog`: fog of war; `--total-fog`: fog of war,
 //!   and the land a side has never seen is black;
@@ -63,6 +65,7 @@ struct Args {
     exact: Option<Exact>,
     wounds: bool,
     blows_back: bool,
+    cap: Option<u32>,
     gold: Option<u32>,
     fog: Fog,
 }
@@ -70,7 +73,7 @@ struct Args {
 fn usage() -> String {
     format!(
         "usage: hexlords [--map <file.map or map directory>] [--players <side>=<person|agent>,...] [--order fixed|drawn] \
-         [--seed <n>] [--chance <0-10>] [--battles lines|strength|dice] [--dice-exact hits|misses|defenders] [--wounds] [--blows-back] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] \
+         [--seed <n>] [--chance <0-10>] [--battles lines|strength|dice] [--dice-exact hits|misses|defenders] [--wounds] [--blows-back] [--cap <n>] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] \
          [--log]] \
          [--script <steps>] {OPTIONS_USAGE}"
     )
@@ -123,6 +126,11 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
                     System::named(&name).ok_or(format!("--battles: \"{name}\" is not lines, strength or dice"));
                 parsed.battles = Some(system?);
             }
+            "--cap" => {
+                let n = value("a number")?;
+                let cap = n.parse::<u32>().ok().filter(|n| *n > 0);
+                parsed.cap = Some(cap.ok_or(format!("--cap: \"{n}\" is not a number above 0"))?);
+            }
             "--dice-exact" => {
                 let name = value("hits, misses or defenders")?;
                 let exact = Exact::named(&name);
@@ -162,6 +170,7 @@ fn main() {
         exact,
         wounds,
         blows_back,
+        cap,
         gold,
         fog,
     } = args;
@@ -205,6 +214,7 @@ fn main() {
             setup.combat.exact = exact.unwrap_or(setup.combat.exact);
             setup.combat.wounds |= wounds;
             setup.combat.blows_back |= blows_back;
+            setup.combat.cap = cap.or(setup.combat.cap);
             setup.gold = gold.unwrap_or(setup.gold);
             if fog.on() {
                 setup.fog = fog;
@@ -317,6 +327,8 @@ mod tests {
         assert_eq!(parse(&["--dice-exact", "x"]).unwrap_err(), "--dice-exact: \"x\" is not hits, misses or defenders");
         assert!(parse(&["--wounds"]).unwrap().wounds && !parse(&[]).unwrap().wounds);
         assert!(parse(&["--blows-back"]).unwrap().blows_back && !parse(&[]).unwrap().blows_back);
+        assert_eq!((parse(&["--cap", "9"]).unwrap().cap, parse(&[]).unwrap().cap), (Some(9), None));
+        assert_eq!(parse(&["--cap", "0"]).unwrap_err(), "--cap: \"0\" is not a number above 0");
         assert_eq!(parse(&["--gold", "120"]).unwrap().gold, Some(120));
         assert_eq!(parse(&["--gold", "lots"]).unwrap_err(), "--gold: \"lots\" is not a number");
     }
