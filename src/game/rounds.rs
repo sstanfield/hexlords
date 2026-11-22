@@ -20,7 +20,8 @@
 //! - **The round plays out** (`Game::play_out`) once every side has done, a
 //!   **tick** at a time: in each tick, every stack with somewhere to go
 //!   takes one step, a hex, if it can pay for it; the sides step in the
-//!   round's order (drawn anew each round, if the game is set up so), so
+//!   round's order (drawn anew as each round begins to play out, if the
+//!   game is set up so: when the orders are given nobody knows it), so
 //!   who steps first in a tick is the one thing chance decides. A stack
 //!   that steps into a hex another side stands on attacks it: so two
 //!   stacks making for the same hex fight there, the one that got there
@@ -28,9 +29,11 @@
 //!   one that steps second; and a stack sent against one that has left
 //!   finds the hex empty, and takes it. Only a plan attacks a stack it sees
 //!   (where it ends); a march or a patrol on its way stops short, as in
-//!   turns (a patrol attacks at its odds). Stacks of a side beside the hex
-//!   they are all sent against attack it together. A battle ends a stack's
-//!   round (it has no movement left).
+//!   turns (a patrol attacks at its odds). Stacks of a side sent against
+//!   the same hex attack it together: those beside it join the one that
+//!   steps in, and one that is there first waits for the others that can
+//!   still come. A stack passes through its own side's stacks, as a move
+//!   does. A battle ends a stack's round (it has no movement left).
 //! - **The round ends** when a tick goes by with nobody moving: the plans
 //!   end, got there or not; the standing orders use what movement is left
 //!   as they do at a turn's end (and say if they are stopped short); wounds
@@ -46,16 +49,19 @@
 use super::{Game, MarchState, Sight, UNSEEN, Undo};
 use crate::orders::Event;
 use crate::setup::{Mode, TurnOrder};
-use crate::state::{Hex, MoveCostId, Side, TileType, Unit, UnitId, hostile};
+use crate::state::{Hex, MAX_STACK, MoveCostId, Side, TileType, Unit, UnitId, hostile};
 
 /// A round plays out in at most this many ticks (a guard: movement runs out
 /// long before).
 const MAX_TICKS: u32 = 400;
 
-/// How far a round that plays out has got: the ticks played.
+/// How far a round that plays out has got: the ticks played; and whether
+/// the stacks that wait for others of their side before an attack wait no
+/// longer (a tick went by with nobody moving).
 #[derive(Clone, Debug, Default)]
 pub(super) struct PlayOut {
     tick: u32,
+    hasty: bool,
 }
 
 impl Game {
@@ -114,6 +120,24 @@ impl Game {
                 return Err("there is no way there".to_string());
             }
         }
+        // Nor, as things stand, where there is no room for them (their own
+        // side's full stack, a ship with no room aboard): the plan would
+        // be accepted and never happen.
+        if reach && !hostile(&self.map, side, to) {
+            // (Those there that are on their way somewhere themselves make
+            // room: they will have gone.)
+            let units = self.map.units();
+            let going = |id: &UnitId| units.get(*id).is_some_and(|u| !u.route.is_empty() || u.patrol.is_some());
+            let staying = self.map.units_at(to).iter().filter(|id| !ids.contains(id) && !going(id));
+            let all: Vec<UnitId> = staying.chain(&ids).copied().collect();
+            let commanders = all.iter().filter(|id| self.map.is_commander(**id)).count();
+            if commanders > 1 || all.len() - commanders > MAX_STACK {
+                return Err("there is no room there".to_string());
+            }
+            if !self.afloat(to, &self.there_after(side, to, &[], &ids)) {
+                return Err("there is no room aboard for them there".to_string());
+            }
+        }
         let mut origins: Vec<Hex> =
             before.iter().filter_map(|(id, _)| self.map.units().get(*id)).map(|u| u.pos()).collect();
         origins.dedup();
@@ -122,11 +146,15 @@ impl Game {
                 return Err("that would leave units in the water with no ship to carry them".to_string());
             }
         }
+        // (The units of one order are a party: they go as a stack, and
+        // those of another order on their hex do not hold them up.)
+        self.parties += 1;
+        let party = self.parties;
         for id in &ids {
             if let Some(unit) = self.map.unit_mut(*id) {
                 unit.stand_down();
                 (unit.route, unit.bound, unit.stalled, unit.defending) = (vec![to], None, false, false);
-                (unit.planned, unit.moved, unit.marauding) = (true, true, roam);
+                (unit.planned, unit.party, unit.moved, unit.marauding) = (true, party, true, roam);
             }
         }
         // (The computer's plans for marauders are not their player's to take
@@ -164,6 +192,13 @@ impl Game {
         self.note_sightings();
         for trail in &mut self.trail {
             trail.clear();
+        }
+        // The order the sides step in, if it is drawn, is drawn now: when
+        // the orders were given nobody knew who would step first (the
+        // review, 2026-11-22: drawn before, it was the order the orders
+        // were given in, and everybody knew).
+        if self.setup.order == TurnOrder::Drawn {
+            self.rng.shuffle(&mut self.order);
         }
         self.playing = Some(PlayOut::default());
         if self.watched.is_some() {
@@ -209,9 +244,12 @@ impl Game {
     /// side that gives its orders first). What happened, in its order.
     pub fn play_out(&mut self) -> Vec<Event> {
         let Some(play) = self.playing.clone() else { return Vec::new() };
-        let (mut events, went) = self.tick();
-        if went && play.tick + 1 < MAX_TICKS && self.winner.is_none() {
-            self.playing = Some(PlayOut { tick: play.tick + 1 });
+        let (mut events, went, waited) = self.tick(play.hasty);
+        // On while somebody moves; and once more, hastily, if nobody did
+        // but some waited for others of their side who did not come.
+        let on = went || (waited && !play.hasty);
+        if on && play.tick + 1 < MAX_TICKS && self.winner.is_none() {
+            self.playing = Some(PlayOut { tick: play.tick + 1, hasty: !went });
             return events;
         }
         events.extend(self.close_round());
@@ -219,10 +257,12 @@ impl Game {
     }
 
     /// One tick of the round: each side in the round's order, each of its
-    /// stacks a step. What happened, and whether anybody moved or fought.
-    fn tick(&mut self) -> (Vec<Event>, bool) {
+    /// stacks a step (`hasty`: none waits for others before an attack).
+    /// What happened, whether anybody moved or fought, and whether a stack
+    /// waited for others of its side.
+    fn tick(&mut self, hasty: bool) -> (Vec<Event>, bool, bool) {
         let round = self.round;
-        let (mut all, mut went) = (Vec::new(), false);
+        let (mut all, mut went, mut waited) = (Vec::new(), false, false);
         // Who has stepped this tick (in another stack's attack, it may be).
         let mut stepped: Vec<UnitId> = Vec::new();
         for side in self.order.clone() {
@@ -243,7 +283,7 @@ impl Game {
                 let events = if patrols {
                     self.patrol_tick(side, &stack, &mut stepped)
                 } else {
-                    self.march_tick(side, &stack, &mut stepped)
+                    self.march_tick(side, &stack, (&mut stepped, hasty, &mut waited))
                 };
                 went |= events.iter().any(|e| matches!(e, Event::Moved { .. } | Event::Battle { .. }));
                 self.remember(round, side, &events);
@@ -251,7 +291,7 @@ impl Game {
             }
         }
         self.note_sightings();
-        (all, went)
+        (all, went, waited)
     }
 
     /// `side`'s stacks with somewhere to go: the units of a hex with the
@@ -259,14 +299,16 @@ impl Game {
     /// not one that fought and waits for its player's word.
     fn stacks_going(&self, side: Side) -> Vec<(bool, Vec<UnitId>)> {
         let map = &self.map;
-        let mut groups: Vec<(Hex, &[Hex], bool, Vec<UnitId>)> = Vec::new();
+        // (A plan's stack is the units of one order: `Unit::party`.)
+        let mut groups: Vec<(Hex, &[Hex], u32, Vec<UnitId>)> = Vec::new();
         for unit in map.units().of_side(side).filter(|u| map.contains(u.pos()) && !u.route.is_empty()) {
-            let same = |(at, route, planned, _): &&mut (Hex, &[Hex], bool, Vec<UnitId>)| {
-                *at == unit.pos() && *route == unit.route.as_slice() && *planned == unit.planned
+            let party = if unit.planned { unit.party.max(1) } else { 0 };
+            let same = |(at, route, of, _): &&mut (Hex, &[Hex], u32, Vec<UnitId>)| {
+                *at == unit.pos() && *route == unit.route.as_slice() && *of == party
             };
             match groups.iter_mut().find(same) {
                 Some((_, _, _, ids)) => ids.push(unit.id()),
-                None => groups.push((unit.pos(), &unit.route, unit.planned, vec![unit.id()])),
+                None => groups.push((unit.pos(), &unit.route, party, vec![unit.id()])),
             }
         }
         let mut stacks: Vec<(bool, Vec<UnitId>)> = groups.into_iter().map(|(_, _, _, ids)| (false, ids)).collect();
@@ -289,8 +331,17 @@ impl Game {
     /// Into another side's units it sees, only a plan goes, where it ends:
     /// an attack, with the side's other stacks beside that hex that are
     /// sent against it too (`company`); one that is no plan waits, and one
-    /// it does not see is met, in a battle. A battle ends a plan.
-    fn march_tick(&mut self, side: Side, ids: &[UnitId], stepped: &mut Vec<UnitId>) -> Vec<Event> {
+    /// it does not see is met, in a battle. A battle ends a plan. Past
+    /// hexes its own side's stacks leave no room on, it goes on to the next
+    /// with room, as a move passes through them. Before an attack it waits
+    /// (unless `hasty`; `waited` says it did) for the side's other stacks
+    /// sent against the same hex that can still get there this round.
+    fn march_tick(
+        &mut self,
+        side: Side,
+        ids: &[UnitId],
+        (stepped, hasty, waited): (&mut Vec<UnitId>, bool, &mut bool),
+    ) -> Vec<Event> {
         let mut events = Vec::new();
         let mut ids = ids.to_vec();
         loop {
@@ -326,7 +377,9 @@ impl Game {
                         }
                     }
                 }
-                if !planned && self.map.tile(at).is_some_and(|t| t.kind == TileType::Temple) {
+                // (A plan that ends on a temple seeks its blessing too:
+                // nobody can be asked as the round plays out.)
+                if self.map.tile(at).is_some_and(|t| t.kind == TileType::Temple) {
                     let blessed = self.blessings(at, &ids);
                     if !blessed.is_empty() {
                         events.extend(blessed);
@@ -341,16 +394,10 @@ impl Game {
                 break;
             }
             let sight = self.sight(side);
-            let way = self.way_toward(lead, table, to, &sight);
-            let Some((hex, cost)) = way.and_then(|way| way.first().copied()) else { break };
-            if cost > lead.movement {
-                break;
-            }
+            let way = self.way_toward(lead, table, to, &sight).unwrap_or_default();
+            let Some(hex) = self.step_along(side, &ids, &way, lead.movement) else { break };
             let foe = sight.sees(hex) && hostile(&self.map, side, hex);
             if foe && !(planned && hex == to) {
-                break;
-            }
-            if !foe && !hostile(&self.map, side, hex) && !self.fits(hex, &ids) {
                 break;
             }
             let mut coming = self.coming(&group, hex, &sight);
@@ -358,6 +405,10 @@ impl Game {
                 break;
             }
             if foe {
+                if !hasty && self.company_coming(side, to, &coming, &sight) {
+                    *waited = true;
+                    break;
+                }
                 coming = self.company(side, hex, coming, stepped, &sight);
             }
             let was: Vec<(UnitId, MarchState)> =
@@ -371,7 +422,8 @@ impl Game {
             for (id, was) in was {
                 let Some(unit) = self.map.unit_mut(id) else { continue };
                 if !(was.planned && battled) {
-                    (unit.route, unit.bound, unit.planned) = (was.route, was.bound, was.planned);
+                    (unit.route, unit.bound) = (was.route, was.bound);
+                    (unit.planned, unit.party) = (was.planned, was.party);
                 }
                 if was.marauding {
                     (unit.marauding, unit.fought) = (true, battled || was.fought);
@@ -394,17 +446,51 @@ impl Game {
             let Some(first) = ids.first().and_then(|id| self.map.units().get(*id)) else { continue };
             let to = if patrols { first.patrol.as_ref().map(|p| p.target()) } else { first.goto() };
             let Some(to) = to else { continue };
+            // (A march's later stops too.)
+            let stops: Vec<Hex> = if patrols { vec![to] } else { first.route.clone() };
             let Ok(group) = self.group(&ids) else { continue };
             let Some((lead, table)) = group.lead(&self.map) else { continue };
             let way = self.way_toward(lead, table, to, &sight).unwrap_or_default();
             let near = way.into_iter().take_while(|(_, cost)| *cost <= lead.movement).map(|(hex, _)| hex);
-            for hex in near.chain([to]) {
+            for hex in near.chain(stops) {
                 if !hexes.contains(&hex) {
                     hexes.push(hex);
                 }
             }
         }
         hexes
+    }
+
+    /// This tick's step of `side`'s stack `ids` along `way` (each hex and
+    /// what it costs to get there), with `movement` to pay for it: the next
+    /// hex; or, past hexes where the side's own units leave no room for
+    /// them, the first with room (a move passes through its side's stacks:
+    /// the review, 2026-11-22, two stacks of a side stopped face to face on
+    /// a road, and an army never got through its own city). None if it
+    /// cannot pay for it, or there is none.
+    pub(super) fn step_along(&self, side: Side, ids: &[UnitId], way: &[(Hex, u32)], movement: u32) -> Option<Hex> {
+        way.iter()
+            .take_while(|(_, cost)| *cost <= movement)
+            .find(|(hex, _)| hostile(&self.map, side, *hex) || self.fits(*hex, ids))
+            .map(|(hex, _)| *hex)
+    }
+
+    /// True if others of `side`, not among `ids`, are sent against `target`
+    /// too (a plan that ends there), are not yet beside it, and can still
+    /// get there this round: an attack waits for them (the review,
+    /// 2026-11-22: one order to attack from two hexes was two attacks, the
+    /// nearer stack alone first; the agents order every joint attack so).
+    fn company_coming(&self, side: Side, target: Hex, ids: &[UnitId], sight: &Sight) -> bool {
+        let map = &self.map;
+        map.units().of_side(side).any(|u| {
+            u.planned
+                && u.movement > 0
+                && map.contains(u.pos())
+                && u.route.as_slice() == [target]
+                && !ids.contains(&u.id())
+                && u.pos().distance(target) > 1
+                && self.known_range(u, sight).cost(target).is_some()
+        })
     }
 
     /// Who attacks `target` with `ids` (a stack of `side`'s that steps into
@@ -453,9 +539,10 @@ impl Game {
         for id in planned {
             if let Some(unit) = self.map.unit_mut(id) {
                 unit.route.clear();
-                unit.planned = false;
+                (unit.planned, unit.party) = (false, 0);
             }
         }
+        self.parties = 0;
         for side in self.order.clone() {
             if self.out.contains(&side) || self.winner.is_some() {
                 continue;
@@ -474,9 +561,6 @@ impl Game {
             return all;
         }
         self.round += 1;
-        if self.setup.order == TurnOrder::Drawn {
-            self.rng.shuffle(&mut self.order);
-        }
         let round = self.round;
         self.raised.clear();
         self.fights.retain(|(_, fought, _)| fought + super::REPLAY_ROUNDS > round);

@@ -131,7 +131,7 @@ fn the_round_plays_out_before_the_persons_eyes_and_their_next_orders_begin() {
     );
     s.frame(1000);
     assert!(s.screen.game.playing_out());
-    assert_eq!(button(&s), "The round plays out");
+    assert_eq!(button(&s), "Playing the round");
     let going: Vec<Vec<UnitId>> = Scene::moving(&s).into_iter().map(|m| m.units).collect();
     assert!(going.contains(&vec![a]) && going.contains(&vec![b]), "{going:?}");
     assert_eq!(pos(&s, a).distance(Hex::new(10, 5)), 1, "the game is a tick on");

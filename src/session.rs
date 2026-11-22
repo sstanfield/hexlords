@@ -231,6 +231,10 @@ fn set_visibility(screen: &mut MapScreen, widget: WidgetId, visibility: Visibili
 /// whether it defends (a badge).
 type IconKey = (String, Side, u8, bool);
 
+/// A tick of a round that played out: what happened in it, and what each
+/// person who did not watch saw after it.
+type RoundTick = (Vec<(Option<usize>, Event)>, Vec<(Side, Sight)>);
+
 /// A unit's place in the stack: a button with the unit's icon and its numbers.
 struct Slot {
     button: WidgetId,
@@ -527,9 +531,13 @@ pub struct Session {
     /// In rounds: what happened as the last round played out, for the
     /// people who did not watch it (hotseat: it is shown to each as their
     /// orders begin), and who has seen it.
-    round_shown: Vec<Vec<(Option<usize>, Event)>>,
+    round_shown: Vec<RoundTick>,
     round_seen: Vec<Side>,
     round_live: bool,
+    /// What each person in the game saw as that round began; and, while a
+    /// tick of it is shown again, what the person saw after it.
+    round_before: Vec<(Side, Sight)>,
+    replay_after: Option<Sight>,
     /// What is to be shown now is a tick of a round: its stacks go together.
     together: bool,
     /// In rounds: where the person was looking when their orders were done
@@ -685,6 +693,8 @@ impl Session {
             round_shown: Vec::new(),
             round_seen: Vec::new(),
             round_live: false,
+            round_before: Vec::new(),
+            replay_after: None,
             together: false,
             looked: None,
             screen,
@@ -765,6 +775,9 @@ impl Session {
         } else {
             (self.cycled, self.visited, self.trail) = (None, Vec::new(), Vec::new());
         }
+        // (In rounds and hotseat: the round they did not watch, now that
+        // the log is out of the way.)
+        self.show_last_round();
     }
 
     /// The person's turn begins at the screen (no cover over it, no log in
@@ -934,11 +947,13 @@ impl Session {
         if !std::mem::replace(&mut self.round_live, true) {
             self.round_shown.clear();
             self.round_seen = self.last_person.into_iter().collect();
+            self.round_before = self.others_sights();
         }
         while self.screen.game.playing_out() {
             self.screen.game.play_out();
             let happened = self.screen.game.take_happened();
-            self.round_shown.push(happened.clone());
+            let sights = self.others_sights();
+            self.round_shown.push((happened.clone(), sights));
             self.together = true;
             self.see_what(happened);
             self.together = false;
@@ -969,11 +984,29 @@ impl Session {
         self.round_seen.push(side);
         self.see();
         self.showing.finish_moves();
+        // Each tick as they saw it then: a stack of another side's shows
+        // only where it was in their sight before the tick or after it
+        // (not where they came to see later in the round).
+        let theirs = |sights: &[(Side, Sight)]| sights.iter().find(|(s, _)| *s == side).map(|(_, sight)| sight.clone());
+        let mut before = theirs(&self.round_before);
         self.together = true;
-        for tick in self.round_shown.clone() {
-            self.show_happened(tick, None);
+        for (tick, sights) in self.round_shown.clone() {
+            let after = theirs(&sights);
+            self.replay_after = after.clone();
+            self.show_happened(tick, before.clone());
+            before = after;
         }
-        self.together = false;
+        (self.together, self.replay_after) = (false, None);
+    }
+
+    /// What each person in the game who is not at the screen sees now
+    /// (rounds and hotseat: for the round shown to them later).
+    fn others_sights(&self) -> Vec<(Side, Sight)> {
+        let game = &self.screen.game;
+        let people =
+            game.setup().seats.iter().filter(|seat| seat.controller == Controller::Person).map(|seat| seat.side);
+        let others = people.filter(|side| Some(*side) != self.last_person && !game.out().contains(side));
+        others.map(|side| (side, game.sight(side))).collect()
     }
 
     /// Play the computer's turns now, up to a person's (a turn at most, once
@@ -1106,7 +1139,13 @@ impl Session {
 
     /// Cover the map until `side`'s person says they are there.
     fn open_cover(&mut self, side: Side) {
-        // Nothing of the last person's stays open for the next to see.
+        // Nothing of the last person's stays open for the next to see, nor
+        // goes on being shown (the review, 2026-11-22: a round shown again
+        // to one person went on under the next one's cover, its battles in
+        // their window over it, its stacks going before the next's eyes).
+        self.showing.clear();
+        self.shown_sight = None;
+        self.screen.redraw_minimap();
         while self.close_top_window() {}
         let root = self.screen.root_window();
         let ui = &mut self.screen.ui;
@@ -1365,7 +1404,8 @@ impl Session {
                         }
                     }
                     let own = side == seer;
-                    let seen = |h: &Hex| before.sees(*h) || self.sight.sees(*h);
+                    let after = self.replay_after.as_ref().unwrap_or(&self.sight);
+                    let seen = |h: &Hex| before.sees(*h) || after.sees(*h);
                     if own || seer == Side::Grey || way.iter().any(seen) {
                         shown.push(Shown::Going(Going { units: vec![unit], side, way, own }));
                     }
@@ -1650,7 +1690,7 @@ impl Session {
             Some(unit) if unit.on_duty() => info::duty_line(map, unit, game.selection().len()),
             Some(unit) if !unit.route.is_empty() && unit.planned => {
                 format!(
-                    "Planned: to {} as the round plays out (another click: another plan; F: stay).",
+                    "Planned: to {} as the round plays out (another click: another plan; F: defend here).",
                     info::route_words_to(map, &unit.route, None)
                 )
             }
@@ -1753,14 +1793,14 @@ impl Session {
         let theirs = person && game.winner().is_none();
         let label = match side {
             _ if game.winner().is_some() => "Game over".to_string(),
-            Side::Grey if game.playing_out() => "The round plays out".to_string(),
+            Side::Grey if game.playing_out() => "Playing the round".to_string(),
             Side::Grey => "End turn".to_string(),
             _ if !person => format!("Waiting for {}", side_name(side)),
             _ if self.between => "Start turn".to_string(),
             // (In rounds a side says its orders are done: the round plays
             // out once every side has.)
             _ if game.rounds() && stacks + cities > 0 => format!("Orders done ({})", stacks + cities),
-            side if game.rounds() => format!("{}'s orders done", self::title(side_name(side))),
+            _ if game.rounds() => "Orders done".to_string(),
             // What still waits for orders, counted.
             _ if stacks + cities > 0 => format!("End turn ({})", stacks + cities),
             side => format!("End {}'s turn", side_name(side)),
@@ -2643,6 +2683,13 @@ impl Session {
         // nothing selected by the screen: the click is the person's).
         if self.between {
             self.start_turn_with(false);
+        }
+        // In rounds, a round being shown again (hotseat): the stacks are
+        // where they went (a plan makes no events to cut it short, and the
+        // person would plan for stacks drawn where they are not); its
+        // battles still play.
+        if self.screen.game.rounds() {
+            self.showing.finish_moves();
         }
         // With a stack selected: a click on another of the person's stacks
         // it could join (in reach, or at a rally point) asks whether it
@@ -3725,9 +3772,15 @@ impl Session {
         let temple = own && units.is_some_and(|u| temple_window::seekers(&game.map, game.player(), u.pos()).is_some());
         let city = game.map.city_at(self.shown).is_some_and(|c| self.sight.knows(c.pos));
         let people = self.people_in_play();
+        // (In rounds a side says its orders are done.)
+        let turn_word = match (self.between, game.rounds()) {
+            (true, _) => "Start turn",
+            (false, true) => "Orders done",
+            (false, false) => "End turn",
+        };
         let menu = if id == TbId::new(MENU_GAME_ID) {
             Menu::new(MENU_GAME_ID)
-                .item(END_TURN_ID, if self.between { "Start turn" } else { "End turn" }, &command('T'), turn)
+                .item(END_TURN_ID, turn_word, &command('T'), turn)
                 .item(UNDO_ID, "Undo", &command('Z'), turn && game.can_undo())
                 .separator()
                 .item(OPTIONS_ID, "Options...", &command(','), true)
@@ -3817,8 +3870,8 @@ impl Session {
                         self.open_log();
                     } else {
                         self.begin_orders();
+                        self.show_last_round();
                     }
-                    self.show_last_round();
                 }
             }
             self.refresh();

@@ -439,16 +439,9 @@ impl Game {
                 break;
             }
             let sight = self.sight(side);
-            let way = self.known_path_by(lead, table, prey.unwrap_or(to), u32::MAX, &sight);
-            let Some((hex, cost)) = way.and_then(|way| way.first().copied()) else { break };
-            if cost > lead.movement {
-                break;
-            }
-            let foe = hostile(&self.map, side, hex);
-            if foe && sight.sees(hex) && prey != Some(hex) {
-                break;
-            }
-            if !foe && !self.fits(hex, &ids) {
+            let way = self.known_path_by(lead, table, prey.unwrap_or(to), u32::MAX, &sight).unwrap_or_default();
+            let Some(hex) = self.step_along(side, &ids, &way, lead.movement) else { break };
+            if hostile(&self.map, side, hex) && sight.sees(hex) && prey != Some(hex) {
                 break;
             }
             let coming = self.coming(&group, hex, &sight);

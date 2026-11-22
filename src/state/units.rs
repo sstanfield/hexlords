@@ -188,6 +188,10 @@ pub struct Unit {
     /// there a hex at a time, attacks what stands where it ends, and the
     /// plan ends with the round, got there or not.
     pub planned: bool,
+    /// Which order of its side's this round its plan is (0: none): the units
+    /// of one order go as a stack; those of another on the same hex, with
+    /// the same end, go on their own.
+    pub party: u32,
     /// The hits it took that have not healed (`combat::Rules::wounds`: they
     /// heal as its side's turn ends; fewer than `combat::HITS`). Wounded, it
     /// fights at half its own strength, rounded up.
@@ -280,7 +284,7 @@ impl Unit {
     /// It patrols and marauds no more (another order of its player's), nor
     /// is its route a round's plan.
     pub fn stand_down(&mut self) {
-        (self.patrol, self.marauding, self.fought, self.planned) = (None, false, false, false);
+        (self.patrol, self.marauding, self.fought, self.planned, self.party) = (None, false, false, false, 0);
     }
 
     /// True if the temple at `at` has blessed it.
@@ -402,6 +406,7 @@ impl Units {
             marauding: false,
             fought: false,
             planned: false,
+            party: 0,
             wounds: 0,
         });
         id

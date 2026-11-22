@@ -494,14 +494,21 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                 "Meeting",
                 "A stack that steps onto a hex another side stands on attacks it. So two stacks making for \
                  the same hex fight there, the one that got there first defending; a stack sent against one \
-                 that has left finds the hex empty, and takes it; your stacks beside a hex they are all sent \
-                 against attack it together."
+                 that has left finds the hex empty, and takes it; your stacks sent against the same hex \
+                 attack it together (the first there waits beside it for the others)."
                     .to_string(),
             ),
             (
                 "Who attacks",
                 "Only a plan attacks a stack it sees, where it ends. A stack on a march (Go to) or a patrol on \
                  its way stops short of one in its way, as in turns; a patrol attacks at its odds."
+                    .to_string(),
+            ),
+            (
+                "Below",
+                "What the rest of this page says happens at once or as your turn ends (a move, Go to, a \
+                 patrol, marauders) happens, in rounds, as the round plays out; a plan that ends on a temple \
+                 seeks its blessing there; and End turn is Orders done."
                     .to_string(),
             ),
             (

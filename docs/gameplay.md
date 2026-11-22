@@ -448,7 +448,8 @@ changed.
   Done, a blessing sought, a unit sent home. An order to move is a
   **plan**: `Order::Move`, `Toward` and `Roam` give the units a route to
   that hex for this round (`Unit::planned`: refused as a move is, if they
-  cannot get there this turn as things stand); `GoTo` and `Patrol` are
+  cannot get there this turn as things stand, or there is no room for
+  them there among those of their side that stay); `GoTo` and `Patrol` are
   standing orders as in turns, and take their first step with the round.
   Another plan takes a plan's place; `Order::Undo` takes the last back.
   A side says it has done with `Order::EndTurn` ("Orders done").
@@ -460,8 +461,10 @@ changed.
     a foot soldier three hexes from a city get there in the same tick; the
     rider's movement takes it farther in the round, not faster.)
   - The sides step in the round's order, so who steps first in a tick is
-    the one thing the order decides: with the order drawn anew each round
-    (the new game screen's choice), nobody knows.
+    the one thing the order decides. With the order drawn anew each round
+    (the new game screen's choice) it is drawn as the round begins to
+    play out, after every side's orders are given: nobody knows. (The
+    orders are given in the order the round before was played in.)
   - A stack that steps onto a hex another side stands on attacks it. So
     two stacks making for the same hex fight there, the one that stepped
     in first defending it (with the ground's bonus); two that would swap
@@ -473,10 +476,21 @@ changed.
   - Only a plan attacks a stack it sees, and only where it ends; a march
     (Go to) or a patrol on its way stops short of one, as in turns, and a
     patrol attacks at its odds (it makes for the stack it would attack, a
-    hex a tick). Units nobody saw (fog of war) are met, in a battle, by
-    anyone.
-  - Stacks of one side that stand beside the hex they are all sent against
-    attack it together, as one attack (as many as a hex holds).
+    hex a tick). (Units nobody saw are not met by surprise as in turns: a
+    stack sees two hexes and steps one.)
+  - Stacks of one side sent against the same hex attack it together, as
+    one attack (as many as a hex holds): those beside it join the one that
+    steps in, and a stack that gets there first waits beside it for the
+    others that can still get there this round (if they do not come, it
+    attacks alone once nobody moves any more). The review, 2026-11-22: an
+    attack ordered from two hexes was two attacks, the nearer stack alone
+    first, and the agents order every joint attack so.
+  - A stack passes through its own side's stacks, as a move does: past a
+    hex they leave it no room on, its step is to the next with room.
+  - The units of one order go as a stack; those of another order on their
+    hex, with the same end, go on their own (`Unit::party`).
+  - A plan or a march that ends on a temple seeks its blessing there
+    (nobody can be asked as the round plays out).
   - A battle ends a stack's round: an attack uses up its movement.
 - **The round ends** when a tick goes by with nobody moving. The plans
   end, got there or not (a stack that did not get there waits for orders
@@ -487,7 +501,10 @@ changed.
   that gives its orders first).
 - **What a side sees** (fog of war): what its units saw on their way as
   the round played out stays seen while the next orders are given, until
-  that round plays out.
+  that round plays out. (As for standing orders in turns, that is live
+  sight: a stack of another side that stands, as the round ends, where a
+  unit only passed earlier shows. Open: whether the way should be
+  remembered rather than watched.)
 - **Into the dark** (total fog of war). Land a side has never seen is
   shut to it, as in turns: no unit steps onto it. But in turns a stack
   creeps, a step and a look at a time; a round's plan is made before
@@ -511,8 +528,11 @@ changed.
   one it plays the round out whole. The same game either way.)
 - **Hotseat**: each person plans in turn behind the hiding screen; the
   last of them watches the round play out, and each of the others is
-  shown it as their next orders begin (what is still there to be shown:
-  the stacks they see, going; their battles).
+  shown it as their next orders begin, once their log is out of the way
+  (what is still there to be shown: their own stacks going, the others'
+  where they saw them at the time, their battles). A click on the map
+  ends the moves shown (the battles still play), and nothing of it goes
+  on under the next person's cover.
 - **The agents** play rounds as they are: each of their moves is a plan
   for the round, made from what they see when they plan (`docs/agents.md`;
   a program is told `mode rounds`). They do not yet think about what the
@@ -520,11 +540,11 @@ changed.
   more of the map they send a stack on past the edge of the land they
   know (`planner::beyond`). Measured (the continent, the steady planners,
   40 seeds each, 200 rounds at most): in turns every game ends, in 49
-  rounds; in rounds 39 of 40, in 72 (their attacks from several hexes
-  arrive a stack at a time); with fog of war, all 40, in 71; with total
-  fog they find each other and fight (85 battles and 18 cities taken a
-  game), but only 5 of 40 games end in 200 rounds (in turns they do, in
-  about 80): they are slow to find the last cities. To be made better.
+  rounds; in rounds every game too, in 60 (66 with the order drawn);
+  with fog of war, in 60; with total fog they find each other and fight
+  (62 battles and 19 cities taken a game), and 22 of 40 games end in 200
+  rounds (in turns they all do, in about 80): they are slow to find the
+  last cities. To be made better.
 - Open: whether a tick should be a hex for everyone or a share of each
   stack's movement (riders arriving first); whether a march should fight
   its way through; plans of more than one leg.

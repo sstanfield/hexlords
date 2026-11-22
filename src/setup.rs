@@ -13,8 +13,8 @@ use crate::state::{Map, Side};
 pub enum Mode {
     /// The sides play one after the other.
     Turns,
-    /// All sides give their orders, then the round plays out at once. (Not
-    /// playable yet.)
+    /// All sides give their orders, then the round plays out at once
+    /// (`game::rounds`).
     Rounds,
 }
 

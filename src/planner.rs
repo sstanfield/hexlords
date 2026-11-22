@@ -194,7 +194,7 @@ pub fn worth(strength: u32, game: &Game) -> f64 {
 /// (`Order::Toward`): a stack has one plan a round, made before it sees
 /// anything new, so a plan to the edge would end there with most of its
 /// movement unspent. It is sent on past the edge, straight out into the
-/// land not seen ([`SCOUT_REACH`] hexes, or as far as it is not seen): it
+/// land not seen (`SCOUT_REACH` hexes, or as far as it is not seen): it
 /// goes as far as it can over the land it comes to see (`game::rounds`).
 pub fn beyond(game: &Game, sight: &Sight, edge: Hex) -> Hex {
     let (rows, cols) = (game.map.rows(), game.map.cols());

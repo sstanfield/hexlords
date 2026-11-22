@@ -225,6 +225,7 @@ struct MarchState {
     marauding: bool,
     fought: bool,
     planned: bool,
+    party: u32,
 }
 
 impl MarchState {
@@ -240,6 +241,7 @@ impl MarchState {
             marauding: unit.marauding,
             fought: unit.fought,
             planned: unit.planned,
+            party: unit.party,
         }
     }
 
@@ -247,7 +249,7 @@ impl MarchState {
         (unit.route, unit.bound, unit.stalled, unit.moved, unit.defending, unit.done) =
             (self.route, self.bound, self.stalled, self.moved, self.defending, self.done);
         (unit.patrol, unit.marauding, unit.fought) = (self.patrol, self.marauding, self.fought);
-        unit.planned = self.planned;
+        (unit.planned, unit.party) = (self.planned, self.party);
     }
 }
 
@@ -587,8 +589,10 @@ pub struct Game {
     /// The sides that are out, in the order they went.
     out: Vec<Side>,
     winner: Option<Side>,
-    /// In rounds, while a round plays out (`play_out`): how far it has got.
+    /// In rounds, while a round plays out (`play_out`): how far it has got;
+    /// and how many plans have been made this round (`Unit::party`).
     playing: Option<rounds::PlayOut>,
+    parties: u32,
 }
 
 impl Game {
@@ -629,6 +633,7 @@ impl Game {
             explored: vec![Vec::new(); NUM_SIDES + 1],
             winner: None,
             playing: None,
+            parties: 0,
             undo: None,
             undo_mark: 0,
             history: Vec::new(),
@@ -999,6 +1004,11 @@ impl Game {
                 for id in &units {
                     if let Some(unit) = self.map.unit_mut(*id) {
                         unit.defending = on;
+                        // (A round's plan ends with it: the unit has no
+                        // orders again.)
+                        if unit.planned && !on {
+                            unit.moved = false;
+                        }
                         if on || unit.planned {
                             (unit.route, unit.bound, unit.stalled) = (Vec::new(), None, false);
                             unit.stand_down();
