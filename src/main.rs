@@ -10,7 +10,9 @@
 //!   it, one from the clock in a window, each game its own; 1 headless, or
 //!   with a script or a screenshot, so a run can be made again);
 //! - `--chance <0-10>`: how much chance there is in a battle (5); `--battles
-//!   lines|strength`: how a battle goes (lines); `--gold <n>`: the gold each
+//!   lines|strength`: how a battle goes (lines); `--wounds`: a unit's hits
+//!   last until its side's turn ends, and it fights at half strength while
+//!   wounded (they do not); `--gold <n>`: the gold each
 //!   side starts with (50); `--fog`: fog of war; `--total-fog`: fog of war,
 //!   and the land a side has never seen is black;
 //! - `--headless`: no window: the computer plays every side of `--map` until
@@ -55,6 +57,7 @@ struct Args {
     log: bool,
     chance: Option<u8>,
     battles: Option<System>,
+    wounds: bool,
     gold: Option<u32>,
     fog: Fog,
 }
@@ -62,7 +65,7 @@ struct Args {
 fn usage() -> String {
     format!(
         "usage: hexgame [--map <file.map or map directory>] [--players <side>=<person|agent>,...] [--order fixed|drawn] \
-         [--seed <n>] [--chance <0-10>] [--battles lines|strength] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] \
+         [--seed <n>] [--chance <0-10>] [--battles lines|strength] [--wounds] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] \
          [--log]] \
          [--script <steps>] {OPTIONS_USAGE}"
     )
@@ -97,6 +100,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             }
             "--headless" => parsed.headless = true,
             "--fog" => parsed.fog = parsed.fog.max(Fog::On),
+            "--wounds" => parsed.wounds = true,
             "--total-fog" => parsed.fog = Fog::Total,
             "--chance" => {
                 let n = value("a number from 0 to 10")?;
@@ -131,7 +135,8 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let Args { window, map, script, players, order, seed, headless, rounds, log, chance, battles, gold, fog } = args;
+    let Args { window, map, script, players, order, seed, headless, rounds, log, chance, battles, wounds, gold, fog } =
+        args;
     // A map that cannot be read ends the run before a window opens.
     let game = match &map {
         Some(path) => match Game::load(path) {
@@ -169,6 +174,7 @@ fn main() {
             setup.seed = game_seed(seed, again, setup.seed);
             setup.combat.chance = chance.unwrap_or(setup.combat.chance);
             setup.combat.system = battles.unwrap_or(setup.combat.system);
+            setup.combat.wounds |= wounds;
             setup.gold = gold.unwrap_or(setup.gold);
             if fog.on() {
                 setup.fog = fog;
@@ -275,6 +281,7 @@ mod tests {
         assert_eq!((o.chance, o.battles), (Some(0), Some(System::Strength)));
         assert_eq!(parse(&["--chance", "11"]).unwrap_err(), "--chance: \"11\" is not a number from 0 to 10");
         assert_eq!(parse(&["--battles", "dice"]).unwrap_err(), "--battles: \"dice\" is not lines or strength");
+        assert!(parse(&["--wounds"]).unwrap().wounds && !parse(&[]).unwrap().wounds);
         assert_eq!(parse(&["--gold", "120"]).unwrap().gold, Some(120));
         assert_eq!(parse(&["--gold", "lots"]).unwrap_err(), "--gold: \"lots\" is not a number");
     }

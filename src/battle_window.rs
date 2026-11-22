@@ -99,6 +99,12 @@ fn title(side: crate::state::Side) -> String {
 
 /// What a side brings to a battle, in a line: how many, and where its
 /// bonuses come from.
+/// The hits each unit came to the battle with (wounds that last), the
+/// attackers' and the defenders'.
+fn wounds(fight: &Fight) -> [Vec<u32>; 2] {
+    [&fight.attackers, &fight.defenders].map(|units| units.iter().map(|u| u.wounds).collect())
+}
+
 fn side_line(fight: &Fight, defending: bool) -> String {
     let (side, units) = if defending { (fight.defender, &fight.defenders) } else { (fight.attacker, &fight.attackers) };
     let who = if side == crate::state::Side::Grey { "Nobody's".to_string() } else { title(side) };
@@ -168,7 +174,11 @@ impl BattleWindow {
         build::text(
             ui,
             c,
-            &format!("Fought {system}, chance {} of 10; each unit takes {HITS} hits.", fight.rules.chance),
+            &format!(
+                "Fought {system}, chance {} of 10; each unit takes {HITS} hits{}.",
+                fight.rules.chance,
+                if fight.rules.wounds { ", and its wounds last until its side's turn ends" } else { "" }
+            ),
         );
         build::gap(ui, c, dp(ui, SPACING_DP));
 
@@ -208,7 +218,7 @@ impl BattleWindow {
         let n = fight.trace.len().max(1) as u64;
         let slow = if fast { 1 } else { 2 };
         let pace = (BATTLE_MS / n).clamp(FASTEST_MS, SLOWEST_MS) * slow;
-        let hits = [vec![0; fight.attackers.len()], vec![0; fight.defenders.len()]];
+        let hits = wounds(fight);
         let mut window = BattleWindow {
             parts,
             fight: fight.clone(),
@@ -264,7 +274,7 @@ impl BattleWindow {
 
     /// Start it over (Watch again).
     pub fn again(&mut self, ui: &mut Ui) {
-        self.hits = [vec![0; self.fight.attackers.len()], vec![0; self.fight.defenders.len()]];
+        self.hits = wounds(&self.fight);
         self.shown = 0;
         self.next_at = None;
         self.draw(ui, None);

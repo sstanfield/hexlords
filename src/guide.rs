@@ -165,8 +165,15 @@ fn battles(game: &Game) -> Vec<HelpSection> {
                 (
                     "Hits",
                     format!(
-                        "A unit dies at its {} hit; one that lives is whole again after the battle.",
-                        if HITS == 2 { "second".to_string() } else { format!("{HITS}th") }
+                        "A unit dies at its {} hit; {}",
+                        if HITS == 2 { "second".to_string() } else { format!("{HITS}th") },
+                        if rules.wounds {
+                            "wounds last until its side's turn ends (attacked in the others' turns, it stays \
+                             wounded through its own), and a wounded unit fights at half its strength, \
+                             rounded up."
+                        } else {
+                            "one that lives is whole again after the battle."
+                        }
                     ),
                 ),
                 ("The odds", "Before you attack, the line under the map says how likely you are to win.".to_string()),

@@ -183,6 +183,10 @@ pub struct Unit {
     pub patrol: Option<Patrol>,
     pub marauding: bool,
     pub fought: bool,
+    /// The hits it took that have not healed (`combat::Rules::wounds`: they
+    /// heal as its side's turn ends; fewer than `combat::HITS`). Wounded, it
+    /// fights at half its own strength, rounded up.
+    pub wounds: u32,
 }
 
 /// The highest level, and the battles won a unit needs for each level above
@@ -385,6 +389,7 @@ impl Units {
             patrol: None,
             marauding: false,
             fought: false,
+            wounds: 0,
         });
         id
     }

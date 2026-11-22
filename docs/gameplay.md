@@ -124,7 +124,26 @@ and the rules use integers, not floats.
      wins with the odds `a^k : b^k`, where `k` is `2 × (10 - chance) / 5`.
      Only the ratio of the strengths counts. The loser of an exchange takes
      a hit; a unit dies at its second (`combat::HITS`), and is whole again
-     after the battle. (In integers: `k` is one of the two whole numbers
+     after the battle, unless wounds last.
+   - **Wounds that last** (built, a choice made with the game, off unless
+     chosen: the new game screen's Wounds last, `--wounds`; the owner's
+     word 2026-11-21): a unit's hits stay with it (`Unit::wounds`) until
+     its side's turn ends, when its units heal (`Game::heal`), so a stack
+     attacked in waves in the others' turns is worn down, and stays
+     battered through its own turn; and a wounded unit fights at half its
+     own strength, rounded up (`combat::wounded`: 5 fights as 3; the
+     bonuses for its stack, the ground and the walls stay whole), from its
+     first hit, in the battle it was hit in too. A battle's odds and the
+     agents count the wounds. Measured (100 seeds of the continent, each
+     way): the simple agents' games hardly change in either system; the
+     planners' games in strength against strength last a little longer
+     (35.5 rounds to 37.2) with more cities taken and taken back (15.8 to
+     16.8, 8.1 to 9.1), and in lines hardly change. The agents do not
+     attack in waves to wear a stack down; and a stack that wins strength
+     against strength loses about 4 in 100 of its units, so it has little
+     to carry over. What makes strength against strength one-sided is the
+     exchange (whole stack against whole stack: the bigger wins nearly
+     every one), not the healing (still open). (In integers: `k` is one of the two whole numbers
      around it, drawn in the share that makes the odds right, so every
      machine fights the same battle.) Before (2026-11-19, first version):
      each side scored its strength plus luck, and the steep edge that gave

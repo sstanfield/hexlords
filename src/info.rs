@@ -352,9 +352,16 @@ fn last_seen(ghost: &Ghost) -> String {
 }
 
 /// A unit in numbers, under its icon in the stack: its strength, and the
-/// movement points it has left of those it gets a turn ("4 · 7/10").
+/// movement points it has left of those it gets a turn ("4 · 7/10");
+/// wounded, the strength its wounds leave it, starred ("2* · 7/10"; the
+/// font has no arrows).
 pub fn unit_numbers(unit: &Unit) -> String {
-    format!("{} \u{b7} {}/{}", unit.power(), unit.movement, unit.base_move_points)
+    let strength = if unit.wounds > 0 {
+        format!("{}*", crate::state::combat::wounded(unit.power()))
+    } else {
+        unit.power().to_string()
+    };
+    format!("{strength} \u{b7} {}/{}", unit.movement, unit.base_move_points)
 }
 
 /// A unit's name with its side, and its rank if it has one to tell: "Riders
@@ -367,9 +374,11 @@ fn named(map: &Map, unit: &Unit) -> String {
 
 /// A unit's strength in words: "4", or with what its level and a blessing
 /// add, "5 (4 +1)".
+/// Wounded, what its wounds leave it: "2, wounded (whole, 4)".
 fn strength_words(unit: &Unit) -> String {
     let (power, own) = (unit.power(), unit.strength);
-    if power > own { format!("{power} ({own} +{})", power - own) } else { own.to_string() }
+    let whole = if power > own { format!("{power} ({own} +{})", power - own) } else { own.to_string() };
+    if unit.wounds > 0 { format!("{}, wounded (whole, {whole})", crate::state::combat::wounded(power)) } else { whole }
 }
 
 /// What a unit has won and been given: its experience and how far the next
@@ -538,6 +547,9 @@ pub fn unit_details(map: &Map, unit: &Unit) -> Vec<String> {
     lines.extend(knack);
     lines.extend(travel);
     lines.extend(growth_line(unit));
+    if unit.wounds > 0 {
+        lines.push("Wounded: half as strong until its side's turn ends, when it heals".to_string());
+    }
     if unit.defending {
         lines.push("Defending: it stays here until it is sent somewhere".to_string());
     }

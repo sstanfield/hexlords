@@ -85,22 +85,43 @@ pub struct Rules {
     /// 0: none, the stronger always wins; 10: strength counts for nothing.
     pub chance: u8,
     pub system: System,
+    /// Wounds last (the owner's word, 2026-11-21): a unit's hits stay with
+    /// it until its side's turn ends, and a wounded unit fights at half its
+    /// own strength, rounded up (`wounded`). Without, a unit is whole again
+    /// after each battle.
+    pub wounds: bool,
 }
 
 impl Default for Rules {
     fn default() -> Rules {
-        Rules { chance: DEFAULT_CHANCE, system: System::Lines }
+        Rules { chance: DEFAULT_CHANCE, system: System::Lines, wounds: false }
     }
+}
+
+/// What is left of a unit's own strength while it is wounded: half,
+/// rounded up (5 fights as 3).
+pub fn wounded(strength: u32) -> u32 {
+    strength.div_ceil(2)
 }
 
 /// A unit in a battle: who it is, how strong it fights here (with its bonuses
 /// for the ground, the walls, its commander), and whether it is a commander
-/// (which fights last).
+/// (which fights last); the hits it has left (`HITS` but its wounds), and
+/// how strong it fights once wounded (as strong without wounds that last).
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Fighter {
     pub unit: UnitId,
     pub strength: u32,
     pub commander: bool,
+    pub hits: u32,
+    pub hurt: u32,
+}
+
+impl Fighter {
+    /// A unit that is whole, and fights as strong wounded.
+    pub fn whole(unit: UnitId, strength: u32, commander: bool) -> Fighter {
+        Fighter { unit, strength, commander, hits: HITS, hurt: strength }
+    }
 }
 
 /// How a battle went.
@@ -178,16 +199,23 @@ struct Standing {
     index: usize,
 }
 
-/// A side as it came, each with all its hits.
+impl Standing {
+    /// How strong it fights now: wounded, as its wounds let it.
+    fn strength(&self) -> u32 {
+        if self.hits < HITS { self.fighter.hurt } else { self.fighter.strength }
+    }
+}
+
+/// A side as it came, each with the hits it has left (one at least).
 fn standing(side: &[Fighter]) -> Vec<Standing> {
-    side.iter().enumerate().map(|(index, f)| Standing { fighter: *f, hits: HITS, index }).collect()
+    side.iter().enumerate().map(|(index, f)| Standing { fighter: *f, hits: f.hits.clamp(1, HITS), index }).collect()
 }
 
 /// A side in its line: the weakest first, its commander last; a side's own
 /// order where they are as strong.
 fn line(side: &[Fighter]) -> Vec<Standing> {
     let mut line = standing(side);
-    line.sort_by_key(|s| (s.fighter.commander, s.fighter.strength));
+    line.sort_by_key(|s| (s.fighter.commander, s.strength()));
     line
 }
 
@@ -197,7 +225,7 @@ fn lines(attackers: &[Fighter], defenders: &[Fighter], chance: u8, rng: &mut Rng
     let mut battle = Battle::default();
     while i < a.len() && j < d.len() && battle.exchanges < MAX_EXCHANGES {
         battle.exchanges += 1;
-        let won = exchange(a[i].fighter.strength, d[j].fighter.strength, chance, rng);
+        let won = exchange(a[i].strength(), d[j].strength(), chance, rng);
         let hit = if won { d[j].index } else { a[i].index };
         let (attacker, defender) = (Some(a[i].index), Some(d[j].index));
         battle.trace.push(Exchange { attacker, defender, hit_attacker: !won, unit: hit });
@@ -215,7 +243,7 @@ fn lines(attackers: &[Fighter], defenders: &[Fighter], chance: u8, rng: &mut Rng
 fn strength(attackers: &[Fighter], defenders: &[Fighter], chance: u8, rng: &mut Rng) -> Battle {
     let (mut a, mut d) = (standing(attackers), standing(defenders));
     let mut battle = Battle::default();
-    let total = |side: &[Standing]| side.iter().map(|s| s.fighter.strength).sum::<u32>();
+    let total = |side: &[Standing]| side.iter().map(Standing::strength).sum::<u32>();
     while !a.is_empty() && !d.is_empty() && battle.exchanges < MAX_EXCHANGES {
         battle.exchanges += 1;
         let won = exchange(total(&a), total(&d), chance, rng);
@@ -276,12 +304,35 @@ mod tests {
         strengths
             .iter()
             .enumerate()
-            .map(|(i, s)| Fighter {
-                unit: UnitId { side, index: i as u32, generation: 0 },
-                strength: *s,
-                commander: false,
-            })
+            .map(|(i, s)| Fighter::whole(UnitId { side, index: i as u32, generation: 0 }, *s, false))
             .collect()
+    }
+
+    /// Wounds that last (the owner's word, 2026-11-21): a wounded unit has
+    /// the hits it has left, and fights at half its own strength, rounded
+    /// up; from its first hit in a battle too.
+    #[test]
+    fn a_wounded_unit_falls_sooner_and_fights_at_half_strength() {
+        assert_eq!((wounded(5), wounded(4), wounded(1)), (3, 2, 1));
+        let id = |side, index| UnitId { side, index, generation: 0 };
+        let rules = Rules { chance: 0, system: System::Lines, wounds: true };
+        let five = Fighter::whole(id(Side::Blue, 0), 5, false);
+        let four = [Fighter::whole(id(Side::Red, 0), 4, false)];
+        assert!(!fight(&four, &[five], &rules, &mut Rng::new(1)).attackers_won, "whole, the 5 holds");
+        let hurt = [Fighter { hits: 1, hurt: 3, ..five }];
+        let battle = fight(&four, &hurt, &rules, &mut Rng::new(1));
+        assert!(battle.attackers_won && battle.exchanges == 1, "wounded, it is a 3 with a hit left");
+        // Hit in the battle, weaker for the rest of it: even stacks are no
+        // longer even when one of them weakens as it is hit.
+        let rules = Rules { chance: 5, ..rules };
+        let won = |hurt: u32| {
+            let a = [Fighter { hurt, ..Fighter::whole(id(Side::Red, 0), 4, false) }];
+            let d = [Fighter::whole(id(Side::Blue, 0), 4, false)];
+            (0..2000).filter(|seed| fight(&a, &d, &rules, &mut Rng::new(*seed)).attackers_won).count()
+        };
+        let (even, weakening) = (won(4), won(2));
+        assert!((850..1150).contains(&even), "{even}");
+        assert!(weakening < even - 150, "{weakening} against {even}");
     }
 
     /// How often `a` beats `b` in one exchange, in percent, over many tries.
@@ -326,7 +377,7 @@ mod tests {
     fn a_seed_always_fights_the_same_battle() {
         let (a, d) = (fighters(Side::Red, &[2, 2, 4, 3]), fighters(Side::Blue, &[3, 3, 2]));
         for system in System::ALL {
-            let rules = Rules { chance: 5, system };
+            let rules = Rules { chance: 5, system, wounds: false };
             let one = fight(&a, &d, &rules, &mut Rng::new(42));
             assert_eq!(one, fight(&a, &d, &rules, &mut Rng::new(42)), "{system:?}");
             // One side is gone, the other has someone left.
@@ -347,7 +398,7 @@ mod tests {
         let a = fighters(Side::Red, &[5]);
         let mut d = fighters(Side::Blue, &[4, 1, 3]);
         d[0].commander = true;
-        let battle = fight(&a, &d, &Rules { chance: 0, system: System::Lines }, &mut Rng::new(1));
+        let battle = fight(&a, &d, &Rules { chance: 0, system: System::Lines, wounds: false }, &mut Rng::new(1));
         assert!(battle.attackers_won);
         let order: Vec<u32> = battle.dead.iter().map(|u| u.index).collect();
         assert_eq!(order, [1, 2, 0], "strength 1, then 3, then the commander");
@@ -357,7 +408,7 @@ mod tests {
         let battle = fight(
             &fighters(Side::Red, &[3, 3, 3]),
             &fighters(Side::Blue, &[4]),
-            &Rules { chance: 0, system: System::Lines },
+            &Rules { chance: 0, system: System::Lines, wounds: false },
             &mut Rng::new(1),
         );
         assert!(!battle.attackers_won && battle.dead.len() == 3);
@@ -369,7 +420,7 @@ mod tests {
         // chance; by strength the many do, their total being greater.
         let many = fighters(Side::Red, &[1, 1, 1, 1, 1]);
         let one = fighters(Side::Blue, &[4]);
-        let rules = |system| Rules { chance: 0, system };
+        let rules = |system| Rules { chance: 0, system, wounds: false };
         assert!(!fight(&many, &one, &rules(System::Lines), &mut Rng::new(1)).attackers_won);
         assert!(fight(&many, &one, &rules(System::Strength), &mut Rng::new(1)).attackers_won);
         // A dear unit behind cheap ones is hit as often as they are.
@@ -377,7 +428,8 @@ mod tests {
         let d = fighters(Side::Blue, &[1, 1, 1, 9]);
         let (mut hit_first, mut any) = (0, 0);
         for seed in 0..1000 {
-            let battle = fight(&d, &a, &Rules { chance: 10, system: System::Strength }, &mut Rng::new(seed));
+            let battle =
+                fight(&d, &a, &Rules { chance: 10, system: System::Strength, wounds: false }, &mut Rng::new(seed));
             if let Some(first) = battle.dead.iter().find(|u| u.side == Side::Blue) {
                 any += 1;
                 hit_first += u32::from(first.index == 3);
@@ -408,7 +460,7 @@ mod tests {
         // dead, in their order, and each with its last hit.
         let (a, d) = (fighters(Side::Red, &[2, 4, 3, 3]), fighters(Side::Blue, &[3, 2, 4]));
         for system in System::ALL {
-            let battle = fight(&a, &d, &Rules { chance: 5, system }, &mut Rng::new(11));
+            let battle = fight(&a, &d, &Rules { chance: 5, system, wounds: false }, &mut Rng::new(11));
             assert_eq!(battle.trace.len() as u32, battle.exchanges, "{system:?}");
             let (mut hits_a, mut hits_d) = (vec![0; a.len()], vec![0; d.len()]);
             let mut dead = Vec::new();
@@ -437,6 +489,6 @@ mod tests {
             assert_eq!(System::named(system.name()), Some(system));
         }
         assert_eq!(System::named("dice"), None);
-        assert_eq!(Rules::default(), Rules { chance: 5, system: System::Lines });
+        assert_eq!(Rules::default(), Rules { chance: 5, system: System::Lines, wounds: false });
     }
 }

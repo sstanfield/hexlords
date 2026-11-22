@@ -110,13 +110,16 @@ fn start_hands_the_window_to_the_game_set_up_as_chosen() {
 fn the_battles_are_set_up_on_the_screen_and_carried_into_the_game() {
     let mut shell = shell();
     assert_eq!(shell.new_game_screen().unwrap().setup().combat, Rules::default());
-    assert_eq!(Rules::default(), Rules { chance: 5, system: System::Lines });
+    assert_eq!(Rules::default(), Rules { chance: 5, system: System::Lines, wounds: false });
     // Strength against strength, and less chance; never below none.
     push(&mut shell, BATTLES_STRENGTH_ID);
     for _ in 0..3 {
         push(&mut shell, CHANCE_LESS_ID);
     }
-    assert_eq!(shell.new_game_screen().unwrap().setup().combat, Rules { chance: 2, system: System::Strength });
+    assert_eq!(
+        shell.new_game_screen().unwrap().setup().combat,
+        Rules { chance: 2, system: System::Strength, wounds: false }
+    );
     for _ in 0..3 {
         push(&mut shell, CHANCE_LESS_ID);
     }
@@ -146,7 +149,7 @@ fn the_battles_are_set_up_on_the_screen_and_carried_into_the_game() {
     push(&mut shell, FOG_TOTAL_ID);
     push(&mut shell, START_ID);
     let game = &shell.session().unwrap().screen.game;
-    assert_eq!(game.setup().combat, Rules { chance: 10, system: System::Strength });
+    assert_eq!(game.setup().combat, Rules { chance: 10, system: System::Strength, wounds: false });
     assert_eq!((game.setup().gold, game.gold(Side::Red)), (gold, gold));
     assert_eq!(game.setup().fog, Fog::Total);
 }

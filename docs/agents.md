@@ -34,7 +34,7 @@ anywhere else.
 
 The same options set up a game in the window: `--map` with `--players`,
 `--order fixed|drawn`, `--seed`, `--chance <0-10>`, `--battles
-lines|strength` and `--gold <n>` (without `--map`, the new game screen sets
+lines|strength`, `--wounds` and `--gold <n>` (without `--map`, the new game screen sets
 them). To compare
 two ways of fighting, play the same seeds with each:
 
@@ -206,7 +206,8 @@ end
 - `turn <round> <side>`: whose turn it is, which is the side the program plays.
 - `order`: this round's order of turns.
 - `battles <lines or strength> chance <0 to 10>`: how the game's battles go
-  (`docs/gameplay.md`, "Fighting").
+  (`docs/gameplay.md`, "Fighting"); `wounds last` at its end when a unit's
+  hits stay with it until its side's turn ends (`--wounds`).
 - `fog <off, on or total>`: fog of war (`docs/gameplay.md`).
 - `gold <n> income <n> upkeep <n>`: the side's treasury, what its cities
   bring in a turn, what its units cost a turn.
@@ -226,8 +227,11 @@ end
 - `unit <name> <side> <row> <col> <kind> strength <n> moves <left>/<a turn's>
   level <n>`: every unit on the map; its strength is what it fights with
   before its stack, the ground and walls (its kind's, a point for each level
-  above 1, a temple's blessing), its level 1 to 3 (`docs/gameplay.md`). A unit's name (`red.0.0`) stays the same from turn
-  to turn while the unit lives.
+  above 1, a temple's blessing), its level 1 to 3 (`docs/gameplay.md`); and,
+  at its end, `wounds <n>` for a unit wounded (wounds that last: it has
+  that many hits fewer, and fights at half its strength, rounded up). A
+  unit's name (`red.0.0`) stays the same from turn to turn while the unit
+  lives.
 
 ### What it writes
 

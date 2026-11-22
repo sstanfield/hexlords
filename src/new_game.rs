@@ -38,6 +38,7 @@ pub const BATTLES_LINES_ID: &str = "battles_lines";
 pub const BATTLES_STRENGTH_ID: &str = "battles_strength";
 pub const CHANCE_LESS_ID: &str = "chance_less";
 pub const CHANCE_MORE_ID: &str = "chance_more";
+pub const WOUNDS_ID: &str = "wounds";
 pub const FOG_OFF_ID: &str = "fog_off";
 pub const FOG_ON_ID: &str = "fog_on";
 pub const FOG_TOTAL_ID: &str = "fog_total";
@@ -183,7 +184,7 @@ impl NewGame {
                 ("Drag on the map", "Move it"),
                 ("Turns, Rounds", "How to play: one side after the other (rounds are to come)"),
                 ("Order of turns", "The same each round, or drawn anew"),
-                ("Battles", "Lines of duels, or strength against strength; how much chance, 0 to 10"),
+                ("Battles", "Lines of duels, or strength against strength; how much chance, 0 to 10; whether wounds last until a side's turn ends"),
                 ("Gold", "What each side's treasury holds at the start"),
                 ("Fog of war", "Each side sees only what is near its units and cities"),
                 ("Fog: Total", "And the land a side has never seen is black, shut to its units"),
@@ -488,6 +489,8 @@ impl NewGame {
         build::button(ui, row, CHANCE_LESS_ID, "-");
         build::text(ui, row, &format!("Chance {} of {MAX_CHANCE}", self.setup.combat.chance));
         build::button(ui, row, CHANCE_MORE_ID, "+");
+        let wounds = build::button(ui, row, WOUNDS_ID, "Wounds last");
+        press(ui, wounds, "wounds", self.setup.combat.wounds);
 
         // The gold and the fog of war, each a row that says what it is.
         build::gap(ui, c, space);
@@ -605,6 +608,9 @@ impl NewGame {
             } else if id == TbId::new(BATTLES_LINES_ID) || id == TbId::new(BATTLES_STRENGTH_ID) {
                 let lines = id == TbId::new(BATTLES_LINES_ID);
                 self.setup.combat.system = if lines { System::Lines } else { System::Strength };
+            } else if id == TbId::new(WOUNDS_ID) {
+                self.setup.combat.wounds = !self.setup.combat.wounds;
+                self.rebuild();
             } else if id == TbId::new(CHANCE_LESS_ID) || id == TbId::new(CHANCE_MORE_ID) {
                 let chance = &mut self.setup.combat.chance;
                 *chance = if id == TbId::new(CHANCE_LESS_ID) {
