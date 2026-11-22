@@ -768,6 +768,19 @@ pub trait Scene {
         &[]
     }
 
+    /// The hexes the main map rings in a color of their own (over the
+    /// cursor's border and `outlined`): in the game, the selected stack's
+    /// hex, the way it is to take, where a battle is.
+    fn rings(&self) -> Vec<(Hex, [f32; 3])> {
+        Vec::new()
+    }
+
+    /// A hex with a tint of its own over it: in the game, where a battle
+    /// is being fought.
+    fn flash(&self) -> Option<(Hex, [f32; 4])> {
+        None
+    }
+
     /// The flags on the main map, each with its number: in the game, the
     /// rally points of the person at the screen.
     fn flags(&self) -> &[(Hex, u8)] {

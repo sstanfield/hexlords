@@ -940,8 +940,21 @@ impl Game {
     /// takes them, each stack's in its order; and their next stops, however
     /// far. For a screen to show a side its plans.
     pub fn ways_this_round(&self, side: Side) -> Vec<Hex> {
-        let sight = self.sight(side);
         let mut hexes: Vec<Hex> = Vec::new();
+        for hex in self.ways_by_stack(side).into_iter().flat_map(|(_, way)| way) {
+            if !hexes.contains(&hex) {
+                hexes.push(hex);
+            }
+        }
+        hexes
+    }
+
+    /// `ways_this_round`, a stack at a time: its units, and the hexes of
+    /// its way. For a screen to show one stack's plan apart from the
+    /// others'.
+    pub fn ways_by_stack(&self, side: Side) -> Vec<(Vec<UnitId>, Vec<Hex>)> {
+        let sight = self.sight(side);
+        let mut ways: Vec<(Vec<UnitId>, Vec<Hex>)> = Vec::new();
         let mut seen: Vec<UnitId> = Vec::new();
         for unit in self.map.units().of_side(side).filter(|u| self.goes(u)) {
             if seen.contains(&unit.id()) {
@@ -973,13 +986,15 @@ impl Game {
                 }
                 near = i + 1;
             }
+            let mut hexes: Vec<Hex> = Vec::new();
             for hex in way[..near].iter().copied().chain(stops) {
                 if !hexes.contains(&hex) {
                     hexes.push(hex);
                 }
             }
+            ways.push((ids, hexes));
         }
-        hexes
+        ways
     }
 
     /// The round has played out: its plans end; the standing orders use

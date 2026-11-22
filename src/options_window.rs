@@ -18,6 +18,7 @@ pub const FAST_BATTLES_ID: &str = "option_fast_battles";
 pub const SHOW_MOVES_ID: &str = "option_show_moves";
 pub const ALWAYS_BLESS_ID: &str = "option_always_bless";
 pub const ASK_END_TURN_ID: &str = "option_ask_end_turn";
+pub const OWN_ORDERS_ID: &str = "option_own_orders";
 
 /// The space between things, in dp.
 const SPACING_DP: i32 = 8;
@@ -51,6 +52,10 @@ pub struct Options {
     /// End turn asks first while stacks wait for orders or cities build
     /// nothing, or the gold will not pay the upkeep.
     pub ask_end_turn: bool,
+    /// In rounds, the map outlines the orders of the selected stack only,
+    /// not those of all the person's stacks (the owner's word, 2026-11-22:
+    /// "The screen gets very busy so this should help focus"; V switches).
+    pub own_orders_only: bool,
 }
 
 impl Default for Options {
@@ -62,6 +67,7 @@ impl Default for Options {
             show_moves: true,
             always_bless: false,
             ask_end_turn: true,
+            own_orders_only: false,
         }
     }
 }
@@ -77,11 +83,12 @@ impl Options {
             show_moves: false,
             always_bless: false,
             ask_end_turn: false,
+            own_orders_only: false,
         }
     }
 
     /// Each option's box: its id, its words, and the option.
-    fn boxes() -> [OptionBox; 6] {
+    fn boxes() -> [OptionBox; 7] {
         [
             (
                 NEXT_AFTER_MOVE_ID,
@@ -96,6 +103,9 @@ impl Options {
             (ALWAYS_BLESS_ID, "On a temple, seek its blessing without asking", |o| &mut o.always_bless),
             (ASK_END_TURN_ID, "Ask before ending a turn with stacks or cities that need orders", |o| {
                 &mut o.ask_end_turn
+            }),
+            (OWN_ORDERS_ID, "In rounds, outline the selected stack's orders only, not everyone's (V)", |o| {
+                &mut o.own_orders_only
             }),
         ]
     }

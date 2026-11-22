@@ -575,6 +575,21 @@ changed.
   were looking when it is over. (While a screen watches, the last side's
   `EndTurn` only begins the round and the screen plays the beats; without
   one it plays the round out whole. The same game either way.)
+- **Finding things on a busy map** (the owner's notes from play,
+  2026-11-22: "The screen gets very busy ... we will need to crack this or
+  it may not be usable"; in turns too, where it applies). The hex of the
+  selected stack (a city, if it is in one) is ringed green, over the
+  cursor's red. Its own orders are ringed white, the other stacks'
+  outlined as before; V (the View menu, Options) switches between every
+  stack's orders and the selected stack's only. A stack with a commander
+  shows the commander's sign, whoever of it is selected, and a commander
+  in one of its side's cities has its pip ringed light. A battle shown as
+  it happens rings its hex in orange, which flashes red while the battle
+  is played out; the battle's window goes clear of the hex (to the top of
+  the map with the hex below it, or to the left with the hex beside it,
+  the map moved if need be). With battles told in a line (Options) the map
+  goes to the hex all the same and it flashes a moment before the game
+  goes on.
 - **Hotseat**: each person plans in turn behind the hiding screen; the
   last of them watches the round play out, and each of the others is
   shown it as their next orders begin, once their log is out of the way

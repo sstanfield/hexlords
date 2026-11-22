@@ -8,10 +8,11 @@
 
 mod common;
 
-use common::{assets, click, pixel_of, push_widget, widget};
+use common::{assets, click, pixel_of, press, push_widget, type_char, widget};
 use hexlords::battle_window::BATTLE_CLOSE_ID;
 use hexlords::game::Game;
 use hexlords::options_window::Options;
+use hexlords::render::{BATTLE_BORDER, OWN_WAY_BORDER, SELECTED_BORDER};
 use hexlords::screen::Scene;
 use hexlords::session::{BEGIN_TURN_ID, END_TURN_ID, MISSION_GO_ID, Session, UNDO_ID};
 use hexlords::setup::{Fog, Mode, Setup};
@@ -348,6 +349,20 @@ fn a_battle_holds_the_round_until_its_window_is_closed() {
     let t = frames(&mut s, 0, 60_000, 20, |s| s.battle().is_some());
     assert!(s.battle().is_some(), "the battle's window opened");
     assert_eq!(pos(&s, a), Hex::new(10, 7), "the battle has been fought");
+    // Where it is fought shows: the hex is ringed, it flashes while the
+    // battle is played out, and the window is clear of it.
+    let field = Hex::new(10, 7);
+    assert!(Scene::rings(&s).contains(&(field, BATTLE_BORDER)), "{:?}", Scene::rings(&s));
+    let window = s.screen.ui.rect(s.battle().unwrap().window());
+    let p = pixel_of(&s, field);
+    let inside = p.x >= window.x && p.x < window.x + window.w && p.y >= window.y && p.y < window.y + window.h;
+    assert!(s.screen.view.shows(field) && !inside, "{p:?} in {window:?}");
+    let mut flashed = false;
+    let t = frames(&mut s, t, t + 2_000, 20, |s| {
+        flashed |= Scene::flash(s).is_some_and(|(at, color)| at == field && color[3] > 0.2);
+        flashed
+    });
+    assert!(flashed, "the hex flashes");
     // The round waits: the other stack is where the battle found it, for
     // as long as the window is open, played out or not.
     let waiting = pos(&s, c);
@@ -355,8 +370,88 @@ fn a_battle_holds_the_round_until_its_window_is_closed() {
     let t = frames(&mut s, t, t + 30_000, 50, |_| false);
     assert!(s.battle().is_some_and(|b| b.done()), "played out, and still open");
     assert!(s.screen.game.playing_out() && pos(&s, c) == waiting, "nothing went on behind it");
+    assert!(Scene::rings(&s).contains(&(field, BATTLE_BORDER)) && Scene::flash(&s).is_none(), "ringed, at rest");
     // Closed, the round goes on to its end.
     push_widget(&mut s, BATTLE_CLOSE_ID);
+    assert!(!Scene::rings(&s).iter().any(|(_, color)| *color == BATTLE_BORDER));
     frames(&mut s, t, t + 60_000, 20, |s| s.screen.game.turn() == 2);
     assert_eq!((s.screen.game.turn(), pos(&s, c)), (2, far));
+}
+
+/// With battles told in a line (Options) no window opens, but the map
+/// still shows where: "If the combat window is off still move to the
+/// location and maybe flash up the ring." Then the round goes on by itself.
+#[test]
+fn a_battle_told_in_a_line_still_shows_where_it_was() {
+    let mut a = None;
+    let game = game("passive", |g| {
+        a = Some(put(g, Side::Red, "soldiers", Hex::new(10, 5)));
+        put(g, Side::Blue, "levy", Hex::new(10, 7));
+    });
+    let options = Options { show_moves: true, quick_battles: true, ..Options::manual() };
+    let mut s = Session::with_options(&assets(), Size::new(1024, 768), 96, game, options).unwrap();
+    let field = Hex::new(10, 7);
+    click_hex(&mut s, Hex::new(10, 5));
+    click_hex(&mut s, field);
+    // The person looks elsewhere when their orders are done.
+    s.screen.view.center_on(Hex::new(25, 25));
+    assert!(!s.screen.view.shows(field));
+    s.end_turn();
+    let marked = |s: &Session| Scene::rings(s).contains(&(field, BATTLE_BORDER));
+    let t = frames(&mut s, 0, 60_000, 20, marked);
+    assert!(marked(&s) && s.battle().is_none(), "ringed, with no window");
+    assert!(s.screen.view.shows(field), "the map has gone there");
+    assert!(s.unit_line().starts_with("You attacked"), "{}", s.unit_line());
+    assert!(s.screen.game.playing_out(), "the round waits a moment");
+    // A moment later the ring is gone and the round has gone on, unasked.
+    frames(&mut s, t, t + 60_000, 20, |s| s.screen.game.turn() == 2);
+    assert_eq!((s.screen.game.turn(), pos(&s, a.unwrap())), (2, field));
+    assert!(!marked(&s));
+}
+
+/// The owner's word, 2026-11-22: "When a stack is selected display its
+/// order outlines in a different color than other orders. Add an
+/// option/hotkey to alternate between displaying all orders (default) and
+/// only the order for the current stack ... The stack that is currently
+/// selected can be harder to find on a busy map ... outline the selected
+/// stack/hex (could be a city) in green".
+#[test]
+fn the_selected_stack_and_its_orders_stand_out_and_v_shows_them_alone() {
+    let (mut a, mut b) = (None, None);
+    let mut s = session(game("passive", |g| {
+        a = Some(put(g, Side::Red, "soldiers", Hex::new(10, 5)));
+        b = Some(put(g, Side::Red, "soldiers", Hex::new(20, 5)));
+    }));
+    let (a, b) = (a.unwrap(), b.unwrap());
+    click_hex(&mut s, Hex::new(10, 5));
+    click_hex(&mut s, Hex::new(10, 9));
+    click_hex(&mut s, Hex::new(20, 5));
+    click_hex(&mut s, Hex::new(20, 8));
+    let way_of = |s: &Session, id: UnitId| s.screen.game.map.units().get(id).unwrap().way.clone();
+    let (way_a, way_b) = (way_of(&s, a), way_of(&s, b));
+    assert_eq!((way_a.len(), way_b.len()), (4, 3));
+    // Nothing selected: every order outlined alike, nothing ringed.
+    assert!(s.screen.game.selection().is_empty() && Scene::rings(&s).is_empty());
+    let outlined = Scene::outlined(&s).to_vec();
+    assert!(way_a.iter().chain(&way_b).all(|hex| outlined.contains(hex)) && outlined.len() == 7);
+    // The first stack selected: its hex ringed in green, its way in a
+    // color of its own; the other's order is outlined as before.
+    click_hex(&mut s, Hex::new(10, 5));
+    assert_eq!(s.screen.game.selection(), [a]);
+    let rings = Scene::rings(&s);
+    assert!(rings.contains(&(Hex::new(10, 5), SELECTED_BORDER)), "{rings:?}");
+    assert!(way_a.iter().all(|hex| rings.contains(&(*hex, OWN_WAY_BORDER))) && rings.len() == 5, "{rings:?}");
+    assert_eq!(Scene::outlined(&s), way_b);
+    // V: the selected stack's only; again: everyone's.
+    type_char(&mut s, 'v');
+    assert!(s.options().own_orders_only && Scene::outlined(&s).is_empty());
+    assert_eq!(Scene::rings(&s).len(), 5, "its own, still");
+    assert!(s.unit_line().starts_with("The map outlines the selected stack's orders only"), "{}", s.unit_line());
+    // (With nothing selected then, none.)
+    press(&mut s, turbo_ferret::SpecialKey::Esc);
+    assert!(s.screen.game.selection().is_empty());
+    assert!(Scene::outlined(&s).is_empty() && Scene::rings(&s).is_empty());
+    type_char(&mut s, 'V');
+    assert!(!s.options().own_orders_only);
+    assert_eq!(Scene::outlined(&s).len(), 7);
 }

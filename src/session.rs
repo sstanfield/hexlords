@@ -41,7 +41,7 @@ use crate::orders::{Event, Order, RallyPoint};
 use crate::patrol_window::{self, PatrolClick, PatrolWindow};
 use crate::platform::WEB;
 use crate::rally_window::{self, RallyClick, RallyWindow};
-use crate::render::{AssetDirs, coin_icon, unit_icon};
+use crate::render::{AssetDirs, BATTLE_BORDER, BATTLE_FLASH, OWN_WAY_BORDER, SELECTED_BORDER, coin_icon, unit_icon};
 use crate::screen::{FULLSCREEN_ID, HELP_KEYS_ID, MapScreen, QUIT_ID, Scene, ZOOM_IN_ID, ZOOM_OUT_ID};
 use crate::setup::Controller;
 use crate::showing::{Going, Now, Showing, Shown};
@@ -121,6 +121,9 @@ pub const DISBAND_ID: &str = "disband";
 pub const DEFEND_ID: &str = "defend";
 pub const DONE_ID: &str = "done";
 pub const TASKS_ID: &str = "tasks";
+/// The View menu's item for which orders the map outlines (rounds): all
+/// the person's stacks', or the selected stack's only.
+pub const ORDERS_SHOWN_ID: &str = "orders_shown";
 pub const MY_CITIES_ID: &str = "my_cities";
 pub const CITY_DETAILS_ID: &str = "city_details";
 /// The Game menu's Options (`options_window`).
@@ -354,6 +357,7 @@ fn help_section() -> Vec<HelpSection> {
                     "End it, then close its window (Close and Esc close it too): what happens next waits for that",
                 ),
                 ("H", "Your capital (in hotseat, each turn starts there)"),
+                ("V", "In rounds: outline all your stacks' orders, or the selected stack's only"),
             ],
         ),
     ]
@@ -530,8 +534,15 @@ pub struct Session {
     /// In rounds: the ways the person's stacks take as the round plays out,
     /// as things stand (outlined on the map), and what they were worked out
     /// for (the map's revision, whose they are).
+    /// (Apart: the way of the selected stack, ringed in a color of its
+    /// own; the others' are not outlined at all if the person said so.)
     plans: Vec<Hex>,
-    plans_of: Option<(u64, Side)>,
+    own_way: Vec<Hex>,
+    plans_of: Option<(u64, Side, Option<UnitId>, bool)>,
+    /// Where a battle being shown is fought, since when, and until when
+    /// (`None`: while its window is open): the map rings the hex, and it
+    /// flashes.
+    battle_mark: Option<(Hex, u64, Option<u64>)>,
     /// In rounds: what happened as the last round played out, for the
     /// people who did not watch it (hotseat: it is shown to each as their
     /// orders begin), and who has seen it.
@@ -549,6 +560,8 @@ pub struct Session {
     looked: Option<[f32; 2]>,
 }
 
+/// How long the hex a battle is fought on takes to flash on and off, in ms.
+const BATTLE_FLASH_MS: u64 = 700;
 /// How many orders the computer gives in a frame, at most, looking for one
 /// to show.
 const STEPS_PER_FRAME: usize = 25;
@@ -689,7 +702,9 @@ impl Session {
             pass_due: false,
             told: Vec::new(),
             plans: Vec::new(),
+            own_way: Vec::new(),
             plans_of: None,
+            battle_mark: None,
             round_shown: Vec::new(),
             round_seen: Vec::new(),
             round_live: false,
@@ -1428,7 +1443,9 @@ impl Session {
                         shown.push(Shown::Going(Going { units: vec![unit], side, way, own }));
                     }
                 }
-                Event::Battle { attacker, defender, .. } if !self.options.quick_battles => {
+                // (Told in a line, with Options: the map shows where all
+                // the same.)
+                Event::Battle { attacker, defender, .. } => {
                     let theirs = watcher.is_some_and(|w| [attacker, defender].contains(&w));
                     if let Some(record) = record.filter(|r| theirs && !told.contains(r)) {
                         shown.push(Shown::Battle(record));
@@ -1479,14 +1496,17 @@ impl Session {
                     break;
                 }
                 Now::Battle(record, first) => {
-                    if first {
-                        self.open_battle(record);
-                        if let Some(at) = self.screen.game.fight(record).map(|f| f.at) {
-                            self.bring_into_view(&[at]);
-                        }
+                    if first && self.options.quick_battles {
+                        // Told in a line: the map goes there all the same,
+                        // and the hex flashes a moment.
+                        self.flash_battle(record);
                         break;
                     }
-                    if self.battle_holds() {
+                    if first {
+                        self.open_battle(record);
+                        break;
+                    }
+                    if self.battle_holds() || self.battle_marked().is_some_and(|_| self.options.quick_battles) {
                         break;
                     }
                     self.showing.battle_over();
@@ -2452,14 +2472,125 @@ impl Session {
         if !game.rounds() || !self.persons_turn() || self.cover.is_some() {
             if self.plans_of.take().is_some() {
                 self.plans.clear();
+                self.own_way.clear();
             }
             return;
         }
-        let key = (game.map.revision(), game.player());
+        let key = (game.map.revision(), game.player(), game.selected(), self.options.own_orders_only);
         if self.plans_of != Some(key) {
-            self.plans = game.ways_this_round(key.1);
+            let selection = game.selection();
+            let (mut own, mut others): (Vec<Hex>, Vec<Hex>) = (Vec::new(), Vec::new());
+            for (units, way) in game.ways_by_stack(key.1) {
+                let selected = units.iter().any(|id| selection.contains(id));
+                let into = if selected { &mut own } else { &mut others };
+                for hex in way {
+                    if !into.contains(&hex) {
+                        into.push(hex);
+                    }
+                }
+            }
+            if self.options.own_orders_only {
+                others.clear();
+            }
+            (self.plans, self.own_way) = (others, own);
             self.plans_of = Some(key);
         }
+    }
+
+    /// V, or the View menu: in rounds the map outlines every stack's
+    /// orders, or the selected stack's only.
+    fn toggle_orders_shown(&mut self) {
+        self.options.own_orders_only = !self.options.own_orders_only;
+        self.notice = Some(
+            if self.options.own_orders_only {
+                "The map outlines the selected stack's orders only (V: everyone's)."
+            } else {
+                "The map outlines all your stacks' orders (V: the selected stack's only)."
+            }
+            .to_string(),
+        );
+    }
+
+    /// The window pixel in the middle of a hex of the main map.
+    fn pixel_of(&self, hex: Hex) -> Point {
+        let [x, y] = self.screen.view.to_ndc(self.screen.view.hex_center(hex));
+        let r = self.screen.map_rect();
+        Point::new(r.x + ((x + 1.0) / 2.0 * r.w as f32) as i32, r.y + ((1.0 - y) / 2.0 * r.h as f32) as i32)
+    }
+
+    /// Move the map so that the middle of `hex` is at the window pixel
+    /// `to`, as far as the map's edges let it.
+    fn put_hex_at(&mut self, hex: Hex, to: Point) {
+        let (view, map) = (&self.screen.view, self.screen.map_rect());
+        let (rel, middle, (half_w, half_h)) = (view.hex_center(hex), view.middle(), view.half_extent());
+        let x = 2.0 * (to.x - map.x) as f32 / map.w.max(1) as f32 - 1.0;
+        let y = 1.0 - 2.0 * (to.y - map.y) as f32 / map.h.max(1) as f32;
+        self.screen.view.set_middle(middle[0] + rel[0] - x * half_w, middle[1] + rel[1] - y * half_h);
+    }
+
+    /// A battle is shown on `at`: the map rings the hex and it flashes
+    /// (the owner's word, 2026-11-22: "When combat starts it can be hard
+    /// to tell where ... open the combat window above the location (so you
+    /// can see it) and do something to highlight the stacks fighting"),
+    /// for `ms` (`None`: while the battle's window is open); and the hex is
+    /// in view, clear of the battle's window if one is open: the window
+    /// goes to the top of the map and the hex shows below it; or, where
+    /// the window leaves too little of the map below it, the window goes
+    /// to the left and the hex shows beside it. (At the map's edge, where
+    /// the hex cannot be brought there, the window goes to the other side.)
+    fn mark_battle(&mut self, at: Hex, ms: Option<u64>) {
+        self.battle_mark = Some((at, self.now, ms.map(|ms| self.now + ms)));
+        if !self.screen.view.shows(at) {
+            self.screen.view.center_on(at);
+        }
+        let Some(window) = self.battle.as_ref().filter(|b| b.is_open(&self.screen.ui)).map(|b| b.window()) else {
+            return;
+        };
+        let (rect, map) = (self.screen.ui.rect(window), self.screen.map_rect());
+        let edge = self.screen.ui.dimension_converter().dp_to_px(SPACING_DP);
+        // (A hex's height, in pixels: room for the hex and those around it.)
+        let hex_h = (map.h as f32 * self.screen.view.to_ndc([0.0, 1.0])[1].abs()) as i32;
+        let room = 3 * hex_h.max(1);
+        let covered = |s: &Session, rect: Rect| {
+            let (p, near) = (s.pixel_of(at), hex_h);
+            p.x > rect.x - near && p.x < rect.x + rect.w + near && p.y > rect.y - near && p.y < rect.y + rect.h + near
+        };
+        // Where the window goes, where it goes if the hex cannot be brought
+        // clear of it there, and where the hex is to show.
+        let (first, second, shows) = if map.h - rect.h >= room || map.h - rect.h >= map.w - rect.w {
+            let top = Rect::new(map.x + (map.w - rect.w) / 2, map.y + edge, rect.w, rect.h);
+            let bottom = Rect::new(top.x, map.y + map.h - rect.h - edge, rect.w, rect.h);
+            (top, bottom, Point::new(map.x + map.w / 2, (top.y + top.h + map.y + map.h) / 2))
+        } else {
+            let left = Rect::new(map.x + edge, rect.y, rect.w, rect.h);
+            let right = Rect::new(map.x + map.w - rect.w - edge, rect.y, rect.w, rect.h);
+            (left, right, Point::new((left.x + left.w + map.x + map.w) / 2, map.y + map.h / 2))
+        };
+        self.screen.ui.set_rect(window, first);
+        if !covered(self, first) {
+            return;
+        }
+        self.put_hex_at(at, shows);
+        if covered(self, first) && !covered(self, second) {
+            self.screen.ui.set_rect(window, second);
+        }
+    }
+
+    /// The hex a battle shown is fought on, while it is marked; and how
+    /// bright its flash is now (0 to 1): on and off while the battle is
+    /// being played out, or for as long as it is marked with no window.
+    fn battle_marked(&self) -> Option<(Hex, f32)> {
+        let (at, since, until) = self.battle_mark?;
+        let window = self.battle.as_ref().filter(|b| b.is_open(&self.screen.ui));
+        let playing = match until {
+            Some(until) => self.now < until,
+            None => window.is_some_and(|b| !b.done()),
+        };
+        if !playing && (until.is_some() || window.is_none()) {
+            return None;
+        }
+        let phase = (self.now.saturating_sub(since) % BATTLE_FLASH_MS) as f32 / BATTLE_FLASH_MS as f32;
+        Some((at, if playing { 1.0 - (2.0 * phase - 1.0).abs() } else { 0.0 }))
     }
 
     /// The window that asks about a stack's orders goes once it is not the
@@ -2850,12 +2981,22 @@ impl Session {
         if let Some(record) = battle {
             self.told.push(record);
             if self.options.quick_battles {
-                let side = self.screen.game.player();
-                let lines = info::battle_outcome(&self.screen.game, record, side);
-                self.notice = Some(format!("{} (L: the log, to watch it.)", lines.join(" ")));
+                self.flash_battle(record);
             } else {
                 self.open_battle(record);
             }
+        }
+    }
+
+    /// A battle told in a line (Options), not played out: how it went
+    /// under the map, the map on the hex, which flashes a moment.
+    fn flash_battle(&mut self, record: usize) {
+        let game = &self.screen.game;
+        let side = if self.persons_turn() { game.player() } else { self.viewer() };
+        let lines = info::battle_outcome(game, record, side);
+        self.notice = Some(format!("{} (L: the log, to watch it.)", lines.join(" ")));
+        if let Some(Event::Battle { at, .. }) = game.history().get(record).map(|r| r.event.clone()) {
+            self.mark_battle(at, Some(BATTLE_FLASH_MS * 2));
         }
     }
 
@@ -3106,6 +3247,7 @@ impl Session {
         );
         self.battle = Some(window);
         self.screen.settle();
+        self.mark_battle(fight.at, None);
     }
 
     /// The battle being watched, while its window is open.
@@ -3831,6 +3973,8 @@ impl Session {
         let temple = own && units.is_some_and(|u| temple_window::seekers(&game.map, game.player(), u.pos()).is_some());
         let city = game.map.city_at(self.shown).is_some_and(|c| self.sight.knows(c.pos));
         let people = self.people_in_play();
+        let orders_shown =
+            if self.options.own_orders_only { "Outline all orders" } else { "Outline this stack's orders only" };
         // (In rounds a side says its orders are done.)
         let turn_word = match (self.between, game.rounds()) {
             (true, _) => "Start turn",
@@ -3875,6 +4019,7 @@ impl Session {
             let menu = Menu::new(MENU_VIEW_ID)
                 .item(TASKS_ID, "Tasks", "T", people)
                 .item(LOG_ID, "Log", "L", true)
+                .item(ORDERS_SHOWN_ID, orders_shown, "V", people && self.screen.game.rounds())
                 .separator()
                 .item(CAPITAL_ID, "Your capital", "H", people)
                 .item(ZOOM_IN_ID, "Zoom in", "2", true)
@@ -4129,6 +4274,7 @@ impl Session {
                     }
                 }
                 RootCommand::Click(id) if id == TbId::new(TASKS_ID) => self.toggle_tasks(),
+                RootCommand::Click(id) if id == TbId::new(ORDERS_SHOWN_ID) => self.toggle_orders_shown(),
                 RootCommand::Click(id) if id == TbId::new(OPTIONS_ID) => self.toggle_options(),
                 RootCommand::Click(id) if id == TbId::new(RALLY_POINTS_ID) => self.toggle_rally_window(),
                 RootCommand::Click(id) if id == TbId::new(rally_window::RALLY_CLOSE_ID) => {
@@ -4199,6 +4345,7 @@ impl Session {
                         'r' | 'R' => self.toggle_rally_window(),
                         'p' | 'P' => self.start_patrol(),
                         'u' | 'U' => self.toggle_maraud(),
+                        'v' | 'V' => self.toggle_orders_shown(),
                         _ => {}
                     }
                 }
@@ -4327,6 +4474,31 @@ impl Scene for Session {
     /// city, its pip is ringed).
     fn front_unit(&self) -> Option<UnitId> {
         self.screen.game.selected()
+    }
+
+    /// The way the selected stack is to take (rounds), in a color of its
+    /// own; the hex the selected stack stands on, in green (once it is
+    /// shown there); and the hex a battle shown is fought on.
+    fn rings(&self) -> Vec<(Hex, [f32; 3])> {
+        let game = &self.screen.game;
+        let mut rings: Vec<(Hex, [f32; 3])> = Vec::new();
+        if self.picking.is_none() && self.patrol_window().is_none() {
+            rings.extend(self.own_way.iter().map(|hex| (*hex, OWN_WAY_BORDER)));
+        }
+        let selected = game.selected().filter(|id| !self.showing.goes(*id)).and_then(|id| game.map.units().get(id));
+        if let Some(unit) = selected.filter(|_| self.cover.is_none()) {
+            rings.push((unit.pos(), SELECTED_BORDER));
+        }
+        if let Some((at, _)) = self.battle_marked() {
+            rings.push((at, BATTLE_BORDER));
+        }
+        rings
+    }
+
+    fn flash(&self) -> Option<(Hex, [f32; 4])> {
+        let (at, bright) = self.battle_marked()?;
+        let [r, g, b, a] = BATTLE_FLASH;
+        (bright > 0.0).then_some((at, [r, g, b, a * bright]))
     }
 
     /// The person at the screen: their units show what they are; the

@@ -132,6 +132,14 @@ impl Scene for Shell {
         self.scene().outlined()
     }
 
+    fn rings(&self) -> Vec<(Hex, [f32; 3])> {
+        self.scene().rings()
+    }
+
+    fn flash(&self) -> Option<(Hex, [f32; 4])> {
+        self.scene().flash()
+    }
+
     fn flags(&self) -> &[(Hex, u8)] {
         self.scene().flags()
     }

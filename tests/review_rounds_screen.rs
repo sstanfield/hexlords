@@ -555,7 +555,10 @@ fn a_route_with_stops_is_outlined_in_rounds_as_in_turns() {
         let at = pos(&s, a);
         click_hex(&mut s, at);
         assert_eq!(s.screen.game.selection(), [a], "{mode:?}");
-        let outlined = Scene::outlined(&s).to_vec();
+        // (In rounds the selected stack's own orders are ringed in a
+        // color of their own, the others' outlined.)
+        let mut outlined = Scene::outlined(&s).to_vec();
+        outlined.extend(Scene::rings(&s).into_iter().map(|(hex, _)| hex));
         seen.push((mode, outlined.contains(&stop), outlined.contains(&end)));
     }
     assert_eq!(seen, [(Mode::Turns, true, true), (Mode::Rounds, true, true)]);

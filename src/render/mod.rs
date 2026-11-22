@@ -22,7 +22,8 @@ pub mod unit_icon;
 
 pub use hex_mesh::HexVariant;
 pub use map_renderer::{
-    CITY_SIDES, MapGeometry, MapRenderer, Marks, Moving, RANGE_OVERLAY, city_image, side_color, tile_image,
+    BATTLE_BORDER, BATTLE_FLASH, CITY_SIDES, MapGeometry, MapRenderer, Marks, Moving, OWN_WAY_BORDER, RANGE_OVERLAY,
+    SELECTED_BORDER, city_image, side_color, tile_image,
 };
 pub use minimap_image::minimap_image;
 pub use minimap_renderer::MiniMapRenderer;

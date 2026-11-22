@@ -37,6 +37,15 @@ pub const HEX_BORDER: [f32; 3] = [0.0, 0.0, 0.0];
 /// The border of a hex the caller outlines (in the game: the stops of a
 /// route), as thick as the cursor's.
 pub const STOP_BORDER: [f32; 3] = [1.0, 0.82, 0.2];
+/// The border of the hex the selected stack stands on (the owner's word,
+/// 2026-11-22: "outline the selected stack/hex (could be a city) in
+/// green"), of the hexes of the way it is to take, and of the hex a battle
+/// is fought on.
+pub const SELECTED_BORDER: [f32; 3] = [0.25, 1.0, 0.35];
+pub const OWN_WAY_BORDER: [f32; 3] = [1.0, 1.0, 1.0];
+pub const BATTLE_BORDER: [f32; 3] = [1.0, 0.35, 0.0];
+/// The tint over the hex a battle is fought on, at its brightest.
+pub const BATTLE_FLASH: [f32; 4] = [1.0, 0.1, 0.0, 0.55];
 /// Laid over the hexes a selected unit can move to. C++: HexOverlayFragment.glsl
 pub const RANGE_OVERLAY: [f32; 4] = [1.0, 0.0, 0.0, 0.3];
 /// Drawn for a unit whose kind has no picture of its own.
@@ -78,6 +87,8 @@ const PIP_BOTTOM: f32 = -0.78;
 const PIP_ROW_STEP: f32 = 0.24;
 /// The ring of the selected unit's pip (the color of a pressed button's text).
 pub const SELECTED_RING: [f32; 4] = [1.0, 0.82, 0.29, 1.0];
+/// The ring of the pip of a commander in one of its side's cities.
+pub const LEADER_RING: [f32; 4] = [0.96, 0.96, 0.92, 1.0];
 /// The corners a disc is drawn with.
 const DISC_CORNERS: usize = 24;
 
@@ -123,6 +134,14 @@ pub struct Marks<'a> {
     /// The stacks shown going from hex to hex (moves being shown): drawn
     /// where they are on their way, and not on their hexes.
     pub moving: &'a [Moving],
+    /// Hexes ringed in a color of their own, as thick as the cursor's
+    /// border, which they win over (as over `outlined`); of two for a hex,
+    /// the later. In the game: the selected stack's hex, the way it is to
+    /// take, where a battle is.
+    pub rings: &'a [(Hex, [f32; 3])],
+    /// A hex with a tint of its own over everything on it: in the game,
+    /// where a battle is being fought (it flashes).
+    pub flash: Option<(Hex, [f32; 4])>,
 }
 
 /// A stack shown going from hex to hex: its units, the point of the map it
@@ -139,7 +158,18 @@ pub struct Moving {
 impl Marks<'_> {
     /// Marks of a map seen whole, everyone's units shown: a tool's.
     pub fn plain(color: [f32; 4], marked: &dyn Fn(Hex) -> bool, front: Option<UnitId>) -> Marks<'_> {
-        Marks { color, marked, front, viewer: None, sight: &SEE_ALL, outlined: &[], flags: &[], moving: &[] }
+        Marks {
+            color,
+            marked,
+            front,
+            viewer: None,
+            sight: &SEE_ALL,
+            outlined: &[],
+            flags: &[],
+            moving: &[],
+            rings: &[],
+            flash: None,
+        }
     }
 }
 
@@ -432,12 +462,14 @@ impl MapGeometry {
             let (positions, uvs) = (variant.positions(), variant.uvs());
             let is_cursor = hex == map.cursor;
             let outlined = !is_cursor && marks.outlined.contains(&hex);
-            let [r, g, b] = match (is_cursor, outlined) {
-                (true, _) => CURSOR_BORDER,
-                (false, true) => STOP_BORDER,
+            let ring = marks.rings.iter().rev().find(|(at, _)| *at == hex).map(|(_, color)| *color);
+            let [r, g, b] = match (ring, is_cursor, outlined) {
+                (Some(color), _, _) => color,
+                (None, true, _) => CURSOR_BORDER,
+                (None, false, true) => STOP_BORDER,
                 _ => HEX_BORDER,
             };
-            let border = [r, g, b, view.border_threshold(is_cursor || outlined)];
+            let border = [r, g, b, view.border_threshold(ring.is_some() || is_cursor || outlined)];
             let corner =
                 |i: usize| view.to_ndc([positions[i][0] + visible.center[0], positions[i][1] + visible.center[1]]);
 
@@ -482,9 +514,16 @@ impl MapGeometry {
                     here.iter().filter_map(|id| map.units().get(*id).map(|unit| (*id, unit.side()))).collect();
                 for (i, (id, side)) in garrison.iter().enumerate() {
                     let Some(at) = pip_at(i, garrison.len()) else { break };
-                    let ring = if marks.front == Some(*id) { SELECTED_RING } else { RING_COLOR };
+                    // (The viewer's commander in it: its pip ringed light,
+                    // and wider, to find the cities their leaders are in.)
+                    let leads = map.is_commander(*id) && marks.viewer.is_none_or(|viewer| viewer == *side);
+                    let (ring, width) = match (marks.front == Some(*id), leads) {
+                        (true, _) => (SELECTED_RING, PIP_RING),
+                        (false, true) => (LEADER_RING, 2.0 * PIP_RING),
+                        _ => (RING_COLOR, PIP_RING),
+                    };
                     let [r, g, b] = side_color(*side);
-                    push_disc(&mut self.discs, view, visible.center, variant, at, PIP_RADIUS + PIP_RING, ring);
+                    push_disc(&mut self.discs, view, visible.center, variant, at, PIP_RADIUS + width, ring);
                     push_disc(&mut self.discs, view, visible.center, variant, at, PIP_RADIUS, [r, g, b, 1.0]);
                 }
             }
@@ -504,6 +543,10 @@ impl MapGeometry {
             if (marks.marked)(hex) {
                 let flat: [FlatVertex; HEX_VERTICES] =
                     std::array::from_fn(|i| FlatVertex { pos: corner(i), color: marks.color });
+                self.overlay.push(&flat, &HEX_INDICES);
+            }
+            if let Some((_, color)) = marks.flash.filter(|(at, _)| *at == hex) {
+                let flat: [FlatVertex; HEX_VERTICES] = std::array::from_fn(|i| FlatVertex { pos: corner(i), color });
                 self.overlay.push(&flat, &HEX_INDICES);
             }
             if !seen {
@@ -548,7 +591,10 @@ impl MapGeometry {
         units: &[UnitId],
         marks: &Marks,
     ) {
-        let shown = marks.front.filter(|id| units.contains(id)).or(units.first().copied());
+        // (A stack with a commander shows it, whoever is selected: its
+        // banner is how its side finds the stacks its leaders are with.)
+        let leader = units.iter().copied().find(|id| map.is_commander(*id));
+        let shown = leader.or(marks.front.filter(|id| units.contains(id))).or(units.first().copied());
         let Some(unit) = shown.and_then(|id| map.units().get(id)) else { return };
         if marks.viewer.is_some_and(|v| v != unit.side()) {
             // Another side's stack: a banner, and how many there are.
@@ -1268,6 +1314,96 @@ mod tests {
 
     fn at_all(g: &MapGeometry, image: &str) -> usize {
         hexes(g.units_with(image)).len()
+    }
+
+    /// The owner's word, 2026-11-22: the selected stack's hex in green, its
+    /// orders in a color of their own, the hex of a battle ringed and
+    /// flashing: rings the caller names win over the cursor's border and
+    /// the outlines, the later of two over the earlier.
+    #[test]
+    fn a_ringed_hex_has_its_own_border_and_a_battles_hex_its_tint() {
+        let mut game = crate::game::grassland();
+        game.set_cursor(Hex::new(50, 52));
+        let view = view_at(START);
+        let (on_cursor, on_stop, twice, plain) =
+            (Hex::new(50, 52), Hex::new(50, 51), Hex::new(50, 54), Hex::new(50, 53));
+        let stops = [on_stop];
+        let rings =
+            [(on_cursor, SELECTED_BORDER), (on_stop, OWN_WAY_BORDER), (twice, OWN_WAY_BORDER), (twice, BATTLE_BORDER)];
+        let flash = [1.0, 0.1, 0.0, 0.3];
+        let marks = Marks {
+            outlined: &stops,
+            rings: &rings,
+            flash: Some((twice, flash)),
+            ..Marks::plain(RANGE_OVERLAY, &|_| false, None)
+        };
+        let mut g = MapGeometry::new();
+        g.build(&game.map, &view, &marks);
+        let border_at = |hex: Hex| {
+            let at = center_of(&view, hex);
+            hexes(g.terrain(TileType::Grass)).iter().find(|h| h[0].pos == at).map(|h| h[0].border).unwrap()
+        };
+        let (thick, thin) = (view.border_threshold(true), view.border_threshold(false));
+        let with = |[r, g, b]: [f32; 3]| [r, g, b, thick];
+        assert_eq!(border_at(on_cursor), with(SELECTED_BORDER), "over the cursor's red");
+        assert_eq!(border_at(on_stop), with(OWN_WAY_BORDER), "over an outline");
+        assert_eq!(border_at(twice), with(BATTLE_BORDER), "the later of two");
+        assert_eq!(border_at(plain), [0.0, 0.0, 0.0, thin]);
+        // The battle's hex, and no other, has its tint over it.
+        let tints: Vec<([f32; 2], [f32; 4])> = g
+            .overlay()
+            .meshes()
+            .iter()
+            .flat_map(|m| m.vertices.chunks(HEX_VERTICES))
+            .map(|h| (h[0].pos, h[0].color))
+            .collect();
+        assert_eq!(tints, [(center_of(&view, twice), flash)]);
+    }
+
+    /// "If one of your stacks has a captain then display it with the
+    /// captain's banner to make it easier to find your stacks with
+    /// leaders": a stack shows its commander, whoever of it is selected,
+    /// and a commander's pip in a city of its side is ringed light.
+    #[test]
+    fn a_stack_with_a_commander_shows_it_and_a_city_rings_its_pip() {
+        let mut rows = vec!["g".repeat(20); 20];
+        rows[10] = "gggggcgggggggggggggg".to_string();
+        let terrain = format!(
+            "20
+20
+{}
+",
+            rows.join(
+                "
+"
+            )
+        );
+        let kinds = format!("{KINDS}unit lead\nimage units/captain.png\nmoves 5\ncommander 1\nenter grass 1, city 1\n");
+        let cities = "city 10 5\nname One\nside red\ngarrison a\ngarrison lead\n";
+        let (mut map, _) = crate::state::scenario::parse(&terrain, Some(&kinds), Some(cities)).unwrap();
+        let field = Hex::new(10, 12);
+        let put = |map: &mut Map, kind: &str| {
+            let kind = map.units().kind_named(kind).unwrap();
+            let id = map.new_unit_of(Side::Red, kind).unwrap();
+            map.place_unit(id, field).unwrap();
+            id
+        };
+        let (soldier, _leader) = (put(&mut map, "a"), put(&mut map, "lead"));
+        let mut view = MapView::new(20, 20, Hex::new(10, 10));
+        view.resize(819, 537);
+        let mut g = MapGeometry::new();
+        // The soldier is first in the stack, and selected: the captain shows.
+        g.build(&map, &view, &Marks::plain(RANGE_OVERLAY, &|_| false, Some(soldier)));
+        assert_eq!((at_all(&g, "units/captain.png"), at_all(&g, "units/militia.png")), (1, 0));
+        // In the city: two pips, the captain's ringed light and wider.
+        let rings: Vec<[f32; 4]> = discs(&g).into_iter().map(|(_, color)| color).collect();
+        assert_eq!(rings.iter().filter(|c| **c == LEADER_RING).count(), 1);
+        // Another side's viewer is shown a banner and plain pips: nothing
+        // of who leads.
+        let marks = Marks { viewer: Some(Side::Blue), ..Marks::plain(RANGE_OVERLAY, &|_| false, None) };
+        g.build(&map, &view, &marks);
+        let rings: Vec<[f32; 4]> = discs(&g).into_iter().map(|(_, color)| color).collect();
+        assert_eq!((rings.iter().filter(|c| **c == LEADER_RING).count(), at_all(&g, "units/captain.png")), (0, 0));
     }
 
     #[test]
