@@ -2700,6 +2700,14 @@ impl Game {
         path_with(&self.map, (unit.pos(), to), &steps, limit, &pass)
     }
 
+    /// The way `unit` would take to `to` this turn, as its side knows the
+    /// map (`sight`): each hex after its own, with the cost so far. `None`
+    /// if it cannot get there with the movement it has. (In rounds: the way
+    /// a plan to go there gives it, `Unit::way`.)
+    pub fn known_way(&self, unit: &Unit, to: Hex, sight: &Sight) -> Option<Vec<(Hex, u32)>> {
+        self.known_path_by(unit, unit.move_cost, to, unit.movement, sight)
+    }
+
     /// The edge of the land `unit`'s side knows (`Sight::frontier`) that it
     /// can get to over that land, in as many turns as it takes, and how much
     /// that costs it, the cheapest first: where it goes to see more (total

@@ -55,6 +55,7 @@ done
 | `steady` | The computer's player unless another is chosen (`src/planner.rs`, below): armies around a commander, cities defended as they are threatened, attacks at fair odds |
 | `bold` | The planner, fast and many: grabs the empty and weak cities first, attacks at lower odds |
 | `careful` | The planner, slow and sure: answers threats with more defenders, big armies, high odds |
+| `steady/turns`, `bold/turns`, `careful/turns` | The planner playing a game of rounds as it plays turns, not in its way for rounds (below): for playing the two against each other |
 | `cmd:<program> [<argument> ...]` | A program that plays (below) |
 
 A side's turn played by an agent (`agents::play_turn`) ends with the
@@ -155,6 +156,64 @@ both ways round: at the default rules steady won 13 games of 24 and lost
 and 8, 10 and 10, 9 and 12. Bold, the quickest, does no better than
 `simple` now; all four styles on a map together, bold wins most (14 of
 46, simple 12, careful 11, steady 9).
+
+### The planner in rounds
+
+A game of rounds is another game (the owner's word, 2026-11-22: "Round
+based games probably need their own AI since they are very different from
+turn based"): every side's orders are given before anything moves, the
+faster stacks are there first, and a stack fights whoever it finds on its
+way. In one the planner plays in a way of its own (`src/planner/rounds.rs`;
+what its cities build, who stays home and what its armies go for are as in
+turns):
+
+- It works out where every stack of another side it sees **could be this
+  round, and when** (a turn's movement, at the stack's speed), and a stack
+  of its own on its way to gather, to look, to a temple or toward a city
+  **stops short of where a stack it fears could meet it** (it fears one
+  worth more than its own, by its style: careful 80 in 100 of its own
+  worth, steady 100, bold 130; more as a long game goes on).
+- **An attack is one stack**: the units of one hex if they are enough (the
+  hex that gets them there first), units of several hexes only where the
+  game makes one stack of them (they gather on the way). Stacks around a
+  city that could take it together but not as one stack this round **join
+  first**, and attack as one the round after.
+- A stack in the field has moved on by the time anyone gets to it: it is
+  attacked only at odds 15 in 100 above those a city is attacked at.
+- It **sets out sooner** (an army marches at three units, where the steady
+  planner waits for four in turns), goes to a temple only when half the
+  stack has a blessing to get there, and **spends its gold**: in turns its
+  cities build what its taxes keep and the treasury piles up; in rounds a
+  twelfth of the treasury a round pays for upkeep besides.
+
+Each of these is there because it won games. Measured on the continent
+(2026-11-22; a style in its way for rounds on two seats against a planner
+playing rounds as turns on the other two, both ways round, 240 seeds, 480
+games): steady won 367 against `steady/turns` (113), careful 324 against
+`careful/turns` (139, 17 not ended in 200 rounds), bold 305 against
+`bold/turns` (175); against `bold/turns`, the best of the three at rounds
+played as turns, steady won 355 (125), bold 305 (175), careful 224 (255).
+With fog of war steady won 171 of 240 against `steady/turns`; with the
+order drawn each round, 187 of 240; with total fog 30 against 8, and 82 of
+120 games not ended in 200 rounds (the planners are still slow to find the
+last cities in the dark). What the parts are worth, steady against
+`bold/turns` over 480 games, as they were put together: setting out at
+three, wary, its attacks one stack, 242; with stacks joining for an
+assault, 270 (256 of those without the wariness); with the gold spent,
+318, and 328 with the temple left to half a stack; with the attack tried
+in its order (one stack that is enough, else join, else a wave), 355. Its
+battles: it wins 61 in 100 of its attacks (the planner playing rounds as
+turns, 47), and 20 in 100 of them are one unit's (36). Among themselves in
+rounds, steady beats careful (187 to 52 of 240) and bold (138 to 102).
+
+Tried and left out, for winning nothing over 480 games: holding an attack
+on a city back for the stacks of its holder that could be in it first;
+sending a threatened city only the units that get in before the others
+could; more defenders at home (a second unit kept in every city lost two
+games in three).
+
+The planner in turns is as it was. (Spending the treasury would likely
+help it there too: not tried.)
 
 ## A program that plays: the text protocol
 

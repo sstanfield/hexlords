@@ -35,6 +35,11 @@ pub trait Agent {
 /// program that plays: `docs/agents.md`).
 pub const NAMES: [&str; 5] = ["passive", "simple", "steady", "bold", "careful"];
 
+/// After a planner's name (`steady/turns`): it plays a game of rounds as it
+/// plays turns, not in its way for rounds (`planner::rounds`). For playing
+/// the two against each other.
+pub const TURNWISE: &str = "/turns";
+
 /// At most this many orders in a turn: an agent that never ends its turn has
 /// it ended for it.
 pub const MAX_ORDERS: usize = 1000;
@@ -51,6 +56,12 @@ pub fn by_name(name: &str) -> Result<Box<dyn Agent>, String> {
         "simple" => Ok(Box::new(Simple::default())),
         name if crate::planner::style(name).is_some() => {
             Ok(Box::new(crate::planner::Planner::new(crate::planner::style(name).unwrap_or(crate::planner::STEADY))))
+        }
+        // (A planner that plays rounds as it plays turns: to measure the
+        // planners' way with rounds against.)
+        name if name.strip_suffix(TURNWISE).and_then(crate::planner::style).is_some() => {
+            let style = name.strip_suffix(TURNWISE).and_then(crate::planner::style);
+            Ok(Box::new(crate::planner::Planner::turnwise(style.unwrap_or(crate::planner::STEADY))))
         }
         _ => Err(format!("\"{name}\" is not an agent ({}, cmd:<program>)", NAMES.join(", "))),
     }

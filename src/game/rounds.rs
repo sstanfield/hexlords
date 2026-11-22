@@ -238,6 +238,18 @@ impl Game {
         })
     }
 
+    /// True if, in rounds, one order sending `ids` of `side` to `to` would
+    /// make one stack of them (`plan`): they stand on one hex, or are sent
+    /// to join each other, or can gather on one of their hexes and get on
+    /// from there. If not, the units of each hex would go on their own: so
+    /// many attacks, one after the other. For an agent that weighs the odds
+    /// of them all together.
+    pub fn goes_as_one(&self, side: Side, ids: &[UnitId], to: Hex) -> bool {
+        self.by_hex(ids).len() <= 1
+            || self.gathering(ids).is_some()
+            || self.muster(side, ids, to, &self.sight(side)).is_some()
+    }
+
     /// Where `ids` (a side's) set off from together, if they do: the hex
     /// they all stand on; or, on several hexes, the one some of them stand
     /// on that all the others are sent to (a plan whose way ends there):

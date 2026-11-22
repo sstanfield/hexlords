@@ -582,19 +582,21 @@ changed.
   where they saw them at the time, their battles, each held until its
   window is closed). A click on the map ends the moves shown (the battles
   still play), and nothing of it goes on under the next person's cover.
-- **The agents** play rounds as they are: each of their moves is a plan
-  for the round, made from what they see when they plan (`docs/agents.md`;
-  a program is told `mode rounds`). They do not yet think about what the
-  others might do meanwhile: a first opponent, not a cunning one. To see
-  more of the map they send a stack on past the edge of the land they
-  know (`planner::beyond`). They do not yet think about who their stacks
-  will run into on the way either: on the clock, with fights on the way,
-  more of their attacks are a lone unit's (4 in 10, from 3 in 10) and
-  fewer are won (44 in 100, from 50). Measured (the continent, the
-  default planners, 40 seeds each, 200 rounds at most; before the clock
-  in brackets): every game ends, in 64 rounds (60), with 94 battles a
-  game (70); with total fog 11 of 40 games end in 200 rounds (18), with
-  133 battles a game (76). To be made better.
+- **The agents**: the planners (`steady`, `bold`, `careful`) play rounds
+  in a way of their own (`src/planner/rounds.rs`, `docs/agents.md`, "The
+  planner in rounds"; the owner's word, 2026-11-22: "Round based games
+  probably need their own AI"): they go by where the other sides' stacks
+  could be this round and when, do not walk a stack into one it cannot
+  beat, attack as one stack (stacks join first for an assault), set out
+  sooner and spend their gold. Their plans are made from what they see
+  when they plan (a program is told `mode rounds`); to see more of the
+  map they send a stack on past the edge of the land they know
+  (`planner::beyond`). `simple` plays rounds as it plays turns. Measured
+  (the continent, the steady planners on every seat, 40 seeds, 200 rounds
+  at most): every game ends, in 58 rounds, with 57 battles a game; with
+  total fog 13 of 40 games end in 200 rounds: they are slow to find the
+  last cities in the dark. Against the planner playing rounds as it plays
+  turns (`steady/turns`), two seats each, steady wins 3 games in 4.
 - Open: whether a march should fight on its way as a plan does, or stop
   short as in turns (it fights: one rule for every stack on its way);
   whether a stack that would run into far worse odds should hold back;

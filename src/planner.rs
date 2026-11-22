@@ -34,6 +34,8 @@ use crate::state::{
     CityId, Hex, HexSide, MAX_STACK, Side, TileType, Travel, Unit, UnitId, UnitProd, compute_range, hostile,
 };
 
+mod rounds;
+
 /// What makes one style of play another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Style {
@@ -54,19 +56,23 @@ pub struct Style {
     /// price (against what it is worth).
     pub speed: u32,
     pub thrift: u32,
+    /// In rounds (`rounds`): how much a stack of another side may be worth,
+    /// in percent of its own stack's worth, for that stack to go where the
+    /// other could meet it this round.
+    pub nerve: u32,
 }
 
 /// Balanced: armies around a commander, cities defended as they are
 /// threatened, attacks at fair odds.
 pub const STEADY: Style =
-    Style { name: "steady", keep: 1, dare: 60, wear: 25, guard: 100, muster: 4, speed: 30, thrift: 100 };
+    Style { name: "steady", keep: 1, dare: 60, wear: 25, guard: 100, muster: 4, speed: 30, thrift: 100, nerve: 100 };
 /// Fast and many: grabs the empty and weak cities first, few defenders,
 /// attacks at lower odds.
 pub const BOLD: Style =
-    Style { name: "bold", keep: 1, dare: 55, wear: 18, guard: 70, muster: 3, speed: 20, thrift: 140 };
+    Style { name: "bold", keep: 1, dare: 55, wear: 18, guard: 70, muster: 3, speed: 20, thrift: 140, nerve: 130 };
 /// Slow and sure: strong defenders, big armies, high odds.
 pub const CAREFUL: Style =
-    Style { name: "careful", keep: 1, dare: 68, wear: 30, guard: 150, muster: 5, speed: 10, thrift: 70 };
+    Style { name: "careful", keep: 1, dare: 68, wear: 30, guard: 150, muster: 5, speed: 10, thrift: 70, nerve: 80 };
 
 pub const STYLES: [Style; 3] = [STEADY, BOLD, CAREFUL];
 
@@ -107,6 +113,12 @@ pub struct Planner {
     explored: Vec<(UnitId, u32)>,
     /// How many units it sent home this turn (to make room for better).
     disbanded: usize,
+    /// It plays a game of rounds as it plays turns (`<style>/turns`: to
+    /// play the two against each other).
+    turnwise: bool,
+    /// In rounds: the other sides' stacks it sees and where each could be
+    /// this round, worked out once a round.
+    foes: Option<((u32, Side), Vec<rounds::Foe>)>,
 }
 
 impl Planner {
@@ -124,7 +136,36 @@ impl Planner {
             scout: None,
             explored: Vec::new(),
             disbanded: 0,
+            turnwise: false,
+            foes: None,
         }
+    }
+
+    /// A player of `style` that plays a game of rounds as it plays turns:
+    /// what the planners did in rounds before they had a way of their own
+    /// for them, kept to measure that against.
+    pub fn turnwise(style: Style) -> Planner {
+        Planner { turnwise: true, ..Planner::new(style) }
+    }
+
+    /// True if it plays this game in its way for rounds (`rounds`).
+    fn in_rounds(&self, game: &Game) -> bool {
+        game.rounds() && !self.turnwise
+    }
+
+    /// Units it gathers before it marches: its style's, and in rounds one
+    /// fewer (waiting is dear when everyone moves at once: with four, the
+    /// steady planner won far fewer games of rounds than with three).
+    fn muster(&self, game: &Game) -> usize {
+        if self.in_rounds(game) { self.style.muster.saturating_sub(1).max(3) } else { self.style.muster }
+    }
+
+    /// What of its treasury pays for upkeep its taxes do not, a round: in
+    /// turns nothing (its cities build what its taxes keep, and the gold
+    /// piles up); in rounds a share of it (`rounds::SPEND_ROUNDS`), so that
+    /// it fields what it can pay for while the gold lasts.
+    fn reserve(&self, game: &Game, side: Side) -> i64 {
+        if self.in_rounds(game) { i64::from(game.gold(side) / rounds::SPEND_ROUNDS) } else { 0 }
     }
 
     /// True while it leaves `hex` be (the game refused to send it there).
@@ -425,66 +466,13 @@ impl Planner {
         let map = &game.map;
         let style = self.style;
         let sight = game.sight(side);
-        // Who stays home: in each city, its strongest, as many as its threat
-        // calls for and at least `keep` (one more in its capital). Threat and
-        // defence are weighed by what they are worth under the rules: with
-        // much chance in battle, numbers more than strength.
-        if self.threats.as_ref().is_none_or(|(turn, _)| *turn != (game.turn(), side)) {
-            let threats = map
-                .cities()
-                .iter()
-                .filter(|c| c.side == side)
-                .map(|c| (c.id, threat(game, side, c.pos, &sight)))
-                .collect();
-            self.threats = Some(((game.turn(), side), threats));
-        }
-        let threats = self.threats.as_ref().map(|(_, t)| t.clone()).unwrap_or_default();
-        // A threatened city, held by too few, behind low walls: it raises
-        // them, if the treasury is well off (walls are dear).
-        for (id, danger) in &threats {
-            let Some(city) = map.cities().get(*id).filter(|c| c.walls < WALLS_GOAL) else { continue };
-            let held: f64 = map
-                .units_at(city.pos)
-                .iter()
-                .filter_map(|u| map.units().get(*u))
-                .map(|u| worth(u.fighting_power() + walls_bonus(city.walls), game))
-                .sum();
-            let danger = danger * f64::from(daring(&style, game).2) / 100.0;
-            if danger > 0.0 && held < danger {
-                if let Ok(price) = game.walls_price(side, city.id) {
-                    if game.gold(side) >= 2 * price {
-                        return Order::Walls { city: city.id };
-                    }
-                }
-            }
-        }
-        let capital = capital(game, side);
-        let mut staying: Vec<UnitId> = Vec::new();
-        let mut short: Vec<Hex> = Vec::new();
-        for city in map.cities().iter().filter(|c| c.side == side) {
-            let guard = daring(&style, game).2;
-            let danger =
-                threats.iter().find(|(id, _)| *id == city.id).map_or(0.0, |(_, t)| *t) * f64::from(guard) / 100.0;
-            let keep = style.keep + usize::from(Some(city.id) == capital);
-            let mut here: Vec<&Unit> = map
-                .units_at(city.pos)
-                .iter()
-                .filter_map(|id| map.units().get(*id))
-                .filter(|u| !map.is_commander(u.id()))
-                .collect();
-            here.sort_by_key(|u| std::cmp::Reverse(u.fighting_power()));
-            let (mut held, mut count) = (0.0, 0);
-            for unit in here {
-                if count >= keep && held >= danger {
-                    break;
-                }
-                held += worth(unit.fighting_power() + walls_bonus(city.walls), game);
-                count += 1;
-                staying.push(unit.id());
-            }
-            if held < danger || count == 0 {
-                short.push(city.pos);
-            }
+        let (staying, short) = match self.homes(game, side, &sight) {
+            Ok(homes) => homes,
+            Err(order) => return order,
+        };
+        // A game of rounds is another game (`rounds`).
+        if self.in_rounds(game) {
+            return self.round(game, (side, &sight), (&staying, &short));
         }
         let free: Vec<&Unit> = map
             .units()
@@ -687,6 +675,78 @@ impl Planner {
         Order::EndTurn
     }
 
+    /// Its cities, before anything else: who stays home (in each city, its
+    /// strongest, as many as its threat calls for and at least `keep`, one
+    /// more in its capital), and the cities that are short of defenders. Or
+    /// an order first: a threatened city, held by too few, behind low
+    /// walls, raises them.
+    fn homes(&mut self, game: &Game, side: Side, sight: &Sight) -> Result<(Vec<UnitId>, Vec<Hex>), Order> {
+        let map = &game.map;
+        let style = self.style;
+        // Who stays home: in each city, its strongest, as many as its threat
+        // calls for and at least `keep` (one more in its capital). Threat and
+        // defence are weighed by what they are worth under the rules: with
+        // much chance in battle, numbers more than strength.
+        if self.threats.as_ref().is_none_or(|(turn, _)| *turn != (game.turn(), side)) {
+            let threats = map
+                .cities()
+                .iter()
+                .filter(|c| c.side == side)
+                .map(|c| (c.id, threat(game, side, c.pos, sight)))
+                .collect();
+            self.threats = Some(((game.turn(), side), threats));
+        }
+        let threats = self.threats.as_ref().map(|(_, t)| t.clone()).unwrap_or_default();
+        // A threatened city, held by too few, behind low walls: it raises
+        // them, if the treasury is well off (walls are dear).
+        for (id, danger) in &threats {
+            let Some(city) = map.cities().get(*id).filter(|c| c.walls < WALLS_GOAL) else { continue };
+            let held: f64 = map
+                .units_at(city.pos)
+                .iter()
+                .filter_map(|u| map.units().get(*u))
+                .map(|u| worth(u.fighting_power() + walls_bonus(city.walls), game))
+                .sum();
+            let danger = danger * f64::from(daring(&style, game).2) / 100.0;
+            if danger > 0.0 && held < danger {
+                if let Ok(price) = game.walls_price(side, city.id) {
+                    if game.gold(side) >= 2 * price {
+                        return Err(Order::Walls { city: city.id });
+                    }
+                }
+            }
+        }
+        let capital = capital(game, side);
+        let mut staying: Vec<UnitId> = Vec::new();
+        let mut short: Vec<Hex> = Vec::new();
+        for city in map.cities().iter().filter(|c| c.side == side) {
+            let guard = daring(&style, game).2;
+            let danger =
+                threats.iter().find(|(id, _)| *id == city.id).map_or(0.0, |(_, t)| *t) * f64::from(guard) / 100.0;
+            let keep = style.keep + usize::from(Some(city.id) == capital);
+            let mut here: Vec<&Unit> = map
+                .units_at(city.pos)
+                .iter()
+                .filter_map(|id| map.units().get(*id))
+                .filter(|u| !map.is_commander(u.id()))
+                .collect();
+            here.sort_by_key(|u| std::cmp::Reverse(u.fighting_power()));
+            let (mut held, mut count) = (0.0, 0);
+            for unit in here {
+                if count >= keep && held >= danger {
+                    break;
+                }
+                held += worth(unit.fighting_power() + walls_bonus(city.walls), game);
+                count += 1;
+                staying.push(unit.id());
+            }
+            if held < danger || count == 0 {
+                short.push(city.pos);
+            }
+        }
+        Ok((staying, short))
+    }
+
     /// A stack goes to see more of the map (total fog): toward the nearest
     /// edge of the land its side knows that it can stand on, away from where
     /// its other stacks went to this turn.
@@ -744,7 +804,8 @@ impl Planner {
         // What its taxes leave after its units' upkeep and that of one more of
         // each kind its cities are building: what it can keep more.
         let planned: u32 = own().filter_map(|c| c.production()).map(|p| p.upkeep).sum();
-        let spare = i64::from(game.income(side)) - i64::from(game.upkeep(side)) - i64::from(planned);
+        let spare =
+            i64::from(game.income(side)) - i64::from(game.upkeep(side)) - i64::from(planned) + self.reserve(game, side);
         // (When it cannot keep what its cities build: late, it sends its
         // weakest home first, below; else it stops the dearest work.)
         let units = map.units();
