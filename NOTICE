@@ -4,8 +4,10 @@ Hexlords is under the zlib licence: see LICENSE, which is the notice of the C++
 hexGame engine demo (https://github.com/sstanfield/hexGame, Copyright (c)
 2015-2016 Steven Stanfield). This Rust version is a port of it, so it is an
 altered version of that software; ported code carries
-"// C++: <file> <function>" comments. The unit picture in assets/units is the
-C++ demo's. The terrain tiles in assets/tiles are not: they are drawn by
+"// C++: <file> <function>" comments. One unit picture,
+assets/units/default_unit.png, is the C++ demo's. The other pictures (the
+tiles in assets/tiles, the roads in assets/roads, the units' signs in
+assets/units and the hg_* pictures in assets/skin) are not: they are drawn by
 tools/assetgen, a program in this repository, and are under the same licence
 as the rest of it.
 

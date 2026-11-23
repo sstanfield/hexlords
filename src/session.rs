@@ -331,8 +331,19 @@ fn help_section() -> Vec<HelpSection> {
                     "Take it into the selection, or leave it out (the leader's box is the left one)",
                 ),
                 ("Esc", "Close the menu or the window on top; with none open, drop the selection"),
-                (&undo, "Take back the last move, a city's work or its walls (not a battle)"),
-                (&end_turn, "End the turn (End turn (3): three stacks or cities still wait for orders)"),
+                (
+                    &undo,
+                    "Take back the last move, a city's work or its walls (not a battle); in rounds: the last plan or leg",
+                ),
+                (
+                    &end_turn,
+                    "End the turn; End turn (3): three stacks or cities still wait, and it asks first (Options)",
+                ),
+                (
+                    "Start turn",
+                    "The same button and key, when your turn comes with news in your log: close it and play",
+                ),
+                ("Begin red's turn", "In hotseat the map is covered between two people's turns: the next one's button"),
                 ("In rounds", "A click is a plan (its way outlined): nothing moves until every side's orders are done"),
                 (
                     "In rounds, a click after a plan",
@@ -341,7 +352,7 @@ fn help_section() -> Vec<HelpSection> {
                 ("In rounds, a click on the black", "Total fog: the stack sets off toward land not seen, to look"),
                 (
                     "Orders done (in rounds)",
-                    "End turn's button: the round then plays out, a hex at a time; a plan attacks where it ends",
+                    "End turn's button: the round then plays out; a stack attacks who it finds on its way",
                 ),
                 (&new_game, "A new game (once this one is over at once; before, it asks)"),
                 ("Leaving a game", "It is kept as it goes: the new game screen plays it on (not in a browser)"),
@@ -362,7 +373,10 @@ fn help_section() -> Vec<HelpSection> {
                     "Aside this turn, on to the next; F: defend, or stand down; B: a temple's blessing; X: disband",
                 ),
                 ("R", "Rally points: place them; Go to (or a city's Send to) onto one's flag sends units there"),
-                ("P", "Patrol: Shift+click waypoints, click the last (its own hex: a loop), say if it attacks"),
+                (
+                    "P",
+                    "Patrol: Shift+click waypoints, click the last (its own: a loop), say if it attacks (Enter: Patrol)",
+                ),
                 ("U", "Maraud: the computer leads the stack, hunts and takes cities; U again calls it back"),
             ],
         ),
@@ -371,7 +385,12 @@ fn help_section() -> Vec<HelpSection> {
             &[
                 ("C", "Go to your next city (Shift+C: the one before)"),
                 ("Your city, in the sidebar", "Set what it builds (point at one: all about it), where its units go"),
-                ("O,  or  City details", "The selected city's window, with more room"),
+                ("O,  or  Open the city's window", "The selected city, with more room (another side's: City details)"),
+                (
+                    "+ beside a kind, in the window",
+                    "Its queue: kinds in turn, how many of each, where they go; then it stops, or repeats",
+                ),
+                ("Raise the walls, in the window", "A level, paid at once: once a turn"),
                 ("M,  A", "Your cities, all cities: see where one is, go to it, open it"),
             ],
         ),
@@ -382,12 +401,15 @@ fn help_section() -> Vec<HelpSection> {
                 ("L", "Your log: your battles, who won and who died, the cities you took and lost"),
                 ("Watch, in the log", "A battle you fought, played out again: both stacks, a hit at a time"),
                 (
-                    "Enter, on a battle shown",
-                    "End it, then close its window (Close and Esc close it too): what happens next waits for that",
+                    "Enter, in a battle's window",
+                    "A battle shown as it happens: end it, then close it (Close, Esc too); the game waits for that",
                 ),
                 ("H", "Your capital (in hotseat, each turn starts there)"),
                 ("V", "In rounds: outline all your stacks' orders, or the selected stack's only"),
-                ("W,  or  Replay", "What happened since your last turn, again (its slider: back into it; Esc: now)"),
+                (
+                    "W,  or  Replay",
+                    "What happened since your last turn, again (W: stop; its slider: back into it; Esc: now)",
+                ),
             ],
         ),
     ]

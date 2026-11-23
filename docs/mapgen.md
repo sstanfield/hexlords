@@ -3,8 +3,7 @@
 `mapgen` makes a map directory in the game's format (`docs/map-format.md`)
 from a seed and a few knobs, measures any map, and checks one. The same seed
 and knobs make the same map, byte for byte, on every machine. The generator
-is `hexlords::mapgen` (pure: no files, no clock, so the game can call it one
-day); `tools/mapgen` is its command line.
+is `hexlords::mapgen` (pure: no files, no clock; the new game screen calls it); `tools/mapgen` is its command line.
 
 Its targets are a hand-built map's statistics ("the target map", the
 `classic` preset): long mountain ranges ringed by hills, big forests, wide
@@ -70,7 +69,9 @@ Options of `gen` and `batch`: `--preset NAME` (or a file), `--config FILE`
 (on top of the preset), `--units PATH` (the units template; default
 `assets/mapgen/units.txt`, the game's own kinds), `--seed N`, and any knob as
 `--knob value` (`--water 0.25`, `--sides 6`, `--layout twin`); the
-checkboxes are flags (`--sea-cities`, `--fly-cities`).
+checkboxes are flags (`--sea-cities`, `--fly-cities`). `--out DIR` is
+needed, and for `batch` `--seeds A..B`. Give `--preset` first: it starts
+the knobs afresh, so one given before it is lost.
 
 ## Tuning
 
@@ -80,7 +81,7 @@ checkboxes are flags (`--sea-cities`, `--fly-cities`).
 3. Change a knob in a copy of a preset and run the batch again with the same
    seeds into `runs/b`. Each stage draws on its own stream of chance, so only
    what comes after the change moves.
-4. Play the good ones (once there are cities): `hexlords --map runs/b/seed-3`.
+4. Play the good ones: `hexlords --map runs/b/seed-3`.
 
 ## The knobs
 
@@ -111,7 +112,7 @@ archipelago; cities only ships reach; the units template needs a ship).
 | `range_style` | `ridges` | long ranges, or `massifs`, round lumps |
 | `hill_ring` | 0.85 | the share of mountain edges that border hills |
 | `city_min_gap` | 0.38 x the square root of the density, at least 4 (5 at `normal`) | the least hex distance between cities |
-| `city_gap_target` | 0.6 x the square root of the density (8) | the middle distance between neighbours aimed at |
+| `city_gap_target` | 0.6 x the square root of the density (8) | with `city_min_gap`, how close the first scatter of cities is; the spacing a map ends with is the score's, 0.9 x the square root of the density (below) |
 | `coastal_cities` | 0.25 | the share of cities by the water aimed at |
 | `edge_margin` | 2 | no city nearer the map's edge |
 | `walls` | `3:8 4:58 5:18 6:16` | the neutral cities' walls and their shares, percent; capitals get the highest |
@@ -119,7 +120,7 @@ archipelago; cities only ships reach; the units template needs a ship).
 | `fly_cities`, `fly_city_count` | off, one for every 40 cities (1 to 3) | cities in mountain rings only flyers reach; the template needs a flyer |
 | `ports`, `ports_per_side` | `auto`, 1 | cities by water that reaches the sea build the template's ship |
 | `fairness` | `normal` | `off`, `loose`, `normal`, `strict` (below) |
-| `attempts` | 30 | maps made before the fairest is given |
+| `attempts` | 30 | maps made before the one that fails least is given |
 | `temples_per_side` | 1 | temples for each side, 0 to 4 (the new game screen offers 0, 0.5, 1, 2, 3, 4): none; one shared by two neighbours; one each, ... (the owner, 2026-11-20: "2 per side is probably a lot") |
 | `temples`, `ruins` | none, and 0.24 a city | a count, or a rate of the cities; a rate, with fairness on, is rounded to as many for each side (one at least). `temples`, if given, is used instead of `temples_per_side` |
 | `site_city_gap` | 3 | no site nearer a city |
@@ -132,8 +133,7 @@ archipelago; cities only ships reach; the units template needs a ship).
 Of size, cities and density, two given say the third (`size` and `cities`:
 the density; `size` alone: the cities at the density; neither: the size for
 the cities). It warns of a density outside 100 to 300, or fewer than 3
-cities a side. The knobs of the stages to come (cities, sites, roads,
-fairness, ships and flyers, retries) are read and written already, and do
+cities a side. One knob is read and written already, and does
 nothing yet: `symmetry` (a map built on a half or a quarter and copied:
 every stage would have to keep to it; the fairness measures already hold
 the sides to a fair share, and the owner wants random maps fun to play,
@@ -228,7 +228,7 @@ with an error that says so.
      fairness allows. Nineteen hexes of land in twenty are within 9 or 10 of
      a city on a medium map (the target map's cities leave far more land
      empty; the owner wants none wasted). The cities are farther apart
-     than the target map's, so: a median of about 10 to the nearest, not 8.
+     than the target map's, so: a median of about 12 to the nearest, not 8.
    - **At sea and in the air** (the checkboxes): cities on the islands
      raised for them (in the main sea, 5 hexes from land if there is such
      water, else 4 or 3), by the water and off the edge; and neutral cities
@@ -281,7 +281,7 @@ with an error that says so.
      it from the land 4 hexes round, over the same across open grass (land
      across the sea or a lake left out; land no walker reaches it from
      counted as 6 turns). At 1.9 or more (hills, forest, a river, a range
-     to go round; about one city in ten) it is hard: its units start
+     to go round; about one neutral city in seven) it is hard: its units start
      veterans, it pays 8 more a turn, it builds the template's strongest
      unit on foot, and one in four builds a flyer too. At 2.8 or more, and
      every city at sea or in the air, it is remote: elites, 16 more, a flyer

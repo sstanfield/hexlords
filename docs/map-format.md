@@ -60,7 +60,7 @@ cargo run -p mapeditor -- --check assets/maps/continent # what is in it, and wha
 | `r` | ruin | a place; crossed like grass |
 
 What a terrain costs is not in this file: every kind of unit has its own
-prices (`units.txt`, below). The third column is how the example map's units
+prices (`units.txt`, below). The third column is how the continent map's units on foot
 have them, and the idea will stay: grass is open, forest, hill and swamp slow
 an army down, mountains and water are walls for anything that walks.
 
@@ -94,7 +94,8 @@ water) instead of the terrain's. So:
   **missing** at the end are all grass. This is almost always a mistake in a
   hand-written file: check for it (below).
 - A row with **too many** letters, a letter that is no terrain, a size that is
-  not a number or is outside 20 to 600: an error that names the line.
+  not a number: an error that names the line. A size outside 20 to 600: an
+  error that names the file.
 - Spaces at the end of a line are ignored. Spaces between letters are an error.
 - Lines after the last row are ignored.
 
@@ -189,7 +190,7 @@ city 13 7
 |---|---|---|
 | `city` | Its row and its column, counted from 0 | (starts the record) |
 | `name` | The city's name; no two cities share one | an error: it must be given |
-| `side` | Who holds it at the start: `black`, `white`, `red`, `green`, `blue`, `orange`, `yellow`, `purple`, or `neutral` | `neutral` |
+| `side` | Who holds it at the start: `black`, `white`, `red`, `green`, `blue`, `orange`, `yellow`, `purple`, or `neutral` (`grey`, `gray` and `none` are read as `neutral`) | `neutral` |
 | `walls` | How strong its walls are at the start (in the game a city that is taken loses a level, and its holder can raise them: `docs/gameplay.md`) | 0 |
 | `income` | The gold it brings its holder at the start of each of the holder's turns (its taxes) | 10 |
 | `trains` | The level the units it builds start at: `regular`, `veteran` or `elite` (`docs/gameplay.md`, levels) | `regular` |
@@ -197,7 +198,7 @@ city 13 7
 | `garrison` | Units that stand in it at the start, on its side: `garrison <unit> [<how many>]`. A line for each kind; at most 8 units in a city, and a commander besides | nobody |
 
 A city tile without a record is still a city, with no name: `--check` warns of
-it. A record on a hex that is not a city, a unit that `units.txt` does not
+it (in a map directory). A record on a hex that is not a city, a unit that `units.txt` does not
 have, two cities on a hex: errors that name the file and the line.
 
 ## Pictures of its own: `assets/`
@@ -266,8 +267,9 @@ cargo run -p mapeditor -- --check assets/maps/mine
 
 prints the size, how many hexes of each terrain and how many roads, bridges
 and passes there are, every kind of unit and every city, and a warning for
-every short or missing row, every city tile without a record and every
-picture that is nowhere. A mistake is an error with its file and line. To look
+every short or missing row, for lines after the last row, and, in a map
+directory, for every city tile without a record, every city that builds a
+ship away from the water and every unit's picture that is nowhere. A mistake is an error with its file and line. To look
 at the map and touch it up:
 
 ```sh

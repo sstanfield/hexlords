@@ -1,8 +1,9 @@
 # Gameplay: the plan
 
 This is the plan for the game's rules: what a side can do, what a turn is,
-and how the two ways to play (below) share one set of rules. It is a plan,
-not a description, though its first steps are built ("Where we are"). It takes the place of
+and how the two ways to play (below) share one set of rules. It began as a
+plan and is now mostly a description: all of it is built but the network
+and what is marked as later or open ("Where we are"). It takes the place of
 phase 3 of `hexgame-rust-port-plan.md`, section 8, which proposed one mode
 (simultaneous turns); the owner's word (2026-11-19) is that the game supports
 two, since they feel very different, above all with several players:
@@ -21,7 +22,7 @@ Nothing is taken from an existing game: the rules and the numbers are ours.
 
 ## Where we are
 
-Built (2026-11-19):
+Built (2026-11-19 to 2026-11-23):
 
 - the map with terrain and roads; a map's kinds of unit (strength, moves,
   upkeep, price, what each terrain costs to enter); cities (holder, walls,
@@ -39,8 +40,9 @@ Built (2026-11-19):
   taken by moving in;
 - **stacks, battles and commanders** (below, "Fighting"): the units of a hex
   are selected together and move together, or some of them; units sent into
-  another side's fight them, and go in if they win; the chance (0 to 10)
-  and the system (lines, or strength against strength) are set with the
+  another side's fight them, and go in if they win; the chance (0 to 10),
+  the system (lines, strength against strength, or dice) and its choices
+  (wounds that last, losers hitting back, a cap) are set with the
   game; the ground, walls and a commander make units stronger; the odds
   are shown before an attack, a report after it, and the news to whoever
   was attacked while they waited;
@@ -80,12 +82,13 @@ orders are applied:
 
 - In **turns**, an order is applied as soon as it is given, and its events
   are shown at once.
-- In **rounds**, the orders are kept until every side has finished giving
-  them; then the round's **resolution** applies them all together, and
-  every side is shown the events it could see.
+- In **rounds**, an order that moves no unit is applied as it is given; an
+  order to move is kept as a plan until every side has finished giving
+  them, and then the round plays out on a clock, every side's plans
+  together, and every side is shown the events it could see.
 
 The UI already only records commands and leaves them to the session (CLAUDE.md,
-"Layering"); orders are the next step of that: the session turns a click into
+"Layering"); orders are that, taken a step further: the session turns a click into
 an order, never changes the map itself. With orders as data, the rest follows:
 an AI is something that makes orders; a saved game is the map and the orders
 since; a network game sends orders. The rules must be **deterministic**: the
@@ -97,7 +100,7 @@ and the rules use integers, not floats.
 |---|---|---|
 | Feel | Careful, tactical: see, then decide | Guessing the other side: plans, feints, surprises |
 | With several players | Each waits for the others' turns | All plan at once; nobody waits but for the slowest |
-| What an order does | Happens now | Happens at the round's end, with the others' |
+| What an order does | Happens now | A move happens as the round plays out, with the others'; the rest, now |
 | Fighting | When a stack moves into an enemy | Where moving stacks meet, as the round plays out |
 | What the UI needs | Moves and battles shown as they happen | Planned paths drawn on the map, then a replay of the round |
 | AI | Easier: it reacts to what it sees | Harder: it plans without knowing |
@@ -108,11 +111,15 @@ and the rules use integers, not floats.
 1. **Players.** Each side is played by a person at this screen, by the AI,
    or by nobody (neutral cities). Only a side's own units and cities take
    its orders.
-2. **Orders and events** (`state::orders`, `state::rules`): applying an
+2. **Orders and events** (built: `src/orders.rs`; the rules are
+   `Game::apply`, `src/game.rs`): applying an
    order checks it is allowed (it is that side's unit, the path is within
    reach) and changes the state through `Map`'s methods.
 3. **Stacks** (built). A stack is the units on a hex: a click on the hex
-   selects those of them with moves left, and they go together where all
+   selects those of them that wait for orders (with moves left, and not
+   defending, put aside, already moved or on a standing order; if none
+   waits, those that moved or are on their way; at sea, or on one patrol,
+   all of them), and they go together where all
    of them can (each pays its own way); a click on a unit under the map
    takes it into the selection or leaves it out, so a stack splits by
    sending some of it, and two join by going to one hex. A hex holds eight
@@ -214,7 +221,7 @@ and the rules use integers, not floats.
      | 8×4 against 8×3: wins | 95% | 90% | 86% | 99% | 98% |
      | 3×6 against 8×2: wins | 99% | 14% | 3% | 48% | 13% |
 
-     On the dice the greater side is always a 9 and misses one roll in
+     On the dice the greater side of two stacks like these is a 9 and misses one roll in
      ten, so a lead runs away: an even battle ends one-sided, and quality
      counts more than by strength (three 6s against eight 2s, about even;
      lines 99 in 100, strength 14). A roll of exactly the number winning for
@@ -230,13 +237,13 @@ and the rules use integers, not floats.
      unended). In lines, hitting back shortens the games (49.8 rounds to
      33.1): the strong unit at the front is worn down by the weak ones
      before it.
-   - **Bonuses**, in either system: a defender is 1 stronger on hills and
+   - **Bonuses**, in every system: a defender is 1 stronger on hills and
      in forests, 2 on mountains, and in a city by its walls
      (`combat::walls_bonus`, the owner's table of 2026-11-20): nothing
      behind walls 0, 1 behind 1 or 2, 2 behind 3 to 5, 3 behind 6 (every
      city of our maps starts with walls 1 at least; before, three quarters of
      a point a level: behind walls 6, a couple of cheap units were a meat
-     grinder); every unit of a stack with a commander is as much stronger
+     grinder); every other unit of a stack with a commander is as much stronger
      as the commander says (`commander 1`). The attackers get no ground and
      no walls. A kind can be at home on some ground (`bonus forest 1`, or
      in a city: the owner's word 2026-11-21, gaps to fill), and fights that
@@ -284,8 +291,8 @@ and the rules use integers, not floats.
    treasury cannot pay waits in its city, done, until it can. **The price is
    the city's** (decided): what its `produce` line says, or, if it says
    nothing, the unit's `price`. (The unit's price is also what it would
-   cost in a city that is given a new kind to build, later.) The sidebar
-   shows the treasury, its taxes and its upkeep; the log says who left
+   cost in a city that is given a new kind to build, later.) The menu
+   bar shows the treasury, its taxes and its upkeep; the log says who left
    unpaid. A unit's upkeep is half its price in the game's own units (the
    owner, 2026-11-20). A side can **disband** its units (`Order::Disband`;
    X, or Disband in the Units menu, which asks first): they are gone, and
@@ -323,7 +330,8 @@ and the rules use integers, not floats.
      which), and its movement is spent: it stops there for the turn. One
      the temple has blessed keeps its movement. Each temple blesses a unit
      once; each other temple blesses it again, and the blessings add up.
-     Going onto a temple blesses nobody. A blessing cannot be undone. (The
+     A move onto a temple blesses nobody (a march that stops on one, and
+     in rounds a plan that does, seeks its blessing unasked). A blessing cannot be undone. (The
      continent has a temple near each side's first city.)
    - **Captains from the ranks** (the owner's word, 2026-11-19): when a
      stack with no commander wins a battle, a captain of the map's first
@@ -444,7 +452,7 @@ and the rules use integers, not floats.
   drawn at the start and again after every round. A **round** is every side
   once. (Built.)
 - A side's turn begins with its cities' work and its gold: income, upkeep,
-  production. (Built for production.)
+  production. (Built.)
 - Moving into an enemy stack or city is an attack: the battle is fought then
   and there, and shown. An attack needs 2 movement points left beside the
   units attacked (the step into them costs 2, `ATTACK_COST`, on any ground
@@ -535,7 +543,7 @@ changed.
     (where they can go together is worked out so: `Game::joint_range`).
     One `Order::Move` for units on several hexes that are not sent to
     join each other gathers them itself, on the one of their hexes
-    nearest to where they go that all can get on from (`rounds::muster`:
+    nearest to where they go that all can get on from (`Game::muster`, in `src/game/rounds.rs`:
     one order is one stack and one attack, as in turns; the agents order
     their attacks so); if there is none, each hex's units go on their own.
   - **Waypoints** (the owner, 2026-11-22: "we need to be able to use
@@ -617,7 +625,7 @@ changed.
   never seen (`Order::Toward`; at the screen, a click on the black): as
   the round plays out it goes over the land it has seen toward the hex
   nearest to where it was sent, sees more, and from there finds the
-  way on (`rounds::way_toward`); each step is still onto land it has
+  way on (`Game::way_toward`, in `src/game/rounds.rs`); each step is still onto land it has
   seen. `Move` and `GoTo` to unseen land are refused as ever.
 - **At the screen.** A click plans: the stack stays, and the map outlines
   the ways the person's stacks will take this round (their own only). The
@@ -638,9 +646,10 @@ changed.
   turns too, for a battle the computer fights against the person; before,
   the game went on a moment after the battle was over). The map goes
   to the person's own stacks if none is in view, and back to where they
-  were looking when it is over. (While a screen watches, the last side's
-  `EndTurn` only begins the round and the screen plays the beats; without
-  one it plays the round out whole. The same game either way.)
+  were looking when it is over. (While a screen watches, or what is done is being
+  kept (`Game::record`), the last side's `EndTurn` only begins the round
+  and whoever watches or keeps it plays the beats; else it plays the round
+  out whole. The same game either way.)
 - **Finding things on a busy map** (the owner's notes from play,
   2026-11-22: "The screen gets very busy ... we will need to crack this or
   it may not be usable"; in turns too, where it applies). The hex of the
@@ -717,10 +726,10 @@ changed.
   with total fog too, in 88 (once, 13 of 40 did: sent past the edge, the
   armies never got to it). Against the planner playing rounds as it plays
   turns (`steady/turns`), two seats each, steady wins 261 games of 480.
-- Open: whether a march should fight on its way as a plan does, or stop
-  short as in turns (it fights: one rule for every stack on its way);
-  whether a stack that would run into far worse odds should hold back;
-  plans by way of hexes of the player's choosing.
+- Open: whether a stack that would run into far worse odds should hold
+  back. (Decided since: a march fights on its way as a plan does, one rule
+  for every stack on its way; a plan goes by hexes of the player's
+  choosing, the waypoints above.)
 
 ## Saved games
 
@@ -795,7 +804,9 @@ thing to happen. Ideas to try, as the rules grow:
   (`Event::Stalled`, and a line in the log), keeps its order, and goes
   back among the stacks that wait for orders (Next stack, the tasks); left
   alone, it tries again next turn. A move of the player's own ends the
-  order (an undo gives it back). In rounds, the same: a stopped march is
+  order (an undo gives it back). In rounds a march fights who stands on its way
+  as the round plays out ("Rounds"); what movement it has left at the
+  round's end it uses as here, without attacking, and a stopped march is
   in the list again, and goes on if it is not given another order. Later:
   a stack follows another.
 - **Routes** (built; the owner, 2026-11-21: "march to a temple, get a
@@ -821,8 +832,8 @@ thing to happen. Ideas to try, as the rules grow:
   the temple, of those the side knows that have not blessed the unit,
   that adds the least to its way, if that is no more than a turn's march
   (`Game::temple_on_the_way`; one far off the way is passed by, so the
-  player ticks the box where a temple is handy). A unit is sent the
-  moment it is done. A route's hexes have to be ones that something the
+  player ticks the box where a temple is handy). A unit is given its order the
+  moment it is done, and sets off at the end of that turn. A route's hexes have to be ones that something the
   city builds can get to over the land; a city taken forgets where its
   old holder sent its units. What a turn's end brings (the marches and
   patrols, what they take) is that turn's in the history, and what its
@@ -856,7 +867,7 @@ thing to happen. Ideas to try, as the rules grow:
 - **A menu bar** (built, the owner's word 2026-11-20: "start cleaning up the
   interface"): Game, Units, Cities, View and Help, each item with its keys
   (every one but the help's topics has one), so the sidebar keeps only End
-  turn, Undo and the city. The treasury sits at the bar's right end ("34
+  turn, Undo, Replay with its slider, and the city. The treasury sits at the bar's right end ("34
   +40 -32"). The stack under the map is a box for its leader and one for
   each of the eight units a hex holds, empty ones dimmed, with Go to, Done
   and Next beside them. One's own city on the selected hex is in full in
@@ -899,8 +910,8 @@ thing to happen. Ideas to try, as the rules grow:
 - **Options** (built, the owner's word 2026-11-21: the turn should not be
   burdensome, nor leave out details): the Game menu's Options (Cmd+, or
   Ctrl+,) are the person's, not rules: they change what the screen does
-  for them, never what an order does (`options_window::Options`). The
-  first selects the next stack that waits by itself: when a turn starts
+  for them, never what an order does (`options_window::Options`). One
+  selects the next stack that waits by itself: when a turn starts
   (the nearest to the cursor), and once the stack the person moved can go
   no further this turn, as Done and Defend do (off at first: the owner's
   word, 2026-11-21, "I like to look around before moving on"). Either
@@ -918,10 +929,10 @@ thing to happen. Ideas to try, as the rules grow:
   or the next stack with the option; so does Done, which is how the person
   says they are done with a stack that can still go on.
   End turn counts what waits for orders ("End
-  turn (3)": the tier-1 tasks), and, as the second option says (on at
+  turn (3)": the tier-1 tasks), and, as another option says (on at
   first), asks before the turn ends while anything does, or while the
   gold and the taxes will not pay next turn's upkeep (units would leave);
-  its window can show the tasks. The third tells a battle of the
+  its window can show the tasks. Another tells a battle of the
   person's in a line under the stack instead of playing it out in its
   window (the log's Watch plays it); another plays battles out at twice
   the pace (off at first: the slower pace has more tension). The next
@@ -942,7 +953,8 @@ thing to happen. Ideas to try, as the rules grow:
   waits for the battle that won it. Without a window nothing is kept for
   this (`Game::watch`): the headless games pay nothing. Another option
   has a stack moved onto a temple seek its blessing unasked, and says in
-  that line what each was given. The shell carries them from one game to
+  that line what each was given; and in rounds one has the map outline
+  the selected stack's orders only (V). The shell carries them from one game to
   the next.
 - **A log** (built): every battle a side fought, attacking or attacked,
   with who won and who died; the cities it took and lost; the units that
@@ -1122,20 +1134,21 @@ it; the rules are written once for both modes from the first step.
 3. **Gold.** Income, the cities' prices, upkeep; a treasury in the sidebar.
    **Done (2026-11-19).**
 4. **The end, and an AI.** A side that has lost its cities is out; the last
-   one wins; a first AI.
+   one wins; a first AI. **Done (2026-11-19).**
 5. **Fog of war.** **Done (2026-11-19)**, with orders that last and the
    tasks.
 6. **Rounds.** Planned paths, "done", the resolution, the replay. **Done
    (2026-11-22).**
-7. **Saves, then the network.**
+7. **Saves, then the network.** Saves: **done (2026-11-22)**, "Saved
+   games" above. The network is to come.
 
 ## Decided (2026-11-19, the owner's word)
 
 1. **The mode** is chosen by the players when a game starts.
 2. **Fighting** always has chance in it: the weaker side may win, or do
    more harm than was to be expected.
-3. **A city's cost** for what it builds is its own (the third number of its
-   `produce` line); if it gives none, the unit's `price`. The unit's price
+3. **A city's cost** for what it builds is its own (the cost at the end of its
+   `produce` line, after the unit and the turns); if it gives none, the unit's `price`. The unit's price
    will also serve when a city is given a new kind to build.
 4. **Movement points:** up to 2 that are not used carry over to the next
    turn.
@@ -1162,10 +1175,11 @@ it; the rules are written once for both modes from the first step.
 
 ## Still open
 
-1. Rounds are built ("Rounds", above), and changed once by play (the
-   clock, fights on the way, joining: 2026-11-22); what more play says
-   of them is open (a march that fights, the computer's players in
-   them).
+1. Rounds are built ("Rounds", above), and changed by play since (the
+   clock, fights on the way, joining, waypoints: 2026-11-22; stacks of a
+   side passing each other: 2026-11-23). A march fights on its way and
+   the planners play rounds in a way of their own; what more play says
+   of them is open (a stack that would run into far worse odds).
 2. Combat: which system a game starts with (lines for now). Agents
    against agents without a window can compare them (`--battles`, with
    many seeds).

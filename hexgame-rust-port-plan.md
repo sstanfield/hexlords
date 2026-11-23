@@ -543,8 +543,7 @@ Testing notes:
    - **Web:** a later option, not a target.
 4. **Storage (future):** phase 1 needs no database. When one is needed (save games,
    scenario libraries, the turn and event log), use the LMDB-style key-value store Steve
-   wrote. It currently lives inside another project, at
-   `/Users/sstanf/work/telcoin-network/crates/tn-lmdb` on Steve's machine, so it is not
+   wrote. It currently lives inside another project on Steve's machine, so it is not
    reachable from this repository. Ask Steve for access, or to have it split out as its
    own crate, before planning around its API.
 

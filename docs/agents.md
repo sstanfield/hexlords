@@ -35,9 +35,10 @@ take their chance from the game's own generator (`state::rng`), never from
 anywhere else.
 
 The same options set up a game in the window: `--map` with `--players`,
-`--order fixed|drawn`, `--seed`, `--chance <0-10>`, `--battles
-lines|strength`, `--wounds` and `--gold <n>` (without `--map`, the new game screen sets
-them). To compare
+`--mode turns|rounds`, `--order fixed|drawn`, `--seed`, `--chance <0-10>`,
+`--battles lines|strength|dice`, `--dice-exact hits|misses|defenders`,
+`--wounds`, `--blows-back`, `--cap <n>`, `--gold <n>`, and `--fog` or
+`--total-fog` (without `--map`, the new game screen sets them). To compare
 two ways of fighting, play the same seeds with each:
 
 ```sh
@@ -264,10 +265,14 @@ games in three).
 
 `--players red=cmd:./my-bot` has red played by a program of your own: a
 script, or a bridge to some other player. At the start of each of red's turns
-the program is run (no shell: the words after `cmd:` are the program and its
-arguments), reads the game on its standard input, writes its orders on its
-standard output, and exits. What it gets wrong is said on the game's error
-output, and the turn goes on without that order.
+the program is run (no shell: the words after `cmd:`, up to the next comma,
+are the program and its arguments), reads the game on its standard input,
+writes its orders on its standard output, and exits. A line that is no order
+is said on the game's error output, and the turn goes on without it. An
+order the game refuses changes nothing, and the turn goes on: without a
+window `--log` prints it (`refused: <the order>: <why>`, the order as the
+game's code writes it, not as the protocol does); in the window nothing says
+so; and the program is not told.
 
 ### What it reads
 
@@ -276,10 +281,13 @@ given the same). With fog of war, the other sides' units out of its sight
 are not in it, and a city in the fog is held by who held it when the side
 saw it last (nobody, if it never did), behind the walls it had then; what
 its side remembers of stacks
-seen before is in the view (`Sight::ghosts`), and its orders go as far as
+seen before is in the view the computer's own players are given
+(`Sight::ghosts`; the text has no line for them: a program remembers what
+it saw itself), and its orders go as far as
 it knows the way (a stack it could not see, met on the way, is a battle
 there). With total fog, land the side has never seen is `?` in the terrain
-and its cities are not listed; no order can go there or through it. Fog or
+and its cities are not listed; no order can go there or through it (but a
+`toward` in rounds, below). Fog or
 not, it is not told what the other sides' cities build or can build, their
 gold, their units' standing orders or the moves they have left.
 
@@ -318,7 +326,9 @@ end
   stands on attacks it, wherever it was going), so the game it is shown
   is the one at the round's start, whatever it has ordered. A `move`
   naming units on several hexes is one stack: they gather first on the
-  one of their hexes nearest to where they go, and go on together; to
+  one of their hexes nearest to where they go, and go on together (with
+  no hex of theirs that all can gather on and go on from, the units of
+  each hex go on their own); to
   have stacks attack one after the other, order each by itself. In turns
   the line is
   not there. In rounds `toward` may name land the side has never seen
@@ -349,10 +359,10 @@ end
   and what each terrain costs it to enter (`docs/gameplay.md`, "Ships and
   flyers", says how they go).
 - `city <row> <col> <side> walls <n> income <n> builds <index or none>
-  progress <turns done> name <name>`: every city the side knows of; `can <row> <col> <index> <kind> <turns>
+  progress <turns done> name <name>`: every city the side knows of (`<side>` is `neutral` for nobody's, here and for a unit); `can <row> <col> <index> <kind> <turns>
   <cost>`: what each of the side's own cities can build.
 - `unit <name> <side> <row> <col> <kind> strength <n> moves <left>/<a turn's>
-  level <n>`: every unit on the map; its strength is what it fights with
+  level <n>`: every unit on the map (with fog of war: every unit the side sees); its strength is what it fights with
   before its stack, the ground and walls (its kind's, a point for each level
   above 1, a temple's blessing), its level 1 to 3 (`docs/gameplay.md`); and,
   at its end, `wounds <n>` for a unit wounded (wounds that last: it has
@@ -372,23 +382,24 @@ the orders that were carried out as the same lines, `docs/saves.md`;
 | `toward <units> <row> <col>` | Move together as far as the slowest gets this turn on its cheapest way to that hex, and where there is room for all of them. Units that go at different prices (flyers with units that walk) take a way all of them can go, and go together or not at all; so do they on a `goto`, a patrol and in a round |
 | `onward <units> <row> <col>` | In rounds: units with a plan for the round (`move`) go on from where it ends to that hex, which all of them can reach from there with what the plan's way leaves them: a waypoint (the plan goes by the first hex, then on). Refused with no plan, or after a plan that ends in a battle, in a city to take, or on a temple that has yet to bless them (it stops them for the round). In turns it is a `move` |
 | `goto <units> <row> <col> [<row> <col> ...]` | A standing order: go to that hex over as many turns as it takes; with more than one hex, by way of each in order (stops; the last is where it ends). At a stop it goes on at once with what movement is left; at a stop on a temple, those the temple has not blessed seek its blessing and the stack stops there for the turn. This turn's part is taken at once (as `toward`), the rest at the end of each of the side's turns, with the movement left (after `end`); it never attacks: a step into another side's units stops it (it keeps the order, and tries again next turn). A `move` or `toward` of the same units ends it |
-| `done <units>` | Put the units aside for this turn (Next stack and the player's tasks pass them by); it changes nothing else |
+| `done <units>` | Put the units aside for this turn (Next stack and the player's tasks pass them by); it changes nothing else, but for a patrol or marauders that fought (below) |
 | `defend <units>`, `undefend <units>` | Mark the units as defenders, staying where they are turn after turn (Next stack and the player's tasks pass them by) until they are sent somewhere; or no longer |
 | `bless <units>` | Units on a temple seek its blessing: each the temple has not blessed yet is blessed (chance says how) and its movement is spent for the turn; one it blessed before keeps its movement |
 | `disband <units>` | Send units home for good: they are gone, and their upkeep with them (a ship at sea only with those it carries, or with ships enough left to carry them) |
 | `build <row> <col> <index or none>` | Set what a city of its side builds |
 | `walls <row> <col>` | Raise the walls of a city of its side a level, paid at once: once a turn, up to 6, 25 gold for each level it raises them to |
 | `rally <row> <col> <row> <col> [<row> <col> ...]`, `rally <row> <col> none`, `rally <row> <col> defend`, `rally <row> <col> point <n> [bless]` | Where a city of its side sends what it builds: along a route (with a standing order, as `goto`, by way of the stops before the last); nowhere (it stays in the city); nowhere, defending the city; or to the side's rally point `n` (0 to 9), with `bless` by way of a temple near the way first |
-| `queue <row> <col> <item> [<item> ...] [repeat <from> [<times>]]`, `queue <row> <col> none` | A city's production queue: its items in turn, each `<what>x<count>[@<where>]` (`what` an index into what it builds, as `build`; where its units go: `defend`, `point<n>`, `point<n>+bless`, or a route `<row>.<col>[,<row>.<col> ...]`; none, they stay); after the last it stops, or with `repeat` goes back to item `from` (0 the first) and on, `times` times or for ever. At most 8 items. It goes on from the item it was building if that is still there; `none` takes the queue away. A queue that runs out leaves the city building nothing, needing orders; `build ... none` is nothing on purpose |
+| `queue <row> <col> <item> [<item> ...] [repeat <from> [<times>]]`, `queue <row> <col> none` | A city's production queue: its items in turn, each `<what>x<count>[@<where>]` (`what` an index into what it builds, as `build`; where its units go: `defend`, `point<n>`, `point<n>+bless`, or a route `<row>.<col>[,<row>.<col> ...]`; `stay` or none, they stay: a saved game writes `@stay`); after the last it stops, or with `repeat` goes back to item `from` (0 the first) and on, `times` times or for ever. At most 8 items. It goes on from the item it was building if that is still there; `none` takes the queue away. A queue that runs out leaves the city building nothing, needing orders; `build ... none` is nothing on purpose |
 | `point <n> <row> <col> [defend]`, `point <n> none` | Place (or move) the side's rally point `n` (0 to 9), on land the side has seen and in no city but its own, where units are sent to gather: once it is full they stand beside it; with `defend` those who get there defend it. `none` removes it: the units on their way there stop, and the cities that sent theirs there keep them. Units sent to a point's hex with `goto` follow it if it moves |
 | `patrol <units> <row> <col> <row> <col> [<row> <col> ...] [attack <percent>]` | A standing order for units on one hex: go round the waypoints in order, the first first (give where they stand first, to start from there), turn after turn: round again after the last if it is the first again, else back the way they came. As with `goto`, this turn's part at once, the rest at the end of each of the side's turns, on from a waypoint with what movement is left, never into another side's units seen. With `attack <percent>`, they attack the other sides' stacks they see and can reach at those odds or better, once a turn at most; without, never. Waypoints are on land the side has seen, and in no city but its own |
 | `maraud <units>`, `unmaraud <units>` | Hand the units to the computer (`src/marauder.rs`), which leads them at the end of each of the side's turns, after the program's orders: it strikes the stacks it can beat and takes the cities it can, at the `bold` odds; or no longer |
 | `roam <units> <row> <col>` | The computer's move for marauding units: as `move`, and they go on marauding (refused for units that are not) |
-| `undo` | Take back the order before, if it can be (not a battle, nor one that put a side out) |
+| `undo` | Take back the order before, if it was a move, a `goto` or `patrol` that has gone one leg at most, a plan in rounds, a `build` or a `walls` (not a battle, nor a move that put a side out or, with fog of war, showed something new; a `queue`, `rally`, `point`, `maraud`, `bless` or `disband` is not taken back; a `done` or `defend` given since does not count) |
 | `end` | The turn is over (the end of the output says so too) |
 
 `<units>` is one unit's name or several, with commas between and no spaces
-(`red.0.0,red.3.0`); they may stand on different hexes. Empty lines and
+(`red.0.0,red.3.0`); they may stand on different hexes, but for `bless`,
+`patrol` and `onward`, which take the units of one hex. Empty lines and
 lines starting with `#` are skipped. Units of another side can be attacked
 but not gone through: a move into them is a battle, and the winners go in. A
 city of another side, or nobody's, ends a move: with nobody in it, it is

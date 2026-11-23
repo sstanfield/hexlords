@@ -54,6 +54,7 @@ pub fn map_section_for(web: bool) -> HelpSection {
             (zoom, "Zoom in or out at the pointer"),
             ("Right or middle drag", "Pull the map along"),
             ("Click the minimap", "Go there (drag to keep going)"),
+            ("Wheel over the minimap", "The view goes the same way, much farther"),
         ],
     )
 }

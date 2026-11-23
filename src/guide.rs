@@ -168,7 +168,8 @@ fn battles(game: &Game) -> Vec<HelpSection> {
                 (
                     "A commander",
                     "Every other unit of a stack with a commander is as much stronger as it gives \
-                                 (a point more when it is at its highest level). The commander fights last."
+                                 (a point more when it is at its highest level). In lines the commander fights last; by \
+                                 strength and on the dice a hit may fall on it as on any other."
                         .to_string(),
                 ),
                 ("The ground", "A defender is a point stronger on hills and in forests, two on mountains.".to_string()),
@@ -273,7 +274,8 @@ fn movement(game: &Game) -> Vec<HelpSection> {
             (
                 "Stacks",
                 "The units selected go together where every one of them can reach; a march goes at \
-                        the pace of the slowest."
+                        the pace of the slowest. Flyers with units that walk stay with them: they go one \
+                        way all of them can pay for, not where the others cannot walk."
                     .to_string(),
             ),
             (
@@ -359,7 +361,7 @@ fn cities(game: &Game) -> Vec<HelpSection> {
                 ),
                 (
                     "New units",
-                    "A city can send what it builds to a hex of your choosing: Send new units to... in \
+                    "A city can send what it builds to a hex of your choosing: Send to... in \
                                its window or the sidebar."
                         .to_string(),
                 ),
@@ -371,7 +373,7 @@ fn cities(game: &Game) -> Vec<HelpSection> {
                          level they rise to. A city that is taken loses a level."
                     ),
                 ),
-                ("Training", "Some cities train their units: they come out veterans.".to_string()),
+                ("Training", "Some cities train their units: they come out veterans, or elite.".to_string()),
                 (
                     "The end",
                     "A side that has lost its last city is out of the game, its units with it; the last \
@@ -431,7 +433,7 @@ fn units(_game: &Game) -> Vec<HelpSection> {
                     "Blessings",
                     format!(
                         "A temple blesses each unit once, if its stack seeks it there (B): {} or {} a turn; \
-                         it stops there for the turn. Each temple blesses it again.",
+                         it stops there for the turn. Another temple blesses it again.",
                         Blessing::Strength.words(),
                         Blessing::Moves.words()
                     ),
@@ -444,7 +446,7 @@ fn units(_game: &Game) -> Vec<HelpSection> {
             &[
                 (
                     "Commanding",
-                    "A captain makes the other units of its stack stronger and fights last. It has a \
+                    "A captain makes the other units of its stack stronger and, in lines, fights last. It has a \
                                 name, and rises in level too; at the highest it commands a point more."
                         .to_string(),
                 ),
@@ -479,8 +481,10 @@ fn orders(game: &Game) -> Vec<HelpSection> {
             (
                 "Your orders",
                 "A click on where a stack goes is a plan: nothing moves yet, and the map outlines the way. \
-                 Another click is another plan; Undo takes the last back. What moves nobody happens at once: \
-                 what a city builds, its walls, Defend, a blessing. Then Orders done (where End turn is)."
+                 While the stack has moves left where its plan ends it stays selected, and another click is a \
+                 waypoint: it goes on from there (a click on the stack itself: afresh). Undo takes the last \
+                 plan, or its last leg, back. What moves nobody happens at once: what a city builds, its \
+                 walls, Defend, a blessing. Then Orders done (where End turn is)."
                     .to_string(),
             ),
             (
@@ -514,6 +518,13 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                  other (Join it); the stack there is then selected with those on their way to it (marked + \
                  in their boxes, which are blue); send it on. Those there wait for the others, and they go on together, at \
                  the pace of the slowest, with what moves the way there left."
+                    .to_string(),
+            ),
+            (
+                "Your own",
+                "A stack waits behind others of yours that are on their way and leave it no room, and goes \
+                 through those that stay. Two of yours that come toward each other with no room for both \
+                 on one hex change places, each paying its step: a hex never holds more than a stack."
                     .to_string(),
             ),
             (
@@ -559,8 +570,8 @@ fn orders_sections(order: &str) -> Vec<HelpSection> {
                     "Your turn",
                     "Move your stacks, set what your cities build, then End turn. When your turn comes \
                      again, your log opens if the others did something to you (Start turn closes it); \
-                     else your turn starts at once, the stack nearest the cursor that waits for orders \
-                     selected."
+                     else your turn starts at once (with the stack nearest the cursor that waits for orders \
+                     selected, if you said so in the Options)."
                         .to_string(),
                 ),
                 (
@@ -569,7 +580,8 @@ fn orders_sections(order: &str) -> Vec<HelpSection> {
                      (as a turn starts, and once the stack you moved can go no further), whether a \
                      battle is told in a line or played out (and how fast), whether moves are shown \
                      as they happen (the computer's an order at a time, the map on what it does), \
-                     whether a temple asks, whether End turn asks while something waits for orders."
+                     whether a temple asks, whether End turn asks while something waits for orders, and in \
+                     rounds whether the map outlines the selected stack's orders only (V)."
                         .to_string(),
                 ),
                 (
@@ -599,7 +611,7 @@ fn orders_sections(order: &str) -> Vec<HelpSection> {
                 (
                     "Go to",
                     "Sends the selected units somewhere far (G, then a hex; or just click a hex beyond \
-                           their reach): they go there over the turns, on their own, at the end of each of \
+                           their reach): this turn's part at once, the rest over the turns, on their own, at the end of each of \
                            yours (until then you can still send them elsewhere); Undo takes it back until they have gone a second leg. A march never attacks: if something is in the way it \
                            stops and waits for orders. Shift+click on the way there makes a stop: they go by \
                            way of it, and on at once; at a temple they seek its blessing and stop for the turn. \
@@ -648,7 +660,8 @@ fn orders_sections(order: &str) -> Vec<HelpSection> {
                      on land you have seen, then click the last: back and forth along them, or round and round \
                      if the last is the stack's own hex. Then say whether it attacks: never (a scout keeps out \
                      of fights), or the stacks it sees and can reach at the odds you pick or better, once a \
-                     turn at most. It goes on from a waypoint at once, and at the end of each of your turns."
+                     turn at most (never nobody's). A waypoint is in no city but your own. It goes on from a \
+                     waypoint at once, and at the end of each of your turns."
                         .to_string(),
                 ),
                 (

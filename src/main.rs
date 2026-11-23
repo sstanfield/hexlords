@@ -3,8 +3,8 @@
 //! Without `--map` the window opens on the new game screen. Options:
 //! - `--map <file or directory>`: play this map at once (one person, the first
 //!   side; the computer plays the others);
-//! - `--players red=person,blue=simple`: who plays which side (`person`, or an
-//!   agent: `passive`, `simple`, `cmd:<program>`);
+//! - `--players red=person,blue=bold`: who plays which side (`person`, or an
+//!   agent: `steady`, `bold`, `careful`, `simple`, `passive`, `cmd:<program>`);
 //! - `--mode turns|rounds`: the sides play one after the other (turns), or
 //!   all give their orders and the round plays out at once (rounds);
 //! - `--order fixed|drawn`: the sides play in the same order each round, or

@@ -68,7 +68,7 @@ pub enum Sampling {
     Nearest,
     /// A mix of the pixels around the point, from a smaller copy of the
     /// picture when it is drawn small (mipmaps). The terrain tiles: a hex is
-    /// anything from 20 to 270 pixels wide, and a 256 pixel tile read one
+    /// anything from 16 to 215 pixels wide, and a 256 pixel tile read one
     /// pixel at a time shimmers when it is drawn small.
     ///
     /// A picture read this way should have no transparency next to what is

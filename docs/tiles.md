@@ -16,7 +16,7 @@ cargo run -p assetgen --release -- --previews target/previews  # and pictures of
 |---|---|---|
 | `assets/tiles/` | `<terrain>_tile.png`: the ten terrains; `city_<side>_tile.png`: a city for each side | 256 x 256, no transparency |
 | `assets/roads/` | `road_NN.png` and `bridge_NN.png`: a road over land and over water, in each of its 14 shapes | 256 x 256, transparent |
-| `assets/units/` | `<name>.png`: the units' signs (and `default_unit.png`, the C++ demo's) | 128 x 128, transparent |
+| `assets/units/` | `<name>.png`: the units' signs (and `default_unit.png`, the C++ demo's, 64 x 64) | 128 x 128, transparent |
 
 This page is for whoever changes these pictures, or draws others: how a
 picture lies in its file, what the game does with it, and how to change the
@@ -69,11 +69,12 @@ gives all nine.
 
 ## What the game does with it
 
-- A hex is drawn with its tile, then a border over its outer twentieth (black,
-  red under the cursor). The border hides where two terrains meet, which is a
+- A hex is drawn with its tile, then a border over about its outer twentieth,
+  wider zoomed out and under the cursor (black; red under the cursor; other
+  colors for the selected stack, a route's stops and a battle). The border hides where two terrains meet, which is a
   hard edge.
-- On the screen a hex is anything from about 270 pixels wide (the closest zoom
-  on a high-density display) to about 20 (the farthest on an ordinary one). The
+- On the screen a hex is anything from about 215 pixels wide (the closest zoom
+  on a display of twice the density) to about 16 (the farthest on an ordinary one). The
   tiles are scaled smoothly, with mipmaps: `Sampling::Smooth` in
   `src/render/textures.rs`. That is why they have no transparency.
 - The minimap does not use the tiles. It gives every terrain one color
@@ -123,7 +124,10 @@ to it.
 ## Units
 
 A unit is drawn as a disc in its side's color, half a hex wide, with the
-picture of its kind on it (`image` in the map's `units.txt`). The game's
+picture of its kind on it (`image` in the map's `units.txt`); a stack with
+a commander shows the commander's, and the ring round the disc is silver
+for veterans and gold for elites. Another side's stack shows as a banner
+in its color with its size, not as its kind's picture. The game's
 signs are a sword (`militia.png`), a spear (`lightinfantry.png`), a shield
 (`wardens.png`), a helmet with a visor (`heavyinfantry.png`), a bow
 (`archers.png`), a pine (`rangers.png`), two peaks (`highlanders.png`), a
@@ -140,8 +144,9 @@ disc**: within 0.45 of the middle, where the hex is 1 from its middle to its
 points (in a 128 pixel picture, within 29 pixels of the middle sideways and
 33 up and down). Its transparent pixels have the outline's color, for the
 same reason as the roads'. A city shows its own picture, never a unit's:
-its garrison is a small pip for each unit, in the unit's color, in rows of
-four over the gate at the bottom of the tile, so keep that part of a city
+its garrison is a small pip for each unit, in its side's color, in rows of
+five over the gate at the bottom of the tile (a stack in the field shows its
+size the same way), so keep that part of a city
 plain enough for them to show.
 
 In the panel under the map the same picture is the unit's icon, on a round
@@ -180,13 +185,14 @@ there. How many trees, peaks and so on a tile has, and how big, is in
 ```sh
 cargo run -p assetgen --release -- --previews target/previews   # draw, and look at target/previews/*.png
 cargo test --workspace                                          # the tiles in assets/ are the generator's
-cargo run -- --map assets/maps/continent.map                    # and in the game
+cargo run -- --map assets/maps/continent                        # and in the game
 ```
 
 The roads are in `road.rs` (`road`, `bridge`, and `lines`, the way a shape's
 road runs), the signs in `icons.rs`, each a shape given by its distance.
 
-`assets/tiles`, `assets/roads` and the signs in `assets/units` hold what the
+`assets/tiles`, `assets/roads`, the signs in `assets/units` and the
+`hg_*.png` of `assets/skin` hold what the
 generator makes and nothing else: tests draw every picture again and compare.
 Do not edit a PNG, and do not add other files there; change the generator and
 run it. A picture drawn some other way (by hand, by another program) can
@@ -198,7 +204,7 @@ does not have to touch the game's: it brings its own.
 
 | Option | What it does |
 |---|---|
-| `--out <dir>` | The asset directory: the pictures go into its `tiles`, `roads` and `units`. Default: `assets` (run it from the repository's root) |
+| `--out <dir>` | The asset directory: the pictures go into its `tiles`, `roads`, `units` and `skin`. Default: `assets` (run it from the repository's root) |
 | `--size <pixels>` | The side of a tile and of a road, 8 to 2048; the signs are half that. Default: 256 |
 | `--cutout` | Leave what is outside the hex transparent in the tiles (with one pixel of terrain past the rim): tiles to look at, or for a renderer that takes single pixels. Not for the game |
 | `--atlas` | Also write `tiles/atlas.png` (all ten tiles in a grid of 5 x 2, two transparent pixels around each) and `atlas.txt` (a line for each: `name letter x y w h u0 v0 u1 v1`). The game does not use an atlas |
@@ -210,7 +216,7 @@ out, so the art can be judged without a window. The terrain of
 
 ## Not here yet
 
-Rivers, and anything that moves on water. The minimap shows no roads. The
+A picture of a river's own (a river is hexes of water). The minimap shows no roads. The
 unit picture `assets/units/default_unit.png` is the C++ demo's, drawn for a
 kind of unit that names no picture.
 
@@ -222,7 +228,8 @@ pictures the generator makes too (`tools/assetgen/src/skin.rs`), named
 `hg_window@192.png`, `@288`, `@384`), so they are sharp on any screen:
 a window is a dark panel inside a thin bronze line, with round corners and
 a soft shadow; its title bar darker, the title in gold; a button a raised
-plate, sunk and lined in bronze when pressed; and the button a window means
+plate, sunk and lined in bronze when pressed; a window's close button; the
+boxes of a stack's units (selected, coming, both); and the button a window means
 its player to press (`build::primary_button`, the skin's `Primary`) in
 bronze. `assets/skin/hexlords.tb.txt` says how the skin cuts each into nine
 (the corners stay, the edges and the middle stretch); the rest of the skin

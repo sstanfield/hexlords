@@ -4,14 +4,13 @@
 //!
 //! It is pure: no files, no clock, no state of its own beyond what it is
 //! given, so the same seed and knobs make the same map on every machine, and
-//! the game can call it for a new random map one day. Its stages each draw on
+//! the new game screen calls it for a new random map. Its stages each draw on
 //! their own stream of chance ([`rng`]), so changing what comes later leaves
 //! what came before as it was.
 //!
 //! The stages, in order: [`land`] (land and water), [`relief`] (mountains and
 //! hills), [`rivers`] (and lakes), [`biomes`] (forest, swamp, desert,
-//! grass), [`cleanup`]. Cities, sites and roads are to come (the plan's
-//! milestones G4 to G6).
+//! grass), [`cleanup`], [`cities`], [`sites`] (temples), [`roads`].
 //!
 //! - [`config`]: the knobs, the presets, the size.
 //! - [`grid`]: the hex grid's helpers: walks, shortest ways, pieces, the

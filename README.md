@@ -1,40 +1,81 @@
 # Hexlords
 
-A hex map strategy game in Rust, of cities, stacks of units and sides that
-take turns. It began as a port of the C++
-[hexGame](https://github.com/sstanfield/hexGame) engine demo, and goes its own
-way. The UI is [Turbo Ferret](https://github.com/sstanfield/turbo-ferret) and
-the graphics go through [miniquad](https://github.com/not-fl3/miniquad).
+A strategy game on a hex map, in the feel of the fantasy strategy games of
+the 1990s. A few sides, each starting from one city, fight over a map of
+cities until one of them is left. Cities bring in gold and build units; the
+units go about in stacks of up to eight, led by captains who rise in level;
+a stack sent into another side's units fights them, and takes the city if
+that is where they stood. People play it (several at one screen, in turn)
+and so does the computer, in a window or in a browser.
 
-![A map in the game](docs/screenshots/continent.png)
+![A game on the continent: a stack selected, and where it can go](docs/screenshots/continent.png)
 
-The port is done (`docs/deviations.md` records how it differs from the C++),
-and from here the game goes its own way. `hexgame-rust-port-plan.md` has the
-direction. So far:
+It is written in Rust, on [Turbo Ferret](https://github.com/sstanfield/turbo-ferret)
+for the UI and [miniquad](https://github.com/not-fl3/miniquad) for the
+graphics, and on nothing else. The rules, the maps and the pictures are its
+own: nothing is taken from an existing game.
 
-- a [map format](docs/map-format.md) in plain text, for maps of any size and
+## Two ways to play
+
+A game is played in one of two modes, chosen when it starts. Both run on the
+same rules, and on any map.
+
+**Turns** ("I go, you go"). The sides play one after the other. An order
+happens as it is given: the stack moves, the battle is fought, and you see
+what came of it before you give the next. When your turn comes again your
+log says what the others did to you meanwhile. It is the careful, tactical game:
+see, then decide.
+
+**Rounds** ("we go"). Every side gives all its orders for the round before
+anything moves, and none sees another's. A click is a plan, and the map
+outlines the way the stack will take; a click after it adds a waypoint. When
+every side has said its orders are done, the round plays out for all of them
+at once, on a clock: a step takes a unit the share of the round that the
+step's cost is of its movement, so the fast are there first. A stack fights
+whoever it finds on its way, the first into a hex defends it against the
+next, and stacks sent to join each other go on as one. It is the
+game of guessing the other side: racing to reinforce a city, or to take one
+before its relief arrives.
+
+![Rounds: a plan, outlined on the map, waits for the round to play out](docs/screenshots/rounds.png)
+
+[docs/gameplay.md](docs/gameplay.md) has the rules in full, and why they are
+as they are.
+
+## What is in it
+
+- **The game** (`cargo run`): a new game screen (the map, the mode, how
+  battles go and how much chance is in them, the gold, fog of war, who plays
+  each side), and then the game. Stacks move along the roads and fight;
+  ships carry armies over the water and flyers go over anything; cities are
+  taken, pay taxes, raise their walls and build what their holder queues up
+  and can pay for; units rise in level and temples bless them. Orders can
+  last: a stack sent far goes there over the turns, goes round on patrol, defends
+  where it stands or is left to the computer to raid with, and a city sends
+  what it builds to a rally point. The other sides show only as banners
+  with their size, and fog of war is a choice (in part, or total: land never
+  seen is black until it is explored). A list says what is left to do this
+  turn, a log keeps your battles, which can be watched again, and what happened
+  since your last turn can be replayed. A game that is not over is kept as
+  it goes and played on later ([docs/saves.md](docs/saves.md)).
+- **Computer players** ([docs/agents.md](docs/agents.md)): several styles
+  that play either mode, a way to play them against each other with no
+  window (`--headless`), and a text protocol for a program of your own to
+  play a side.
+- **Maps** in a plain text [format](docs/map-format.md), of any size and
   shape from 20 x 20 to 600 x 600: terrain, roads with bridges and mountain
   passes, the map's own kinds of unit, its cities with what they build and
-  who stands in them, and pictures of its own if it wants them;
-- the game plays such a map (`--map`, or the new game screen): sides take
-  turns, people (hotseat) and the computer; stacks move along the roads and
-  fight, led by captains who rise in level; ships carry armies over the
-  water, and flyers go over anything; cities are taken, pay taxes and
-  build what their holder sets and can pay for; stacks can be sent far over
-  turns, cities can send what they build, and a list says what is left to
-  do; the other sides show only as banners, and fog of war is a choice (in
-  part, or total: land never seen is black until it is explored); the
-  last side left wins. [docs/gameplay.md](docs/gameplay.md) is the plan for
-  the rules, in two modes, both built: sides taking turns; or rounds, where
-  all give their orders and the round then plays out at once, every stack
-  a hex at a time; a game that is not over is kept as it goes, and the new
-  game screen plays it on ([docs/saves.md](docs/saves.md));
-- a [map editor](#the-map-editor) for the terrain and the roads;
-- a random map generator, `mapgen`, with a ruler for any map
-  ([docs/mapgen.md](docs/mapgen.md)): the terrain so far; rivers, cities,
-  sites and roads to come;
-- [tiles, roads and unit signs](#the-pictures) drawn by a program in the
-  repository, so the art is original and can be made again.
+  who stands in them, and pictures of its own if it wants them. The game
+  comes with one to play on, a continent of nine cities for four sides, and
+  a small example of a terrain file.
+- **A [map editor](#the-map-editor)** for the terrain and the roads.
+- **A random map generator**, `mapgen` ([docs/mapgen.md](docs/mapgen.md)),
+  which the new game screen uses for "A random map", with a ruler for any
+  map.
+- **[The pictures](#the-pictures)**: the tiles, the roads, the units' signs
+  and the windows' skin are drawn by a program in the repository, so the art
+  is original and can be made again.
+- **[A browser build](#in-a-browser)**: the same game as WebAssembly.
 
 ## Build and run
 
@@ -90,29 +131,41 @@ its keys) and, at the right end, your treasury: your gold, what your cities
 bring in each turn (+), what your units cost (-). Under the map are the
 selected hex's units, a box each: the leader's (its commander) on the left,
 then one for each of the eight units a hex holds, and beside them Go to, Done
-and Next. Beside the map are End turn and Undo, and the selected hex's city:
-one of yours in full (set what it builds, where its new units go), another's
-as it shows from outside.
+and Next. Beside the map, under the minimap, are End turn, Undo and Replay,
+and the selected hex's city: one of yours in full (set what it builds, where
+its new units go), another's as it shows from outside.
+
+The help in the game (F1 or `?`) says every key, and the Help menu has the
+rules of the game in play. The most used:
 
 | Input | What it does |
 |---|---|
 | A menu's title | Opens it (with one open, pointing at another title opens that one); a click elsewhere, or Esc, closes it |
 | Move the pointer over the map | The hex under it becomes the cursor (red border) |
-| Click a hex, or Enter at the cursor | The hex is the selected one: the panels are about it. With no unit selected: select your stack on the hex (those of its units with moves left), which shows where all of them can go (red tint). With units selected: they move to the hex together if all of them can reach it (into another side's units: an attack), and while the whole stack can go on it stays selected (once it cannot, nothing is, or the next stack that waits: Options); any other hex drops the selection (and selects your stack there, if it has one) |
+| Click a hex, or Enter at the cursor | With no unit selected: select your stack on the hex (those of its units that wait for orders), which shows where all of them can go. With units selected: they go to the hex together if all of them can reach it (into another side's units: an attack; the line under the map says the odds first), and stay selected while they can go on. A hex beyond their reach sends them there over the turns (Go to). Another of your stacks is selected instead, or, if the selected units can reach it, the game asks: join it, or select it. A stack that has orders (defends, marches, patrols) asks before it takes new ones. An order the rules refuse opens a window that says why |
 | Drag on the map with the left button | Moves the map with the pointer (a press that hardly moves is still a click) |
 | Esc | Close the menu or the window on top (the help first); with none open, drop the selection |
-| Undo, or Ctrl+Z (Cmd+Z) | Take back the last move or city order, unless it was a battle (chance had a say) or put a side out: the units are back where they were, with their points, selected |
-| Next, or N (Shift+N: back) | Select the next of your stacks that can still move, and look at it |
+| Undo, or Ctrl+Z (Cmd+Z) | Take back the last move, what a city was set to build, or its walls: the units are back where they were, with their points, selected. Not a battle (chance had a say), nor a move that put a side out or, with fog of war, showed something new. In rounds: the last plan, or its last leg |
+| Next, or N (Shift+N: back) | Select the nearest of your stacks that waits for orders, and look at it |
+| Done, or D | Put the selected units aside for this turn: Next passes them by |
+| F | The selected units defend where they stand, turn after turn, until they are sent somewhere (F again: no longer) |
+| Go to, or G, then a hex | The selected units go there over as many turns as it takes: this turn's part now, the rest at the end of each of your turns. Shift+click (or Shift+Enter) on the way makes a stop they go by. In turns a march never attacks: if something is in the way it stops, says so in your log, and waits for orders (left alone, it tries again next turn) |
+| P | Patrol: Shift+click the waypoints, click the last (the stack's own hex: round and round; else back and forth), then say whether it attacks what it sees, and at what odds |
+| U | Maraud: the computer leads the stack, strikes what it can beat and takes the cities it can; U again calls it back |
+| R | Rally points: ten flags of yours on the map, where cities send what they build and stacks are sent to gather |
+| B | On a temple: the selected units seek its blessing (each temple blesses a unit once) |
+| X | Disband the selected units, for good (it asks first) |
 | C (Shift+C: back) | Look at your next city (and drop the selection) |
 | H | Look at your capital (in hotseat, each person's turn starts there) |
-| Go to, or G, then a hex | The selected units go there over as many turns as it takes: this turn's part now, the rest at the start of your next turns. A march never attacks: if something is in the way it stops, says so in your log, and waits for orders (left alone, it tries again next turn). Esc: never mind |
-| Done, or D | Put the selected units aside for this turn: Next stack passes them by, and the next stack that waits is selected |
-| Tasks, or T | What you have left to do this turn, most pressing first: stacks with no orders and cities that build nothing; then stacks that can go further and cities whose work waits; then the rest. Click a row to see to it |
-| Send to..., beside the map or in a city's window, then a hex | What the city builds goes there on its own (Keep here: it stays) |
-| Log, or L | Your log: every battle you fought, attacking or attacked, with who won and who died on each side; the cities you took and lost; who is out. The latest round first |
+| O, or Open the city's window (City details, for another's) | The selected hex's city in a window, with more room. Your own: a button for each thing it can build (pointing at one shows all about it), a queue (+ beside a kind: kinds in turn, how many of each, where they go, and whether it then stops or starts over), where its new units go (Send to..., then a hex; a rally point; Keep here; Defend here), and Raise the walls |
+| M, A | A list of your cities, or of all of them, with a minimap that rings the one you choose; open it in full, or go to it |
+| Tasks, or T | What you have left to do this turn, most pressing first: stacks with no orders and cities that build nothing; then cities whose work waits for gold or for room; then the rest. Click a row to see to it |
+| Log, or L | Your log: every battle you fought, attacking or attacked, with who won and who died on each side (Watch plays it again); the cities you took and lost; who is out. The latest round first |
+| Replay, or W | What happened since your last turn, again (in rounds: the round that played out). W again stops it; the slider beside the button goes back to any moment of it, where the map can be looked over but no orders given; Esc, or the turn's button, comes back to now |
+| The End turn button, or Ctrl+T (Cmd+T) | The side's turn is over ("End turn (3)": three stacks or cities still wait for orders, and it asks first). The others play theirs, and the button says whose turn it waits for |
+| Start turn (the same button, when your turn has come), or Ctrl+T | When your turn comes with news for you, your log opens first: this closes it and you play. With no news your turn starts at once |
 | Point at a unit under the map | A box over it says all about the unit: its side, numbers, and what each terrain costs it to enter |
-| Point at what your city can build, beside the map | A box beside it says all about it: turns, price, upkeep, what each terrain costs it |
-| Click a unit under the map | Take that unit into the selection, or leave it out (a unit of another hex starts a new one): the reach of those selected shows on the map, and the line under the units is about them |
+| Click a unit under the map | Take that unit into the selection, or leave it out: the reach of those selected shows on the map, and the line under the units is about them |
 | Two fingers on a trackpad, or the mouse wheel, over the map | The map moves with the fingers (a wheel moves it up and down, and sideways with Shift) |
 | Drag with the right or the middle button | Pulls the map along with the pointer |
 | Ctrl (or Cmd) and the wheel or two fingers | Zoom in and out; what is under the pointer stays under it |
@@ -120,53 +173,54 @@ as it shows from outside.
 | Two fingers or the wheel over the minimap | The view goes the same way as over the main map, but much farther: a pixel of the minimap for a pixel of the fingers |
 | Arrow keys | Move the cursor; the view follows when the cursor leaves it, and comes back to it if it was moved away |
 | `1` / `2` | Zoom out / in, centered on the cursor |
-| The End turn button ("End red's turn"), or Ctrl+T (Cmd+T) | The side's turn is over: your log opens, and shows what the others do while they play their turns (the computer's a little apart; the button says whose turn it waits for); a turn begins with the side's units' points back and its cities' work |
-| Start turn (the same button, when your turn has come), or Ctrl+T | Close the log and play (an order on the map starts the turn too) |
-| O, or Open the city's window (City details, for another's) | The selected hex's city in a window, with more room: all about it, and a button for each thing it can build, with the unit's icon, strength and moves (only its holder's to press); pointing at one shows all about it |
-| M, A | A list of your cities, or of all of them, with a minimap that rings the one you choose; open it in full, or go to it |
 | F1, or `?` | The help: every key and what the mouse does (Esc closes it). The Help menu also has the rules of the game in play: battles (the system and chance it was set up with), movement (what each of the map's kinds of unit pays), cities and gold, units and captains, orders and turns, what you see |
+| Ctrl+, (Cmd+,) | Options: what the screen does for you as a turn goes (selects the next stack, asks before a turn ends, plays battles out or tells them in a line, shows moves as they happen). They are yours, not rules |
 | Ctrl+Cmd+F, or F11 | Fullscreen on and off (macOS keeps F11 for itself) |
 | Ctrl+N (or Cmd+N), or Game > New game... | Back to the new game screen: at once if the game is over, else after asking (a game that is not over is kept, and can be played on from there) |
 | Ctrl+Q (or Cmd+Q) | Quit |
 
-A unit is a disc in its side's color with the sign of its kind. A city shows
-itself, not the units in it: its roofs and walls in its holder's color (grey
-for nobody's), and a pip for each unit of its garrison in that unit's color
-(the selected unit's ringed in gold). On the minimap a city is a square in
-its holder's color. The map stops at its edges: the view never shows what is
-past them.
+**In rounds** the same clicks make plans. A click on where a stack goes
+outlines its way on the map, and nothing moves; while the stack has moves
+left where the plan ends, another click is a waypoint it goes on to (a click
+on the stack itself starts afresh). V outlines every stack's orders, or the
+selected stack's only. The End turn button is Orders done: once every side
+has pressed it the round plays out before you, a stack fighting whoever it
+finds on its way, and your battles are played out in their window as the
+round comes to them.
+
+Your own stack is a disc in your side's color with the sign of its kind (its
+commander's, if it has one); another side's is a banner in its color with
+its size. A city shows itself, not the units in it: its roofs and walls in
+its holder's color (grey for nobody's), and a pip for each unit of its
+garrison. On the minimap a city is a square in its holder's color. The map
+stops at its edges: the view never shows what is past them.
 
 **Under the map** the first line says the turn and what is under the cursor
 (with what it would cost the selected unit to go there, or, if it is another
 side's units, how likely an attack on them is to be won). Below it is the
 selected hex, the one last clicked: its terrain and road, and its units in
-the stack's order, nine places in a row (eight units and a commander), each
+the stack's order, nine places in a row (a commander and eight units), each
 the unit's icon with its strength and the movement points it has left
 (`4 · 6/10`). Pointing at one opens a box with all about it; clicking it
-takes it into the selection or out of it (the selected are pressed in, their
-numbers in gold), and the last line is about the selected units. The map takes all
-the room the panel leaves. **Under the minimap** are your
-gold, taxes and upkeep, and the selected hex's city: its name, who holds it,
+takes it into the selection or out of it (the selected are outlined), and
+the last line is about the selected units. The map takes all the room the
+panel leaves. **Under the minimap** is the selected hex's city: its name,
 its walls and taxes, its garrison, what it is building and what it can
-build, in how many turns, at what price.
+build.
 
-![The list of cities and a city in full](docs/screenshots/cities.png)
+![A city in full: what it can build, its queue, where its new units go](docs/screenshots/cities.png)
 
-**A new game** starts on its own screen: the map (the preview beside the
-settings can be looked over like the game's), how to play (turns, one side after the
-other; or rounds: every side gives its orders, a click being a plan the map
-outlines, and then the round plays out before you, the faster units there
-first, a stack fighting whoever it finds on its way, stacks sent to join
-each other going on as one, a click after a plan a waypoint the stack
-goes by), the order of the turns
-(the same each round, or drawn anew; in rounds, who goes first of two
-there at the same moment), the
-battles (lines, strength or dice; how much chance, from 0 to 10, or on the
-dice what a roll of exactly a side's number does; whether wounds last and
-whether the loser of an exchange may hit back; a cap of 9 on a unit's
-strength), the gold
-each side starts with, and who plays each side, a person or the computer. Several people take turns at
-one screen (hotseat): between two people's turns a screen hides the map
+**A new game** starts on its own screen: the map (one of the game's, or a
+random map made there; the preview beside the settings can be looked over
+like the game's), how to play (turns or rounds, above), the order of the
+turns (the same each round, or drawn anew; in rounds, who goes first of two
+there at the same moment), the battles (lines, strength or dice; how much
+chance, from 0 to 10, or on the dice what a roll of exactly a side's number
+does; whether wounds last and whether the loser of an exchange may hit back;
+a cap of 9 on a unit's strength), the gold each side starts with, fog of war
+(off, on, or total), and who plays each side, a person or the computer (a
+click on Computer again goes through its styles). Several people take turns
+at one screen (hotseat): between two people's turns a screen hides the map
 until the next one says they are there.
 
 ![The new game screen](docs/screenshots/new_game.png)
@@ -187,47 +241,47 @@ map, the setup and every order given since, which make the same game again
 ([docs/saves.md](docs/saves.md)): one saved by another version of the rules
 may no longer come out the same, and then says so and is not played on.
 
-The sides play one after the other. On a side's turn only its units move and
-only its cities can be set to build ("my cities"); End turn passes to the
-next side, and the computer plays its sides' turns at once. A side's turn
+**The rules in short** (in turns; [docs/gameplay.md](docs/gameplay.md) has
+them in full, and the Help menu those of the game in play). On a side's turn
+only its units move and only its cities can be set to build; End turn passes
+to the next side, and the computer plays its sides' turns. A side's turn
 begins with its units' points back and its cities' work. A city of another
 side, or nobody's, with nobody in it, is taken by moving into it. Units sent
 into another side's units attack them, as many as a hex holds (from one hex
 or several): the two stacks fight until one is gone, and if the attackers
-win they go in (and take the city, if it is one).
-Strength counts, and so do chance, the ground (hills and forests 1, mountains
-2), a city's walls (¾ a level) and a commander, who makes every other unit of
-its stack 1 stronger (or as much as its kind says). A battle is played out
-in a window: both stacks, a card for each unit with what it fights with and
-where its bonuses come from, and then the exchanges, a few a second, the two
-that fight lit, the one hit in red with an X, the dead dimmed (Skip, Watch
-again). A battle the others fight against you is shown as it happens, its
-hex ringed and flashing, and
-the game waits until you close its window (Close, Enter or Esc). What
-happened since your last turn can be looked at again: Replay (W) under the
-turn's button plays it, and the slider beside it goes back to any moment of
-it, where the map can be looked over but no orders given. Every battle
-you fought, attacking or attacked, can be watched again
-from your log for a few rounds (its Watch button). While the others play,
-your log is open and fills as they go; Start turn begins yours. When the
-last person is out, the computer plays on, a turn at a time, to the end. A side that loses its last
-city is out, and the last side left wins.
+win they go in (and take the city, if it is one). Strength counts, and so do
+chance, the ground (a defender is 1 stronger on hills and in forests, 2 on
+mountains), a city's walls (1 behind walls 1 or 2, 2 behind 3 to 5, 3 behind
+6) and a commander, who makes every other unit of its stack 1 stronger (or
+as much as its kind says). A side that loses its last city is out, and the
+last side left wins; when the last person is out, the computer plays on to
+the end.
+
+A battle is played out in a window: both stacks, a card for each unit with
+what it fights with and where its bonuses come from, and then the exchanges,
+a few a second, the two that fight lit, the one hit in red with an X, the
+dead dimmed (Skip, Watch again). A battle the others fight against you is
+shown as it happens, and the game waits until you close its window (Close,
+Enter or Esc). Every battle you fought, attacking or attacked, can be
+watched again from your log for a few rounds (its Watch button).
 
 Units rise in level from the battles they win: veteran (a silver ring), then
-elite (gold), each a point stronger; a city may train its units a level up.
-A temple blesses a unit that stops on it, once: +1 strength or +2 moves.
-Captains have names and levels too, and a stack with no captain that wins a
-hard fight may see one rise from its ranks.
+elite (gold), each a point stronger; some cities train their units, which
+come out veterans or elite. A temple blesses the units of a stack that seeks
+its blessing there (B), each unit once: +1 strength or +2 moves. Captains
+have names and levels too, and a stack with no captain that wins a hard
+fight may see one rise from its ranks.
 
-Each side has a treasury (the sidebar shows yours: "Gold 34", "Taxes +40,
-upkeep -32"). At the start of each of its turns its cities' taxes come in
-and its units' upkeep goes out; units it cannot pay leave it. What a city
-finishes is paid for then, at the city's price; without the gold, the unit
-waits in the city until there is enough ([docs/gameplay.md](docs/gameplay.md)).
+Each side has a treasury (the menu bar shows yours: "34 +40 -32"). At the
+start of each of its turns its cities' taxes come in and its units' upkeep
+goes out; units it cannot pay leave it. What a city finishes is paid for
+then, at the city's price; without the gold, the unit waits in the city
+until there is enough. A city's holder can raise its walls a level a turn,
+for gold; a city that is taken loses a level.
 
 ![A battle, played out](docs/screenshots/battle.png)
 
-![A side's log: the battles it fought and the cities it lost](docs/screenshots/log.png)
+![A side's log: the battles it fought and the cities it took and lost](docs/screenshots/log.png)
 
 ## Options
 
@@ -240,20 +294,24 @@ hexlords [--map <file.map or map directory>] [--players <side>=<who>,...] [--mod
         [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
 ```
 
-Without `--map` the window opens on the new game screen.
+Without `--map` the window opens on the new game screen, which sets the
+game up; the options that set up a game (`--players` to `--total-fog`) go
+with `--map`, and without it are not used.
 
 - `--map <file.map or map directory>`: play this map at once (the format is
   in `docs/map-format.md`): one person plays the side of the first city with
   a garrison, where the view starts, and the computer the others.
 - `--players red=person,blue=bold`: who plays which side: `person`, or an
-  agent of the computer's: `steady` (the default), `bold`, `careful` (the
-  planner's styles), `simple`, `passive`, `cmd:<program>`
-  ([docs/agents.md](docs/agents.md)).
+  agent of the computer's: `steady` (the default), `bold`, `careful` (the planner's styles), `simple`, `passive`, `cmd:<program>`
+  ([docs/agents.md](docs/agents.md), which has more: `steady/turns`, a
+  planner that plays rounds as it plays turns, to measure against).
 - `--mode turns|rounds`: the sides play one after the other (turns, unless
   it is said), or all give their orders and the round plays out at once
   ([docs/gameplay.md](docs/gameplay.md), "Rounds").
 - `--order fixed|drawn`: the sides play in the same order each round, or one
-  drawn anew; `--seed <n>`: the seed of the game's chance.
+  drawn anew; `--seed <n>`: the seed of the game's chance (without it: one
+  from the clock in a window, each game its own; 1 without a window, or
+  with a script or a screenshot, so that a run can be made again).
 - `--chance <0-10>`: how much chance there is in a battle: 0 none (the
   stronger always wins), 10 nothing else; 5 unless it is said.
   `--battles lines|strength|dice`: how a battle goes (lines unless it is said;
@@ -284,7 +342,8 @@ Without `--map` the window opens on the new game screen.
 - `--script <steps>`: play some input before the first frame. Steps are
   separated by commas: `left`, `right`, `up`, `down`, `enter`, `esc`, `space`,
   `1`, `2`, `key:X` (any character; `key:ctrl+s` with modifiers),
-  `click:ROW:COL`, `hover:ROW:COL`, `drag:ROW:COL:ROW:COL`, `minimap:ROW:COL`
+  `click:ROW:COL`, `shiftclick:ROW:COL` (a click with Shift held),
+  `hover:ROW:COL`, `drag:ROW:COL:ROW:COL`, `minimap:ROW:COL`
   (click the minimap there), `press:ID` (click the widget with that id),
   `point:ID` (point at it),
   `scroll:DX:DY` (two fingers on the map: it moves that many pixels right and
@@ -353,8 +412,10 @@ cargo run -p assetgen --release -- --previews target/previews  # and maps drawn 
 The map's pictures are not drawn by hand: `tools/assetgen` (Rust, no
 dependencies) computes them from noise and shapes. The ten terrain tiles in
 `assets/tiles`, each running on into its neighbours of the same terrain
-without a seam; a road and a bridge in each of the 14 shapes a hex's road can
-have, in `assets/roads`; and four signs for units in `assets/units`. So the
+without a seam, and a city for each side; a road and a bridge in each of the
+14 shapes a hex's road can have, in `assets/roads`; a sign for each of the
+game's kinds of unit in `assets/units`; and the windows' and buttons'
+pictures in `assets/skin`. So the
 art is original, it is under the game's licence and no other, and it can be
 made again at any size. [docs/tiles.md](docs/tiles.md) says how each picture
 lies in its file and how to change the art. A map can bring pictures of its
@@ -371,7 +432,8 @@ cargo test --workspace    # needs no GPU and no display
 ```
 
 The repository is a Cargo workspace: the game at its root, the tools
-(`mapeditor`, `assetgen`, `mapgen`, `web`) under `tools/`. The code is laid out so that almost all of it runs in `cargo test`:
+(`mapeditor`, `assetgen`, `mapgen`, `web`) under `tools/`. The code is laid out so that
+almost all of it runs in `cargo test`:
 the game state (`src/state`, `src/game.rs`), the view math (`src/view.rs`,
 `src/minimap_view.rs`), the geometry the renderers draw (`src/render`), and the
 UI with its input (`src/screen.rs`, `src/session.rs` and the editor, driven
@@ -379,16 +441,18 @@ headlessly by `tests/` and `tools/mapeditor/tests/`). Only the GPU calls need a
 window, and the screenshot mode shows what they draw. `CLAUDE.md`
 has the layout and the rules of the repository.
 
-The C++ original is not part of this repository. To read it next to the port:
-`git clone https://github.com/sstanfield/hexGame reference/hexGame` (the
-directory is gitignored).
+Hexlords began as a Rust port of an older C++ demo of the author's
+([hexGame](https://github.com/sstanfield/hexGame)) and has gone its own way
+since. `hexgame-rust-port-plan.md` and `docs/deviations.md` are what is left
+of that: history, not a specification.
 
 ### What has been run where
 
 Everything was built, tested and looked at (through screenshots, and a window
 resize) on **macOS 15, Apple Silicon, at 2x**, and the owner has run the game's
 live window there. The map editor has only been driven by tests and scripted
-screenshots: nobody has used its live window yet. **Linux and Windows have not been run**: CI
+screenshots: nobody has used its live window yet. **Linux and Windows have not been
+run**: CI
 (`.github/workflows/ci.yml`) builds and tests on all three, and has itself not
 run yet. Things to try by hand on each: the mouse (hover, click to select and
 move), the keys above, resizing the window, a HiDPI and a plain screen, F11
@@ -407,5 +471,6 @@ Hexlords is under the zlib licence (`LICENSE`), as the C++ original is.
 `NOTICE` lists what it is built on and ships with: Turbo Ferret and Turbo Badger
 (zlib), Turbo Badger's default skin in `assets/skin` (public domain), miniquad
 (MIT or Apache-2.0), and the built-in font, DejaVu Sans, whose licence notice
-has to accompany every copy of the program. The terrain tiles are made by
-`tools/assetgen` and are part of the game; the unit picture is the C++ demo's.
+has to accompany every copy of the program. The tiles, the roads, the units' signs and the
+windows' pictures are made by `tools/assetgen` and are part of the game; one
+unit picture, `assets/units/default_unit.png`, is the C++ demo's.
