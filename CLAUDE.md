@@ -103,6 +103,7 @@ cargo run -p assetgen --release                                  # draw the game
 cargo run -p assetgen --release -- --previews target/previews    # and maps drawn with the tiles
 cargo run -p mapgen --release -- batch --seeds 1..16 --size medium --out target/maps --sheet   # random maps, a contact sheet
 cargo run -p mapgen --release -- stats assets/maps/continent     # what a map measures
+FUZZ_N=300 cargo test --release --test fuzz -- --nocapture   # games of random orders, many (the tests play a few): the rules' promises held to
 cargo +1.86 check --workspace --all-targets # MSRV
 cargo run -p web -- --serve                 # the game in a browser: http://127.0.0.1:8080 (once: rustup target add wasm32-unknown-unknown)
 cargo clippy --target wasm32-unknown-unknown -p hexlords -- -D warnings   # the browser build, checked

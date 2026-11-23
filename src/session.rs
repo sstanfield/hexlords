@@ -577,7 +577,7 @@ pub struct Session {
     /// own; the others' are not outlined at all if the person said so.)
     plans: Vec<Hex>,
     own_way: Vec<Hex>,
-    plans_of: Option<(u64, Side, Option<UnitId>, bool)>,
+    plans_of: Option<(u64, Side, Vec<UnitId>, bool)>,
     /// Where a battle being shown is fought, since when, and until when
     /// (`None`: while its window is open): the map rings the hex, and it
     /// flashes.
@@ -2910,8 +2910,10 @@ impl Session {
             }
             return;
         }
-        let key = (game.map.revision(), game.player(), game.selected(), self.options.own_orders_only);
-        if self.plans_of != Some(key) {
+        // (The whole selection: a unit left out by its box goes its own
+        // way, another stack's.)
+        let key = (game.map.revision(), game.player(), game.selection().to_vec(), self.options.own_orders_only);
+        if self.plans_of.as_ref() != Some(&key) {
             let selection = game.selection();
             let (mut own, mut others): (Vec<Hex>, Vec<Hex>) = (Vec::new(), Vec::new());
             for (units, way) in game.ways_by_stack(key.1) {
@@ -3359,8 +3361,15 @@ impl Session {
         self.close_mission_ask();
         let before = self.screen.game.history().len();
         let sent = self.screen.game.selection().to_vec();
+        // (Where a stack selected to be sent on has its plan's end: a click
+        // there is no order, and the panels stay about the stack.)
+        let end = self.screen.game.onward_from();
         let outcome = self.screen.game.select_hex(hex);
         self.shown = hex;
+        if end == Some(hex) {
+            let game = &self.screen.game;
+            self.shown = game.selected().and_then(|id| game.map.units().get(id)).map_or(hex, |u| u.pos());
+        }
         match outcome {
             // Beyond their reach: sent there (Go to). The cursor follows
             // them, or the next stack is selected.
@@ -4152,7 +4161,8 @@ impl Session {
             Pick::GoTo => {
                 let units = self.screen.game.selection().to_vec();
                 let before = self.screen.game.history().len();
-                match self.screen.game.apply(Order::GoTo { units: units.clone(), to: hex, via: self.stops.clone() }) {
+                let via: Vec<Hex> = self.onward_stops().into_iter().chain(self.stops.iter().copied()).collect();
+                match self.screen.game.apply(Order::GoTo { units: units.clone(), to: hex, via }) {
                     Ok(_) => {
                         self.stops.clear();
                         self.tell_battle(before);
@@ -4227,6 +4237,17 @@ impl Session {
         }
     }
 
+    /// The stops of the plan the selected stack is to be sent on from
+    /// (`Game::onward_from`): a Go to for it goes by way of them, as a
+    /// click beyond its reach does. None if it is selected afresh.
+    fn onward_stops(&self) -> Vec<Hex> {
+        let game = &self.screen.game;
+        match game.onward_from() {
+            Some(_) => game.selected().and_then(|id| game.map.units().get(id)).map_or(Vec::new(), |u| u.route.clone()),
+            None => Vec::new(),
+        }
+    }
+
     /// Shift+click (or Shift+Enter) while picking where units go: a stop on
     /// the way, if they (or what the city builds) can get there from the
     /// last; else it says why. The picking goes on: a click without Shift
@@ -4241,8 +4262,9 @@ impl Session {
         let game = &self.screen.game;
         let side = game.player();
         let route: Vec<Hex> = self.stops.iter().copied().chain([hex]).collect();
+        let by_plan: Vec<Hex> = self.onward_stops().into_iter().chain(route.iter().copied()).collect();
         let checked = match pick {
-            Pick::GoTo => game.check_route(side, game.selection(), &route),
+            Pick::GoTo => game.check_route(side, game.selection(), &by_plan),
             Pick::Rally(city) => game.check_rally(side, city, &route),
             Pick::RallyPoint(_) => Ok(()),
             Pick::Patrol => game.check_waypoints(side, game.selection(), &route),
@@ -4275,14 +4297,15 @@ impl Session {
                     self.look_at(at);
                     return;
                 }
-                if game
-                    .map
-                    .units_at(at)
-                    .iter()
-                    .filter_map(|id| game.map.units().get(*id))
-                    .any(|u| u.side() == game.player())
-                {
-                    game.select_hex(at);
+                // The units the row is about, not all on the hex (the
+                // review, 2026-11-23: a row that said "2 units" selected
+                // the garrison beside them too).
+                let about = game.task_units(game.player(), at);
+                if let Some((first, rest)) = about.split_first() {
+                    game.select_unit(*first);
+                    for id in rest {
+                        game.toggle_unit(*id);
+                    }
                 }
                 self.cycled = Some(at);
                 self.look_at(at);

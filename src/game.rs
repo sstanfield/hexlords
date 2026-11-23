@@ -3494,7 +3494,8 @@ impl Game {
                 }
                 None => Vec::new(),
             };
-            let order = if self.rounds() && !self.sight(side).knows(hex) && via.is_empty() {
+            // (A plan they had goes, as with any new plan.)
+            let order = if self.rounds() && !self.sight(side).knows(hex) {
                 Order::Toward { units: units.clone(), to: hex }
             } else {
                 Order::GoTo { units: units.clone(), to: hex, via }
@@ -3553,10 +3554,18 @@ impl Game {
         let waiting: Vec<UnitId> = able.iter().copied().filter(|id| units.get(*id).is_some_and(free)).collect();
         // (At sea, all of them: the ships carry who has no points left. On
         // patrol or marauding, all of them too: they go as one.)
+        // (With none that waits: those that moved, were put aside or are on
+        // their way, not the defenders and the patrols beside them: the
+        // review, 2026-11-23, a stack moved into a city took its garrison
+        // along.)
+        let loose: Vec<UnitId> =
+            able.iter().copied().filter(|id| units.get(*id).is_some_and(|u| !u.defending && !u.on_duty())).collect();
         let mut stack = if self.map.open_water(hex) || patrol::together(&self.map, &own) {
             own
         } else if !waiting.is_empty() {
             waiting
+        } else if !loose.is_empty() {
+            loose
         } else if !able.is_empty() {
             able
         } else {
@@ -3678,6 +3687,9 @@ impl Game {
         let stalled = |u: &Unit| !u.route.is_empty() && u.stalled && !u.done && !u.moved;
         let waiting = |u: &Unit| !u.moved && !u.done && u.route.is_empty();
         let moved = |u: &Unit| !u.done && u.route.is_empty();
+        // (Put aside with somewhere to go still, it is on its way: a plan
+        // goes as the round plays out, whatever D said.)
+        let aside = |u: &Unit| u.done && (u.route.is_empty() || u.stalled);
         if let Some(alarm) = patrol::alarm_state(units) {
             (alarm, those(units, &|u| patrol::needs_word(u)))
         } else if free.iter().any(|u| stalled(u)) {
@@ -3687,8 +3699,8 @@ impl Game {
             (StackState::Waiting, those(&free, &waiting))
         } else if free.iter().any(|u| moved(u)) {
             (StackState::MovesLeft, those(&free, &moved))
-        } else if free.iter().any(|u| u.done) {
-            (StackState::Done, those(&free, &|u| u.done))
+        } else if free.iter().any(|u| aside(u)) {
+            (StackState::Done, those(&free, &aside))
         } else if let Some(duty) = patrol::duty_state(units) {
             (duty, those(units, &|u| u.on_duty()))
         } else if units.iter().any(|u| !u.route.is_empty()) {

@@ -550,8 +550,13 @@ changed.
     later, starts afresh: the next click is a new plan from where it
     stands. Undo takes back the last leg. A plan that ends in a battle or
     in a city to take has nothing after it (the battle ends the
-    attackers' round), and a waypoint on a temple that has not blessed
-    them stops them there for the round, as any stop on one does.
+    attackers' round); nor has one that ends on a temple that has yet to
+    bless them, which stops them there for the round as any stop on one
+    does: nothing is offered from there, and a leg after it is refused.
+    Go to (G) for a stack so selected goes by the plan's stops too; a
+    click on land never seen (total fog) is a new plan, to look. The
+    status line counts a hex's cost of what the plan leaves ("2 of 6
+    points to go on to here").
   - A stack passes through its own side's stacks that stay, as a move
     does: past a hex they leave it no room on, its step is to the next
     with room. Behind stacks of its side that are on their way themselves
@@ -843,7 +848,11 @@ thing to happen. Ideas to try, as the rules grow:
   the player is done with this turn: put aside, or moved). A stack's row
   counts the units it is about, not all on the hex (the owner,
   2026-11-22: three defenders and two units that wait are "2 units ... no
-  orders yet", `Game::task_units`). A stack the
+  orders yet", `Game::task_units`), and its click selects those; a click
+  on a hex whose units have all had their orders takes those that moved
+  or are on their way, not the defenders beside them. A stack with a
+  plan that was put aside (D) is still on its way, and says where; units
+  of one hex sent two ways name both. A stack the
   player moved and that stopped has had its orders, moves left or not:
   Next stack passes it by, as it does one put aside, and a click on its
   hex picks the units that have not moved first. A stack that got where

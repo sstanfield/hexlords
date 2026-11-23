@@ -234,6 +234,11 @@ impl Game {
         if !self.goes_on_from(side, from, &sight) {
             return Err("their plan ends in a battle, or in a city to take: nothing comes after it".to_string());
         }
+        if self.stopped_at(&ids, from) {
+            return Err(
+                "their plan ends on a temple that has yet to bless them: it stops them for the round".to_string()
+            );
+        }
         let legs = self.legs(side, &ids, (from, to), true, &sight, None)?;
         self.parties += 1;
         let party = self.parties;
@@ -265,17 +270,34 @@ impl Game {
         !fight && self.map.city_at(hex).is_none_or(|c| sight.holder(c) == side)
     }
 
+    /// True if `ids` would be stopped for the round on `hex`, a stop of
+    /// their plan: a temple that has not blessed all of them (they seek its
+    /// blessing there, `stops`).
+    fn stopped_at(&self, ids: &[UnitId], hex: Hex) -> bool {
+        self.map.tile(hex).is_some_and(|t| t.kind == TileType::Temple)
+            && ids.iter().filter_map(|id| self.map.units().get(*id)).any(|u| !u.blessed_at(hex))
+    }
+
     /// Where `ids` (a side's, with one plan for this round) can all go on
     /// to from where their plan ends (`plan_end`), with what its way leaves
     /// each of them. `None` if they have no plan together, or none that
-    /// can have more after it.
+    /// can have more after it (it ends in a battle, in a city to take, or
+    /// on a temple that stops them).
     pub(super) fn onward_range(&self, ids: &[UnitId], sight: &Sight) -> Option<crate::state::MoveRange> {
         let from = self.plan_end(ids)?;
         let side = self.map.units().get(*ids.first()?)?.side();
-        if !self.goes_on_from(side, from, sight) {
+        if !self.goes_on_from(side, from, sight) || self.stopped_at(ids, from) {
             return None;
         }
         self.range_from(ids, from, sight)
+    }
+
+    /// What `unit`, selected to be sent on from its plan's end
+    /// (`Game::onward_from`), has left there: its movement less the plan's
+    /// way. `None` if it is not.
+    pub fn onward_left(&self, unit: &Unit) -> Option<u32> {
+        let from = self.onward_from()?;
+        self.left_at(unit, unit.move_cost, from, &self.sight(unit.side()))
     }
 
     /// `ids` by the hex they stand on, in their order.

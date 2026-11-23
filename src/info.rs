@@ -51,7 +51,11 @@ pub fn cursor_line_for(game: &Game, sight: &Sight) -> String {
             None if game.selection().len() > 1 => {
                 parts.push(format!("the {} units can move here", game.selection().len()))
             }
-            None => parts.push(format!("{cost} of {} points to move here", unit.movement)),
+            // (Sent on from its plan's end: of what the plan leaves it.)
+            None => match game.onward_left(unit) {
+                Some(left) => parts.push(format!("{cost} of {left} points to go on to here")),
+                None => parts.push(format!("{cost} of {} points to move here", unit.movement)),
+            },
         }
     }
     parts.join("  |  ")
@@ -828,10 +832,17 @@ pub fn task_line(game: &Game, task: &Task) -> String {
                 Some(city) => format!("in {}", city.name),
                 None => format!("at row {}, column {}", at.row, at.col),
             };
-            let goal = here
-                .iter()
-                .find(|u| !u.route.is_empty())
-                .map_or(String::new(), |u| route_words_to(map, &u.route, u.bound));
+            // Where those it is about go: each way there is, once.
+            let going: Vec<&Unit> = about.iter().filter_map(|id| map.units().get(*id)).collect();
+            let going = if going.iter().any(|u| !u.route.is_empty()) { going } else { here.clone() };
+            let mut goals: Vec<String> = Vec::new();
+            for unit in going.iter().filter(|u| !u.route.is_empty()) {
+                let words = route_words_to(map, &unit.route, unit.bound);
+                if !goals.contains(&words) {
+                    goals.push(words);
+                }
+            }
+            let goal = goals.join(" and to ");
             // On patrol, or marauding.
             let patrol = here.iter().find_map(|u| u.patrol.as_ref());
             let duty = here.iter().find_map(|u| duty_words(u)).unwrap_or_default();
