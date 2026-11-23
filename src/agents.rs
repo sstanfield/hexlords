@@ -682,6 +682,7 @@ pub fn order_text(game: &Game, order: &Order) -> String {
         Order::EndTurn => "end".to_string(),
         Order::Move { units: u, to } => format!("move {} {}", units(u), hex(to)),
         Order::Toward { units: u, to } => format!("toward {} {}", units(u), hex(to)),
+        Order::Onward { units: u, to } => format!("onward {} {}", units(u), hex(to)),
         Order::Roam { units: u, to } => format!("roam {} {}", units(u), hex(to)),
         Order::GoTo { units: u, to, via } => {
             format!("goto {} {}", units(u), hexes(&via.iter().chain([to]).copied().collect::<Vec<_>>()))
@@ -776,6 +777,7 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
         ["end"] => Order::EndTurn,
         ["move", u, row, col] => Order::Move { units: units(u)?, to: hex(row, col)? },
         ["toward", u, row, col] => Order::Toward { units: units(u)?, to: hex(row, col)? },
+        ["onward", u, row, col] => Order::Onward { units: units(u)?, to: hex(row, col)? },
         ["build", row, col, what] => {
             let city = game.map.city_at(hex(row, col)?).ok_or("there is no city there")?.id;
             let what = match what {
@@ -856,7 +858,7 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
         ["roam", u, row, col] => Order::Roam { units: units(u)?, to: hex(row, col)? },
         _ => {
             return Err(
-                "not an order (move, toward, goto, done, defend, undefend, bless, disband, build, rally, queue, point, walls, undo, end, patrol, maraud, unmaraud, roam)".to_string()
+                "not an order (move, toward, onward, goto, done, defend, undefend, bless, disband, build, rally, queue, point, walls, undo, end, patrol, maraud, unmaraud, roam)".to_string()
             );
         }
     }))

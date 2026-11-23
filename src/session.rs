@@ -334,6 +334,10 @@ fn help_section() -> Vec<HelpSection> {
                 (&undo, "Take back the last move, a city's work or its walls (not a battle)"),
                 (&end_turn, "End the turn (End turn (3): three stacks or cities still wait for orders)"),
                 ("In rounds", "A click is a plan (its way outlined): nothing moves until every side's orders are done"),
+                (
+                    "In rounds, a click after a plan",
+                    "A waypoint: they go on from where it ends (a click on the stack: afresh)",
+                ),
                 ("In rounds, a click on the black", "Total fog: the stack sets off toward land not seen, to look"),
                 (
                     "Orders done (in rounds)",
@@ -2146,6 +2150,13 @@ impl Session {
                 )
             }
             Some(unit) if unit.on_duty() => info::duty_line(map, unit, game.selection().len()),
+            // (To be sent on from where the plan ends: `Game::select_onward`.)
+            Some(unit) if !unit.route.is_empty() && unit.planned && game.onward_from().is_some() => {
+                format!(
+                    "Planned: to {}. Another click: on from there (the stack itself: afresh).",
+                    info::route_words_to(map, &unit.route, None)
+                )
+            }
             Some(unit) if !unit.route.is_empty() && unit.planned => {
                 format!(
                     "Planned: to {} as the round plays out (another click: another plan; F: defend here).",
@@ -3402,12 +3413,26 @@ impl Session {
                     );
                     return;
                 }
+                let at = sent.iter().find_map(|id| game.map.units().get(*id)).map_or(hex, |u| u.pos());
+                self.shown = at;
+                // While they have movement left where the plan ends, they
+                // stay selected, to be sent on from there: a waypoint (the
+                // owner's word, 2026-11-22: "setting a goto point could
+                // leave the stack active with MP to spend from that
+                // point"). Selected again, they start afresh.
+                if self.screen.game.select_onward(&sent) {
+                    self.auto_selection.clear();
+                    self.picking = None;
+                    self.notice = Some(
+                        "Planned: they go there as the round plays out. Another click: on from there (the stack: afresh)."
+                            .to_string(),
+                    );
+                    return;
+                }
                 self.notice = Some(
                     "Planned: they go there as the round plays out, fighting who they meet (Ctrl+Z: not after all)."
                         .to_string(),
                 );
-                let at = sent.iter().find_map(|id| game.map.units().get(*id)).map_or(hex, |u| u.pos());
-                self.shown = at;
                 self.after_move(at, &sent);
             }
             SelectOutcome::Moved { .. } => {

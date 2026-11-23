@@ -129,7 +129,9 @@ impl CityBefore {
 /// Something a side has left to do, or to look at, this turn (`Game::tasks`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Task {
-    /// A stack of the side's, on its hex: how many units, and how it stands.
+    /// A stack of the side's, on its hex: how it stands, and how many of
+    /// its units that is about (of five, three of which defend while two
+    /// wait for orders: two).
     Stack {
         at: Hex,
         units: usize,
@@ -267,12 +269,45 @@ struct Group {
 }
 
 impl Group {
-    /// The one that moves with the fewest points left: the way is its.
+    /// The one that moves with the fewest points left: the way is its, if
+    /// they all go at one table's prices (`mixed`).
     fn lead<'a>(&self, map: &'a Map) -> Option<(&'a Unit, MoveCostId)> {
         let movers = self.movers.iter().filter_map(|(id, table)| map.units().get(*id).map(|u| (u, *table)));
         movers.min_by_key(|(u, _)| u.movement)
     }
+
+    /// True if those that move go at different prices (flyers with units
+    /// that walk, riders with rangers): the way of one is not the others',
+    /// and they go a way all of them can (`Game::ground_together`).
+    fn mixed(&self) -> bool {
+        self.movers.windows(2).any(|pair| pair[0].1 != pair[1].1)
+    }
 }
+
+/// What a hex is to one who goes, and what a step costs it, as closures a
+/// way is found with (`Game::ground`, `Game::ground_together`).
+type Ground<'a> = (Box<dyn Fn(Hex) -> Passage + 'a>, Box<dyn Fn(Hex, Hex) -> Option<u16> + 'a>);
+
+/// How the steps of units that go together are weighed against each other,
+/// to find the way of them all (`Game::ground_together`).
+enum Weigh {
+    /// This turn, with what each has left (in the movers' order): a step
+    /// weighs the largest share it takes of what one of them has left, of
+    /// [`SHARE`]; a way that weighs no more than [`SHARE`] all of them can
+    /// pay for.
+    Now(Vec<u32>),
+    /// However far: a step weighs the time it takes the slowest of them
+    /// (its cost over its movement a turn; not a commander's among others,
+    /// who keeps up).
+    Far,
+}
+
+/// All of what a unit has left, as `Weigh::Now` counts (every number up to
+/// 12 divides it, and most up to 36).
+const SHARE: u32 = 55_440;
+
+/// A turn's movement, as `Weigh::Far` counts the time a step takes.
+const PACE: u32 = 720;
 
 /// How far a side sees, with fog of war: from its units, and from its cities.
 pub const UNIT_SIGHT: u32 = 2;
@@ -537,6 +572,10 @@ pub struct Game {
     range: Option<MoveRange>,
     /// The map's revision when `range` was computed.
     range_revision: u64,
+    /// In rounds: the selected units go on from where their plan for the
+    /// round ends (`select_onward`): `range` is from there, and the hex
+    /// chosen next is a waypoint more (`Order::Onward`), not a new plan.
+    onward: bool,
     /// The map's own asset directory, if it brought one: a picture found
     /// there is drawn instead of the game's of the same path.
     pub assets: Option<PathBuf>,
@@ -634,6 +673,7 @@ impl Game {
             selected: Vec::new(),
             range: None,
             range_revision: 0,
+            onward: false,
             assets: None,
             order,
             current: 0,
@@ -1022,7 +1062,8 @@ impl Game {
             Order::Move { units, to } if self.rounds() => self.plan(side, &units, to, true, false),
             Order::Toward { units, to } if self.rounds() => self.plan(side, &units, to, false, false),
             Order::Roam { units, to } if self.rounds() => self.plan(side, &units, to, true, true),
-            Order::Move { units, to } => self.move_units(side, &units, to),
+            Order::Onward { units, to } if self.rounds() => self.plan_onward(side, &units, to),
+            Order::Move { units, to } | Order::Onward { units, to } => self.move_units(side, &units, to),
             Order::Toward { units, to } => {
                 // The way of the slowest; whoever can get as far comes along
                 // (all or none, of those that ships carry).
@@ -1038,9 +1079,21 @@ impl Game {
                     return Err(UNSEEN.to_string());
                 }
                 let room = |hex: Hex| self.fits(hex, &units);
-                let (hex, _) =
-                    self.known_step_toward_by(lead, table, (to, &room), &sight).ok_or("there is no way there")?;
+                let hex = if group.mixed() {
+                    // (A way all of them can go, as far as all can pay.)
+                    let way = self.way_together(&group, to, &sight).ok_or("there is no way there")?;
+                    let near = |(hex, cost): &(Hex, u32)| {
+                        *cost <= lead.movement && (hostile(&self.map, side, *hex) || room(*hex))
+                    };
+                    way.into_iter().rev().find(near).map(|(hex, _)| hex)
+                } else {
+                    self.known_step_toward_by(lead, table, (to, &room), &sight).map(|(hex, _)| hex)
+                };
+                let hex = hex.ok_or("there is no way there")?;
                 let coming = self.coming(&group, hex, &sight);
+                if coming.is_empty() {
+                    return Err("they cannot all get that far".to_string());
+                }
                 self.move_units(side, &coming, hex)
             }
             Order::Build { city, what } => {
@@ -1254,7 +1307,7 @@ impl Game {
                 continue;
             }
             let group = self.group(&ids);
-            let Some((lead, table)) = group.as_ref().ok().and_then(|g| g.lead(&self.map)) else {
+            let Some((lead, _)) = group.as_ref().ok().and_then(|g| g.lead(&self.map)) else {
                 events.extend(self.stall(side, ids, at, to));
                 break;
             };
@@ -1262,12 +1315,12 @@ impl Game {
                 break;
             }
             // This turn's step: the farthest along the way, as the side
-            // knows it, that the slowest can pay for and that has room for
+            // knows it, that all of them can pay for and that has room for
             // all of them; never into another side's units it sees (one it
             // does not is met).
             let sight = self.sight(side);
             let room = |hex: Hex| self.fits(hex, &ids);
-            let way = self.known_path_by(lead, table, to, u32::MAX, &sight);
+            let way = group.as_ref().ok().and_then(|group| self.way_together(group, to, &sight));
             // Too few points left for the first step: that is no stop, it
             // goes on next time.
             if way.as_ref().and_then(|w| w.first()).is_some_and(|(_, cost)| *cost > lead.movement) {
@@ -1319,16 +1372,14 @@ impl Game {
         vec![Event::Stalled { side, units: ids, at, to }]
     }
 
-    /// Who of `group` can get to `hex` this turn: those that move and can;
-    /// with ships, all of them if every one that moves can, else none.
+    /// Who of `group` goes to `hex` this turn: all of them, if every one
+    /// that moves can get there; else none (a stack stays together: the
+    /// owner's word, 2026-11-22).
     fn coming(&self, group: &Group, hex: Hex, sight: &Sight) -> Vec<UnitId> {
         let units = self.map.units();
         let reach = |(id, table): &(UnitId, MoveCostId)| {
             units.get(*id).is_some_and(|u| self.known_range_by(u, *table, sight).cost(hex).is_some())
         };
-        if group.carried.is_empty() {
-            return group.movers.iter().filter(|m| reach(m)).map(|(id, _)| *id).collect();
-        }
         if !group.movers.iter().all(reach) {
             return Vec::new();
         }
@@ -1408,7 +1459,11 @@ impl Game {
                         march.restore(unit);
                     }
                 }
-                self.select(ids);
+                // (In rounds, with a plan still: to be sent on from its end,
+                // as they were before the leg taken back.)
+                if !self.select_onward(&ids) {
+                    self.select(ids);
+                }
             }
             Undo::Built { city, building, progress, queue, resting } => {
                 let holder = self.map.cities().get(city).map(|c| c.side);
@@ -2658,6 +2713,121 @@ impl Game {
         (pass, steps)
     }
 
+    /// Those of `group` that move, each with its table's prices, in the
+    /// group's order. `None` if one is gone.
+    fn walkers(&self, group: &Group) -> Option<Vec<(&Unit, &MoveCost)>> {
+        let units = self.map.units();
+        group.movers.iter().map(|(id, table)| Some((units.get(*id)?, units.move_cost(*table)?))).collect()
+    }
+
+    /// What each hex is to the units of `group` going as one, as their side
+    /// knows the map, and what a step weighs for them (`weigh`): a hex shut
+    /// to one of them is shut to all, and a step one of them cannot make
+    /// none makes (the owner's word, 2026-11-22: "a mixed stack should
+    /// always stay and move together even with flyers and non-flyers": the
+    /// flyers do not fly where the others cannot walk). Each still pays its
+    /// own price for the way.
+    fn ground_together<'a>(&'a self, group: &Group, sight: &'a Sight, weigh: Weigh) -> Option<Ground<'a>> {
+        let walkers = self.walkers(group)?;
+        let led = walkers.iter().any(|(u, _)| !self.map.is_commander(u.id()));
+        let mut passes = Vec::new();
+        let mut steps = Vec::new();
+        for (i, (unit, costs)) in walkers.iter().enumerate() {
+            let (pass, step) = self.ground(unit, costs, sight);
+            passes.push(pass);
+            // What its cost is multiplied by and divided by, to weigh it.
+            let scale = match &weigh {
+                Weigh::Now(left) => (SHARE, left.get(i).copied().unwrap_or(0), true),
+                Weigh::Far => (PACE, unit.speed(), !(led && self.map.is_commander(unit.id()))),
+            };
+            steps.push((step, scale));
+        }
+        let now = matches!(weigh, Weigh::Now(_));
+        let pass = move |hex: Hex| {
+            let mut worst = Passage::Open;
+            for pass in &passes {
+                match pass(hex) {
+                    Passage::Blocked => return Passage::Blocked,
+                    Passage::Stop => worst = Passage::Stop,
+                    Passage::Open => {}
+                }
+            }
+            worst
+        };
+        let step = move |from: Hex, to: Hex| {
+            let mut worst = 0u32;
+            for (step, (times, over, counts)) in &steps {
+                let cost = u32::from(step(from, to)?);
+                if now && (*over == 0 || cost > *over) {
+                    return None;
+                }
+                if *counts {
+                    let weight = cost.saturating_mul(*times);
+                    worst = worst.max(if now { weight / over } else { weight.div_ceil((*over).max(1)) });
+                }
+            }
+            Some(worst.clamp(1, u32::from(u16::MAX)) as u16)
+        };
+        Some((Box::new(pass), Box::new(step)))
+    }
+
+    /// The ground of `group` for a way however far: its lead's, if all of
+    /// it goes at one table's prices; else the ground of them all
+    /// (`ground_together`), where a step weighs what it takes the slowest.
+    fn ground_far<'a>(&'a self, group: &Group, sight: &'a Sight) -> Option<Ground<'a>> {
+        if group.mixed() {
+            return self.ground_together(group, sight, Weigh::Far);
+        }
+        let (lead, table) = group.lead(&self.map)?;
+        let costs = self.map.units().move_cost(table)?;
+        let (pass, steps) = self.ground(lead, costs, sight);
+        Some((Box::new(pass), Box::new(steps)))
+    }
+
+    /// The way of `group` (a stack on a hex) to `to`, however far, as its
+    /// side knows the map: each hex after its own, with what it costs so
+    /// far, to be held against the movement of the group's lead (the one
+    /// with the fewest points): no more than that, and every one of them
+    /// can pay to get there this turn. For a group that goes at one table's
+    /// prices that is the lead's cost on its cheapest way; for a mixed one
+    /// (`Group::mixed`) the way is one all of them can go, the quickest for
+    /// the slowest, and the cost says how much the one worst off is short.
+    fn way_together(&self, group: &Group, to: Hex, sight: &Sight) -> Option<Vec<(Hex, u32)>> {
+        let (lead, table) = group.lead(&self.map)?;
+        if !group.mixed() {
+            return self.known_path_by(lead, table, to, u32::MAX, sight);
+        }
+        let (pass, steps) = self.ground_together(group, sight, Weigh::Far)?;
+        let way = path_with(&self.map, (lead.pos(), to), &*steps, u32::MAX, &*pass)?;
+        let hexes: Vec<Hex> = way.into_iter().map(|(hex, _)| hex).collect();
+        let costs = self.costs_each(group, lead.pos(), &hexes, sight)?;
+        let walkers = self.walkers(group)?;
+        let short = |spent: &Vec<u32>| {
+            let over = walkers.iter().zip(spent).map(|((u, _), c)| i64::from(*c) - i64::from(u.movement)).max();
+            (i64::from(lead.movement) + over.unwrap_or(0)).max(0) as u32
+        };
+        Some(hexes.into_iter().zip(&costs).map(|(hex, spent)| (hex, short(spent))).collect())
+    }
+
+    /// What going from `from` over `hexes`, one after the other, has cost
+    /// each of `group` that moves (in its order) by each hex, as their side
+    /// knows the map. `None` if one of them cannot go that way.
+    fn costs_each(&self, group: &Group, from: Hex, hexes: &[Hex], sight: &Sight) -> Option<Vec<Vec<u32>>> {
+        let walkers = self.walkers(group)?;
+        let grounds: Vec<_> = walkers.iter().map(|(unit, costs)| self.ground(unit, costs, sight)).collect();
+        let mut spent = vec![0u32; walkers.len()];
+        let mut at = from;
+        let mut all = Vec::with_capacity(hexes.len());
+        for hex in hexes {
+            for (i, (_, steps)) in grounds.iter().enumerate() {
+                spent[i] += u32::from(steps(at, *hex)?);
+            }
+            all.push(spent.clone());
+            at = *hex;
+        }
+        Some(all)
+    }
+
     /// True if a ship of `side` on `hex` has room for one more who rides
     /// (`Game::rides`); for a commander, if a ship is there and no commander.
     fn room_aboard(&self, side: Side, hex: Hex, leads: bool) -> bool {
@@ -3134,13 +3304,46 @@ impl Game {
     pub fn deselect(&mut self) {
         self.selected.clear();
         self.range = None;
+        self.onward = false;
+    }
+
+    /// In rounds, units that were just given a plan stay selected to be
+    /// sent on from where it ends (the owner's word, 2026-11-22: "setting a
+    /// goto point could leave the stack active with MP to spend from that
+    /// point"): `range` is where all of them can go from there with what
+    /// the plan's way leaves them, and a hex chosen in it is a waypoint
+    /// more (`Order::Onward`). False, and nothing is selected, if they
+    /// have no plan together, or can go nowhere from its end. Selecting
+    /// them any other way starts afresh: from where they stand, and a hex
+    /// chosen then is a new plan.
+    pub fn select_onward(&mut self, units: &[UnitId]) -> bool {
+        self.deselect();
+        if !self.rounds() || units.is_empty() || !units.iter().all(|id| self.own(*id)) {
+            return false;
+        }
+        self.onward = true;
+        let there = self.select(units.to_vec()) && self.range.as_ref().is_some_and(|r| r.reachable().next().is_some());
+        if !there {
+            self.deselect();
+        }
+        there
+    }
+
+    /// Where the selected units go on from, if they are selected to be sent
+    /// on from their plan's end (`select_onward`).
+    pub fn onward_from(&self) -> Option<Hex> {
+        self.onward.then(|| self.plan_end(&self.selected)).flatten()
     }
 
     /// Select one unit by name (a slot of the stack was chosen), and no other.
     /// False, and nothing changes, if there is no such unit any more, or it is
     /// not the side's whose turn it is.
     pub fn select_unit(&mut self, id: UnitId) -> bool {
-        self.own(id) && self.select(vec![id])
+        if !self.own(id) {
+            return false;
+        }
+        self.onward = false;
+        self.select(vec![id])
     }
 
     /// Take a unit into the selection, or out of it (a slot of the stack was
@@ -3169,6 +3372,7 @@ impl Game {
             self.deselect();
             return true;
         }
+        self.onward = false;
         self.select(units)
     }
 
@@ -3186,7 +3390,13 @@ impl Game {
         // (Units that cannot go together can go nowhere: `selection_problem`.)
         // In rounds, with those that come to join them (`rounds::plan`):
         // from the hex they gather on, with what the way there leaves each.
-        self.range = if self.rounds() { self.joint_range(&units, &sight) } else { self.group_range(&units, &sight) };
+        // (Sent on from their plan's end, `select_onward`: from there, with
+        // what the plan leaves them.)
+        self.range = match (self.rounds(), self.onward) {
+            (true, true) => self.onward_range(&units, &sight),
+            (true, false) => self.joint_range(&units, &sight),
+            (false, _) => self.group_range(&units, &sight),
+        };
         self.range_revision = self.map.revision();
         self.selected = units;
         true
@@ -3239,8 +3449,21 @@ impl Game {
         self.refresh();
         let Some(first) = self.selected() else { return self.select_stack(hex) };
         // Their own hex: they stay selected, as they are (some of the stack,
-        // taken by their boxes, stay so).
+        // taken by their boxes, stay so); if they were to be sent on from
+        // their plan's end, afresh: from where they stand.
         if self.map.units().get(first).is_some_and(|u| u.pos() == hex) {
+            if self.onward {
+                self.onward = false;
+                self.select(self.selected.clone());
+            }
+            return SelectOutcome::Selected(first);
+        }
+        // Sent on from their plan's end (`select_onward`): a hex in reach
+        // from there is a waypoint more; the end itself, nothing; one
+        // beyond, where they go by way of the plan's stops, over as many
+        // rounds as it takes.
+        let onward = self.onward_from();
+        if onward == Some(hex) {
             return SelectOutcome::Selected(first);
         }
         // A rally point of the side's: they are sent there (Go to), bound to
@@ -3265,27 +3488,39 @@ impl Game {
             // In rounds, land the side has never seen (total fog of war):
             // they set off toward it, to look, and find their way as the
             // round plays out.
-            let order = if self.rounds() && !self.sight(side).knows(hex) {
+            let via: Vec<Hex> = match onward {
+                Some(_) => {
+                    units.first().and_then(|id| self.map.units().get(*id)).map_or(Vec::new(), |u| u.route.clone())
+                }
+                None => Vec::new(),
+            };
+            let order = if self.rounds() && !self.sight(side).knows(hex) && via.is_empty() {
                 Order::Toward { units: units.clone(), to: hex }
             } else {
-                Order::GoTo { units: units.clone(), to: hex, via: Vec::new() }
+                Order::GoTo { units: units.clone(), to: hex, via }
             };
             return match self.apply(order) {
                 Ok(events) => SelectOutcome::Sent(events),
                 Err(why) => {
+                    self.onward = onward.is_some();
                     self.select(units);
                     SelectOutcome::Refused(why)
                 }
             };
         };
         let units = self.selected.clone();
-        let done = self.apply(Order::Move { units: units.clone(), to: hex });
+        let order = match onward {
+            Some(_) => Order::Onward { units: units.clone(), to: hex },
+            None => Order::Move { units: units.clone(), to: hex },
+        };
+        let done = self.apply(order);
         self.deselect();
         match done {
             Ok(events) if events.iter().any(|e| matches!(e, Event::Battle { .. })) => SelectOutcome::Fought(events),
             Ok(events) => SelectOutcome::Moved { unit: first, cost, events },
             // (A full stack, for one.) They stay selected, and it says why.
             Err(why) => {
+                self.onward = onward.is_some();
                 self.select(units);
                 SelectOutcome::Refused(why)
             }
@@ -3295,6 +3530,7 @@ impl Game {
     /// Select the side's stack on a hex: those of its units with points left,
     /// or all of them if none has any.
     fn select_stack(&mut self, hex: Hex) -> SelectOutcome {
+        self.onward = false;
         let side = self.player();
         let units = self.map.units();
         let own: Vec<UnitId> = self
@@ -3402,31 +3638,8 @@ impl Game {
                     .filter_map(|id| map.units().get(*id))
                     .filter(|u| u.side() == side)
                     .collect();
-                let can_go = |u: &&Unit| {
-                    u.movement > 0 && !u.defending && !u.on_duty() && compute_range(map, u).reachable().next().is_some()
-                };
-                let free: Vec<&Unit> = units.iter().copied().filter(can_go).collect();
-                let state = if let Some(alarm) = patrol::alarm_state(&units) {
-                    alarm
-                } else if free.iter().any(|u| !u.route.is_empty() && u.stalled && !u.done && !u.moved) {
-                    // (One its player put aside is done with, stopped or not.)
-                    StackState::Stalled
-                } else if free.iter().any(|u| !u.moved && !u.done && u.route.is_empty()) {
-                    StackState::Waiting
-                } else if free.iter().any(|u| !u.done && u.route.is_empty()) {
-                    StackState::MovesLeft
-                } else if free.iter().any(|u| u.done) {
-                    StackState::Done
-                } else if let Some(duty) = patrol::duty_state(&units) {
-                    duty
-                } else if units.iter().any(|u| !u.route.is_empty()) {
-                    StackState::Marching
-                } else if units.iter().any(|u| u.defending) {
-                    StackState::Defending
-                } else {
-                    StackState::Spent
-                };
-                Task::Stack { at, units: units.len(), state }
+                let (state, about) = self.stack_task(&units);
+                Task::Stack { at, units: about.len(), state }
             })
             .collect();
         for city in map.cities().iter().filter(|c| c.side == side && side != Side::Grey) {
@@ -3446,6 +3659,55 @@ impl Game {
         };
         tasks.sort_by_key(|t| (t.tier(), place(t)));
         tasks
+    }
+
+    /// How a stack (a side's `units` on a hex) stands as far as orders go,
+    /// and which of them that is about: those that wait for orders, if any
+    /// do (not the ones beside them that defend, or are on their way);
+    /// else those moved, put aside, on duty, marching, defending; else all
+    /// of them.
+    fn stack_task(&self, units: &[&Unit]) -> (StackState, Vec<UnitId>) {
+        let map = &self.map;
+        let can_go = |u: &&Unit| {
+            u.movement > 0 && !u.defending && !u.on_duty() && compute_range(map, u).reachable().next().is_some()
+        };
+        let free: Vec<&Unit> = units.iter().copied().filter(can_go).collect();
+        let those = |of: &[&Unit], are: &dyn Fn(&Unit) -> bool| -> Vec<UnitId> {
+            of.iter().filter(|u| are(u)).map(|u| u.id()).collect()
+        };
+        let stalled = |u: &Unit| !u.route.is_empty() && u.stalled && !u.done && !u.moved;
+        let waiting = |u: &Unit| !u.moved && !u.done && u.route.is_empty();
+        let moved = |u: &Unit| !u.done && u.route.is_empty();
+        if let Some(alarm) = patrol::alarm_state(units) {
+            (alarm, those(units, &|u| patrol::needs_word(u)))
+        } else if free.iter().any(|u| stalled(u)) {
+            // (One its player put aside is done with, stopped or not.)
+            (StackState::Stalled, those(&free, &stalled))
+        } else if free.iter().any(|u| waiting(u)) {
+            (StackState::Waiting, those(&free, &waiting))
+        } else if free.iter().any(|u| moved(u)) {
+            (StackState::MovesLeft, those(&free, &moved))
+        } else if free.iter().any(|u| u.done) {
+            (StackState::Done, those(&free, &|u| u.done))
+        } else if let Some(duty) = patrol::duty_state(units) {
+            (duty, those(units, &|u| u.on_duty()))
+        } else if units.iter().any(|u| !u.route.is_empty()) {
+            (StackState::Marching, those(units, &|u| !u.route.is_empty()))
+        } else if units.iter().any(|u| u.defending) {
+            (StackState::Defending, those(units, &|u| u.defending))
+        } else {
+            (StackState::Spent, those(units, &|_| true))
+        }
+    }
+
+    /// The units of `side` on `at` that its task there is about
+    /// (`Game::tasks`): of a stack some of which waits for orders, those
+    /// that do.
+    pub fn task_units(&self, side: Side, at: Hex) -> Vec<UnitId> {
+        let map = &self.map;
+        let units: Vec<&Unit> =
+            map.units_at(at).iter().filter_map(|id| map.units().get(*id)).filter(|u| u.side() == side).collect();
+        self.stack_task(&units).1
     }
 
     /// A side's capital: its first city in the map's order (on the maps here,

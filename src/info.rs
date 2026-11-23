@@ -816,7 +816,11 @@ pub fn task_line(game: &Game, task: &Task) -> String {
     match task {
         Task::Stack { at, units, state } => {
             let here: Vec<&Unit> = map.units_at(*at).iter().filter_map(|id| map.units().get(*id)).collect();
-            let who = match (here.first(), units) {
+            // (Those the task is about: of a stack some of which waits for
+            // orders, the ones that do.)
+            let about = here.first().map_or(Vec::new(), |u| game.task_units(u.side(), *at));
+            let first = about.first().and_then(|id| map.units().get(*id)).or(here.first().copied());
+            let who = match (first, units) {
                 (Some(unit), 1) => unit.title(),
                 _ => format!("{units} units"),
             };

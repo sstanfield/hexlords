@@ -1,6 +1,7 @@
 //! A battle, watched: the attackers' stack on top, the defenders' below, a
 //! card for each unit (its icon, its name, the strength it fights with, its
-//! hits); a line for each side that says where its bonuses come from (a
+//! hits), each stack from its weakest to its strongest with its commander
+//! on the right, always (`line_order`); a line for each side that says where its bonuses come from (a
 //! commander, the ground, the walls); and then the battle played out, an
 //! exchange at a time, a few a second: the two that fight lit, the one hit
 //! in red with an X, the dead dimmed; and at the end, how it went. Skip goes
@@ -139,6 +140,18 @@ fn side_line(fight: &Fight, defending: bool) -> String {
     parts.join(", ")
 }
 
+/// The order a side's cards stand in, as indices into its units: from the
+/// weakest to the strongest, its commander last (on the right), whatever
+/// order the stack was in and whichever way the battle is fought (the
+/// owner's word, 2026-11-22: "the combat window should be consistent ...
+/// from weakest to strongest with the captain always on one side"). It is
+/// the order of a line (`combat::System::Lines`).
+pub fn line_order(units: &[Combatant]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..units.len()).collect();
+    order.sort_by_key(|i| (units[*i].commander, units[*i].quarters));
+    order
+}
+
 impl BattleWindow {
     /// Its window (the session closes the one on top first).
     pub fn window(&self) -> WidgetId {
@@ -205,13 +218,19 @@ impl BattleWindow {
             if which == ATTACKERS {
                 build::text(ui, c, &side_line(fight, false));
             }
+            // In the row as they stand in a line, however the battle is
+            // fought (`line_order`); the cards are kept in the fight's
+            // order, which is what its exchanges name.
             let row = build::row(ui, c, dp(ui, 4));
-            for (i, unit) in units.iter().enumerate() {
+            let mut made: Vec<(usize, Card)> = Vec::new();
+            for i in line_order(units) {
                 let icon = icons[which].get(i).cloned().unwrap_or_default();
-                if let Some(card) = card(ui, row, &format!("card_{tag}_{i}"), unit, icon) {
-                    cards[which].push(card);
+                if let Some(card) = card(ui, row, &format!("card_{tag}_{i}"), &units[i], icon) {
+                    made.push((i, card));
                 }
             }
+            made.sort_by_key(|(i, _)| *i);
+            cards[which] = made.into_iter().map(|(_, card)| card).collect();
             if which == DEFENDERS {
                 build::text(ui, c, &side_line(fight, true));
             }
@@ -435,6 +454,21 @@ impl BattleWindow {
     /// The outcome's lines, once it is shown.
     pub fn outcome(&self, ui: &Ui) -> Vec<String> {
         self.outcome_lines.iter().filter_map(|w| ui.text(*w)).filter(|t| !t.is_empty()).map(str::to_string).collect()
+    }
+
+    /// The names on the cards of each side, from the left: the attackers',
+    /// the defenders'.
+    pub fn names(&self, ui: &Ui) -> [Vec<String>; 2] {
+        let row = |which: usize, units: &[Combatant]| -> Vec<String> {
+            let mut cards: Vec<(i32, String)> = self.cards[which]
+                .iter()
+                .zip(units)
+                .map(|(card, unit)| (ui.node(card.root).map_or(0, |n| n.rect().x), unit.title.clone()))
+                .collect();
+            cards.sort_by_key(|(x, _)| *x);
+            cards.into_iter().map(|(_, name)| name).collect()
+        };
+        [row(ATTACKERS, &self.fight.attackers), row(DEFENDERS, &self.fight.defenders)]
     }
 
     /// Each card's hits so far: the attackers', the defenders'.

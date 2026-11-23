@@ -418,7 +418,16 @@ and the rules use integers, not floats.
     wherever its prices let it (the continent's cross water and mountains
     at a flat price); a commander that goes with flyers and no one else
     flies with them, at the first flyer's prices, and may stand over water
-    with them. The computer builds no ships yet (carrying an army by sea is
+    with them. **A stack of flyers and units that walk stays together**
+    (the owner's word, 2026-11-22: "a mixed stack should always stay and
+    move together even with flyers and non-flyers"; the flyers of one went
+    over the water alone, the way being theirs): units that go at
+    different prices take a way all of them can go
+    (`Game::ground_together`: a hex shut to one is shut to all, and the
+    way is the quickest for the slowest of them), each paying its own
+    price for it, and they go as one or not at all, on a march, a patrol
+    and in a round alike. Flyers that are to cross the water are sent
+    without those that cannot. The computer builds no ships yet (carrying an army by sea is
     planning of its own, to come), and values a flyer's moves above a
     walker's.
 
@@ -472,7 +481,9 @@ changed.
     the turn before; `rounds::ROUND` is a round on the clock). Riders with
     20 points are three hexes of grass on (6 points) when soldiers with
     12 are two. A stack goes at the pace of its slowest: a step takes it
-    as long as it takes the one of them it takes longest.
+    as long as it takes the one of them it takes longest; and it goes
+    whole or not at all (a step one of it cannot pay for stops it for the
+    round).
   - Each stack sets off on the next hex of its way, and is there when the
     step's time is up; the stacks get there in the order of the clock.
     Of those there at the same moment, the sides go in the round's
@@ -521,6 +532,26 @@ changed.
     nearest to where they go that all can get on from (`rounds::muster`:
     one order is one stack and one attack, as in turns; the agents order
     their attacks so); if there is none, each hex's units go on their own.
+  - **Waypoints** (the owner, 2026-11-22: "we need to be able to use
+    goto more than once. This will let setting waypoints to force a stack
+    on a path we want and not waste mp/turns ... setting a goto point
+    could leave the stack active with MP to spend from that point ...
+    always start 'fresh' when a stack is selected"). A stack that has a
+    plan can be sent on from where the plan ends (`Order::Onward`), to a
+    hex all of it can reach from there with what the way so far leaves
+    each: the plan goes by the first hex and on to the next, so the
+    player says which way a stack takes, round a stack it would rather
+    not meet or by the road, and loses no movement by it. On the screen
+    a stack given a plan stays selected while it has movement left where
+    the plan ends: the map marks where it can go on to from there, and
+    the next click is a waypoint more (`Game::select_onward`). A click
+    beyond that sends it there over the rounds, by way of the plan's
+    stops (a march). A click on the stack itself, or selecting it again
+    later, starts afresh: the next click is a new plan from where it
+    stands. Undo takes back the last leg. A plan that ends in a battle or
+    in a city to take has nothing after it (the battle ends the
+    attackers' round), and a waypoint on a temple that has not blessed
+    them stops them there for the round, as any stop on one does.
   - A stack passes through its own side's stacks that stay, as a move
     does: past a hex they leave it no room on, its step is to the next
     with room. Behind stacks of its side that are on their way themselves
@@ -588,7 +619,10 @@ changed.
   shows the commander's sign, whoever of it is selected, and a commander
   in one of its side's cities has its pip ringed light. A battle shown as
   it happens rings its hex in orange, which flashes red while the battle
-  is played out; the battle's window goes clear of the hex: to the first
+  is played out; in its window each stack stands the same way whatever
+  order it was in and however the battle is fought, from its weakest to
+  its strongest with its commander on the right (the owner, 2026-11-22;
+  `battle_window::line_order`); the battle's window goes clear of the hex: to the first
   of its places that leaves the hex in sight with the map as it is (the
   top of the map, its bottom, its corners), the map moved under it only if
   none does, and at the map's edge or on a map all in view, where the map
@@ -806,7 +840,10 @@ thing to happen. Ideas to try, as the rules grow:
   stacks that have had no orders (or whose march stopped short) and cities
   that build nothing; then cities whose work is done and waits (for gold,
   or for room); then the rest (marching, spent, building, and the stacks
-  the player is done with this turn: put aside, or moved). A stack the
+  the player is done with this turn: put aside, or moved). A stack's row
+  counts the units it is about, not all on the hex (the owner,
+  2026-11-22: three defenders and two units that wait are "2 units ... no
+  orders yet", `Game::task_units`). A stack the
   player moved and that stopped has had its orders, moves left or not:
   Next stack passes it by, as it does one put aside, and a click on its
   hex picks the units that have not moved first. A stack that got where

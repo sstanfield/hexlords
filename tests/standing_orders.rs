@@ -282,7 +282,8 @@ fn a_stack_moved_or_put_aside_is_done_with_for_the_turn() {
     let task = |game: &Game, hex: Hex| {
         game.tasks(Side::Red).into_iter().find(|t| matches!(t, Task::Stack { at, .. } if *at == hex)).unwrap()
     };
-    assert_eq!(task(&game, there), Task::Stack { at: there, units: 2, state: StackState::MovesLeft });
+    // (The task is about those with moves left: the riders.)
+    assert_eq!(task(&game, there), Task::Stack { at: there, units: 1, state: StackState::MovesLeft });
     assert_eq!(task(&game, there).tier(), 3);
     // Done: put aside, and as little pressing.
     game.apply(Order::Done { units: vec![other] }).unwrap();
@@ -736,4 +737,32 @@ fn a_standing_order_goes_at_the_turns_end_and_can_be_changed_before() {
     assert_eq!(goto(&game, built), None);
     round(&mut game);
     assert_eq!(pos(&game, built), south, "its city's order is over");
+}
+
+/// The owner (2026-11-22): "a stack with 3 defenders and 2 regular units
+/// will stack them all and say 5 units need orders: only 2 should be
+/// stacked and need orders."
+#[test]
+fn a_task_counts_the_units_that_wait_not_the_defenders_beside_them() {
+    let mut game = game("garrison soldiers 3\ngarrison riders 2\n");
+    let all = at(&game, REDHOLD);
+    let (soldiers, riders) = (all[..3].to_vec(), all[3..].to_vec());
+    game.apply(Order::Defend { units: soldiers.clone(), on: true }).unwrap();
+    let task = |game: &Game| {
+        game.tasks(Side::Red).into_iter().find(|t| matches!(t, Task::Stack { at, .. } if *at == REDHOLD)).unwrap()
+    };
+    assert_eq!(task(&game), Task::Stack { at: REDHOLD, units: 2, state: StackState::Waiting });
+    assert_eq!(game.task_units(Side::Red, REDHOLD), riders);
+    assert_eq!(hexlords::info::task_line(&game, &task(&game)), "2 units in Redhold: no orders yet");
+    // One of the two put aside: the one left is named, not the first
+    // defender.
+    game.apply(Order::Done { units: vec![riders[0]] }).unwrap();
+    assert_eq!(task(&game), Task::Stack { at: REDHOLD, units: 1, state: StackState::Waiting });
+    assert_eq!(hexlords::info::task_line(&game, &task(&game)), "Riders in Redhold: no orders yet");
+    // Both: the stack is the two put aside; and with them gone, the three
+    // that defend.
+    game.apply(Order::Done { units: vec![riders[1]] }).unwrap();
+    assert_eq!(task(&game), Task::Stack { at: REDHOLD, units: 2, state: StackState::Done });
+    game.apply(Order::Disband { units: riders }).unwrap();
+    assert_eq!(task(&game), Task::Stack { at: REDHOLD, units: 3, state: StackState::Defending });
 }

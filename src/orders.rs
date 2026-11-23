@@ -28,6 +28,15 @@ pub enum Order {
     /// Move units together as far as the slowest gets this turn on its
     /// cheapest way toward a hex, near or far.
     Toward { units: Vec<UnitId>, to: Hex },
+    /// Units that have somewhere to go go on from there, to a hex every
+    /// one of them can reach from it with what the way there leaves it: a
+    /// waypoint. In rounds, where a move is a plan for the round: the plan
+    /// goes by the hex it ended on and on to this one (its way so far, then
+    /// the cheapest from there), so a player sets the way a stack takes and
+    /// loses no movement by it; a plan that ends in a battle, or in
+    /// another side's city, has nothing after it. In turns the units are
+    /// where their last move took them: it is a `Move`.
+    Onward { units: Vec<UnitId>, to: Hex },
     /// Set what a city builds, one after another, for ever: an index into
     /// what it can build; or nothing, on purpose (it is no task that needs
     /// orders). Its queue, if it had one, is gone.

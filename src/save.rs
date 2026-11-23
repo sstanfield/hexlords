@@ -472,6 +472,7 @@ mod tests {
         let orders = [
             Order::Move { units: red.clone(), to: a },
             Order::Toward { units: vec![red[0]], to: b },
+            Order::Onward { units: red.clone(), to: b },
             Order::Build { city, what: Some(0) },
             Order::Build { city, what: None },
             Order::Queue {

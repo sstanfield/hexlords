@@ -310,7 +310,7 @@ impl Game {
                 break;
             }
             let group = self.group(&ids);
-            let Some((lead, table)) = group.as_ref().ok().and_then(|g| g.lead(&self.map)) else {
+            let Some((lead, _)) = group.as_ref().ok().and_then(|g| g.lead(&self.map)) else {
                 events.extend(self.stall(side, ids.clone(), at, to));
                 break;
             };
@@ -320,7 +320,7 @@ impl Game {
             // This turn's step, as a march's.
             let sight = self.sight(side);
             let room = |hex: Hex| self.fits(hex, &ids);
-            let way = self.known_path_by(lead, table, to, u32::MAX, &sight);
+            let way = group.as_ref().ok().and_then(|group| self.way_together(group, to, &sight));
             // Too few points left for the first step: no stop, on next time.
             if way.as_ref().and_then(|w| w.first()).is_some_and(|(_, cost)| *cost > lead.movement) {
                 break;
@@ -446,12 +446,12 @@ impl Game {
         let (at, to) = (first.pos(), patrol.target());
         let prey = self.patrol_prey(side, ids, &patrol);
         let Ok(group) = self.group(ids) else { return Look::Stop };
-        let Some((lead, table)) = group.lead(&self.map) else { return Look::Stop };
+        let Some((lead, _)) = group.lead(&self.map) else { return Look::Stop };
         if lead.movement == 0 {
             return Look::Stop;
         }
         let sight = self.sight(side);
-        let way = self.known_path_by(lead, table, prey.unwrap_or(to), u32::MAX, &sight).unwrap_or_default();
+        let way = self.way_together(&group, prey.unwrap_or(to), &sight).unwrap_or_default();
         let Some(hex) = self.step_along(side, ids, &way, lead.movement) else {
             // (Too few points for the step: that is the round. No way: it
             // may open.)

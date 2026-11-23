@@ -157,7 +157,8 @@ settings can be looked over like the game's), how to play (turns, one side after
 other; or rounds: every side gives its orders, a click being a plan the map
 outlines, and then the round plays out before you, the faster units there
 first, a stack fighting whoever it finds on its way, stacks sent to join
-each other going on as one), the order of the turns
+each other going on as one, a click after a plan a waypoint the stack
+goes by), the order of the turns
 (the same each round, or drawn anew; in rounds, who goes first of two
 there at the same moment), the
 battles (lines, strength or dice; how much chance, from 0 to 10, or on the

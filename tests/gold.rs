@@ -171,3 +171,21 @@ fn the_menu_bar_shows_the_treasury_and_a_city_its_taxes() {
     }
     assert!(texts.iter().any(|t| t == "Taxes: 6 gold a turn"), "{texts:?}");
 }
+
+#[test]
+fn in_rounds_too_units_that_cannot_be_paid_leave() {
+    // As in turns: upkeep 8 against taxes of 6 and no gold, 2 short.
+    let mut game = game("garrison soldiers 2\ngarrison levy\ngarrison captain\n", 0, |s| {
+        s.mode = hexlords::setup::Mode::Rounds;
+    });
+    assert!(game.rounds());
+    next_round(&mut game);
+    assert_eq!(game.turn(), 2, "the round played out");
+    let names: Vec<String> =
+        game.map.units_at(REDHOLD).iter().map(|id| game.map.units().get(*id).unwrap().name.clone()).collect();
+    assert_eq!(names, ["Soldiers", "Levy", "Captain"]);
+    assert_eq!(game.gold(Side::Red), 0);
+    let lines = info::log(&game, Side::Red, 0);
+    let all: Vec<&String> = lines.iter().flat_map(|(_, entries)| entries).flat_map(|e| &e.lines).collect();
+    assert!(all.iter().any(|l| l.starts_with("Unpaid, your Soldiers left you")), "{all:?}");
+}

@@ -7,7 +7,7 @@
 
 mod common;
 
-use common::{assets, click, pixel_of, push_widget, type_char, widget};
+use common::{assets, click, pixel_of, press, push_widget, type_char, widget};
 use hexlords::battle_window::BATTLE_CLOSE_ID;
 use hexlords::game::Game;
 use hexlords::options_window::Options;
@@ -309,6 +309,8 @@ fn a_city_window_gives_no_order_while_the_round_plays_out() {
     }));
     click_hex(&mut s, Hex::new(10, 5));
     click_hex(&mut s, Hex::new(10, 9));
+    // (The stack stays selected, to be sent on: let go of it.)
+    press(&mut s, turbo_ferret::SpecialKey::Esc);
     click_hex(&mut s, Hex::new(5, 5));
     type_char(&mut s, 'o');
     assert!(s.city_window().is_some());
@@ -533,9 +535,11 @@ fn undo_takes_the_outline_back() {
     }));
     click_hex(&mut s, Hex::new(10, 5));
     click_hex(&mut s, Hex::new(10, 9));
-    assert!(!Scene::outlined(&s).is_empty());
+    // (The stack stays selected: its way is ringed, the selected stack's.)
+    assert_eq!(Scene::rings(&s).len(), 5, "{:?}", Scene::rings(&s));
     push_widget(&mut s, UNDO_ID);
     assert!(Scene::outlined(&s).is_empty(), "{:?}", Scene::outlined(&s));
+    assert_eq!(Scene::rings(&s).len(), 1, "{:?}", Scene::rings(&s));
     assert_eq!(button(&s), "Orders done (2)");
     // Selected again, as after an undo in turns.
     assert_eq!(s.screen.game.selection().len(), 1);

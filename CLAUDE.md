@@ -14,7 +14,8 @@ turn, one side after the other (a new game screen sets the game up: who
 plays each side, a person or the computer, hotseat for several people), and
 cities build what their holder sets; an empty city is taken by moving in;
 stacks move together (ships carry land units, flyers fly, a captain with
-flyers flies: `Game::group`), and moving into another side's units is a battle
+flyers flies: `Game::group`; flyers with units that walk go a way all of
+them can, `Game::ground_together`), and moving into another side's units is a battle
 (`state::combat`: how much chance and which system are set with the game;
 commanders lead stacks); each side has a treasury, its cities' taxes come
 in and its units' upkeep goes out each turn, and what a city builds is paid
@@ -47,7 +48,7 @@ touching the rules.
 |---|---|
 | `src/state/` | Map, tiles, roads, units and their kinds, cities, movement range; `combat`, the battles (pure); `rng`, the game's chance; `scenario`, the reader of a map's files. No UI, no graphics |
 | `src/files.rs`, `build.rs` | Reading the game's files: from the disk, or in a browser (the WebAssembly build) from the copy of `assets/` inside the program, which `build.rs` lists. Everything that reads a file of the game's asks here, not `std::fs` |
-| `src/game.rs`, `src/game/patrol.rs`, `src/game/rounds.rs`, `src/orders.rs`, `src/setup.rs` | `Game`: the map, whose turn it is, and the rules: `Game::apply` carries out an `Order` and says what came of it (`Event`s); the selected unit and its range for the screen; `game::patrol`: patrols, and marauding's flag, as rules; `game::rounds`: the second mode (an order to move is a plan with its way, and the round plays out on a clock, each step taking a unit its cost over its movement a turn; a stack attacks who it finds on its way; stacks join to go as one; `Game::play_out`). `Setup`: a game before it starts (the mode, the order of turns, who plays each side, the seed) |
+| `src/game.rs`, `src/game/patrol.rs`, `src/game/rounds.rs`, `src/orders.rs`, `src/setup.rs` | `Game`: the map, whose turn it is, and the rules: `Game::apply` carries out an `Order` and says what came of it (`Event`s); the selected unit and its range for the screen; `game::patrol`: patrols, and marauding's flag, as rules; `game::rounds`: the second mode (an order to move is a plan with its way, and the round plays out on a clock, each step taking a unit its cost over its movement a turn; a stack attacks who it finds on its way; stacks join to go as one; a plan is sent on from where it ends, a waypoint, `Order::Onward`; `Game::play_out`). `Setup`: a game before it starts (the mode, the order of turns, who plays each side, the seed) |
 | `src/agents.rs`, `src/planner.rs`, `src/planner/wary.rs`, `src/planner/rounds.rs`, `src/marauder.rs`, `src/headless.rs` | The computer's players (`Agent`: `passive`, `simple`, `cmd:<program>` over a text protocol; `planner`: `steady`, `bold`, `careful`, which read the rules in effect, keep clear of stacks they could not beat (`src/planner/wary.rs`), and play a game of rounds in a way of their own, `src/planner/rounds.rs`: `<style>/turns` is one that does not, to measure against); with fog of war each is given its side's view (`Game::view_for`); `marauder`: the computer leading a side's marauding stacks; a game played without a window (`--headless`) |
 | `src/view.rs`, `src/minimap_view.rs` | Pure math: zoom, scale factors, visible hexes, picking, panning, recentering; the minimap's fit and marker |
 | `src/render/` | miniquad drawing: hex meshes, shaders, textures, the map and minimap renderers, the PNG writer; the units' icons for the panels (`unit_icon`, on the CPU) |

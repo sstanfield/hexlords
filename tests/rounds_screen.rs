@@ -90,11 +90,16 @@ fn a_click_plans_and_the_map_shows_the_plan() {
     // It has not moved: it has a plan, and the map outlines its way.
     assert_eq!(pos(&s, a), Hex::new(10, 5));
     assert!(s.screen.game.map.units().get(a).unwrap().planned);
-    let way = Scene::outlined(&s).to_vec();
-    assert_eq!((way.len(), way.last()), (4, Some(&to)), "{way:?}");
+    // (With movement left where the plan ends, it stays selected, to be
+    // sent on from there: its way is ringed as the selected stack's.)
     assert!(s.unit_line().starts_with("Planned: they go there as the round plays out"), "{}", s.unit_line());
     assert_eq!(button(&s), "Orders done (1)", "the stack has its orders");
-    assert!(s.screen.game.selection().is_empty() && !s.asks_mission());
+    assert_eq!((s.screen.game.selection(), s.screen.game.onward_from()), ([a].as_slice(), Some(to)));
+    assert!(Scene::rings(&s).contains(&(to, OWN_WAY_BORDER)) && !s.asks_mission());
+    press(&mut s, turbo_ferret::SpecialKey::Esc);
+    let way = Scene::outlined(&s).to_vec();
+    assert_eq!((way.len(), way.last()), (4, Some(&to)), "{way:?}");
+    assert!(s.screen.game.selection().is_empty());
     // Selected again, it says what it plans; another click is another
     // plan, unasked.
     click_hex(&mut s, Hex::new(10, 5));
@@ -102,7 +107,8 @@ fn a_click_plans_and_the_map_shows_the_plan() {
     assert!(s.unit_line().starts_with("Planned: to row 10, column 9"), "{}", s.unit_line());
     click_hex(&mut s, Hex::new(12, 5));
     assert!(!s.asks_mission(), "a plan is no mission to ask about");
-    assert_eq!(Scene::outlined(&s).last(), Some(&Hex::new(12, 5)));
+    assert_eq!(s.screen.game.map.units().get(a).unwrap().route, [Hex::new(12, 5)]);
+    assert!(Scene::rings(&s).contains(&(Hex::new(12, 5), OWN_WAY_BORDER)));
     // Undo takes the last plan back: the one before it stands.
     push_widget(&mut s, UNDO_ID);
     assert_eq!(s.screen.game.map.units().get(a).unwrap().route, [to]);
@@ -202,6 +208,7 @@ fn in_hotseat_each_plans_behind_the_cover_and_is_shown_the_round() {
     assert!(Scene::outlined(&s).is_empty());
     click_hex(&mut s, Hex::new(20, 24));
     click_hex(&mut s, Hex::new(20, 20));
+    press(&mut s, turbo_ferret::SpecialKey::Esc);
     assert_eq!(Scene::outlined(&s).last(), Some(&Hex::new(20, 20)));
     // Blue has done: the round plays out before blue's eyes; then the
     // cover, for red's next orders.
@@ -449,6 +456,9 @@ fn the_selected_stack_and_its_orders_stand_out_and_v_shows_them_alone() {
     let way_of = |s: &Session, id: UnitId| s.screen.game.map.units().get(id).unwrap().way.clone();
     let (way_a, way_b) = (way_of(&s, a), way_of(&s, b));
     assert_eq!((way_a.len(), way_b.len()), (4, 3));
+    // (The stack planned last stays selected, to be sent on.)
+    assert_eq!(s.screen.game.selection(), [b]);
+    press(&mut s, turbo_ferret::SpecialKey::Esc);
     // Nothing selected: every order outlined alike, nothing ringed.
     assert!(s.screen.game.selection().is_empty() && Scene::rings(&s).is_empty());
     let outlined = Scene::outlined(&s).to_vec();

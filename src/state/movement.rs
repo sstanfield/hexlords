@@ -45,6 +45,14 @@ impl MoveRange {
         MoveRange { origin: self.origin, cols: self.cols, cost }
     }
 
+    /// The same range with every cost multiplied by `times` and divided by
+    /// `over`, rounded up (a range counted in shares of what a stack has
+    /// left, in points again: `Game::ground_together`).
+    pub fn scaled(&self, times: u32, over: u32) -> MoveRange {
+        let scale = |c: u32| (u64::from(c) * u64::from(times)).div_ceil(u64::from(over.max(1))) as u32;
+        MoveRange { origin: self.origin, cols: self.cols, cost: self.cost.iter().map(|c| c.map(scale)).collect() }
+    }
+
     /// Every hex in reach, with its cost, in row-major order.
     pub fn reachable(&self) -> impl Iterator<Item = (Hex, u32)> + '_ {
         let cols = usize::from(self.cols);

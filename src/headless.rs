@@ -145,6 +145,7 @@ pub fn order_line(game: &Game, order: &Order) -> String {
     match order {
         Order::Move { units, to } => format!("move {} {} {}", names(units), to.row, to.col),
         Order::Toward { units, to } => format!("toward {} {} {}", names(units), to.row, to.col),
+        Order::Onward { units, to } => format!("onward {} {} {}", names(units), to.row, to.col),
         Order::Build { city, what } => {
             let at = game.map.cities().get(*city).map_or((0, 0), |c| (c.pos.row, c.pos.col));
             let what = what.map_or("none".to_string(), |i| i.to_string());
