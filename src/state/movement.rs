@@ -45,14 +45,6 @@ impl MoveRange {
         MoveRange { origin: self.origin, cols: self.cols, cost }
     }
 
-    /// The same range with every cost multiplied by `times` and divided by
-    /// `over`, rounded up (a range counted in shares of what a stack has
-    /// left, in points again: `Game::ground_together`).
-    pub fn scaled(&self, times: u32, over: u32) -> MoveRange {
-        let scale = |c: u32| (u64::from(c) * u64::from(times)).div_ceil(u64::from(over.max(1))) as u32;
-        MoveRange { origin: self.origin, cols: self.cols, cost: self.cost.iter().map(|c| c.map(scale)).collect() }
-    }
-
     /// Every hex in reach, with its cost, in row-major order.
     pub fn reachable(&self) -> impl Iterator<Item = (Hex, u32)> + '_ {
         let cols = usize::from(self.cols);
@@ -344,6 +336,158 @@ pub fn reach_with(map: &Map, origin: Hex, steps: Steps, limit: u32, passage: &dy
     best[index(origin)] = None;
     range.cost = best;
     range
+}
+
+/// One of the units that go together (`reach_together`): what each hex is
+/// to it, what a step costs it, and what it has left to spend.
+pub struct Walker<'a> {
+    pub passage: &'a dyn Fn(Hex) -> Passage,
+    pub steps: Steps<'a>,
+    pub left: u32,
+}
+
+/// A way units took together so far: where it has got to, what it has cost
+/// each of them, the one it goes on from, and the largest share any of
+/// them has spent of what it had (of [`WHOLE`]).
+struct Leg {
+    hex: Hex,
+    spent: Vec<u32>,
+    from: Option<usize>,
+    share: u64,
+    /// Another way to the same hex costs none of them more.
+    beaten: bool,
+}
+
+/// All of what a unit has left, as a `Leg`'s share counts it.
+const WHOLE: u64 = 55_440;
+
+/// Where units that pay different prices can go together (`reach_together`):
+/// the hexes with one way to them that every one of the units can pay for.
+pub struct Together {
+    origin: Hex,
+    cols: u16,
+    legs: Vec<Leg>,
+    /// Row-major: of the ways to each hex, the one that leaves them most.
+    best: Vec<Option<usize>>,
+    /// The least any of them had to spend.
+    least: u32,
+}
+
+impl Together {
+    /// The hexes they can all go to, each at a cost in points of the one
+    /// that had the least: its share of that, by the unit the way is
+    /// dearest for.
+    pub fn range(&self) -> MoveRange {
+        let cost = |leg: &usize| (self.legs[*leg].share * u64::from(self.least)).div_ceil(WHOLE).max(1) as u32;
+        MoveRange {
+            origin: self.origin,
+            cols: self.cols,
+            cost: self.best.iter().map(|b| b.as_ref().map(cost)).collect(),
+        }
+    }
+
+    /// The way to `to` that leaves them most: each hex after the origin,
+    /// with what it has cost each of them (in the walkers' order) by then.
+    /// `None` if they cannot all get there.
+    pub fn way(&self, to: Hex) -> Option<Vec<(Hex, Vec<u32>)>> {
+        if to.col >= self.cols {
+            return None;
+        }
+        let mut at = (*self.best.get(usize::from(to.row) * usize::from(self.cols) + usize::from(to.col))?)?;
+        let mut way = Vec::new();
+        while let Some(from) = self.legs[at].from {
+            way.push((self.legs[at].hex, self.legs[at].spent.clone()));
+            at = from;
+        }
+        way.reverse();
+        Some(way)
+    }
+}
+
+/// Where `walkers` can go together from `origin`: every hex with a way to
+/// it that each of them can pay for with what it has left, a hex shut to
+/// one of them being shut to all, and a hex that ends one's move ending
+/// theirs. Units that pay different prices do not have one cheapest way:
+/// a way dear for one may be cheap for another. So every way that is not
+/// beaten (another to the same hex costing none of them more) is followed,
+/// the ones that leave them most first.
+pub fn reach_together(map: &Map, origin: Hex, walkers: &[Walker]) -> Together {
+    let cols = usize::from(map.cols());
+    let index = |h: Hex| usize::from(h.row) * cols + usize::from(h.col);
+    let size = usize::from(map.rows()) * cols;
+    let least = walkers.iter().map(|w| w.left).min().unwrap_or(0);
+    let mut together = Together { origin, cols: map.cols(), legs: Vec::new(), best: vec![None; size], least };
+    if !map.contains(origin) || walkers.is_empty() {
+        return together;
+    }
+    let passage = |hex: Hex| {
+        let mut worst = Passage::Open;
+        for walker in walkers {
+            match (walker.passage)(hex) {
+                Passage::Blocked => return Passage::Blocked,
+                Passage::Stop => worst = Passage::Stop,
+                Passage::Open => {}
+            }
+        }
+        worst
+    };
+    // The ways to each hex that are not beaten.
+    let mut ways: Vec<Vec<usize>> = vec![Vec::new(); size];
+    together.legs.push(Leg { hex: origin, spent: vec![0; walkers.len()], from: None, share: 0, beaten: false });
+    ways[index(origin)].push(0);
+    let mut queue = BinaryHeap::from([Reverse((0u64, 0usize))]);
+    while let Some(Reverse((_, at))) = queue.pop() {
+        if together.legs[at].beaten {
+            continue;
+        }
+        let hex = together.legs[at].hex;
+        if hex != origin && passage(hex) == Passage::Stop {
+            continue; // the move ends here
+        }
+        for next in map.neighbours(hex) {
+            if next == origin || passage(next) == Passage::Blocked {
+                continue;
+            }
+            let mut spent = together.legs[at].spent.clone();
+            let mut share = 0u64;
+            let mut paid = true;
+            for (i, walker) in walkers.iter().enumerate() {
+                let Some(step) = (walker.steps)(hex, next) else {
+                    paid = false;
+                    break;
+                };
+                spent[i] += u32::from(step);
+                if spent[i] > walker.left {
+                    paid = false;
+                    break;
+                }
+                share = share.max(u64::from(spent[i]) * WHOLE / u64::from(walker.left.max(1)));
+            }
+            if !paid {
+                continue;
+            }
+            let there = &mut ways[index(next)];
+            let no_dearer = |a: &[u32], b: &[u32]| a.iter().zip(b).all(|(a, b)| a <= b);
+            if there.iter().any(|leg| no_dearer(&together.legs[*leg].spent, &spent)) {
+                continue;
+            }
+            for leg in there.iter() {
+                if no_dearer(&spent, &together.legs[*leg].spent) {
+                    together.legs[*leg].beaten = true;
+                }
+            }
+            there.retain(|leg| !together.legs[*leg].beaten);
+            let leg = together.legs.len();
+            there.push(leg);
+            together.legs.push(Leg { hex: next, spent, from: Some(at), share, beaten: false });
+            queue.push(Reverse((share, leg)));
+        }
+    }
+    for (i, there) in ways.iter().enumerate() {
+        together.best[i] = there.iter().copied().min_by_key(|leg| (together.legs[*leg].share, *leg));
+    }
+    together.best[index(origin)] = None;
+    together
 }
 
 #[cfg(test)]

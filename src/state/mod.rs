@@ -20,8 +20,8 @@ pub use cities::{
 pub use hex::{Direction, Hex, HexSide};
 pub use map::{MAX_COLS, MAX_ROWS, MAX_STACK, MIN_COLS, MIN_ROWS, Map, MapError, PlaceError, Tile};
 pub use movement::{
-    ATTACK_COST, MoveRange, Passage, attack_or_step, compute_range, hostile, passage, path_with, reach_with, step_cost,
-    step_toward, step_toward_by, step_toward_with, way_over_land,
+    ATTACK_COST, MoveRange, Passage, Together, Walker, attack_or_step, compute_range, hostile, passage, path_with,
+    reach_together, reach_with, step_cost, step_toward, step_toward_by, step_toward_with, way_over_land,
 };
 pub use patrol::Patrol;
 pub use rng::Rng;

@@ -14,8 +14,8 @@ turn, one side after the other (a new game screen sets the game up: who
 plays each side, a person or the computer, hotseat for several people), and
 cities build what their holder sets; an empty city is taken by moving in;
 stacks move together (ships carry land units, flyers fly, a captain with
-flyers flies: `Game::group`; flyers with units that walk go a way all of
-them can, `Game::ground_together`), and moving into another side's units is a battle
+flyers flies: `Game::group`; flyers with units that walk go one way all of
+them can pay for, `state::reach_together`, `Game::ground_together`), and moving into another side's units is a battle
 (`state::combat`: how much chance and which system are set with the game;
 commanders lead stacks); each side has a treasury, its cities' taxes come
 in and its units' upkeep goes out each turn, and what a city builds is paid
@@ -208,7 +208,9 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
   clock or another source, so a seed and a set of orders always make the
   same game. Keep the agents and `--headless` working for every rule: they
   are how the game is balanced. A saved game depends on it (`src/save.rs`):
-  it is the map, the setup and the steps done since, done again. So
+  it is the map, the setup and the steps done since, done again. An
+  order that is refused changes nothing: refuse before the first change
+  (a refusal after `see_along` once made a saved game another game). So
   whatever changes a game goes through `Game::apply` (or is a `Step` of
   its own that `Game::record` keeps and `Game::redo` does again), a new
   order is written and read by `agents::order_text` and `parse_order` (a

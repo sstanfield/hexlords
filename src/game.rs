@@ -12,7 +12,7 @@ use crate::orders::{Event, Fallen, Order, RALLY_POINTS, RallyPoint, Record, Step
 use crate::setup::{Controller, Fog, Setup, TurnOrder, WhenOut};
 use crate::state::combat::{self, Fighter};
 use crate::state::scenario::{self, MapSource, Scenario, side_name};
-use crate::state::{ATTACK_COST, Blessing};
+use crate::state::{ATTACK_COST, Blessing, Together, Walker, reach_together};
 use crate::state::{
     City, CityId, Direction, Hex, MAX_QUEUE, MAX_STACK, Map, MoveCost, MoveCostId, MoveRange, NUM_SIDES, Passage,
     Queue, QueueEnd, QueueItem, Rng, Sends, Side, TileType, Travel, Unit, UnitId, compute_range, hostile, passage,
@@ -284,29 +284,23 @@ impl Group {
     }
 }
 
+/// `ids`, each once, in their order (an order may name a unit twice).
+fn distinct(ids: &[UnitId]) -> Vec<UnitId> {
+    let mut once: Vec<UnitId> = Vec::with_capacity(ids.len());
+    for id in ids {
+        if !once.contains(id) {
+            once.push(*id);
+        }
+    }
+    once
+}
+
 /// What a hex is to one who goes, and what a step costs it, as closures a
 /// way is found with (`Game::ground`, `Game::ground_together`).
 type Ground<'a> = (Box<dyn Fn(Hex) -> Passage + 'a>, Box<dyn Fn(Hex, Hex) -> Option<u16> + 'a>);
 
-/// How the steps of units that go together are weighed against each other,
-/// to find the way of them all (`Game::ground_together`).
-enum Weigh {
-    /// This turn, with what each has left (in the movers' order): a step
-    /// weighs the largest share it takes of what one of them has left, of
-    /// [`SHARE`]; a way that weighs no more than [`SHARE`] all of them can
-    /// pay for.
-    Now(Vec<u32>),
-    /// However far: a step weighs the time it takes the slowest of them
-    /// (its cost over its movement a turn; not a commander's among others,
-    /// who keeps up).
-    Far,
-}
-
-/// All of what a unit has left, as `Weigh::Now` counts (every number up to
-/// 12 divides it, and most up to 36).
-const SHARE: u32 = 55_440;
-
-/// A turn's movement, as `Weigh::Far` counts the time a step takes.
+/// A turn's movement, as the time a step takes units that go together is
+/// counted (`Game::ground_together`).
 const PACE: u32 = 720;
 
 /// How far a side sees, with fog of war: from its units, and from its cities.
@@ -899,7 +893,14 @@ impl Game {
                 self.undo_mark = mark;
                 self.note_sightings();
             }
-            Err(_) => self.undo = last, // nothing changed: it can still be taken back
+            // Nothing changed: it can still be taken back (and nothing
+            // was seen on a way not taken).
+            Err(_) => {
+                self.undo = last;
+                for trail in &mut self.trail {
+                    trail.clear();
+                }
+            }
         }
         done
     }
@@ -1380,7 +1381,12 @@ impl Game {
         let reach = |(id, table): &(UnitId, MoveCostId)| {
             units.get(*id).is_some_and(|u| self.known_range_by(u, *table, sight).cost(hex).is_some())
         };
-        if !group.movers.iter().all(reach) {
+        // (Units that pay different prices: by one way, all of them.)
+        let all = match group.mixed().then(|| self.reach_from_here(group, sight)).flatten() {
+            Some(together) => together.way(hex).is_some(),
+            None => group.movers.iter().all(reach),
+        };
+        if !all {
             return Vec::new();
         }
         group.movers.iter().map(|(id, _)| *id).chain(group.carried.iter().copied()).collect()
@@ -1506,8 +1512,7 @@ impl Game {
     /// in only if they win; a city of another side with nobody left in it is
     /// taken.
     fn move_units(&mut self, side: Side, ids: &[UnitId], to: Hex) -> Result<Vec<Event>, String> {
-        let mut ids = ids.to_vec();
-        ids.dedup();
+        let ids = distinct(ids);
         if ids.is_empty() {
             return Err("no units".to_string());
         }
@@ -1527,15 +1532,30 @@ impl Game {
         }
         // Each that moves pays what it costs it; those a ship carries, nothing.
         let group = self.group(&ids)?;
-        for (id, table) in &group.movers {
+        // Units that pay different prices (flyers with units that walk) go
+        // one way, all of them (the review, 2026-11-23: each went its own,
+        // and units met unseen on the flyers' way over the water had the
+        // walkers taken there too, to drown): the way that leaves them
+        // most, and what it has cost each by each of its hexes.
+        let common = match group.mixed().then(|| self.reach_from_here(&group, &sight)).flatten() {
+            Some(together) => Some(together.way(to).ok_or("they cannot all get there together this turn")?),
+            None => None,
+        };
+        for (i, (id, table)) in group.movers.iter().enumerate() {
             let unit = self.own_unit(side, *id)?;
-            let cost = self.known_range_by(unit, *table, &sight).cost(to);
-            let cost = cost.ok_or(format!("{} cannot get there this turn", unit.name))?;
+            let (cost, way): (u32, Vec<Hex>) = match &common {
+                Some(way) => (way.last().map_or(0, |(_, spent)| spent[i]), way.iter().map(|(hex, _)| *hex).collect()),
+                None => {
+                    let cost = self.known_range_by(unit, *table, &sight).cost(to);
+                    let cost = cost.ok_or(format!("{} cannot get there this turn", unit.name))?;
+                    let way = self.known_path_by(unit, *table, to, unit.movement, &sight).unwrap_or_default();
+                    (cost, way.into_iter().map(|(h, _)| h).collect())
+                }
+            };
             going.push((*id, unit.pos(), cost));
             before.push((*id, unit.pos(), unit.movement));
             goals.push((*id, MarchState::of(unit)));
-            let way = self.known_path_by(unit, *table, to, unit.movement, &sight).unwrap_or_default();
-            ways.push(std::iter::once(unit.pos()).chain(way.into_iter().map(|(h, _)| h)).collect());
+            ways.push(std::iter::once(unit.pos()).chain(way).collect());
         }
         for id in &group.carried {
             let unit = self.own_unit(side, *id)?;
@@ -1564,7 +1584,10 @@ impl Game {
             Some(at) => {
                 for (i, (id, _, cost)) in going.iter_mut().enumerate().take(group.movers.len()) {
                     let unit = self.map.units().get(*id);
-                    let there = unit.and_then(|u| self.known_range_by(u, group.movers[i].1, &sight).cost(at));
+                    let there = match &common {
+                        Some(way) => way.iter().find(|(hex, _)| *hex == at).map(|(_, spent)| spent[i]),
+                        None => unit.and_then(|u| self.known_range_by(u, group.movers[i].1, &sight).cost(at)),
+                    };
                     *cost = there.unwrap_or(*cost);
                     if let Some(way) = ways.get_mut(i) {
                         if let Some(stop) = way.iter().position(|h| *h == at) {
@@ -1590,16 +1613,24 @@ impl Game {
                 stacks.push((*from, self.map.units_at(*from).to_vec()));
             }
         }
-        // What they see on the way stays seen this turn.
-        for way in &ways {
-            self.see_along(side, way);
-        }
+        // Refused before anything changes (the review, 2026-11-23: what
+        // the units would have seen on the way was seen though the move was
+        // refused for room, so a refused click scouted, and a game saved
+        // after it, the refused order not in it, was another game).
         let battled = hostile(&self.map, side, to);
         if battled {
             // An attack is a stack: as many as a hex holds, from wherever.
             if !self.fits(Hex::new(u16::MAX, u16::MAX), &ids) {
                 return Err(format!("at most {MAX_STACK} units and a commander attack together"));
             }
+        } else if !self.fits(to, &ids) {
+            return Err("there is no room there".to_string());
+        }
+        // What they see on the way stays seen this turn.
+        for way in &ways {
+            self.see_along(side, way);
+        }
+        if battled {
             let (won, battle) = self.battle(side, &ids, to);
             events.push(battle);
             events.append(&mut self.promoted);
@@ -1618,8 +1649,6 @@ impl Game {
                 return Ok(events);
             }
             going.retain(|(id, _, _)| self.map.units().get(*id).is_some());
-        } else if !self.fits(to, &ids) {
-            return Err("there is no room there".to_string());
         }
         let mut arrived = Vec::new();
         // The way they went, as the first of them went it (straight from
@@ -2720,29 +2749,25 @@ impl Game {
         group.movers.iter().map(|(id, table)| Some((units.get(*id)?, units.move_cost(*table)?))).collect()
     }
 
-    /// What each hex is to the units of `group` going as one, as their side
-    /// knows the map, and what a step weighs for them (`weigh`): a hex shut
-    /// to one of them is shut to all, and a step one of them cannot make
+    /// What each hex is to the units of `group` going as one, however far,
+    /// as their side knows the map, and what a step weighs for them: a hex
+    /// shut to one of them is shut to all, a step one of them cannot make
     /// none makes (the owner's word, 2026-11-22: "a mixed stack should
     /// always stay and move together even with flyers and non-flyers": the
-    /// flyers do not fly where the others cannot walk). Each still pays its
-    /// own price for the way.
-    fn ground_together<'a>(&'a self, group: &Group, sight: &'a Sight, weigh: Weigh) -> Option<Ground<'a>> {
+    /// flyers do not fly where the others cannot walk), and a step weighs
+    /// the time it takes the slowest of them (its cost over its movement a
+    /// turn; not a commander's among others, who keeps up). Each still pays
+    /// its own price for the way.
+    fn ground_together<'a>(&'a self, group: &Group, sight: &'a Sight) -> Option<Ground<'a>> {
         let walkers = self.walkers(group)?;
         let led = walkers.iter().any(|(u, _)| !self.map.is_commander(u.id()));
         let mut passes = Vec::new();
         let mut steps = Vec::new();
-        for (i, (unit, costs)) in walkers.iter().enumerate() {
+        for (unit, costs) in &walkers {
             let (pass, step) = self.ground(unit, costs, sight);
             passes.push(pass);
-            // What its cost is multiplied by and divided by, to weigh it.
-            let scale = match &weigh {
-                Weigh::Now(left) => (SHARE, left.get(i).copied().unwrap_or(0), true),
-                Weigh::Far => (PACE, unit.speed(), !(led && self.map.is_commander(unit.id()))),
-            };
-            steps.push((step, scale));
+            steps.push((step, unit.speed(), !(led && self.map.is_commander(unit.id()))));
         }
-        let now = matches!(weigh, Weigh::Now(_));
         let pass = move |hex: Hex| {
             let mut worst = Passage::Open;
             for pass in &passes {
@@ -2756,14 +2781,10 @@ impl Game {
         };
         let step = move |from: Hex, to: Hex| {
             let mut worst = 0u32;
-            for (step, (times, over, counts)) in &steps {
+            for (step, speed, counts) in &steps {
                 let cost = u32::from(step(from, to)?);
-                if now && (*over == 0 || cost > *over) {
-                    return None;
-                }
                 if *counts {
-                    let weight = cost.saturating_mul(*times);
-                    worst = worst.max(if now { weight / over } else { weight.div_ceil((*over).max(1)) });
+                    worst = worst.max(cost.saturating_mul(PACE).div_ceil((*speed).max(1)));
                 }
             }
             Some(worst.clamp(1, u32::from(u16::MAX)) as u16)
@@ -2771,12 +2792,40 @@ impl Game {
         Some((Box::new(pass), Box::new(step)))
     }
 
+    /// Where the units of `group` that move can go together this turn from
+    /// `from`, each with what it has left there (`left`, in the group's
+    /// order), as their side knows the map: the hexes with one way to them
+    /// that every one of them can pay for (`state::reach_together`). For
+    /// units that pay different prices (`Group::mixed`).
+    fn reach_together(&self, group: &Group, from: Hex, left: &[u32], sight: &Sight) -> Option<Together> {
+        let walkers = self.walkers(group)?;
+        let grounds: Vec<_> = walkers.iter().map(|(unit, costs)| self.ground(unit, costs, sight)).collect();
+        let walkers: Vec<Walker> = grounds
+            .iter()
+            .zip(left)
+            .map(|((pass, steps), left)| Walker { passage: pass, steps, left: *left })
+            .collect();
+        Some(reach_together(&self.map, from, &walkers))
+    }
+
+    /// `reach_together` for a stack on one hex, each with the movement it
+    /// has. `None` if its units stand on several hexes.
+    fn reach_from_here(&self, group: &Group, sight: &Sight) -> Option<Together> {
+        let walkers = self.walkers(group)?;
+        let from = walkers.first()?.0.pos();
+        if walkers.iter().any(|(u, _)| u.pos() != from) {
+            return None;
+        }
+        let left: Vec<u32> = walkers.iter().map(|(u, _)| u.movement).collect();
+        self.reach_together(group, from, &left, sight)
+    }
+
     /// The ground of `group` for a way however far: its lead's, if all of
     /// it goes at one table's prices; else the ground of them all
     /// (`ground_together`), where a step weighs what it takes the slowest.
     fn ground_far<'a>(&'a self, group: &Group, sight: &'a Sight) -> Option<Ground<'a>> {
         if group.mixed() {
-            return self.ground_together(group, sight, Weigh::Far);
+            return self.ground_together(group, sight);
         }
         let (lead, table) = group.lead(&self.map)?;
         let costs = self.map.units().move_cost(table)?;
@@ -2797,7 +2846,7 @@ impl Game {
         if !group.mixed() {
             return self.known_path_by(lead, table, to, u32::MAX, sight);
         }
-        let (pass, steps) = self.ground_together(group, sight, Weigh::Far)?;
+        let (pass, steps) = self.ground_together(group, sight)?;
         let way = path_with(&self.map, (lead.pos(), to), &*steps, u32::MAX, &*pass)?;
         let hexes: Vec<Hex> = way.into_iter().map(|(hex, _)| hex).collect();
         let costs = self.costs_each(group, lead.pos(), &hexes, sight)?;
@@ -2953,9 +3002,15 @@ impl Game {
 
     /// Where `ids` can go together this turn, as their side knows the map:
     /// where every one of them that moves can get (those carried go with
-    /// their ships). `None` if they cannot go together.
+    /// their ships), by one way if they pay different prices (flyers with
+    /// units that walk: `reach_together`). `None` if they cannot go together.
     fn group_range(&self, ids: &[UnitId], sight: &Sight) -> Option<MoveRange> {
         let group = self.group(ids).ok()?;
+        // Units that pay different prices go one way, all of them: where
+        // there is one they can all pay for.
+        if let Some(together) = group.mixed().then(|| self.reach_from_here(&group, sight)).flatten() {
+            return Some(together.range());
+        }
         let mut range: Option<MoveRange> = None;
         for (id, table) in &group.movers {
             let one = self.known_range_by(self.map.units().get(*id)?, *table, sight);

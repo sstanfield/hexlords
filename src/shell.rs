@@ -135,8 +135,13 @@ impl Shell {
 }
 
 /// Keep `session`'s game in a new file in `dir`, if it can be kept (it
-/// knows the texts its map was read from).
+/// knows the texts its map was read from, and has sides).
 fn keep(session: &mut Session, dir: &Path) {
+    // (A map with no sides is no game to play on: its file could not be
+    // read.)
+    if session.screen.game.setup().seats.is_empty() {
+        return;
+    }
     if let Some(source) = session.screen.game.source() {
         let path = crate::save::fresh(dir, &source.name);
         session.keep_in(path);

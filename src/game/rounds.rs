@@ -58,7 +58,7 @@
 //!
 //! Not a port: the C++ had no turns.
 
-use super::{Game, Group, MarchState, SEE_ALL, SHARE, Sight, UNSEEN, Undo, Weigh};
+use super::{Game, Group, MarchState, SEE_ALL, Sight, UNSEEN, Undo};
 use crate::orders::Event;
 use crate::setup::{Mode, TurnOrder};
 use crate::state::{Hex, MAX_STACK, MoveCostId, Passage, Side, TileType, Unit, UnitId, hostile, path_with, reach_with};
@@ -152,8 +152,7 @@ impl Game {
         reach: bool,
         roam: bool,
     ) -> Result<Vec<Event>, String> {
-        let mut ids = ids.to_vec();
-        ids.dedup();
+        let ids = super::distinct(ids);
         if ids.is_empty() {
             return Err("no units".to_string());
         }
@@ -161,6 +160,9 @@ impl Game {
             .iter()
             .map(|id| self.own_unit(side, *id).map(|u| (*id, MarchState::of(u))))
             .collect::<Result<_, _>>()?;
+        if !self.map.contains(to) {
+            return Err(format!("{to} is not on the map"));
+        }
         if roam && before.iter().any(|(_, was)| !was.marauding) {
             return Err("they are not marauding".to_string());
         }
@@ -177,13 +179,15 @@ impl Game {
         let together = if reach && !roam { self.gathering(&ids) } else { None };
         let mut plans = Vec::new();
         match together {
-            Some(from) => plans.push(self.legs(side, &ids, (from, to), reach, &sight, None)?),
-            None if stacks.len() == 1 => plans.push(self.legs(side, &ids, (stacks[0].0, to), reach, &sight, None)?),
+            Some(from) => plans.push(self.legs(side, &ids, (from, to), reach, &sight, (None, false))?),
+            None if stacks.len() == 1 => {
+                plans.push(self.legs(side, &ids, (stacks[0].0, to), reach, &sight, (None, false))?)
+            }
             None => match self.muster(side, &ids, to, &sight).filter(|_| reach && !roam) {
                 Some(legs) => plans.push(legs),
                 None => {
                     for (from, stack) in &stacks {
-                        plans.push(self.legs(side, stack, (*from, to), reach, &sight, None)?);
+                        plans.push(self.legs(side, stack, (*from, to), reach, &sight, (None, false))?);
                     }
                 }
             },
@@ -214,8 +218,7 @@ impl Game {
     /// Nothing moves yet. An undo takes this leg back: the plan is as it
     /// was.
     pub(super) fn plan_onward(&mut self, side: Side, ids: &[UnitId], to: Hex) -> Result<Vec<Event>, String> {
-        let mut ids = ids.to_vec();
-        ids.dedup();
+        let ids = super::distinct(ids);
         if ids.is_empty() {
             return Err("no units".to_string());
         }
@@ -239,7 +242,7 @@ impl Game {
                 "their plan ends on a temple that has yet to bless them: it stops them for the round".to_string()
             );
         }
-        let legs = self.legs(side, &ids, (from, to), true, &sight, None)?;
+        let legs = self.legs(side, &ids, (from, to), true, &sight, (None, true))?;
         self.parties += 1;
         let party = self.parties;
         for (id, route, way) in legs {
@@ -289,7 +292,7 @@ impl Game {
         if !self.goes_on_from(side, from, sight) || self.stopped_at(ids, from) {
             return None;
         }
-        self.range_from(ids, from, sight)
+        self.range_from(ids, from, sight, true)
     }
 
     /// What `unit`, selected to be sent on from its plan's end
@@ -297,7 +300,7 @@ impl Game {
     /// way. `None` if it is not.
     pub fn onward_left(&self, unit: &Unit) -> Option<u32> {
         let from = self.onward_from()?;
-        self.left_at(unit, unit.move_cost, from, &self.sight(unit.side()))
+        self.left_at(unit, unit.move_cost, from, &self.sight(unit.side()), true)
     }
 
     /// `ids` by the hex they stand on, in their order.
@@ -324,9 +327,9 @@ impl Game {
         hexes.into_iter().find_map(|on| {
             let mut coming = Vec::new();
             for (from, stack) in stacks.iter().filter(|(from, _)| *from != on) {
-                coming.extend(self.legs(side, stack, (*from, on), true, sight, None).ok()?);
+                coming.extend(self.legs(side, stack, (*from, on), true, sight, (None, false)).ok()?);
             }
-            self.legs(side, ids, (on, to), true, sight, Some(&coming)).ok()
+            self.legs(side, ids, (on, to), true, sight, (Some(&coming), false)).ok()
         })
     }
 
@@ -372,8 +375,10 @@ impl Game {
     /// What `unit` (at the prices of `table`) has left when it stands on
     /// `from`: its movement, less the way there if it is not there yet (a
     /// plan takes it there). `None` if it cannot get there.
-    fn left_at(&self, unit: &Unit, table: MoveCostId, from: Hex, sight: &Sight) -> Option<u32> {
-        if unit.pos() == from {
+    fn left_at(&self, unit: &Unit, table: MoveCostId, from: Hex, sight: &Sight, onward: bool) -> Option<u32> {
+        // (Sent on from its plan's end, `onward`, it has gone the plan's
+        // way though that ends where it stands: out and back.)
+        if unit.pos() == from && !onward {
             return Some(unit.movement);
         }
         // A plan that takes it there: by the plan's way (its waypoints may
@@ -399,29 +404,26 @@ impl Game {
     /// way there leaves them. `None` if they do not go together.
     pub(super) fn joint_range(&self, ids: &[UnitId], sight: &Sight) -> Option<crate::state::MoveRange> {
         let from = self.gathering(ids)?;
-        self.range_from(ids, from, sight)
+        self.range_from(ids, from, sight, false)
     }
 
     /// Where `ids` (a side's) can all go this round from `from`, the hex
-    /// they stand on or their plans take them to, with what each has left
-    /// there (`left_at`).
-    fn range_from(&self, ids: &[UnitId], from: Hex, sight: &Sight) -> Option<crate::state::MoveRange> {
+    /// they stand on or their plans take them to (`onward`: sent on from
+    /// their plan's end), with what each has left there (`left_at`).
+    fn range_from(&self, ids: &[UnitId], from: Hex, sight: &Sight, onward: bool) -> Option<crate::state::MoveRange> {
         let group = self.group(ids).ok()?;
         // Units that go at different prices (flyers with units that walk):
         // where there is a way all of them can go and pay for.
         if group.mixed() {
             let units = self.map.units();
-            let left = |(id, table): &(UnitId, MoveCostId)| self.left_at(units.get(*id)?, *table, from, sight);
+            let left = |(id, table): &(UnitId, MoveCostId)| self.left_at(units.get(*id)?, *table, from, sight, onward);
             let left: Vec<u32> = group.movers.iter().map(left).collect::<Option<_>>()?;
-            let least = left.iter().copied().min()?;
-            let (pass, steps) = self.ground_together(&group, sight, Weigh::Now(left))?;
-            // (In points of the one with the fewest left.)
-            return Some(reach_with(&self.map, from, &*steps, SHARE, &*pass).scaled(least, SHARE));
+            return Some(self.reach_together(&group, from, &left, sight)?.range());
         }
         let mut range: Option<crate::state::MoveRange> = None;
         for (id, table) in &group.movers {
             let unit = self.map.units().get(*id)?;
-            let left = self.left_at(unit, *table, from, sight)?;
+            let left = self.left_at(unit, *table, from, sight, onward)?;
             let costs = self.map.units().move_cost(*table)?;
             let (pass, steps) = self.ground(unit, costs, sight);
             let one = reach_with(&self.map, from, &steps, left, &pass);
@@ -439,7 +441,9 @@ impl Game {
     /// there (`reach`), has no room there, or would leave others in the
     /// water. Without `reach` (`Order::Toward`) the way is as far as it is
     /// known. `coming`: the stops and the ways of those that come to
-    /// `from` first, if they are not the units' own yet (`muster`).
+    /// `from` first, if they are not the units' own yet (`muster`);
+    /// `onward`: they are sent on from their plan's end, and keep its way
+    /// (though it ends where they stand).
     fn legs(
         &self,
         side: Side,
@@ -447,7 +451,7 @@ impl Game {
         (from, to): (Hex, Hex),
         reach: bool,
         sight: &Sight,
-        coming: Option<&Legs>,
+        (coming, onward): (Option<&Legs>, bool),
     ) -> Result<Legs, String> {
         let group = self.group(ids)?;
         // What each that moves has left on `from`; the way is the one of
@@ -459,7 +463,7 @@ impl Game {
         for (id, table) in &group.movers {
             let unit = self.own_unit(side, *id)?;
             let short = || format!("{} cannot get there this turn", unit.name);
-            let left = self.left_at(unit, *table, from, sight).ok_or_else(short)?;
+            let left = self.left_at(unit, *table, from, sight, onward).ok_or_else(short)?;
             lefts.push(left);
             if reach && !mixed {
                 let costs = self.map.units().move_cost(*table).ok_or_else(short)?;
@@ -473,9 +477,9 @@ impl Game {
         let (lead, table, left) = slowest.ok_or("no units")?;
         let hexes = |way: Vec<(Hex, u32)>| -> Vec<Hex> { way.into_iter().map(|(hex, _)| hex).collect() };
         let way: Vec<Hex> = if reach && mixed {
-            let (pass, steps) = self.ground_together(&group, sight, Weigh::Now(lefts)).ok_or("no units")?;
-            let way = path_with(&self.map, (from, to), &*steps, SHARE, &*pass);
-            hexes(way.ok_or("they cannot all get there together this turn")?)
+            let together = self.reach_together(&group, from, &lefts, sight).ok_or("no units")?;
+            let way = together.way(to).ok_or("they cannot all get there together this turn")?;
+            way.into_iter().map(|(hex, _)| hex).collect()
         } else if reach {
             let costs = self.map.units().move_cost(table).ok_or("no units")?;
             let (pass, steps) = self.ground(lead, costs, sight);
@@ -519,7 +523,7 @@ impl Game {
         for unit in ids.iter().filter_map(|id| self.map.units().get(*id)) {
             let sent = coming.and_then(|legs| legs.iter().find(|(id, _, _)| *id == unit.id()));
             let (mut route, mut hexes) = match sent {
-                _ if unit.pos() == from => (Vec::new(), Vec::new()),
+                _ if unit.pos() == from && !onward => (Vec::new(), Vec::new()),
                 Some((_, route, way)) => (route.clone(), way.clone()),
                 None => (unit.route.clone(), unit.way.clone()),
             };
@@ -650,9 +654,14 @@ impl Game {
             if self.winner.is_some() || play.steps >= MAX_STEPS {
                 break;
             }
-            for (side, set_off) in self.set_off(&play) {
+            let (happened, went) = self.set_off(&play);
+            for (side, set_off) in happened {
                 self.remember(round, side, &set_off);
                 events.extend(set_off);
+            }
+            // (Somebody set off who had waited: the others wait again.)
+            if went {
+                play.hasty = false;
             }
             let Some((due, side, ids, hex)) = self.next_there() else {
                 // Nobody is on a step. Those that wait for others of their
@@ -738,8 +747,15 @@ impl Game {
     /// way, if it has none (a march, as it sets off; a plan toward land
     /// never seen, as far as it knows it), and passes the stops it is on.
     /// What happened at the stops (a blessing sought), side by side.
-    fn set_off(&mut self, play: &PlayOut) -> Vec<(Side, Vec<Event>)> {
+    fn set_off(&mut self, play: &PlayOut) -> (Vec<(Side, Vec<Event>)>, bool) {
         let mut happened = Vec::new();
+        // Told that nobody comes (`hasty`), a stack that could go only once
+        // another has left is not stopped for the round if some stack does
+        // set off now: it waits behind that one (the review, 2026-11-23: a
+        // stack sent where a bigger one stood, which left by way of its
+        // hex, was stopped though the hex was empty a moment later).
+        let mut held: Vec<(Side, Vec<UnitId>)> = Vec::new();
+        let mut went = false;
         for (side, stack) in self.idle_stacks() {
             let patrols = self.map.units().get(stack[0]).is_some_and(|u| u.route.is_empty());
             let mut stack = stack;
@@ -758,20 +774,35 @@ impl Game {
                 self.find_way(side, &stack);
             }
             let look = if patrols { self.patrol_look(side, &stack) } else { self.look(side, &stack, play.hasty) };
-            let clock = stack.iter().filter_map(|id| self.map.units().get(*id)).map(|u| u.clock).max().unwrap_or(0);
-            let at = self.map.units().get(stack[0]).map(|u| u.pos());
-            for id in &stack {
-                let Some(unit) = self.map.unit_mut(*id) else { continue };
-                match &look {
-                    Look::Go { hex, time, .. } => unit.step = Some((*hex, clock + *time)),
-                    // (A rest is a step to where it stands.)
-                    Look::Rest => unit.step = at.map(|at| (at, play.now + REST)),
-                    Look::Wait => unit.clock = unit.clock.max(play.now),
-                    Look::Stop => unit.halted = true,
-                }
+            if play.hasty && !patrols && look == Look::Stop {
+                held.push((side, stack));
+                continue;
+            }
+            went |= play.hasty && matches!(look, Look::Go { .. });
+            self.take_look(&stack, &look, play.now);
+        }
+        for (side, stack) in held {
+            let look = if went { self.look(side, &stack, false) } else { Look::Stop };
+            self.take_look(&stack, &look, play.now);
+        }
+        (happened, went)
+    }
+
+    /// The stack `stack` does what it found to do next (`look`), at the
+    /// moment `now` of the round.
+    fn take_look(&mut self, stack: &[UnitId], look: &Look, now: u64) {
+        let clock = stack.iter().filter_map(|id| self.map.units().get(*id)).map(|u| u.clock).max().unwrap_or(0);
+        let at = stack.first().and_then(|id| self.map.units().get(*id)).map(|u| u.pos());
+        for id in stack {
+            let Some(unit) = self.map.unit_mut(*id) else { continue };
+            match look {
+                Look::Go { hex, time, .. } => unit.step = Some((*hex, clock + *time)),
+                // (A rest is a step to where it stands.)
+                Look::Rest => unit.step = at.map(|at| (at, now + REST)),
+                Look::Wait => unit.clock = unit.clock.max(now),
+                Look::Stop => unit.halted = true,
             }
         }
-        happened
     }
 
     /// The stack whose step is up first: when, its side, its units, and
@@ -1030,7 +1061,12 @@ impl Game {
             // (A rest is over.)
             _ if hex == at => Look::Wait,
             Some(_) => self.patrol_look(side, ids),
-            None => self.look(side, ids, play.hasty),
+            // (It set off: it waits for nobody now, though the others of
+            // its side wait again, `set_off`.)
+            None => match self.look(side, ids, play.hasty) {
+                Look::Wait => self.look(side, ids, true),
+                look => look,
+            },
         };
         let mut events = Vec::new();
         let (mut halt, mut came) = (false, Vec::new());
@@ -1060,6 +1096,17 @@ impl Game {
                                 (unit.route, unit.bound) = (was.route, was.bound);
                                 (unit.planned, unit.party) = (was.planned, was.party);
                                 unit.way = if there { way[passed.min(way.len())..].to_vec() } else { way.clone() };
+                                // A stop gone through (its side's stack left
+                                // no room on it) is behind them: not the
+                                // next to make for (the review, 2026-11-23:
+                                // from the plan's end the stack turned
+                                // back for it).
+                                if there {
+                                    let through = &way[..passed.min(way.len()).saturating_sub(1)];
+                                    while unit.route.len() > 1 && through.contains(&unit.route[0]) {
+                                        unit.route.remove(0);
+                                    }
+                                }
                             }
                             if was.marauding {
                                 (unit.marauding, unit.fought) = (true, battled || was.fought);

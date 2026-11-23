@@ -422,12 +422,18 @@ and the rules use integers, not floats.
     (the owner's word, 2026-11-22: "a mixed stack should always stay and
     move together even with flyers and non-flyers"; the flyers of one went
     over the water alone, the way being theirs): units that go at
-    different prices take a way all of them can go
-    (`Game::ground_together`: a hex shut to one is shut to all, and the
-    way is the quickest for the slowest of them), each paying its own
-    price for it, and they go as one or not at all, on a march, a patrol
-    and in a round alike. Flyers that are to cross the water are sent
-    without those that cannot. The computer builds no ships yet (carrying an army by sea is
+    different prices take one way, which all of them can go (a hex shut
+    to one is shut to all), each paying its own price for it, and they go
+    as one or not at all, on a move, a march, a patrol and in a round
+    alike. This turn they can go wherever there is one way that every one
+    of them can pay for (`state::reach_together`: the map marks those
+    hexes, and takes the way that leaves them most); farther, on a march,
+    the way is the quickest for the slowest of them
+    (`Game::ground_together`). Units met unseen on the way are met on that
+    one way (the review, 2026-11-23: each unit went its own in turns, and
+    boats met on the flyers' way over a pond had the walkers taken there
+    too, to drown). Flyers that are to cross the water are sent without
+    those that cannot. The computer builds no ships yet (carrying an army by sea is
     planning of its own, to come), and values a flyer's moves above a
     walker's.
 
@@ -553,7 +559,9 @@ changed.
     attackers' round); nor has one that ends on a temple that has yet to
     bless them, which stops them there for the round as any stop on one
     does: nothing is offered from there, and a leg after it is refused.
-    Go to (G) for a stack so selected goes by the plan's stops too; a
+    A stop the stack goes through without standing on it (others of its
+    side left it no room there) is behind it: it does not turn back for
+    it. Go to (G) for a stack so selected goes by the plan's stops too; a
     click on land never seen (total fog) is a new plan, to look. The
     status line counts a hex's cost of what the plan leaves ("2 of 6
     points to go on to here").
@@ -562,7 +570,11 @@ changed.
     with room. Behind stacks of its side that are on their way themselves
     it waits until they have gone. (If nobody can step any more and some
     still wait, for others to join them or to get out of the way, they
-    wait no longer.)
+    wait no longer: those that can set off do, and the others wait behind
+    them again; only if none can are they stopped for the round. The
+    review, 2026-11-23: a stack sent where a bigger one stood, which left
+    by way of its hex, was stopped though the hex was empty a moment
+    later.)
   - The units of one order go as a stack; those of another order on their
     hex, with the same end, go on their own (`Unit::party`).
   - A plan or a march that stops on a temple seeks its blessing there

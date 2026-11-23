@@ -1134,7 +1134,7 @@ impl Session {
     fn play_round(&mut self, now_ms: u64) {
         if !std::mem::replace(&mut self.round_live, true) {
             self.round_shown.clear();
-            self.round_seen = self.last_person.into_iter().collect();
+            self.round_seen = self.person_here().into_iter().collect();
             self.round_before = self.others_sights();
             // The round is kept, a beat at a time, to be looked at again.
             self.take_orders();
@@ -1203,7 +1203,8 @@ impl Session {
         let game = &self.screen.game;
         let people =
             game.setup().seats.iter().filter(|seat| seat.controller == Controller::Person).map(|seat| seat.side);
-        let others = people.filter(|side| Some(*side) != self.last_person && !game.out().contains(side));
+        let here = self.person_here();
+        let others = people.filter(|side| Some(*side) != here && !game.out().contains(side));
         others.map(|side| (side, game.sight(side))).collect()
     }
 
@@ -1727,6 +1728,10 @@ impl Session {
         }
         let beat = replay.step(at) == Some(&Step::Beat);
         let happened = replay.advance(&mut self.screen.game, at);
+        // (An undo done again selects the units it gave back: nothing is
+        // selected in the past, least of all a stack the person looking
+        // does not see.)
+        self.screen.game.deselect();
         if let Some(past) = &mut self.past {
             past.at = at + 1;
         }
@@ -1825,7 +1830,7 @@ impl Session {
         // Whose battles are played out: the person at the screen's, or, in
         // the computer's turns, the last person's (even once they are out:
         // the battle that put them out).
-        let watcher = if self.persons_turn() { Some(self.screen.game.player()) } else { self.last_person };
+        let watcher = if self.persons_turn() { Some(self.screen.game.player()) } else { self.person_here() };
         let mut shown: Vec<Shown> = Vec::new();
         for (record, event) in happened {
             match event {
@@ -3828,7 +3833,23 @@ impl Session {
     /// computer's turns, the person who played last.
     fn viewer(&self) -> Side {
         let side = self.screen.game.player();
-        if self.persons_turn() { side } else { self.last_person.unwrap_or(side) }
+        if self.persons_turn() { side } else { self.person_here().unwrap_or(side) }
+    }
+
+    /// The person the screen is: who played here last; or, when nobody has
+    /// yet (a game the computer begins, a saved game played on in the
+    /// computer's turn or while a round plays out), the person whose turn
+    /// comes next (the review, 2026-11-23: the screen was the computer's
+    /// side's until then, or nobody's, and fog of war hid nothing).
+    fn person_here(&self) -> Option<Side> {
+        self.last_person.or_else(|| {
+            let game = &self.screen.game;
+            let order = game.order();
+            let at = order.iter().position(|s| *s == game.player()).unwrap_or(0);
+            (0..order.len())
+                .map(|i| order[(at + i) % order.len()])
+                .find(|s| !game.out().contains(s) && game.controller(*s) == Some(&Controller::Person))
+        })
     }
 
     /// Who gives the orders at this screen now: the side whose turn it is, if
