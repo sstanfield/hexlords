@@ -60,7 +60,9 @@ as they are.
   with their size, and fog of war is a choice (in part, or total: land never
   seen is black until it is explored); a city out of sight is as you saw it
   last. A list says what is left to do this
-  turn, a log keeps your battles, which can be watched again, and what happened
+  turn, one window shows the whole side's production (what every city
+  builds and where it goes, what the next rounds bring, whether the gold
+  will keep paying the upkeep, and the stacks to cut it with), a log keeps your battles, which can be watched again, and what happened
   since your last turn can be replayed. A game that is not over is kept as
   it goes and played on later ([docs/saves.md](docs/saves.md)).
 - **Computer players** ([docs/agents.md](docs/agents.md)): several styles
@@ -164,6 +166,7 @@ rules of the game in play. The most used:
 | H | Look at your capital (in hotseat, each person's turn starts there) |
 | O, or Open the city's window (City details, for another's) | The selected hex's city in a window, with more room. Your own: a button for each thing it can build (pointing at one shows all about it), a queue (+ beside a kind: kinds in turn, how many of each, where they go, and whether it then stops or starts over), where its new units go (Send to..., then a hex; a rally point; Keep here; Defend here), and Raise the walls. The sidebar has the same in less room (Send..., Keep, Defend) |
 | M, A | A list of your cities, or of all of them, with a minimap that rings the one you choose; open it in full, or go to it |
+| E, or Cities > Production... | Your production in one window. A minimap with your cities and rally points (cities idle or waiting ringed in orange, the chosen one in gold with a line to where its units go); your gold, what comes in and goes out a turn, and whether the gold will go on paying the upkeep (if not, from which round); every city with what it builds and where its units go, the idle and waiting first; what the next 5 rounds finish; and, when shown, your stacks, the dearest first. A city's row chooses it: Open its window (what it builds, its queue), Stop, Keep, Defend, a rally point, or To a city... and then that city's row. A stack's row: Select puts it under the map (to send some of it home with X), Disband... all of it. Stop all production... stops every city, after asking |
 | Tasks, or T | What you have left to do this turn, most pressing first: stacks with no orders and cities that build nothing; then cities whose work waits for gold or for room; then the rest. Click a row to see to it |
 | Log, or L | Your log: every battle you fought, attacking or attacked, with who won and who died on each side (Watch plays it again); the cities you took and lost; who is out. The latest round first |
 | Replay, or W | What happened since your last turn, again (in rounds: the round that played out). W again stops it; the slider beside the button goes back to any moment of it, where the map can be looked over but no orders given; Esc, or the turn's button, comes back to now |
@@ -214,6 +217,8 @@ its walls and taxes, its garrison, what it is building and what it can
 build.
 
 ![A city in full: what it can build, its queue, where its new units go](docs/screenshots/cities.png)
+
+![The production window: the cities and rally points on a map, the gold and how long it pays the upkeep, what each round finishes and where it goes, the stacks to cut the upkeep with](docs/screenshots/production.png)
 
 **A new game** starts on its own screen: the map (one of the game's, or a
 random map made there; the preview beside the settings can be looked over

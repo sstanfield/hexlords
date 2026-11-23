@@ -124,6 +124,16 @@ impl City {
         self.building.and_then(|i| self.units.get(i))
     }
 
+    /// A turn of work on what it builds (`Map::produce`, and the forecast
+    /// of it, `Game::forecast`): what it builds, if that is done now, ready
+    /// to be paid for and placed (until it is, it stays done and waits).
+    pub fn work(&mut self) -> Option<UnitProd> {
+        let prod = self.production().cloned()?;
+        let time = prod.time.max(1);
+        self.progress = self.progress.saturating_add(1).min(time);
+        (self.progress >= time).then_some(prod)
+    }
+
     /// A unit of what it builds is out: its queue, if it has one, goes on
     /// (the next of the item, the next item, back to where it repeats from,
     /// or, at its end, nothing, and the city waits for orders).
@@ -256,6 +266,25 @@ impl Cities {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn work_counts_a_turn_and_a_done_unit_stays_done() {
+        let mut cities = Cities::new();
+        let id = cities.new_city("Alder", Hex::new(3, 4), 2);
+        let city = cities.get_mut(id).unwrap();
+        assert_eq!(city.work(), None, "nothing to build");
+        let prod = UnitProd { basename: "pikes".into(), time: 2, cost: 5, upkeep: 1, strength: 2, movement: 10 };
+        city.units.push(prod.clone());
+        city.building = Some(0);
+        assert_eq!((city.work(), city.progress), (None, 1));
+        assert_eq!((city.work(), city.progress), (Some(prod.clone()), 2));
+        // Not paid for: it stays done, and is done again the next turn.
+        assert_eq!((city.work(), city.progress), (Some(prod.clone()), 2));
+        // A unit of no turns takes one.
+        city.units[0].time = 0;
+        city.progress = 0;
+        assert_eq!((city.work(), city.progress), (Some(UnitProd { time: 0, ..prod }), 1));
+    }
 
     #[test]
     fn cities_start_neutral_and_are_found_by_position() {

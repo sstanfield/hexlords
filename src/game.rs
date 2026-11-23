@@ -19,9 +19,11 @@ use crate::state::{
     path_with, reach_with, step_cost, step_toward_by, way_over_land,
 };
 
+mod forecast;
 mod patrol;
 mod rounds;
 
+pub use forecast::{Built, Forecast, PayDay, Wait};
 pub use rounds::{BEAT, ROUND};
 
 /// The agent that passes its turns: the computer's, when nothing else is said.
@@ -171,7 +173,7 @@ pub enum StackState {
     Fought,
 }
 
-/// How a city stands this turn.
+/// How a city stands this turn ([`CityState::of`]).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CityState {
     /// It builds nothing, and its holder has not said that is what it wants
@@ -183,6 +185,19 @@ pub enum CityState {
     Waiting,
     /// It is building.
     Building,
+}
+
+impl CityState {
+    /// How `city` stands: building, done and waiting, or building nothing
+    /// (on its holder's word, or not).
+    pub fn of(city: &crate::state::City) -> CityState {
+        match city.production() {
+            None if city.resting => CityState::Resting,
+            None => CityState::Idle,
+            Some(prod) if city.progress >= prod.time.max(1) => CityState::Waiting,
+            Some(_) => CityState::Building,
+        }
+    }
 }
 
 impl Task {
@@ -3915,13 +3930,7 @@ impl Game {
             })
             .collect();
         for city in map.cities().iter().filter(|c| c.side == side && side != Side::Grey) {
-            let state = match city.production() {
-                None if city.resting => CityState::Resting,
-                None => CityState::Idle,
-                Some(prod) if city.progress >= prod.time.max(1) => CityState::Waiting,
-                Some(_) => CityState::Building,
-            };
-            tasks.push(Task::City { city: city.id, state });
+            tasks.push(Task::City { city: city.id, state: CityState::of(city) });
         }
         let place = |task: &Task| match task {
             Task::Stack { at, .. } => (0, at.row, at.col),

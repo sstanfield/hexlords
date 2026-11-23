@@ -5,7 +5,7 @@
 //!
 //! Not a port: the C++ had no panels.
 
-use crate::game::{CityState, Game, Ghost, Sight, StackState, Task, describe_terrain};
+use crate::game::{CityState, Forecast, Game, Ghost, Sight, StackState, Task, Wait, describe_terrain};
 use crate::orders::{Event, Fallen, Record};
 use crate::state::scenario::side_name;
 use crate::state::{City, Hex, Map, MoveCost, Patrol, QueueEnd, Sends, Side, TileType, Travel, Unit, UnitProd};
@@ -764,6 +764,127 @@ pub fn progress_short(map: &Map, city: &City) -> String {
     }
 }
 
+/// Where a city's new units go, short, for the production window: "stay",
+/// "defend it", "to rally point 2", "to Alder" (a city, or a place), "to
+/// Alder by 2 stops".
+pub fn sends_short(map: &Map, sends: &Sends) -> String {
+    match sends {
+        Sends::Stay => "stay".to_string(),
+        Sends::Defend => "defend it".to_string(),
+        Sends::Route(route) => match route.split_last() {
+            Some((end, [])) => format!("to {}", place(map, *end)),
+            Some((end, [_])) => format!("to {} by a stop", place(map, *end)),
+            Some((end, stops)) => format!("to {} by {} stops", place(map, *end), stops.len()),
+            None => "stay".to_string(),
+        },
+        Sends::Point { n, bless: false } => format!("to rally point {n}"),
+        Sends::Point { n, bless: true } => format!("to rally point {n}, by a temple"),
+    }
+}
+
+/// A city's row in the production window: its name, what it builds and how
+/// far it has got (or that it waits, or builds nothing), and where its new
+/// units go. "Alder: Riders 1/3, item 2 of 4; to rally point 2"; "Birch:
+/// Pikes done, they wait for 12 gold; stay"; "Cobb: IDLE, building
+/// nothing"; "Dunn: stopped".
+pub fn production_row(map: &Map, city: &City) -> String {
+    let state = CityState::of(city);
+    let what = match (city.production(), state) {
+        (Some(prod), CityState::Waiting) => format!("{} done, {}", kind_name(map, prod), waits(map, city, prod)),
+        (Some(prod), _) => {
+            let item = match city.queue.current() {
+                Some(_) => format!(", item {} of {}", city.queue.at + 1, city.queue.items.len()),
+                None => String::new(),
+            };
+            format!("{} {}/{}{item}", kind_name(map, prod), city.progress, prod.time.max(1))
+        }
+        (None, CityState::Resting) => return format!("{}: stopped", city.name),
+        (None, _) => return format!("{}: IDLE, building nothing", city.name),
+    };
+    format!("{}: {what}; {}", city.name, sends_short(map, &city.sends))
+}
+
+/// The money, for the production window, in short lines (it has a narrow
+/// column), from `forecast` (as far as the window asks it to look; its
+/// first `shown` days are those it lists): the gold, and what comes and
+/// goes a turn; what the cities build in the days shown, and the upkeep
+/// after them; whether the gold pays the upkeep as far as it looks, and if
+/// not from when; and the cities at no work.
+pub fn economy_lines(game: &Game, side: Side, forecast: &Forecast, shown: usize) -> Vec<String> {
+    let (gold, taxes, upkeep) = (game.gold(side), game.income(side), game.upkeep(side));
+    let net = i64::from(taxes) - i64::from(upkeep);
+    let mut lines =
+        vec![format!("Gold {gold}"), format!("Taxes +{taxes}, upkeep -{upkeep}"), format!("{net:+} gold a turn")];
+    let days = &forecast.days[..shown.min(forecast.days.len())];
+    let built: usize = days.iter().map(|d| d.built.len()).sum();
+    let price: u32 = days.iter().flat_map(|d| &d.built).map(|b| b.price).sum();
+    let after = days.last().map_or(upkeep, |d| d.upkeep + d.built.iter().map(|b| b.upkeep).sum::<u32>());
+    if !days.is_empty() {
+        let n = days.len();
+        match built {
+            0 => lines.push(format!("Next {n} rounds: nothing built")),
+            1 => lines.extend([format!("Next {n} rounds: 1 unit, {price} gold"), format!("Upkeep after: -{after}")]),
+            _ => lines
+                .extend([format!("Next {n} rounds: {built} units, {price} gold"), format!("Upkeep after: -{after}")]),
+        }
+    }
+    match forecast.short_at {
+        Some(round) => lines.extend([format!("Round {round}: upkeep unpaid,"), "units will leave you".to_string()]),
+        None => lines.push(format!("Upkeep paid {}+ rounds", forecast.days.len())),
+    }
+    let cities: Vec<CityState> =
+        game.map.cities().iter().filter(|c| c.side == side && side != Side::Grey).map(CityState::of).collect();
+    let count = |state: CityState| cities.iter().filter(|s| **s == state).count();
+    let (idle, waiting, stopped) = (count(CityState::Idle), count(CityState::Waiting), count(CityState::Resting));
+    let mut unused = Vec::new();
+    for (n, what) in [(idle, "idle"), (waiting, "waiting"), (stopped, "stopped")] {
+        if n > 0 {
+            unused.push(format!("{n} {what}"));
+        }
+    }
+    lines.push(match (cities.len(), unused.is_empty()) {
+        (0, _) => "You hold no city".to_string(),
+        (1, true) => "Your city is at work".to_string(),
+        (n, true) => format!("All {n} cities at work"),
+        (_, false) => format!("Cities: {}", unused.join(", ")),
+    });
+    lines
+}
+
+/// What the cities finish on the first `shown` days of `forecast`, a line
+/// each, under a heading for each day (true): "Round 14: 21 gold left",
+/// "Alder: Riders, 12 gold; to rally point 1", "Birch: waits for gold"; a
+/// day with nothing done says so in its heading ("Round 15: nothing done,
+/// 31 gold left"); a day the upkeep goes unpaid says so, and is the last.
+pub fn coming_lines(map: &Map, forecast: &Forecast, shown: usize) -> Vec<(bool, String)> {
+    let name = |id| map.cities().get(id).map_or("?".to_string(), |c| c.name.clone());
+    let mut lines = Vec::new();
+    for day in forecast.days.iter().take(shown) {
+        if day.short {
+            let have = day.gold_before + day.taxes;
+            lines.push((true, format!("Round {}: {have} gold, upkeep {}: units leave", day.round, day.upkeep)));
+            break;
+        }
+        if day.built.is_empty() && day.waiting.is_empty() {
+            lines.push((true, format!("Round {}: nothing done, {} gold left", day.round, day.gold_after)));
+            continue;
+        }
+        lines.push((true, format!("Round {}: {} gold left", day.round, day.gold_after)));
+        for built in &day.built {
+            let to = sends_short(map, &built.sends);
+            lines.push((false, format!("{}: {}, {} gold; {to}", name(built.city), built.kind, built.price)));
+        }
+        for (city, wait) in &day.waiting {
+            let why = match wait {
+                Wait::Gold => "waits for gold",
+                Wait::Room => "waits for room",
+            };
+            lines.push((false, format!("{}: {why}", name(*city))));
+        }
+    }
+    lines
+}
+
 /// Why a unit that is done is not out yet: no room in the city (a hex holds
 /// eight units, and a commander besides), or no gold.
 fn waits(map: &Map, city: &City, prod: &UnitProd) -> String {
@@ -771,7 +892,7 @@ fn waits(map: &Map, city: &City, prod: &UnitProd) -> String {
     let commander = units.kind_named(&prod.basename).and_then(|k| units.kind(k)).is_some_and(|k| k.commander > 0);
     let here = map.units_at(city.pos);
     let leaders = here.iter().filter(|u| map.is_commander(**u)).count();
-    let full = if commander { leaders > 0 } else { here.len() - leaders >= crate::state::MAX_STACK };
+    let full = !crate::state::map::fits(here.len() - leaders, leaders, commander);
     if full { "they wait for room".to_string() } else { format!("they wait for {} gold", prod.cost) }
 }
 

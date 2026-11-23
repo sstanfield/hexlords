@@ -375,6 +375,22 @@ fn cities(game: &Game) -> Vec<HelpSection> {
                 ),
                 ("Training", "Some cities train their units: they come out veterans, or elite.".to_string()),
                 (
+                    "Production",
+                    "E: all your cities in one window: what each builds and where its units go (those \
+                     idle or waiting first), what the next 5 rounds bring, and your gold: whether it \
+                     will go on paying the upkeep, and if not from which round. From there you stop \
+                     a city, or all of them, send a city's new units to a rally point or to another \
+                     of your cities, and open a city's window for what it builds. Your stacks are \
+                     there too, the dearest first, to send home what you can do without."
+                        .to_string(),
+                ),
+                (
+                    "The forecast",
+                    "It takes things to stay as they are: your cities held, no battles, no new \
+                     orders. Units sent from a city are taken to leave it, and none to arrive."
+                        .to_string(),
+                ),
+                (
                     "The end",
                     "A side that has lost its last city is out of the game, its units with it; the last \
                              side left wins."

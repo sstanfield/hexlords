@@ -55,6 +55,7 @@ pub mod paths;
 pub mod patrol_window;
 pub mod planner;
 pub mod platform;
+pub mod production_window;
 pub mod rally_window;
 pub mod render;
 pub mod replay;

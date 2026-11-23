@@ -112,6 +112,7 @@ fn it_says_every_key_of_the_game() {
         assert!(keys.contains(&expected), "{expected} is not in {keys:?}");
     }
     assert!(keys.iter().any(|k| k.contains(&format!("{}+T", command_key()))), "{keys:?}");
+    assert!(keys.contains(&"E"), "the production window: {keys:?}");
 }
 
 #[test]

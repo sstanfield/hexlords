@@ -2,22 +2,45 @@
 //! window (the list of cities), which the host cannot draw under the UI as it
 //! draws the sidebar's (`docs`, "Things that bite"). The same colors as the
 //! minimap: each hex its terrain's, each city a square in its holder's, and
-//! one city ringed so that it is found at once.
+//! one city ringed so that it is found at once. The production window's
+//! has more on it ([`Marks`]): the rally points, the cities whose work
+//! waits, and where the chosen city sends its units.
 //!
 //! Not a port: the C++ had no windows.
 
 use turbo_ferret::{Image, Size};
 
-use super::map_renderer::{RING_COLOR, SELECTED_RING, side_color};
+use super::map_renderer::{BATTLE_BORDER, OWN_WAY_BORDER, RING_COLOR, SELECTED_RING, side_color};
 use super::minimap_renderer::{BACKING, terrain_color};
 use crate::game::Sight;
 use crate::minimap_view::MiniMapView;
 use crate::state::{Hex, Map};
 
+/// What is marked on the map's picture besides the terrain and the cities.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Marks {
+    /// A hex ringed in gold (the city chosen).
+    pub ringed: Option<Hex>,
+    /// Flags (the side's rally points): white, on a pole, edged in dark.
+    pub flags: Vec<Hex>,
+    /// Hexes with a small orange ring (cities whose work waits, or that
+    /// build nothing).
+    pub warned: Vec<Hex>,
+    /// A line, light on dark, from a hex to another (where the chosen
+    /// city's units go).
+    pub line: Option<(Hex, Hex)>,
+}
+
 /// The map in `w` x `h` pixels, with `ringed` (a city's hex, say) ringed in
 /// gold: straight-alpha RGBA, top row first, opaque. As `sight` knows it, as
 /// the minimap shows it (`city_marks`).
 pub fn minimap_image(map: &Map, w: i32, h: i32, ringed: Option<Hex>, sight: &Sight) -> Image {
+    minimap_marked(map, w, h, &Marks { ringed, ..Marks::default() }, sight)
+}
+
+/// [`minimap_image`] with all of `marks` on it: the line under the cities,
+/// the rings and the flags over them.
+pub fn minimap_marked(map: &Map, w: i32, h: i32, marks: &Marks, sight: &Sight) -> Image {
     let (w, h) = (w.max(0), h.max(0));
     let mut view = MiniMapView::new(map.rows(), map.cols());
     view.resize(w, h);
@@ -39,25 +62,60 @@ pub fn minimap_image(map: &Map, w: i32, h: i32, ringed: Option<Hex>, sight: &Sig
         }
     }
     let mut image = Image { size: Size::new(w, h), rgba };
-    // The cities: a dark square, and in it the holder's color.
     let reach = view.city_mark_reach();
     let edge = (reach / 4.0).max(1.0);
+    let dark = [RING_COLOR[0], RING_COLOR[1], RING_COLOR[2]];
+    // Where the chosen city's units go: a light line on a dark one.
+    if let Some((from, to)) = marks.line {
+        let (a, b) = (pixel_of(&view, from), pixel_of(&view, to));
+        let width = edge.max(2.0);
+        line(&mut image, a, b, width + 2.0, dark);
+        line(&mut image, a, b, width, OWN_WAY_BORDER);
+    }
+    // The cities: a dark square, and in it the holder's color.
     for city in map.cities().iter().filter(|c| sight.knows(c.pos)) {
         let [cx, cy] = pixel_of(&view, city.pos);
         let [r, g, b] = side_color(sight.holder(city));
         fill_square(&mut image, cx, cy, reach + edge, [RING_COLOR[0], RING_COLOR[1], RING_COLOR[2]]);
         fill_square(&mut image, cx, cy, reach, [r, g, b]);
     }
+    // Those warned of: a thin orange ring close round the square.
+    for hex in &marks.warned {
+        let [cx, cy] = pixel_of(&view, *hex);
+        let (radius, width) = (reach * 1.6 + 1.5, (reach / 3.0).max(1.5));
+        ring(&mut image, cx, cy, radius, width + 1.5, dark);
+        ring(&mut image, cx, cy, radius, width, BATTLE_BORDER);
+    }
     // The ringed one: a gold ring well outside its square, edged in dark.
-    if let Some(hex) = ringed {
+    if let Some(hex) = marks.ringed {
         let [cx, cy] = pixel_of(&view, hex);
         let (radius, width) = (reach * 2.2 + 3.0, (reach / 2.0).max(2.0));
         let gold = [SELECTED_RING[0], SELECTED_RING[1], SELECTED_RING[2]];
-        let dark = [RING_COLOR[0], RING_COLOR[1], RING_COLOR[2]];
         ring(&mut image, cx, cy, radius, width + 2.0, dark);
         ring(&mut image, cx, cy, radius, width, gold);
     }
+    // The flags: a pole up from the hex's middle, and a white cloth on it.
+    for hex in &marks.flags {
+        let [cx, cy] = pixel_of(&view, *hex);
+        let size = (reach * 1.2).max(2.0);
+        let (top, pole) = (cy - size * 2.4, (size / 3.0).max(1.0));
+        line(&mut image, [cx, cy], [cx, top], pole + 1.0, dark);
+        let cloth = [cx + size, top + size * 0.7];
+        fill_square(&mut image, cloth[0], cloth[1], size * 0.75 + 1.0, dark);
+        fill_square(&mut image, cloth[0], cloth[1], size * 0.75, OWN_WAY_BORDER);
+    }
     image
+}
+
+/// The pixels within `width / 2` of the segment from `a` to `b`.
+fn line(image: &mut Image, a: [f32; 2], b: [f32; 2], width: f32, color: [f32; 3]) {
+    let length = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+    let steps = (length * 2.0).ceil().max(1.0) as i32;
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let (x, y) = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
+        fill_square(image, x, y, (width / 2.0).max(0.5), color);
+    }
 }
 
 /// The pixel (x right, y down, fractional) of a hex's middle.
@@ -172,5 +230,35 @@ mod tests {
         // Any size, even none.
         assert!(minimap_image(&map(), 0, 0, Some(Hex::new(15, 15)), &Sight::all()).rgba.is_empty());
         assert_eq!(minimap_image(&map(), 3, 2, Some(Hex::new(0, 0)), &Sight::all()).rgba.len(), 24);
+    }
+
+    #[test]
+    fn flags_rings_and_a_line_are_marked_where_they_are() {
+        let plain = minimap_image(&map(), 240, 200, None, &Sight::all());
+        let (flag, warned, from, to) = (Hex::new(14, 8), Hex::new(5, 5), Hex::new(5, 5), Hex::new(15, 35));
+        let marks = Marks { ringed: None, flags: vec![flag], warned: vec![warned], line: Some((from, to)) };
+        let image = minimap_marked(&map(), 240, 200, &marks, &Sight::all());
+        let mut view = MiniMapView::new(20, 40);
+        view.resize(240, 200);
+        let count = |image: &Image, c: [f32; 3]| image.rgba.chunks(4).filter(|p| p[..3] == byte(c)).count();
+        // White: the flag's cloth and the line, which the plain one has none of.
+        assert_eq!(count(&plain, OWN_WAY_BORDER), 0);
+        assert!(count(&image, OWN_WAY_BORDER) > 40, "{}", count(&image, OWN_WAY_BORDER));
+        // The line's middle is on the way from one to the other.
+        let ([ax, ay], [bx, by]) = (pixel_of(&view, from), pixel_of(&view, to));
+        let middle = (((ax + bx) / 2.0) as i32, ((ay + by) / 2.0) as i32);
+        assert_eq!(pixel(&image, middle.0, middle.1), byte(OWN_WAY_BORDER));
+        // The flag flies up and to the right of its hex.
+        let [fx, fy] = pixel_of(&view, flag);
+        let reach = view.city_mark_reach();
+        let size = (reach * 1.2).max(2.0);
+        let cloth = ((fx + size) as i32, (fy - size * 2.4 + size * 0.7) as i32);
+        assert_eq!(pixel(&image, cloth.0, cloth.1), byte(OWN_WAY_BORDER));
+        // An orange ring round the city warned of, and its square as it was.
+        assert!(count(&image, BATTLE_BORDER) > 10);
+        let [wx, wy] = pixel_of(&view, warned);
+        assert_eq!(pixel(&image, wx as i32, wy as i32), byte(side_color(Side::Red)));
+        // Without marks, the same picture as before.
+        assert_eq!(minimap_marked(&map(), 240, 200, &Marks::default(), &Sight::all()).rgba, plain.rgba);
     }
 }

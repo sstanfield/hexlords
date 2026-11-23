@@ -16,6 +16,14 @@ use super::units::{MoveCostId, Side, Travel, Unit, UnitId, UnitKind, UnitKindId,
 
 /// The most units that can stand on one tile.
 pub const MAX_STACK: usize = 8;
+
+/// True if a unit (a commander, or not) fits on a hex that holds `others`
+/// units that are not commanders and `commanders` that are: a hex holds
+/// [`MAX_STACK`] units, and one commander besides. The one rule of room
+/// (`Map::has_room`; what a city's new unit waits for, and its forecast).
+pub fn fits(others: usize, commanders: usize, commander: bool) -> bool {
+    if commander { commanders == 0 } else { others < MAX_STACK }
+}
 pub const MIN_ROWS: u16 = 20;
 pub const MAX_ROWS: u16 = 600;
 pub const MIN_COLS: u16 = 20;
@@ -395,16 +403,13 @@ impl Map {
     }
 
     /// True if `id` has room on `hex`: a hex holds [`MAX_STACK`] units that
-    /// are not commanders, and one commander besides.
+    /// are not commanders, and one commander besides ([`fits`]).
     pub fn has_room(&self, hex: Hex, id: UnitId) -> bool {
         let Some(i) = self.index(hex) else { return false };
         let here = &self.tiles[i].units;
         let commanders = here.iter().filter(|u| **u != id && self.is_commander(**u)).count();
-        if self.is_commander(id) {
-            commanders == 0
-        } else {
-            here.iter().filter(|u| **u != id).count() - commanders < MAX_STACK
-        }
+        let others = here.iter().filter(|u| **u != id).count() - commanders;
+        fits(others, commanders, self.is_commander(id))
     }
 
     fn push_unit(&mut self, id: UnitId, hex: Hex) -> Result<(), PlaceError> {
@@ -595,11 +600,7 @@ impl Map {
         let mut made = Vec::new();
         for id in working {
             let Some(city) = self.cities.get_mut(id) else { continue };
-            let Some(prod) = city.production().cloned() else { continue };
-            city.progress = city.progress.saturating_add(1).min(prod.time.max(1));
-            if city.progress < prod.time.max(1) {
-                continue;
-            }
+            let Some(prod) = city.work() else { continue };
             let pos = city.pos;
             if *gold < prod.cost {
                 continue; // it waits to be paid for
@@ -644,6 +645,13 @@ mod tests {
     fn add_unit(map: &mut Map, name: &str) -> UnitId {
         let mc = map.acquire_move_cost(MoveCost { grass: 2, ..MoveCost::default() });
         map.new_unit(Side::Black, name, 1, 1, 10, mc)
+    }
+
+    #[test]
+    fn a_hex_fits_eight_and_a_commander() {
+        assert!(fits(7, 0, false) && !fits(MAX_STACK, 0, false));
+        assert!(fits(MAX_STACK, 0, true), "a commander besides");
+        assert!(!fits(0, 1, true) && fits(3, 1, false));
     }
 
     #[test]

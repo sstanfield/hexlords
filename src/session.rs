@@ -40,6 +40,7 @@ use crate::options_window::{self, Options, OptionsWindow};
 use crate::orders::{Event, Order, RallyPoint};
 use crate::patrol_window::{self, PatrolClick, PatrolWindow};
 use crate::platform::WEB;
+use crate::production_window::{self, ProductionClick, ProductionWindow};
 use crate::rally_window::{self, RallyClick, RallyWindow};
 use crate::render::{AssetDirs, BATTLE_BORDER, BATTLE_FLASH, OWN_WAY_BORDER, SELECTED_BORDER, coin_icon, unit_icon};
 use crate::replay::{Replay, Step};
@@ -129,6 +130,8 @@ pub const TASKS_ID: &str = "tasks";
 /// the person's stacks', or the selected stack's only.
 pub const ORDERS_SHOWN_ID: &str = "orders_shown";
 pub const MY_CITIES_ID: &str = "my_cities";
+/// The Cities menu's Production... (`production_window`).
+pub const PRODUCTION_ID: &str = "production";
 pub const CITY_DETAILS_ID: &str = "city_details";
 /// The Game menu's Options (`options_window`).
 pub const OPTIONS_ID: &str = "options";
@@ -174,6 +177,8 @@ pub const GAME_OVER_CLOSE_ID: &str = "game_over_close";
 const LIST_ALIGN: (f32, f32) = (0.0, 0.33);
 const CITY_ALIGN: (f32, f32) = (1.0, 0.33);
 const TASKS_ALIGN: (f32, f32) = (1.0, 0.0);
+/// The production window: at the top, in the middle.
+const PRODUCTION_ALIGN: (f32, f32) = (0.5, 0.0);
 
 /// What a click on the map picks, when it does not choose (`Session::picking`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -392,6 +397,12 @@ fn help_section() -> Vec<HelpSection> {
                 ),
                 ("Raise the walls, in the window", "A level, paid at once: once a turn"),
                 ("M,  A", "Your cities, all cities: see where one is, go to it, open it"),
+                ("E", "Production: every city's work and where it goes, the next 5 rounds, the gold; your stacks"),
+                (
+                    "A city's row, in Production",
+                    "Choose it: Open its window, Stop, Keep, Defend, a rally point; To a city..., then that row",
+                ),
+                ("Stop all production...", "In Production: every city stops building (it asks first)"),
             ],
         ),
         HelpSection::new(
@@ -497,6 +508,8 @@ pub struct Session {
     /// The list of tasks, while it is open; and the map's revision and the
     /// side it was last brought up to date for.
     tasks: Option<TasksWindow>,
+    /// The production window, while it is open.
+    production: Option<ProductionWindow>,
     /// A temple's window: whether the stack there seeks its blessing, and
     /// what came of it.
     temple: Option<TempleWindow>,
@@ -767,6 +780,7 @@ impl Session {
             refused: None,
 
             tasks: None,
+            production: None,
             temple: None,
             disband: None,
             tasks_of: None,
@@ -2399,6 +2413,17 @@ impl Session {
         if self.rally_window.as_ref().is_some_and(|w| !w.is_open(&self.screen.ui)) {
             self.rally_window = None;
         }
+        // The production window: the viewer's, as the game is now (it works
+        // out again only what changed).
+        if self.production.as_ref().is_some_and(|w| !w.is_open(&self.screen.ui)) {
+            self.production = None;
+        }
+        let acting = self.can_act();
+        if let Some(window) = &mut self.production {
+            if window.refresh(&mut self.screen.ui, &self.screen.game, (viewer, &self.sight, acting)) {
+                self.screen.settle();
+            }
+        }
         // The disband window asks about units that are all there still, and
         // the player's (one fell in a battle: the question is over).
         let gone = self.disband.as_ref().is_some_and(|w| {
@@ -2580,6 +2605,7 @@ impl Session {
             self.patrol_window.as_ref().and_then(|w| open(w.window())),
             self.mission_ask.as_ref().and_then(|(w, _, _)| open(w.window)),
             self.refusal.as_ref().and_then(|w| open(w.window)),
+            self.production.as_ref().and_then(|w| open(w.window())),
         ];
         // The one on top: the last of them among the root window's children.
         let order = ui.children(root).to_vec();
@@ -2605,6 +2631,7 @@ impl Session {
             }
             Some(12) => self.mission_ask.take().map(|(w, _, _)| build::close(ui, w.window)).is_some(),
             Some(13) => self.refusal.take().map(|w| build::close(ui, w.window)).is_some(),
+            Some(14) => self.production.take().map(|w| w.close(ui)).is_some(),
             _ => false,
         }
     }
@@ -2922,6 +2949,7 @@ impl Session {
             parts(&self.cover),
             parts(&self.game_over),
             parts(&self.ask_new),
+            self.production.as_ref().is_some_and(|w| w.is_open(ui)),
         ];
         open.iter().enumerate().fold(0, |bits, (i, open)| bits | (u32::from(*open) << i))
     }
@@ -3186,6 +3214,23 @@ impl Session {
     /// A click on a button of a window about cities, or on one that opens
     /// one. False if it was none of those.
     fn window_click(&mut self, id: TbId) -> bool {
+        if id == TbId::new(PRODUCTION_ID) {
+            self.toggle_production();
+            return true;
+        }
+        if id == TbId::new(production_window::PRODUCTION_CLOSE_ID) {
+            if let Some(window) = self.production.take() {
+                window.close(&mut self.screen.ui);
+            }
+            return true;
+        }
+        if self.production.as_ref().is_some_and(|w| w.owns(id)) {
+            let click = self.production.as_mut().and_then(|w| w.click(&self.screen.game, id));
+            if let Some(click) = click {
+                self.production_click(click);
+            }
+            return true;
+        }
         if id == TbId::new(ALL_CITIES_ID) || id == TbId::new(MY_CITIES_ID) {
             self.toggle_list(id == TbId::new(MY_CITIES_ID));
             return true;
@@ -3655,14 +3700,20 @@ impl Session {
     /// X, or Disband: ask whether the selected units (the person's) go home
     /// for good.
     pub fn ask_disband(&mut self) {
+        let units = self.screen.game.selection().to_vec();
+        self.ask_disband_of(units);
+    }
+
+    /// Ask whether `units` (those of them that are the player's) go home
+    /// for good: the selected units (X), or a stack of the production
+    /// window's.
+    fn ask_disband_of(&mut self, units: Vec<UnitId>) {
         if !self.can_act() {
             return;
         }
         let game = &self.screen.game;
-        let units: Vec<UnitId> = game
-            .selection()
-            .iter()
-            .copied()
+        let units: Vec<UnitId> = units
+            .into_iter()
             .filter(|id| game.map.units().get(*id).is_some_and(|u| u.side() == game.player()))
             .collect();
         if units.is_empty() {
@@ -4335,30 +4386,113 @@ impl Session {
         let mine = self.persons_turn();
         match task {
             Task::Stack { at, .. } => {
-                let game = &mut self.screen.game;
-                game.deselect();
-                if !mine {
-                    self.look_at(at);
-                    return;
-                }
                 // The units the row is about, not all on the hex (the
                 // review, 2026-11-23: a row that said "2 units" selected
                 // the garrison beside them too).
-                let about = game.task_units(game.player(), at);
-                if let Some((first, rest)) = about.split_first() {
-                    game.select_unit(*first);
-                    for id in rest {
-                        game.toggle_unit(*id);
-                    }
-                }
-                self.cycled = Some(at);
-                self.look_at(at);
+                let game = &self.screen.game;
+                let about = if mine { game.task_units(game.player(), at) } else { Vec::new() };
+                self.select_these(at, &about);
             }
             Task::City { city, .. } => {
                 if let Some(pos) = self.screen.game.map.cities().get(city).map(|c| c.pos) {
                     self.screen.game.deselect();
                     self.look_at(pos);
                     self.open_city(city);
+                }
+            }
+        }
+    }
+
+    /// Select `units`, of the stack on `at`, and no others, and look at
+    /// them (a task's row, a stack's row of the production window); not
+    /// the person's turn, or none of them: look only.
+    fn select_these(&mut self, at: Hex, units: &[UnitId]) {
+        self.drop_pick();
+        self.auto_selection.clear();
+        let mine = self.persons_turn();
+        let game = &mut self.screen.game;
+        game.deselect();
+        if !mine {
+            self.look_at(at);
+            return;
+        }
+        let side = game.player();
+        let units: Vec<UnitId> =
+            units.iter().copied().filter(|id| game.map.units().get(*id).is_some_and(|u| u.side() == side)).collect();
+        if let Some((first, rest)) = units.split_first() {
+            game.select_unit(*first);
+            for id in rest {
+                game.toggle_unit(*id);
+            }
+            self.cycled = Some(at);
+        }
+        self.look_at(at);
+    }
+
+    /// Open the production window (E, or the Cities menu's Production...),
+    /// or close it.
+    pub fn toggle_production(&mut self) {
+        if let Some(window) = self.production.take() {
+            if window.is_open(&self.screen.ui) {
+                window.close(&mut self.screen.ui);
+                return;
+            }
+        }
+        if self.covered() || !self.people_in_play() {
+            return;
+        }
+        let (root, area) = (self.screen.root_window(), self.window_area());
+        let (side, acting) = (self.viewer(), self.can_act());
+        let shown = self.screen.game.map.city_at(self.shown).filter(|c| c.side == side).map(|c| c.id);
+        let ui = &mut self.screen.ui;
+        let mut window =
+            ProductionWindow::open(ui, root, &self.screen.game, (side, &self.sight, acting), (area, PRODUCTION_ALIGN));
+        if let Some(city) = shown {
+            window.choose_city(city);
+            window.refresh(&mut self.screen.ui, &self.screen.game, (side, &self.sight, acting));
+        }
+        self.production = Some(window);
+        self.screen.settle();
+    }
+
+    /// What a click in the production window asks for. Looking always;
+    /// orders only when the person may give them.
+    fn production_click(&mut self, click: ProductionClick) {
+        match click {
+            ProductionClick::City(order) => self.obey(order),
+            ProductionClick::Select { at, units } => self.select_these(at, &units),
+            ProductionClick::Disband(units) => self.ask_disband_of(units),
+            ProductionClick::SendTo { city, to } => {
+                if !self.can_act() {
+                    return;
+                }
+                self.order_given();
+                self.city_order(Order::Rally { city, to: Sends::Route(vec![to]) });
+            }
+            ProductionClick::StopAll => {
+                if !self.can_act() {
+                    return;
+                }
+                self.order_given();
+                let side = self.screen.game.player();
+                let cities: Vec<CityId> = self
+                    .screen
+                    .game
+                    .map
+                    .cities()
+                    .iter()
+                    .filter(|c| c.side == side && (c.production().is_some() || !c.queue.is_empty()))
+                    .map(|c| c.id)
+                    .collect();
+                let mut refused = Vec::new();
+                for city in cities {
+                    if let Err(why) = self.screen.game.apply(Order::Build { city, what: None }) {
+                        let name = self.screen.game.map.cities().get(city).map_or(String::new(), |c| c.name.clone());
+                        refused.push(format!("{name}: {why}"));
+                    }
+                }
+                if !refused.is_empty() {
+                    self.refuse("Some cities could not stop", &refused.join("; "));
                 }
             }
         }
@@ -4472,6 +4606,11 @@ impl Session {
     }
 
     /// The list of tasks, while it is open.
+    /// The production window, while it is open.
+    pub fn production(&self) -> Option<&ProductionWindow> {
+        self.production.as_ref().filter(|w| w.is_open(&self.screen.ui))
+    }
+
     pub fn tasks_window(&self) -> Option<&TasksWindow> {
         self.tasks.as_ref().filter(|t| t.is_open(&self.screen.ui))
     }
@@ -4556,6 +4695,8 @@ impl Session {
                 .separator()
                 .item(MY_CITIES_ID, "My cities", "M", people)
                 .item(ALL_CITIES_ID, "All cities", "A", true)
+                .separator()
+                .item(PRODUCTION_ID, "Production...", "E", people)
         } else if id == TbId::new(MENU_VIEW_ID) {
             let menu = Menu::new(MENU_VIEW_ID)
                 .item(TASKS_ID, "Tasks", "T", people)
@@ -4887,6 +5028,7 @@ impl Session {
                         'b' | 'B' => self.seek_blessing(),
                         'x' | 'X' => self.ask_disband(),
                         't' | 'T' => self.toggle_tasks(),
+                        'e' | 'E' => self.toggle_production(),
                         'm' | 'M' => self.toggle_list(true),
                         'a' | 'A' => self.toggle_list(false),
                         'o' | 'O' => self.open_shown_city(),

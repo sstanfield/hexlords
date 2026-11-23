@@ -135,7 +135,14 @@ fn an_item_does_what_its_key_does_and_is_greyed_when_it_can_do_nothing() {
     let zoom = s.screen.view.zoom_level();
     choose(&mut s, MENU_VIEW_ID, ZOOM_IN_ID);
     assert!(s.screen.view.zoom_level() != zoom);
-    // The cities': the list of all, as A.
+    // The cities': production, as E; the list of all, as A.
+    push_widget(&mut s, MENU_CITIES_ID);
+    assert!(items(&s).contains(&(hexlords::session::PRODUCTION_ID.to_string(), "E".to_string())), "{:?}", items(&s));
+    press(&mut s, SpecialKey::Esc);
+    choose(&mut s, MENU_CITIES_ID, hexlords::session::PRODUCTION_ID);
+    assert!(s.production().is_some());
+    type_char(&mut s, 'e');
+    assert!(s.production().is_none(), "E closes what the item opened");
     choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     assert!(s.city_list().is_some_and(|l| !l.own()));
     // The keys for them.

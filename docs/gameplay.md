@@ -959,6 +959,35 @@ thing to happen. Ideas to try, as the rules grow:
   that line what each was given; and in rounds one has the map outline
   the selected stack's orders only (V). The shell carries them from one game to
   the next.
+- **Production** (built, the owner's word 2026-11-23: "a central
+  production hub screen ... efficient management of an entire empires
+  production in one place vs visiting a bunch of cities", "a birds eye
+  view of current production as well as make changes (for instance late
+  game we may need to start shutting down production to save money)"):
+  E, or the Cities menu, opens `production_window`. A map with the
+  side's cities and rally points; its gold, taxes and upkeep, what the
+  next 5 rounds build and the upkeep after, and whether the gold pays
+  the upkeep for 20 rounds or from which round it will not; every city
+  with what it builds and where its units go (idle and waiting first);
+  what each of the next 5 rounds finishes, and where it goes; and,
+  folded until asked for, the side's stacks, the dearest first (a hex
+  with defenders and others is two: "if a stack has defend and other
+  units then best to treat them as two stacks"). A city is stopped, kept,
+  set to defend, sent to a rally point or to another of the side's cities
+  (not a hex: "it is ok to use rally points and maybe other cities not
+  random hexes"), and its window opened for what it builds and its
+  queue. Stop all production stops every city, after asking ("having a
+  single button to just stop and then finish with your current armies
+  will be helpful"): an `Order::Build` with nothing for each, so Undo
+  brings back only the last. A stack is selected under the map, to
+  disband some of it with X, or disbanded whole. It gives no order of its
+  own kind: what it does is what the city window and X do. The forecast
+  (`Game::forecast`) is the pay day's rules played forward on copies of
+  the cities (`City::work`, `map::fits`, `City::built_one`): it takes
+  the side to hold its cities, nobody to fight and no new orders to be
+  given, units a city sends elsewhere to leave it and none to arrive, and
+  stops at the first pay day the upkeep goes unpaid. Tests hold it to
+  what real turns and rounds then do.
 - **A log** (built): every battle a side fought, attacking or attacked,
   with who won and who died; the cities it took and lost; the units that
   left it unpaid; the sides out. The game keeps the history
