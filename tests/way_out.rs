@@ -1,9 +1,10 @@
 //! A full city lets out what it sends elsewhere (the owner's word,
 //! 2026-11-23: "produce it if it can leave the city and let it go otherwise
-//! don't produce it"): the new unit stands on the first hex of its way, its
-//! step paid for, and goes on as any unit its city sends does. A city whose
-//! units stay, or whose unit cannot step out (no room there, another side's
-//! units, ground it cannot go on), waits as before.
+//! don't produce it"): the new unit stands on the first hex of its way, the
+//! best beside the city that is free (room for it, nobody else's units,
+//! ground it can go on), its step paid for, and goes on as any unit its
+//! city sends does. A city whose units stay, or whose unit has no such hex
+//! to step out to, waits as before.
 
 use hexlords::game::{Game, Wait};
 use hexlords::orders::{Event, Order, RallyPoint};
@@ -122,9 +123,34 @@ fn a_city_ringed_by_another_sides_units_lets_nothing_out() {
     assert!(game.map.neighbours(ALDER).all(|h| game.map.units_at(h).len() == 1), "nobody joined blue's");
 }
 
-/// One of the side's own stacks, full, on the first hex of the way: it
-/// steps out by another, round it; with every hex round the city full,
-/// nowhere, and no unit.
+/// A full stack of the side's own on the best hex out: the unit steps out
+/// onto the best of the others that is free (it once waited, though
+/// another hex beside the city had room).
+#[test]
+fn a_full_stack_on_the_best_hex_out_is_gone_round() {
+    let mut open = game(&[], |_| {});
+    to_point(&mut open);
+    let first = next_round(&mut open)[0];
+    let best = open.map.units().get(first).unwrap().pos();
+    let mut game = game(&[], |_| {});
+    to_point(&mut game);
+    let levy = game.map.units().kind_named("levy").unwrap();
+    for _ in 0..8 {
+        let id = game.map.new_unit_of(Side::Red, levy).unwrap();
+        game.map.place_unit(id, best).unwrap();
+    }
+    let forecast = game.forecast(Side::Red, 1);
+    assert_eq!(forecast.days[0].built.len(), 1, "{forecast:?}");
+    let built = next_round(&mut game);
+    assert_eq!(built.len(), 1, "out by another hex");
+    let at = game.map.units().get(built[0]).unwrap().pos();
+    assert!(at != best && game.map.neighbours(ALDER).any(|h| h == at), "{at:?} beside Alder, not {best:?}");
+    assert_eq!(game.map.units_at(best).len(), 8, "the full stack as it was");
+    assert_eq!(game.gold(Side::Red), forecast.days[0].gold_after);
+}
+
+/// Every hex round the city full of the side's own: nowhere to step out
+/// to, and no unit.
 #[test]
 fn no_room_on_the_way_out_no_unit() {
     let mut game = game(&[], |s| s.gold = 1000);

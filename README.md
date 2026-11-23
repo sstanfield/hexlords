@@ -288,8 +288,9 @@ start of each of its turns its cities' taxes come in and its units' upkeep
 goes out; units it cannot pay leave it. What a city finishes is paid for
 then, at the city's price; without the gold, the unit waits in the city
 until there is enough. A full city keeps what stays in it waiting for room,
-but lets out what it sends elsewhere, onto the first hex of its way, if
-there is room there. A city's holder can raise its walls a level a turn,
+but lets out what it sends elsewhere: onto the best hex beside the city on
+its way that is free (room for it, no other side's units), if there is
+one. A city's holder can raise its walls a level a turn,
 for gold; a city that is taken loses a level.
 
 ![A battle, played out](docs/screenshots/battle.png)

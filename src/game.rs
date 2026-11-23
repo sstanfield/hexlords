@@ -2285,10 +2285,12 @@ impl Game {
     /// 2026-11-23: "produce it if it can leave the city and let it go
     /// otherwise don't produce it"): the first hex of its way toward where
     /// they go (the first stop of a route; a rally point), the cheapest as
-    /// its side knows the map, if it has room for it and nobody else's
-    /// units are on it; and what the step costs it. `None` if its units
-    /// stay, or it cannot leave so (a walker built where only flyers go
-    /// out, a city ringed by others' units).
+    /// its side knows the map, of those beside the city it can stand on
+    /// (room for it, and nobody else's units or city: the best hex out
+    /// that is free, not only the best hex out); and what the step costs
+    /// it. `None` if its units stay, or it cannot leave so (a walker built
+    /// where only flyers go out, a city ringed by others' units or by full
+    /// stacks of its own).
     pub(crate) fn way_out(&self, city: &City, prod: &UnitProd) -> Option<(Hex, u32)> {
         let side = city.side;
         let to = match &city.sends {
@@ -2298,19 +2300,26 @@ impl Game {
         };
         let map = &self.map;
         let kind = map.units().kind_named(&prod.basename).and_then(|k| map.units().kind(k))?;
+        let commander = kind.commander > 0;
+        // A hex beside the city it can be put on.
+        let free = |hex: Hex| {
+            let here = map.units_at(hex);
+            let leaders = here.iter().filter(|u| map.is_commander(**u)).count();
+            let theirs = hostile(map, side, hex) || map.city_at(hex).is_some_and(|c| c.side != side);
+            !theirs && crate::state::map::fits(here.len() - leaders, leaders, commander)
+        };
         let sight = self.sight(side);
-        // Over land the side knows, round the units it sees of others'.
+        // Over land the side knows, round the units it sees of others'; and
+        // its first step only onto a hex it can be put on.
         let steps = |from: Hex, hex: Hex| {
             let open = sight.knows(hex) && !(sight.sees(hex) && hostile(map, side, hex));
-            if open { step_cost(map, &kind.cost, from, hex) } else { None }
+            let out = from != city.pos || free(hex);
+            if open && out { step_cost(map, &kind.cost, from, hex) } else { None }
         };
         let pass = |hex: Hex| passage(map, side, hex);
         let way = path_with(map, (city.pos, to), &steps, u32::MAX, &pass)?;
         let (first, cost) = *way.first()?;
-        let here = map.units_at(first);
-        let leaders = here.iter().filter(|u| map.is_commander(**u)).count();
-        let theirs = hostile(map, side, first) || map.city_at(first).is_some_and(|c| c.side != side);
-        (!theirs && crate::state::map::fits(here.len() - leaders, leaders, kind.commander > 0)).then_some((first, cost))
+        free(first).then_some((first, cost))
     }
 
     /// A temple near `id`'s way to `to` that has not blessed it, as its side
