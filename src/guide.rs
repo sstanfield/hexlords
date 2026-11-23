@@ -362,7 +362,7 @@ fn cities(game: &Game) -> Vec<HelpSection> {
                 (
                     "New units",
                     "A city can send what it builds to a hex of your choosing: Send to... in \
-                               its window or the sidebar."
+                               its window (Send... in the sidebar)."
                         .to_string(),
                 ),
                 (
@@ -740,7 +740,8 @@ fn sight(game: &Game) -> Vec<HelpSection> {
                 "Remembered",
                 "Another side's stack you saw stays on the map, faint, where you saw it last (or where it \
                  went out of your sight), until that hex is in sight again; a city keeps the colors of who \
-                 held it then. The line under the map says how many and when."
+                 held it then, and the walls it had then (one you have never seen: nobody's colors, and \
+                 the walls it began with). The line under the map says how many and when."
                     .to_string(),
             ),
             (

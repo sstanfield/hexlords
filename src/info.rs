@@ -456,31 +456,48 @@ pub fn duty_words(unit: &Unit) -> Option<String> {
 }
 
 /// What a stack on a standing order (`units`, its player's) is doing, in
-/// words after "This unit is" or "These units are": "defending rally point
-/// 0", "on the way to rally point 0 (row 25, column 5)", "patrolling 3
-/// waypoints, ...", "marauding", "defending Redhold". `None` if none of them
-/// is on one that goes on (one whose orders stopped and that waits for
-/// orders, `game::waits_for_word`, has none to lose).
+/// words that say whose orders they are: "This unit is on the way to rally
+/// point 0 (row 25, column 5)", "These 2 units are defending rally point
+/// 0", "1 of these 3 units is defending Redhold" (the others have no such
+/// orders), "... patrolling 3 waypoints, ...", "... marauding, led by the
+/// computer". `None` if none of them is on one that goes on (one whose
+/// orders stopped and that waits for orders, `game::waits_for_word`, has
+/// none to lose).
 pub fn mission(game: &Game, units: &[&Unit]) -> Option<String> {
     let map = &game.map;
+    let all = units.len();
     // (One whose orders stopped waits for orders: it has none to lose.)
     let units: Vec<&Unit> = units.iter().copied().filter(|u| !crate::game::waits_for_word(u)).collect();
-    if let Some(unit) = units.iter().find(|u| u.on_duty()) {
-        return duty_words(unit).map(|w| w.replace(": the computer leads it", ", led by the computer"));
-    }
-    // (A round's plan is no mission: another takes its place unasked.)
-    if let Some(unit) = units.iter().find(|u| !u.route.is_empty() && !u.planned) {
-        return Some(format!("on the way to {}", route_words_to(map, &unit.route, unit.bound)));
-    }
-    let unit = units.iter().find(|u| u.defending)?;
-    let at = unit.pos();
-    let point =
-        (0..crate::orders::RALLY_POINTS as u8).find(|n| game.rally_point(unit.side(), *n).is_some_and(|p| p.at == at));
-    Some(match (point, map.city_at(at)) {
-        (Some(n), _) => format!("defending rally point {n}"),
-        (None, Some(city)) => format!("defending {}", city.name),
-        (None, None) => "defending where they stand".to_string(),
-    })
+    // The first kind of orders any of them has, and how many have it.
+    let on_duty = |u: &&&Unit| u.on_duty();
+    let marching = |u: &&&Unit| !u.route.is_empty() && !u.planned;
+    let defending = |u: &&&Unit| u.defending;
+    let (count, words) = if let Some(unit) = units.iter().find(on_duty) {
+        let words = duty_words(unit)?.replace(": the computer leads it", ", led by the computer");
+        (units.iter().filter(on_duty).count(), words)
+    } else if let Some(unit) = units.iter().find(marching) {
+        // (A round's plan is no mission: another takes its place unasked.)
+        let words = format!("on the way to {}", route_words_to(map, &unit.route, unit.bound));
+        (units.iter().filter(marching).count(), words)
+    } else {
+        let unit = units.iter().find(defending)?;
+        let at = unit.pos();
+        let point = (0..crate::orders::RALLY_POINTS as u8)
+            .find(|n| game.rally_point(unit.side(), *n).is_some_and(|p| p.at == at));
+        let words = match (point, map.city_at(at)) {
+            (Some(n), _) => format!("defending rally point {n}"),
+            (None, Some(city)) => format!("defending {}", city.name),
+            (None, None) => "defending where they stand".to_string(),
+        };
+        (units.iter().filter(defending).count(), words)
+    };
+    let who = match (count, all) {
+        (_, 1) => "This unit is".to_string(),
+        (n, all) if n == all => format!("These {all} units are"),
+        (1, all) => format!("1 of these {all} units is"),
+        (n, all) => format!("{n} of these {all} units are"),
+    };
+    Some(format!("{who} {words}"))
 }
 
 /// The line under the stack about a selected unit (of `count` selected)

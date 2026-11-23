@@ -158,6 +158,38 @@ fn an_attack_is_played_out_in_the_battles_window() {
     assert!(s.battle().is_none());
 }
 
+/// Enter, while a battle's window is open, is the window's: it ends a
+/// battle still being played out and closes one that is over, whoever
+/// ordered the attack. (For a battle of the person's own, or one watched
+/// again from the log, it once went to the map as a click at the cursor;
+/// only a battle the screen showed by itself took it.)
+#[test]
+fn enter_ends_and_then_closes_a_battle_of_ones_own() {
+    let mut s = session(game("garrison soldiers 3\ngarrison captain\n", "garrison levy 2\n", |s| s.combat.chance = 5));
+    let p = pixel_of(&s, REDHOLD);
+    click(&mut s, p);
+    let p = pixel_of(&s, BLUEMOOR);
+    click(&mut s, p);
+    assert!(s.battle().is_some_and(|b| !b.done()), "being played out");
+    let before = (s.screen.game.selection().to_vec(), s.screen.game.map.cursor, s.screen.game.history().len());
+    press(&mut s, SpecialKey::Enter);
+    assert!(s.battle().is_some_and(|b| b.done()), "Enter ends it");
+    press(&mut s, SpecialKey::Enter);
+    assert!(s.battle().is_none(), "and then closes it");
+    let after = (s.screen.game.selection().to_vec(), s.screen.game.map.cursor, s.screen.game.history().len());
+    assert_eq!(before, after, "and nothing else: no click on the map");
+    // The same for one watched again from the log.
+    choose(&mut s, MENU_VIEW_ID, LOG_ID);
+    let watch = s.log_watchable();
+    push(&mut s, &hexlords::log_window::watch_id(watch[0]));
+    assert!(s.battle().is_some_and(|b| !b.done()));
+    press(&mut s, SpecialKey::Enter);
+    assert!(s.battle().is_some_and(|b| b.done()));
+    press(&mut s, SpecialKey::Enter);
+    assert!(s.battle().is_none());
+    assert!(!s.log_lines().is_empty(), "the log under it is still open");
+}
+
 #[test]
 fn the_computers_attacks_are_watched_from_the_log() {
     // Blue (the computer) attacks Redhold in its turn; red's log has the

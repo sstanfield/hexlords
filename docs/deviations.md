@@ -2,7 +2,8 @@
 
 Where the Rust port behaves differently from the C++ hexGame demo
 (`reference/hexGame`, commit `99edad5`) on purpose. D1 to D11 are the ones the
-plan (`hexgame-rust-port-plan.md`, section 6) asked for; the rest were found
+port's plan (`hexgame-rust-port-plan.md`, section 6: no longer in the tree, but in its
+history) asked for; the rest were found
 while porting.
 
 **This record is closed.** Since 2026-11-18 the game no longer follows the C++

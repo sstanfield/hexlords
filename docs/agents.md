@@ -279,7 +279,8 @@ so; and the program is not told.
 The game as the program's side knows it (`Game::view_for`; every agent is
 given the same). With fog of war, the other sides' units out of its sight
 are not in it, and a city in the fog is held by who held it when the side
-saw it last (nobody, if it never did), behind the walls it had then; what
+saw it last (nobody, if it never did), behind the walls it had then (one it
+has never seen: the walls it began the game with, never those it has now); what
 its side remembers of stacks
 seen before is in the view the computer's own players are given
 (`Sight::ghosts`; the text has no line for them: a program remembers what

@@ -1590,7 +1590,7 @@ mod tests {
 
     #[test]
     fn the_widest_view_fits_sixteen_bit_indices() {
-        // Plan, section 3.4: at the widest zoom the layers stay far below 65,536
+        // At the widest zoom the layers stay far below 65,536
         // vertices each, so each is one draw call.
         let mut game = crate::game::grassland();
         game.select_hex(START);

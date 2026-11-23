@@ -292,6 +292,32 @@ fn the_sidebar_has_ones_own_city_in_full_and_anothers_from_outside() {
     assert_eq!(visible(&s), Some(Visibility::Gone));
 }
 
+/// The sidebar is narrow: the buttons that say where a city's new units go
+/// all show in it (the third, Defend, once ran off its edge), and so do
+/// the rally points' numbers, all ten of them set.
+#[test]
+fn the_sidebars_buttons_for_new_units_fit_in_it() {
+    for (w, h, dpi) in [(1024, 768, 96), (2048, 1536, 192)] {
+        let mut s = session_at(w, h, dpi);
+        for n in 0..10 {
+            let point = hexlords::orders::RallyPoint { at: Hex::new(15, 3 + n as u16), defend: false };
+            let order = hexlords::orders::Order::RallyPoint { n, point: Some(point) };
+            s.screen.game.apply(order).unwrap();
+        }
+        s.pump();
+        s.screen.settle();
+        let side = frame(&s, "city_scroll");
+        let names = [CITY_RALLY_ID, hexlords::city_windows::CITY_NO_RALLY_ID, hexlords::city_windows::CITY_DEFEND_ID];
+        let points = (0..10).map(hexlords::city_windows::point_id);
+        for name in names.iter().map(|n| n.to_string()).chain(points) {
+            let r = frame(&s, &format!("{PANEL_PREFIX}{name}"));
+            // (Clear of the scroll bar at the sidebar's edge, too.)
+            let right = side.right() - 10 * dpi / 96;
+            assert!(r.w > 0 && side.x <= r.x && r.right() <= right, "{name} at {w}: {r:?} in {side:?}");
+        }
+    }
+}
+
 #[test]
 fn the_windows_fit_the_map_and_take_the_wheel_from_it() {
     for (w, h, dpi) in [(1024, 768, 96), (2048, 1536, 192)] {

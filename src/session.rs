@@ -402,7 +402,7 @@ fn help_section() -> Vec<HelpSection> {
                 ("Watch, in the log", "A battle you fought, played out again: both stacks, a hit at a time"),
                 (
                     "Enter, in a battle's window",
-                    "A battle shown as it happens: end it, then close it (Close, Esc too); the game waits for that",
+                    "End the battle, then close it (Close and Esc close it too); one shown as it happens holds the game",
                 ),
                 ("H", "Your capital (in hotseat, each turn starts there)"),
                 ("V", "In rounds: outline all your stacks' orders, or the selected stack's only"),
@@ -2812,7 +2812,8 @@ impl Session {
     }
 
     /// Ask before a click sends `units` (the selected stack) to `hex`:
-    /// `mission`, their orders of their own in words, which would end; and
+    /// `mission`, whose orders of their own would end, in words
+    /// (`info::mission`); and
     /// `join`, if another of the person's stacks is there (its rally point,
     /// if it is one; whether the screen chose `units`): join it, or take
     /// that stack instead (the first button is the one the screen's choice
@@ -2826,9 +2827,9 @@ impl Session {
         self.close_mission_ask();
         self.mission_windows = self.open_windows();
         let (root, area) = (self.screen.root_window(), self.window_area());
-        let (who, them, their, they_go) = match units.len() {
-            1 => ("This unit is".to_string(), "it", "Its", "it goes"),
-            n => (format!("These {n} units are"), "them", "Their", "they go"),
+        let (them, their, they_go) = match units.len() {
+            1 => ("it", "Its", "it goes"),
+            _ => ("them", "Their", "they go"),
         };
         let place = info::place(&self.screen.game.map, hex);
         let rounds = self.screen.game.rounds();
@@ -2855,10 +2856,10 @@ impl Session {
         }
         match (mission, join) {
             (Some(mission), Some(_)) => {
-                build::text(ui, parts.content, &format!("{who} {mission}: that ends if {they_go}."));
+                build::text(ui, parts.content, &format!("{mission}: that ends if {they_go}."));
             }
             (Some(mission), None) => {
-                build::heading(ui, parts.content, &format!("{who} {mission}."));
+                build::heading(ui, parts.content, &format!("{mission}."));
                 build::text(ui, parts.content, &format!("Send {them} to {place} instead? {their} orders end."));
             }
             (None, _) => {}
@@ -4672,10 +4673,12 @@ impl Session {
                 }
             }
             self.screen.navigate(command);
-            // While a battle shown holds what happens next, Enter ends it
-            // if it is still being played out, and closes it once it is
-            // over.
-            if command == MapCommand::Key(MapKey::Enter) && self.battle_holds() && !self.showing.is_idle() {
+            // While a battle's window is open, Enter is its: it ends the
+            // battle if it is still being played out, and closes the window
+            // once it is over (one the screen shows by itself, which holds
+            // what happens next; the person's own attack; one watched again
+            // from the log: it once went to the map for the last two).
+            if command == MapCommand::Key(MapKey::Enter) && self.battle_holds() {
                 match self.battle.take() {
                     Some(mut battle) if !battle.done() => {
                         battle.skip(&mut self.screen.ui);

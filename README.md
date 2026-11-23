@@ -10,10 +10,14 @@ and so does the computer, in a window or in a browser.
 
 ![A game on the continent: a stack selected, and where it can go](docs/screenshots/continent.png)
 
+It is inspired by SSG's Warlords, to give credit where it is due: the map of
+cities, the stacks of eight, the cheap troops against the dear ones. The
+rules, the maps, the names and the pictures are its own: nothing is taken
+from that game or any other.
+
 It is written in Rust, on [Turbo Ferret](https://github.com/sstanfield/turbo-ferret)
 for the UI and [miniquad](https://github.com/not-fl3/miniquad) for the
-graphics, and on nothing else. The rules, the maps and the pictures are its
-own: nothing is taken from an existing game.
+graphics, and on nothing else.
 
 ## Two ways to play
 
@@ -54,7 +58,8 @@ as they are.
   where it stands or is left to the computer to raid with, and a city sends
   what it builds to a rally point. The other sides show only as banners
   with their size, and fog of war is a choice (in part, or total: land never
-  seen is black until it is explored). A list says what is left to do this
+  seen is black until it is explored); a city out of sight is as you saw it
+  last. A list says what is left to do this
   turn, a log keeps your battles, which can be watched again, and what happened
   since your last turn can be replayed. A game that is not over is kept as
   it goes and played on later ([docs/saves.md](docs/saves.md)).
@@ -142,7 +147,7 @@ rules of the game in play. The most used:
 |---|---|
 | A menu's title | Opens it (with one open, pointing at another title opens that one); a click elsewhere, or Esc, closes it |
 | Move the pointer over the map | The hex under it becomes the cursor (red border) |
-| Click a hex, or Enter at the cursor | With no unit selected: select your stack on the hex (those of its units that wait for orders), which shows where all of them can go. With units selected: they go to the hex together if all of them can reach it (into another side's units: an attack; the line under the map says the odds first), and stay selected while they can go on. A hex beyond their reach sends them there over the turns (Go to). Another of your stacks is selected instead, or, if the selected units can reach it, the game asks: join it, or select it. A stack that has orders (defends, marches, patrols) asks before it takes new ones. An order the rules refuse opens a window that says why |
+| Click a hex, or Enter at the cursor | With no unit selected: select your stack on the hex (those of its units that wait for orders), which shows where all of them can go. With units selected: they go to the hex together if all of them can reach it (into another side's units: an attack; the line under the map says the odds first), and stay selected while they can go on. A hex beyond their reach sends them there over the turns (Go to). Another of your stacks is selected instead, or, if the selected units can reach it, the game asks: join it, or select it. A stack that has orders (defends, marches, patrols) asks before it takes new ones, and says how many of the selected units the orders are ("1 of these 3 units is defending Redhold"). An order the rules refuse opens a window that says why |
 | Drag on the map with the left button | Moves the map with the pointer (a press that hardly moves is still a click) |
 | Esc | Close the menu or the window on top (the help first); with none open, drop the selection |
 | Undo, or Ctrl+Z (Cmd+Z) | Take back the last move, what a city was set to build, or its walls: the units are back where they were, with their points, selected. Not a battle (chance had a say), nor a move that put a side out or, with fog of war, showed something new. In rounds: the last plan, or its last leg |
@@ -157,7 +162,7 @@ rules of the game in play. The most used:
 | X | Disband the selected units, for good (it asks first) |
 | C (Shift+C: back) | Look at your next city (and drop the selection) |
 | H | Look at your capital (in hotseat, each person's turn starts there) |
-| O, or Open the city's window (City details, for another's) | The selected hex's city in a window, with more room. Your own: a button for each thing it can build (pointing at one shows all about it), a queue (+ beside a kind: kinds in turn, how many of each, where they go, and whether it then stops or starts over), where its new units go (Send to..., then a hex; a rally point; Keep here; Defend here), and Raise the walls |
+| O, or Open the city's window (City details, for another's) | The selected hex's city in a window, with more room. Your own: a button for each thing it can build (pointing at one shows all about it), a queue (+ beside a kind: kinds in turn, how many of each, where they go, and whether it then stops or starts over), where its new units go (Send to..., then a hex; a rally point; Keep here; Defend here), and Raise the walls. The sidebar has the same in less room (Send..., Keep, Defend) |
 | M, A | A list of your cities, or of all of them, with a minimap that rings the one you choose; open it in full, or go to it |
 | Tasks, or T | What you have left to do this turn, most pressing first: stacks with no orders and cities that build nothing; then cities whose work waits for gold or for room; then the rest. Click a row to see to it |
 | Log, or L | Your log: every battle you fought, attacking or attacked, with who won and who died on each side (Watch plays it again); the cities you took and lost; who is out. The latest round first |
@@ -261,8 +266,9 @@ A battle is played out in a window: both stacks, a card for each unit with
 what it fights with and where its bonuses come from, and then the exchanges,
 a few a second, the two that fight lit, the one hit in red with an X, the
 dead dimmed (Skip, Watch again). A battle the others fight against you is
-shown as it happens, and the game waits until you close its window (Close,
-Enter or Esc). Every battle you fought, attacking or attacked, can be
+shown as it happens, and the game waits until you close its window. In any
+battle's window Enter ends the battle and then closes it, as Close and Esc
+do. Every battle you fought, attacking or attacked, can be
 watched again from your log for a few rounds (its Watch button).
 
 Units rise in level from the battles they win: veteran (a silver ring), then
@@ -443,8 +449,8 @@ has the layout and the rules of the repository.
 
 Hexlords began as a Rust port of an older C++ demo of the author's
 ([hexGame](https://github.com/sstanfield/hexGame)) and has gone its own way
-since. `hexgame-rust-port-plan.md` and `docs/deviations.md` are what is left
-of that: history, not a specification.
+since. `docs/deviations.md` is what is left of that: history, not a
+specification.
 
 ### What has been run where
 

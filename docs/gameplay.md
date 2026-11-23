@@ -4,8 +4,8 @@ This is the plan for the game's rules: what a side can do, what a turn is,
 and how the two ways to play (below) share one set of rules. It began as a
 plan and is now mostly a description: all of it is built but the network
 and what is marked as later or open ("Where we are"). It takes the place of
-phase 3 of `hexgame-rust-port-plan.md`, section 8, which proposed one mode
-(simultaneous turns); the owner's word (2026-11-19) is that the game supports
+what the port's plan proposed for the game (one mode, simultaneous turns);
+the owner's word (2026-11-19) is that the game supports
 two, since they feel very different, above all with several players:
 
 - **Turns** ("I go, you go"): the sides play one after the other. A side's
@@ -16,7 +16,7 @@ two, since they feel very different, above all with several players:
 The players choose the mode when a game starts, on any map (decided,
 2026-11-19).
 
-The feel stays the one of section 8: 1990s fantasy strategy on a map of
+The feel is that of 1990s fantasy strategy on a map of
 cities, cheap troops against dear ones, gold from cities, stacks of eight.
 Nothing is taken from an existing game: the rules and the numbers are ours.
 
@@ -364,7 +364,10 @@ and the rules use integers, not floats.
    rest of the map is dimmed: its terrain and where its cities are show,
    but no units, and a city in the colors of who held it when the side saw
    it last (`Sight::holder`; nobody's, if it never did; a side is told who
-   took a city of its own); on the map, the minimap and the lists of
+   took a city of its own), behind the walls it had then
+   (`Sight::walls_seen`; one never seen: those it began the game with,
+   never those it has now, for a person and the computer's players alike);
+   on the map, the minimap and the lists of
    cities. It is worked out anew whenever the map changes. With nobody at
    the screen (the computer against itself) all is seen.
    **Total fog of war** (`Fog::Total`, `--total-fog`; the owner's word,

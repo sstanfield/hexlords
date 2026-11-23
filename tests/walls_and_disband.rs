@@ -534,6 +534,36 @@ fn a_city_in_the_fog_has_the_walls_seen_last() {
     assert_eq!(game.sight(Side::Red).walls_seen(BLUEMOOR), Some(3));
 }
 
+/// With fog of war, a city a side has never seen has, for it, the walls it
+/// began the game with: it once had those it has now, for the person's
+/// panel and the computer's players alike, who so knew of walls raised and
+/// fallen out of their sight.
+#[test]
+fn a_city_never_seen_has_the_walls_it_began_with() {
+    let game = game("garrison levy\n", "", 50);
+    let mut setup = game.setup().clone();
+    setup.fog = hexlords::setup::Fog::On;
+    let mut game = game.with_setup(setup);
+    let red = game.sight(Side::Red);
+    assert!(!red.sees(BLUEMOOR) && red.held(BLUEMOOR).is_none(), "red has never seen it");
+    let bluemoor = game.map.city_at(BLUEMOOR).unwrap().id;
+    game.map.city_mut(bluemoor).unwrap().walls = 5;
+    assert_eq!(game.view_for(Side::Red).map.city_at(BLUEMOOR).unwrap().walls, 3, "what an agent is given");
+    let (sight, city) = (game.sight(Side::Red), game.map.city_at(BLUEMOOR).unwrap());
+    let known = hexlords::info::Known::of(city, Side::Red, &sight);
+    let lines = hexlords::info::city_lines_for(&game.map, city, 8, known);
+    assert!(lines.iter().any(|l| l.starts_with("Walls 3,")), "what the person is told: {lines:?}");
+    // Its holder knows them as they are.
+    assert_eq!(game.view_for(Side::Blue).map.city_at(BLUEMOOR).unwrap().walls, 5);
+    // And once red has seen it, as they were then.
+    let scout = new_unit(&mut game, Side::Red, "levy", Hex::new(5, 7));
+    game.apply(Order::Move { units: vec![scout], to: Hex::new(5, 8) }).unwrap();
+    game.map.kill_unit(scout);
+    game.end_turn();
+    game.map.city_mut(bluemoor).unwrap().walls = 1;
+    assert_eq!(game.view_for(Side::Red).map.city_at(BLUEMOOR).unwrap().walls, 5);
+}
+
 /// With fog of war, a side lays siege only to one it outnumbers counting
 /// the units it saw and sees no more (it once counted only those in sight,
 /// and waved at walls against an army it had seen go by).

@@ -399,6 +399,9 @@ pub struct Sight {
     /// Where each city it has seen is, who held it then, the round, and its
     /// walls then.
     held: Vec<(Hex, Side, u32, u32)>,
+    /// Where each city is and the walls it began the game with: what the
+    /// side takes one it has never seen to have.
+    first: Vec<(Hex, u32)>,
 }
 
 /// Sight of everything, to lend (`Sight::ALL`).
@@ -406,7 +409,8 @@ pub static SEE_ALL: Sight = Sight::ALL;
 
 impl Sight {
     /// Sight of everything.
-    pub const ALL: Sight = Sight { cols: 0, seen: None, known: None, ghosts: Vec::new(), held: Vec::new() };
+    pub const ALL: Sight =
+        Sight { cols: 0, seen: None, known: None, ghosts: Vec::new(), held: Vec::new(), first: Vec::new() };
 
     /// Sight of everything.
     pub fn all() -> Sight {
@@ -429,6 +433,7 @@ impl Sight {
             known: known.map(|known| hexes().map(known).collect()),
             ghosts,
             held: Vec::new(),
+            first: Vec::new(),
         }
     }
 
@@ -495,9 +500,12 @@ impl Sight {
     }
 
     /// The walls of the city on `hex` when the side saw it last (they fall
-    /// when it is taken, and rise when its holder raises them).
+    /// when it is taken, and rise when its holder raises them); of one it
+    /// has never seen, those it began the game with: never those it has
+    /// now, out of sight.
     pub fn walls_seen(&self, hex: Hex) -> Option<u32> {
-        self.held.iter().find(|(at, ..)| *at == hex).map(|(.., walls)| *walls)
+        let seen = self.held.iter().find(|(at, ..)| *at == hex).map(|(.., walls)| *walls);
+        seen.or_else(|| self.first.iter().find(|(at, _)| *at == hex).map(|(_, walls)| *walls))
     }
 
     /// The other sides' stacks it remembers where it saw them last: those in
@@ -693,6 +701,11 @@ pub struct Game {
     /// saw it last (`Sight::held`); with total fog, the hexes it has ever
     /// seen.
     held: Vec<Vec<(Hex, Side, u32, u32)>>,
+    /// Where each city is and the walls it began the game with: with fog
+    /// of war, what a side takes a city it has never seen to have
+    /// (`Sight::walls_seen`). (The map's, as the game began: it never
+    /// changes, so `digest` has no need of it.)
+    first_walls: Vec<(Hex, u32)>,
     explored: Vec<Vec<bool>>,
     /// The cities whose walls were raised this turn (once a turn each).
     raised: Vec<CityId>,
@@ -738,8 +751,10 @@ impl Game {
         if setup.order == TurnOrder::Drawn {
             rng.shuffle(&mut order);
         }
+        let first_walls = map.cities().iter().map(|c| (c.pos, c.walls)).collect();
         let mut game = Game {
             map,
+            first_walls,
             selected: Vec::new(),
             range: None,
             range_revision: 0,
@@ -2855,7 +2870,14 @@ impl Game {
             known
         });
         let held = self.held.get(side.index()).cloned().unwrap_or_default();
-        Sight { cols, seen: Some(seen), known, ghosts: self.ghosts(side).to_vec(), held }
+        Sight {
+            cols,
+            seen: Some(seen),
+            known,
+            ghosts: self.ghosts(side).to_vec(),
+            held,
+            first: self.first_walls.clone(),
+        }
     }
 
     /// The other sides' stacks `side` remembers where it saw them last (fog

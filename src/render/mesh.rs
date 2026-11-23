@@ -3,7 +3,7 @@
 //!
 //! The C++ kept one small static buffer per hex model and issued a draw call (or
 //! three) for every hex. Here a whole layer of the map is one mesh and one draw
-//! call (plan, section 3.4).
+//! call.
 
 use miniquad::{BufferId, BufferSource, BufferType, BufferUsage, RenderingBackend};
 

@@ -4,8 +4,9 @@ A hex map strategy game foundation in Rust. Phase 1 (done) is a port of the C++
 hexGame engine demo (<https://github.com/sstanfield/hexGame>, read at `99edad5`):
 a 100 x 100 hex map, one unit, a movement range, a minimap. The UI is Turbo
 Ferret (<https://github.com/sstanfield/turbo-ferret>) and graphics go through
-miniquad. `hexgame-rust-port-plan.md` is the brief: the acceptance spec of the
-demo, the design, and the direction for the phases after it. Phase 2 has begun:
+miniquad. (The port's brief, `hexgame-rust-port-plan.md`, is no longer in the
+tree: the port is done. It is in the history, `git log -- hexgame-rust-port-plan.md`,
+for whoever wants to know why the window is built as it is.) Phase 2 has begun:
 there is a documented map format (`docs/map-format.md`: terrain, roads, the
 map's own kinds of unit, its cities), which the game plays with `--map`; a map
 editor (`tools/mapeditor`); and the tiles, the roads and the units' signs are
@@ -37,10 +38,8 @@ C++ any more. `docs/deviations.md` records how the port differed from it and
 what has changed since; it is closed, and new work does not add to it. Read the
 C++ to understand why something is the way it is, not to decide what to do.
 
-**Read before changing anything substantial:** `hexgame-rust-port-plan.md`
-(section 3 for the design, section 8 for what comes next; section 2 describes
-the C++ demo and is no longer binding), and `docs/gameplay.md` before
-touching the rules.
+**Read before changing anything substantial:** this file, and
+`docs/gameplay.md` before touching the rules.
 
 ## Layout
 
@@ -253,8 +252,8 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
   sees gets a screenshot, and you look at the picture.
 - **Commits:** on `main`, small, described by what changed and why.
 - **Later phases** take the feel of 1990s fantasy strategy games but must not
-  clone one: no names, factions, lore, maps, tables or art from an existing game
-  (plan, section 8).
+  clone one: no names, factions, lore, maps, tables or art from an existing game.
+  (The README says where the feel comes from: credit, not content.)
 
 ## Things that bite
 
@@ -265,7 +264,7 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
 2. **The map is drawn by the host, not by a widget.** Turbo Ferret widgets paint
    through a batched, read-only `PaintCtx`, so `MapWidget` and `MiniMapWidget`
    paint nothing: `App::draw` draws the map into their rectangles first and the
-   UI on top (plan, section 3.3). A map that must sit *between* UI layers (in
+   UI on top. A map that must sit *between* UI layers (in
    a window) cannot be drawn so: the list of cities shows a picture of the
    minimap drawn on the CPU (`render::minimap_image`) in an `ImageWidget`.
 3. **Pixels are framebuffer pixels.** On a HiDPI screen the window is 1024 x 768

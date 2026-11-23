@@ -280,7 +280,7 @@ impl<S: Scene> App<S> {
     /// Draw a frame into `target` (`None`: the window): the map and the minimap
     /// into their widgets' rectangles, then the UI on top. Turbo Ferret widgets
     /// cannot draw with the GPU themselves, so the map widgets paint nothing and
-    /// the host does it here (plan, section 3.3).
+    /// the host does it here.
     /// C++: Application::processFrame, GLWidget::OnPaint
     fn render(&mut self, target: Option<RenderPass>) {
         let framebuffer = self.scene.screen().ui.viewport();

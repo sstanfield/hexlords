@@ -375,18 +375,29 @@ impl CityView {
         let rally_gap = build::gap(ui, content, space);
         let rally = Text::new(build::text(ui, content, ""));
         let rally_to = compact.then(|| Text::new(build::text(ui, content, "")));
-        let rally_row = build::row(ui, content, space / 2);
+        // (In the sidebar the three have to fit its width, clear of its
+        // scroll bar: shorter words, closer together. Defend once ran off
+        // its edge.)
+        let rally_row = build::row(ui, content, if compact { dp(ui, 2) } else { space / 2 });
         let (send, keep, defend) =
-            if compact { ("Send to...", "Keep", "Defend") } else { ("Send to...", "Keep here", "Defend here") };
+            if compact { ("Send...", "Keep", "Defend") } else { ("Send to...", "Keep here", "Defend here") };
         let send = build::button(ui, rally_row, &pid(CITY_RALLY_ID), send);
         let keep = build::button(ui, rally_row, &pid(CITY_NO_RALLY_ID), keep);
         let defend = build::button(ui, rally_row, &pid(CITY_DEFEND_ID), defend);
-        // The rally points that are set, a button each.
-        let points_row = build::row(ui, content, dp(ui, 2));
+        // The rally points that are set, a button each. (In the sidebar
+        // the ten do not fit in a line beside their words, and ran off its
+        // edge: under the words, in two lines of five.)
+        let points_row = if compact { build::column(ui, content, 0) } else { build::row(ui, content, dp(ui, 2)) };
         build::text(ui, points_row, if compact { "To rally point" } else { "To a rally point:" });
+        let point_lines = if compact {
+            vec![build::row(ui, points_row, dp(ui, 2)), build::row(ui, points_row, dp(ui, 2))]
+        } else {
+            vec![points_row]
+        };
+        let per_line = RALLY_POINTS.div_ceil(point_lines.len());
         let point_buttons: Vec<WidgetId> = (0..RALLY_POINTS)
             .map(|n| {
-                let button = build::button(ui, points_row, &pid(&point_id(n)), &n.to_string());
+                let button = build::button(ui, point_lines[n / per_line], &pid(&point_id(n)), &n.to_string());
                 ui.set_visibility(button, Visibility::Gone);
                 button
             })

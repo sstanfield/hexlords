@@ -130,6 +130,37 @@ fn defenders_at_a_rally_point_say_so_before_new_orders() {
     assert_eq!((pos(&s, a), pos(&s, b)), (to, to));
 }
 
+/// The question counts those the orders are whose: one defender taken along
+/// with two that wait is "1 of these 3 units", not "These 3 units" (it once
+/// said all of the selected were defending).
+#[test]
+fn the_question_counts_only_those_with_orders() {
+    let mut game = game();
+    let ids: Vec<UnitId> = (0..3).map(|_| put(&mut game, Side::Red, "soldiers", REDHOLD)).collect();
+    game.apply(Order::Defend { units: vec![ids[0]], on: true }).unwrap();
+    let mut s = session(game, Options::manual());
+    for id in &ids {
+        if !s.screen.game.selection().contains(id) {
+            s.screen.game.toggle_unit(*id);
+        }
+    }
+    assert_eq!(s.screen.game.selection().len(), 3);
+    click_hex(&mut s, Hex::new(12, 6));
+    let says = asks(&s);
+    assert!(says.iter().any(|t| t == "1 of these 3 units is defending Redhold."), "{says:?}");
+    // Two of the three.
+    push_widget(&mut s, MISSION_KEEP_ID);
+    s.screen.game.apply(Order::Defend { units: vec![ids[1]], on: true }).unwrap();
+    for id in &ids {
+        if !s.screen.game.selection().contains(id) {
+            s.screen.game.toggle_unit(*id);
+        }
+    }
+    click_hex(&mut s, Hex::new(12, 6));
+    let says = asks(&s);
+    assert!(says.iter().any(|t| t == "2 of these 3 units are defending Redhold."), "{says:?}");
+}
+
 #[test]
 fn a_unit_on_its_way_says_where_before_new_orders() {
     let mut game = game();

@@ -5,7 +5,7 @@
 //!
 //! The C++ drew the minimap into the window and read it back with
 //! `glReadPixels` to cache it. Here it is drawn into a render target, which has
-//! to happen before the frame's own render pass begins (plan, section 3.3).
+//! to happen before the frame's own render pass begins.
 //!
 //! C++: src/render/minimaprender.cpp MiniMapRenderer (renderMap, CTX::drawHex,
 //! CTX::saveMiniMap, CTX::miniMapLocMarker, getTileColor)
