@@ -355,8 +355,9 @@ fn cities(game: &Game) -> Vec<HelpSection> {
                 ),
                 (
                     "Paying",
-                    "What a city finishes is paid for then; if the gold is short, or the city is full, it \
-                            waits in the city until it can come out."
+                    "What a city finishes is paid for then; if the gold is short it waits until it can be. \
+                     A full city keeps what stays in it waiting for room; what it sends elsewhere steps out \
+                     onto the first hex of its way, if there is room there and nobody else's units."
                         .to_string(),
                 ),
                 (

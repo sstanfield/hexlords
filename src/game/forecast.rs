@@ -8,7 +8,9 @@
 //! changes nothing. It takes the world to stay as it is: the side holds its
 //! cities, nobody fights, no new orders are given and no walls raised, the
 //! units a city sends somewhere are gone from it by its next pay day, and
-//! nothing arrives in a city from elsewhere. It stops at the first pay day
+//! nothing arrives in a city from elsewhere (a full city lets out what it
+//! sends elsewhere if it has a way out now, `Game::way_out`). It stops at
+//! the first pay day
 //! whose upkeep the gold cannot pay: who leaves then is the rules' to say,
 //! and what comes after depends on it.
 //!
@@ -145,18 +147,21 @@ impl Game {
                 }
                 let Some(kind) = units.kind_named(&prod.basename).and_then(|k| units.kind(k)) else { continue };
                 let commander = kind.commander > 0;
-                if !fits(here.0, here.1, commander) {
-                    waiting.push((city.id, Wait::Room));
-                    continue;
-                }
-                gold -= prod.cost;
-                city.progress = 0;
                 let sends = city.sends.clone();
                 let leaves = match &sends {
                     Sends::Route(route) => !route.is_empty(),
                     Sends::Point { n, .. } => self.rally_point(side, *n).is_some(),
                     Sends::Stay | Sends::Defend => false,
                 };
+                // A full city lets out what it sends elsewhere, if it has a
+                // way out (`Game::way_out`, as the map is now).
+                let out = fits(here.0, here.1, commander) || (leaves && self.way_out(city, &prod).is_some());
+                if !out {
+                    waiting.push((city.id, Wait::Room));
+                    continue;
+                }
+                gold -= prod.cost;
+                city.progress = 0;
                 if !leaves {
                     if commander {
                         here.1 += 1;

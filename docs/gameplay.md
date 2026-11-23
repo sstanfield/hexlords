@@ -288,7 +288,17 @@ and the rules use integers, not floats.
    it all, units leave, unpaid: as few as make up what it is short (the
    least dear that does it alone, or else the dearest; a commander last);
    then what its cities finish is paid for, and a unit whose price the
-   treasury cannot pay waits in its city, done, until it can. **The price is
+   treasury cannot pay waits in its city, done, until it can. A unit is
+   done into its city; in a full one (eight units and a commander), what
+   stays waits for room, and what the city sends elsewhere (a route, a
+   rally point) steps out onto the first hex of its way, paying for the
+   step, if there is room for it there and nobody else's units (the
+   owner's word, 2026-11-23: "produce it if it can leave the city and let
+   it go otherwise don't produce it ... there will be times when a full
+   garison is called for but the city production is stil needed";
+   `Game::way_out`, `Map::produce`). It does not fight its way out: a
+   city ringed by another side's units, or a walker built where only
+   flyers go out, waits. **The price is
    the city's** (decided): what its `produce` line says, or, if it says
    nothing, the unit's `price`. (The unit's price is also what it would
    cost in a city that is given a new kind to build, later.) The menu

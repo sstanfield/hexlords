@@ -886,14 +886,21 @@ pub fn coming_lines(map: &Map, forecast: &Forecast, shown: usize) -> Vec<(bool, 
 }
 
 /// Why a unit that is done is not out yet: no room in the city (a hex holds
-/// eight units, and a commander besides), or no gold.
+/// eight units, and a commander besides) for one that stays; for one sent
+/// elsewhere, the gold or a way out of the city (`Game::way_out`); or the
+/// gold.
 fn waits(map: &Map, city: &City, prod: &UnitProd) -> String {
     let units = map.units();
     let commander = units.kind_named(&prod.basename).and_then(|k| units.kind(k)).is_some_and(|k| k.commander > 0);
     let here = map.units_at(city.pos);
     let leaders = here.iter().filter(|u| map.is_commander(**u)).count();
     let full = !crate::state::map::fits(here.len() - leaders, leaders, commander);
-    if full { "they wait for room".to_string() } else { format!("they wait for {} gold", prod.cost) }
+    let leaves = !matches!(city.sends, Sends::Stay | Sends::Defend);
+    match (full, leaves) {
+        (true, false) => "they wait for room".to_string(),
+        (true, true) => format!("they wait for {} gold or a way out", prod.cost),
+        (false, _) => format!("they wait for {} gold", prod.cost),
+    }
 }
 
 /// A side's treasury in two lines, for the sidebar: "Gold 34", and what comes
@@ -1280,7 +1287,7 @@ mod tests {
         assert_eq!(city_row(&game.map, &city(&game), true), "Wrenfold: building nothing");
         // Building riders, a turn done.
         game.map.set_production(id, Some(0));
-        game.map.produce(Side::Blue, &mut 1000);
+        game.map.produce(Side::Blue, &mut 1000, &[]);
         assert_eq!(progress_line(&game.map, &city(&game)), "Building Riders, 1 of 3 turns done");
         assert_eq!(city_row(&game.map, &city(&game), true), "Wrenfold: Riders, 1 of 3");
         assert_eq!(city_lines(&game.map, &city(&game), 9)[4], "Building Riders, 1/3");

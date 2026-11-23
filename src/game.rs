@@ -15,8 +15,8 @@ use crate::state::scenario::{self, MapSource, Scenario, side_name};
 use crate::state::{ATTACK_COST, Blessing, Together, Walker, reach_together};
 use crate::state::{
     City, CityId, Direction, Hex, MAX_QUEUE, MAX_STACK, Map, MoveCost, MoveCostId, MoveRange, NUM_SIDES, Passage,
-    Queue, QueueEnd, QueueItem, Rng, Sends, Side, TileType, Travel, Unit, UnitId, compute_range, hostile, passage,
-    path_with, reach_with, step_cost, step_toward_by, way_over_land,
+    Queue, QueueEnd, QueueItem, Rng, Sends, Side, TileType, Travel, Unit, UnitId, UnitProd, compute_range, hostile,
+    passage, path_with, reach_with, step_cost, step_toward_by, way_over_land,
 };
 
 mod forecast;
@@ -2280,6 +2280,39 @@ impl Game {
         }
     }
 
+    /// Where a unit of `prod` that `city` finishes steps out to, when the
+    /// city is full and sends its units elsewhere (the owner's word,
+    /// 2026-11-23: "produce it if it can leave the city and let it go
+    /// otherwise don't produce it"): the first hex of its way toward where
+    /// they go (the first stop of a route; a rally point), the cheapest as
+    /// its side knows the map, if it has room for it and nobody else's
+    /// units are on it; and what the step costs it. `None` if its units
+    /// stay, or it cannot leave so (a walker built where only flyers go
+    /// out, a city ringed by others' units).
+    pub(crate) fn way_out(&self, city: &City, prod: &UnitProd) -> Option<(Hex, u32)> {
+        let side = city.side;
+        let to = match &city.sends {
+            Sends::Route(route) => route.first().copied()?,
+            Sends::Point { n, .. } => self.rally_point(side, *n)?.at,
+            Sends::Stay | Sends::Defend => return None,
+        };
+        let map = &self.map;
+        let kind = map.units().kind_named(&prod.basename).and_then(|k| map.units().kind(k))?;
+        let sight = self.sight(side);
+        // Over land the side knows, round the units it sees of others'.
+        let steps = |from: Hex, hex: Hex| {
+            let open = sight.knows(hex) && !(sight.sees(hex) && hostile(map, side, hex));
+            if open { step_cost(map, &kind.cost, from, hex) } else { None }
+        };
+        let pass = |hex: Hex| passage(map, side, hex);
+        let way = path_with(map, (city.pos, to), &steps, u32::MAX, &pass)?;
+        let (first, cost) = *way.first()?;
+        let here = map.units_at(first);
+        let leaders = here.iter().filter(|u| map.is_commander(**u)).count();
+        let theirs = hostile(map, side, first) || map.city_at(first).is_some_and(|c| c.side != side);
+        (!theirs && crate::state::map::fits(here.len() - leaders, leaders, kind.commander > 0)).then_some((first, cost))
+    }
+
     /// A temple near `id`'s way to `to` that has not blessed it, as its side
     /// knows the map: the one that adds the least to the way, if that is no
     /// more than a turn's march (its full movement). None if there is none.
@@ -2809,16 +2842,34 @@ impl Game {
                 events.push(Event::Deserted { side, name: unit.name });
             }
         }
-        for unit in self.map.produce(side, &mut gold) {
-            let city =
-                self.map.units().get(unit).and_then(|u| self.map.city_at(u.pos())).map(|c| (c.id, c.sends.clone()));
-            if let Some((city, sends)) = city {
-                events.push(Event::Built { city, unit });
-                // Its city sends it on, and its queue goes on.
-                self.send_new(side, unit, &sends);
-                if let Some(c) = self.map.city_mut(city) {
-                    c.built_one();
+        // The ways out of the cities that are full, for what they finish
+        // and send elsewhere.
+        let ways_out: Vec<(CityId, Hex, u32)> = self
+            .map
+            .cities()
+            .iter()
+            .filter(|c| c.side == side && side != Side::Grey)
+            .filter_map(|c| {
+                let prod = c.production()?;
+                let done = c.progress.saturating_add(1) >= prod.time.max(1);
+                done.then(|| self.way_out(c, prod)).flatten().map(|(hex, cost)| (c.id, hex, cost))
+            })
+            .collect();
+        let hexes: Vec<(CityId, Hex)> = ways_out.iter().map(|(city, hex, _)| (*city, *hex)).collect();
+        for (city, unit) in self.map.produce(side, &mut gold, &hexes) {
+            let sends = self.map.cities().get(city).map(|c| c.sends.clone()).unwrap_or_default();
+            events.push(Event::Built { city, unit });
+            // Its city sends it on, and its queue goes on. One let out of
+            // a full city has paid for its step out.
+            self.send_new(side, unit, &sends);
+            let out = self.map.units().get(unit).map(|u| u.pos()) != self.map.cities().get(city).map(|c| c.pos);
+            if let Some((_, _, cost)) = ways_out.iter().find(|(c, ..)| *c == city).filter(|_| out) {
+                if let Some(u) = self.map.unit_mut(unit) {
+                    u.movement = u.movement.saturating_sub(*cost);
                 }
+            }
+            if let Some(c) = self.map.city_mut(city) {
+                c.built_one();
             }
         }
         self.name_commanders();

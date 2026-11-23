@@ -587,10 +587,13 @@ impl Map {
     /// A turn of work in every city that `side` holds. A city that builds
     /// something works a turn more on it; when it has worked the turns the
     /// unit takes, its price is paid from `gold`, the unit stands in the city
-    /// and the work starts over. A city whose hex is full, or whose price
-    /// `gold` cannot pay, waits, its unit done, until there is room and gold.
-    /// A kind the map does not have is never done. Returns the new units.
-    pub fn produce(&mut self, side: Side, gold: &mut u32) -> Vec<UnitId> {
+    /// and the work starts over. A city whose hex is full stands it on its
+    /// way out, if `ways_out` gives the city one (the owner's word,
+    /// 2026-11-23: a unit sent elsewhere goes, "if it can leave the city");
+    /// else it waits, its unit done, as one whose price `gold` cannot pay
+    /// does, until there is room and gold. A kind the map does not have is
+    /// never done. Returns the new units, with their cities.
+    pub fn produce(&mut self, side: Side, gold: &mut u32, ways_out: &[(CityId, Hex)]) -> Vec<(CityId, UnitId)> {
         let working: Vec<CityId> = self
             .cities
             .iter()
@@ -607,9 +610,14 @@ impl Map {
             }
             let Some(kind) = self.units.kind_named(&prod.basename) else { continue };
             let Some(unit) = self.new_unit_of(side, kind) else { continue };
-            if self.place_unit(unit, pos).is_ok() {
+            // A full city lets out what it sends elsewhere, onto the first
+            // hex of its way (`Game::way_out`), if there is room there.
+            let out = ways_out.iter().find(|(city, _)| *city == id).map(|(_, hex)| *hex);
+            let placed =
+                self.place_unit(unit, pos).is_ok() || out.is_some_and(|hex| self.place_unit(unit, hex).is_ok());
+            if placed {
                 *gold -= prod.cost;
-                made.push(unit);
+                made.push((id, unit));
                 // A city that trains its units makes them a level up.
                 let trains = self.cities.get(id).map_or(1, |c| c.trains);
                 if let Some(new) = self.units.get_mut(unit) {
@@ -1004,24 +1012,25 @@ mod tests {
         let city = Hex::new(5, 5);
         // Nothing at first: the turns go by and nothing comes.
         assert_eq!(map.cities().get(id).unwrap().production(), None);
-        assert!(map.produce(Side::Red, &mut 1000).is_empty());
+        assert!(map.produce(Side::Red, &mut 1000, &[]).is_empty());
         // Riders: two turns.
         let before = map.revision();
         assert!(map.set_production(id, Some(0)));
         assert!(map.revision() > before);
         assert_eq!(map.cities().get(id).unwrap().production().unwrap().basename, "riders");
-        assert!(map.produce(Side::Red, &mut 1000).is_empty());
+        assert!(map.produce(Side::Red, &mut 1000, &[]).is_empty());
         assert_eq!(map.cities().get(id).unwrap().progress, 1);
-        let made = map.produce(Side::Red, &mut 1000);
+        let made = map.produce(Side::Red, &mut 1000, &[]);
         assert_eq!(made.len(), 1);
-        let rider = map.units().get(made[0]).unwrap();
+        assert_eq!(made[0].0, id);
+        let rider = map.units().get(made[0].1).unwrap();
         assert_eq!((rider.name.as_str(), rider.side(), rider.movement), ("Riders", Side::Red, 10));
         assert_eq!(map.units_at(city).len(), 2);
-        assert_eq!(map.units_at(city)[1], made[0], "it joins the end of the stack");
+        assert_eq!(map.units_at(city)[1], made[0].1, "it joins the end of the stack");
         // And the work starts over.
         assert_eq!(map.cities().get(id).unwrap().progress, 0);
         // Only the holder's turn counts.
-        assert!(map.produce(Side::Blue, &mut 1000).is_empty());
+        assert!(map.produce(Side::Blue, &mut 1000, &[]).is_empty());
         assert_eq!(map.cities().get(id).unwrap().progress, 0);
     }
 
@@ -1029,7 +1038,7 @@ mod tests {
     fn a_change_of_production_starts_over_and_a_full_city_waits() {
         let (mut map, id) = city_map();
         map.set_production(id, Some(0));
-        map.produce(Side::Red, &mut 1000);
+        map.produce(Side::Red, &mut 1000, &[]);
         // The same again keeps the work; another starts it over.
         map.set_production(id, Some(0));
         assert_eq!(map.cities().get(id).unwrap().progress, 1);
@@ -1042,18 +1051,18 @@ mod tests {
         // Militia, one turn each, until the hex is full; then it waits, done.
         let city = Hex::new(5, 5);
         for _ in 0..MAX_STACK - 1 {
-            assert_eq!(map.produce(Side::Red, &mut 1000).len(), 1);
+            assert_eq!(map.produce(Side::Red, &mut 1000, &[]).len(), 1);
         }
         assert_eq!(map.units_at(city).len(), MAX_STACK);
-        assert!(map.produce(Side::Red, &mut 1000).is_empty());
+        assert!(map.produce(Side::Red, &mut 1000, &[]).is_empty());
         assert_eq!(map.cities().get(id).unwrap().progress, 1, "done, and waiting");
         // Room again: it comes.
         let first = map.units_at(city)[0];
         map.kill_unit(first);
-        assert_eq!(map.produce(Side::Red, &mut 1000).len(), 1);
+        assert_eq!(map.produce(Side::Red, &mut 1000, &[]).len(), 1);
         // Nothing: no more work.
         map.set_production(id, None);
-        assert!(map.produce(Side::Red, &mut 1000).is_empty());
+        assert!(map.produce(Side::Red, &mut 1000, &[]).is_empty());
     }
 
     #[test]
