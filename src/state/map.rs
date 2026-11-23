@@ -442,6 +442,66 @@ impl Map {
         Ok(())
     }
 
+    /// True if a hex holds `ids` together: [`MAX_STACK`] units that are not
+    /// commanders, one commander besides, and nobody twice.
+    fn holds(&self, ids: &[UnitId]) -> bool {
+        let commanders = ids.iter().filter(|id| self.is_commander(**id)).count();
+        let twice = ids.iter().enumerate().any(|(i, id)| ids[..i].contains(id));
+        !twice && commanders <= 1 && ids.len() - commanders <= MAX_STACK
+    }
+
+    /// The hexes of `a` and of `b` and who is on each once the two have
+    /// changed places (`change_places`), or why they cannot.
+    fn places_changed(&self, a: &[UnitId], b: &[UnitId]) -> Result<[(Hex, Vec<UnitId>); 2], PlaceError> {
+        let hex_of = |ids: &[UnitId]| -> Result<Hex, PlaceError> {
+            let first = ids.first().and_then(|id| self.units.get(*id)).ok_or(PlaceError::NoSuchUnit)?;
+            for id in ids {
+                let unit = self.units.get(*id).ok_or(PlaceError::NoSuchUnit)?;
+                if unit.pos() != first.pos() || !self.is_on_map(unit) {
+                    return Err(PlaceError::NotOnMap);
+                }
+            }
+            Ok(first.pos())
+        };
+        let (x, y) = (hex_of(a)?, hex_of(b)?);
+        if x == y {
+            return Err(PlaceError::AlreadyOnMap);
+        }
+        let after = |hex: Hex, gone: &[UnitId], come: &[UnitId]| -> Vec<UnitId> {
+            self.units_at(hex).iter().filter(|id| !gone.contains(id)).chain(come).copied().collect()
+        };
+        let (on_x, on_y) = (after(x, a, b), after(y, b, a));
+        if !self.holds(&on_x) || !self.holds(&on_y) {
+            return Err(PlaceError::StackFull);
+        }
+        Ok([(x, on_x), (y, on_y)])
+    }
+
+    /// True if `a` and `b` can change places (`change_places`).
+    pub fn could_change_places(&self, a: &[UnitId], b: &[UnitId]) -> bool {
+        self.places_changed(a, b).is_ok()
+    }
+
+    /// The units `a`, on one hex, and `b`, on another, change places, both
+    /// at once: each hex then holds who stayed on it and who came, the
+    /// newcomers last. Nothing changes if either would then hold more than
+    /// a hex holds: at no moment does one (two stacks that pass each other
+    /// could not go one after the other).
+    pub fn change_places(&mut self, a: &[UnitId], b: &[UnitId]) -> Result<(), PlaceError> {
+        for (hex, units) in self.places_changed(a, b)? {
+            for id in &units {
+                if let Some(unit) = self.units.get_mut(*id) {
+                    unit.set_pos(hex);
+                }
+            }
+            if let Some(i) = self.index(hex) {
+                self.tiles[i].units = units;
+            }
+        }
+        self.changed();
+        Ok(())
+    }
+
     /// Remove a unit from the map and the game. C++: Map::killUnit
     pub fn kill_unit(&mut self, id: UnitId) -> Option<Unit> {
         let unit = self.units.delete(id)?;
@@ -706,6 +766,37 @@ mod tests {
         let ghost = UnitId { side: Side::Red, index: 3, generation: 0 };
         assert_eq!(m.place_unit(ghost, from), Err(PlaceError::NoSuchUnit));
         assert_eq!(m.move_unit(ghost, from), Err(PlaceError::NoSuchUnit));
+    }
+
+    #[test]
+    fn two_stacks_change_places_at_once_or_not_at_all() {
+        let mut m = map();
+        let (x, y) = (Hex::new(4, 4), Hex::new(4, 5));
+        let a: Vec<UnitId> = (0..MAX_STACK).map(|i| add_unit(&mut m, &format!("A{i}"))).collect();
+        let b: Vec<UnitId> = (0..5).map(|i| add_unit(&mut m, &format!("B{i}"))).collect();
+        let stays = add_unit(&mut m, "stays");
+        for id in &a {
+            m.place_unit(*id, x).unwrap();
+        }
+        for id in b.iter().chain([&stays]) {
+            m.place_unit(*id, y).unwrap();
+        }
+        // Eight to where one stays: nine there, so nobody goes.
+        assert!(!m.could_change_places(&a, &b));
+        assert_eq!(m.change_places(&a, &b), Err(PlaceError::StackFull));
+        assert_eq!((m.units_at(x), m.units_at(y).len()), (&a[..], 6));
+        // Seven of them, and it is done: the one who stayed first.
+        let revision = m.revision();
+        m.change_places(&a[..7], &b).unwrap();
+        assert_eq!(m.units_at(x), [&a[7..], &b[..]].concat());
+        assert_eq!(m.units_at(y), [&[stays], &a[..7]].concat());
+        assert!(a[..7].iter().all(|id| m.units().get(*id).unwrap().pos() == y));
+        assert!(b.iter().all(|id| m.units().get(*id).unwrap().pos() == x));
+        assert_ne!(m.revision(), revision);
+        // Not with units of two hexes, with itself, or with nobody.
+        assert_eq!(m.change_places(&[a[0], a[7]], &b), Err(PlaceError::NotOnMap));
+        assert_eq!(m.change_places(&a[..7], &[stays]), Err(PlaceError::AlreadyOnMap));
+        assert_eq!(m.change_places(&[], &b), Err(PlaceError::NoSuchUnit));
     }
 
     #[test]

@@ -42,7 +42,9 @@
 //!   finds the hex empty, and takes it. Each stack attacks when it gets
 //!   there: to attack together, stacks join first. A stack waits behind
 //!   others of its side that are on their way and leave it no room, and
-//!   goes through those that stay. A battle ends the attackers' round (they
+//!   goes through those that stay; two of a side that come toward each
+//!   other and have no room on one hex pass each other: they change places
+//!   at once (`passes`). A battle ends the attackers' round (they
 //!   have no movement left); a patrol goes round and attacks at its odds,
 //!   as ever.
 //! - **The round ends** when nobody is on a step any more: the plans end,
@@ -90,6 +92,15 @@ pub(super) struct PlayOut {
     now: u64,
     steps: u32,
     hasty: bool,
+}
+
+impl PlayOut {
+    /// For `Game::digest`.
+    pub(super) fn digest(&self, sum: &mut super::Digest) {
+        sum.n(1 + self.now);
+        sum.n(u64::from(self.steps));
+        sum.flags(&[self.hasty]);
+    }
 }
 
 /// A plan's legs: for each unit, its stops and its way, hex by hex.
@@ -1017,6 +1028,11 @@ impl Game {
             if hostile(&self.map, side, *hex) || self.fits(*hex, ids) {
                 return self.go(&group, at, &first.way[..=i]);
             }
+            // Its own side's stack that comes the other way: the two pass
+            // each other.
+            if self.passes(ids, at, &first.way[..=i], hasty).is_some() {
+                return self.go(&group, at, &first.way[..=i]);
+            }
             // Its own side's stack, and no room: it follows one that is on
             // its way, and goes through one that stays.
             let leaving = |id: &UnitId| self.map.units().get(*id).is_some_and(|u| self.goes(u) && !ids.contains(id));
@@ -1025,6 +1041,115 @@ impl Game {
             }
         }
         Look::Stop
+    }
+
+    /// The stack that `ids` (a stack on `at`, whose step over `hexes`, the
+    /// last where it would get to, finds no room there) passes, and the
+    /// hexes of that stack's own step: one of its side that stands there
+    /// and goes to `at` itself (it is on its step there; or that is where
+    /// its next step gets it, past the stacks that stay, and it waits for
+    /// nobody: `hasty`, it does not anyway), if each of the two can pay
+    /// for its step and, with both gone, each hex has room for who comes.
+    /// The two change places at once (`change_places`; the owner's word,
+    /// 2026-11-23: "we really don't want overloaded hexes"). Two stacks
+    /// sent to each other's hexes stood still for the round before: each
+    /// waited for the other to leave.
+    fn passes(&self, ids: &[UnitId], at: Hex, hexes: &[Hex], hasty: bool) -> Option<(Vec<UnitId>, Vec<Hex>)> {
+        let hex = *hexes.last()?;
+        let units = self.map.units();
+        let comes = |u: &&Unit| self.goes(u) && !ids.contains(&u.id()) && !u.route.is_empty() && u.way.contains(&at);
+        let first = self.map.units_at(hex).iter().filter_map(|id| units.get(*id)).find(comes)?;
+        let (side, them) = (first.side(), self.stack_of(first));
+        let there = first.way.iter().position(|h| *h == at)?;
+        let back = &first.way[..=there];
+        match first.step {
+            Some((to, _)) if to != at => return None,
+            Some(_) => {}
+            None => {
+                if !hasty && self.awaited(first, &them) {
+                    return None;
+                }
+                // Its next step gets it to `at`: it goes through the hexes
+                // before (its side's, with no room, where nobody is
+                // leaving).
+                let leaving = |id: &UnitId| {
+                    units.get(*id).is_some_and(|u| self.goes(u) && !them.contains(id) && !ids.contains(id))
+                };
+                let through = |h: &Hex| {
+                    !hostile(&self.map, side, *h)
+                        && !self.fits(*h, &them)
+                        && (hasty || !self.map.units_at(*h).iter().any(leaving))
+                };
+                if !back[..there].iter().all(through) {
+                    return None;
+                }
+            }
+        }
+        let pays = |ids: &[UnitId], from: Hex, over: &[Hex]| {
+            self.group(ids).is_ok_and(|group| matches!(self.go(&group, from, over), Look::Go { .. }))
+        };
+        if !pays(ids, at, hexes) || !pays(&them, hex, back) || !self.map.could_change_places(ids, &them) {
+            return None;
+        }
+        // (On open water, who rides has a ship there still.)
+        let afloat = self.afloat(at, &self.there_after(side, at, ids, &them))
+            && self.afloat(hex, &self.there_after(side, hex, &them, ids));
+        afloat.then(|| (them, back.to_vec()))
+    }
+
+    /// Two stacks of `side`, each on its step to the hex of the other
+    /// (`passes`: the units of each and the hexes of its step, the last the
+    /// other's), change places, and each of them pays its step. Refused,
+    /// and nothing changes, if one cannot pay or there is no room.
+    fn change_places(
+        &mut self,
+        side: Side,
+        ours: (&[UnitId], &[Hex]),
+        theirs: (&[UnitId], &[Hex]),
+    ) -> Result<Vec<Event>, String> {
+        let at = |ids: &[UnitId]| ids.first().and_then(|id| self.map.units().get(*id)).map(|u| u.pos());
+        let (Some(x), Some(y)) = (at(ours.0), at(theirs.0)) else { return Err("no units".to_string()) };
+        if ours.1.last() != Some(&y) || theirs.1.last() != Some(&x) {
+            return Err("they do not go to each other's hexes".to_string());
+        }
+        let mut going: Vec<(UnitId, Hex, u32)> = Vec::new();
+        for ((ids, over), from) in [(ours, x), (theirs, y)] {
+            let group = self.group(ids)?;
+            let costs = self.costs_along(&group.movers, from, over);
+            for ((id, _), cost) in group.movers.iter().zip(costs) {
+                let unit = self.own_unit(side, *id)?;
+                let cost = cost.filter(|c| *c <= unit.movement).ok_or(format!("{} cannot get there", unit.name))?;
+                going.push((*id, from, cost));
+            }
+            going.extend(group.carried.iter().map(|id| (*id, from, 0)));
+        }
+        let from = |hex: Hex| going.iter().filter(|g| g.1 == hex).map(|g| g.0).collect::<Vec<UnitId>>();
+        let (a, b) = (from(x), from(y));
+        self.map.change_places(&a, &b).map_err(|_| "there is no room there".to_string())?;
+        let way = |from: Hex, over: &[Hex]| std::iter::once(from).chain(over.iter().copied()).collect::<Vec<Hex>>();
+        let (way_a, way_b) = (way(x, ours.1), way(y, theirs.1));
+        let mut events = Vec::new();
+        for (id, from, cost) in going {
+            let (to, way) = if from == x { (y, way_a.clone()) } else { (x, way_b.clone()) };
+            events.push(Event::Moved { unit: id, from, to, cost, way });
+            self.pay(id, cost);
+            // (As a move leaves them, `move_units`: what they were about
+            // is `arrive`'s to give back.)
+            if let Some(unit) = self.map.unit_mut(id) {
+                (unit.moved, unit.stalled, unit.defending) = (true, false, false);
+                (unit.route, unit.bound) = (Vec::new(), None);
+                unit.stand_down();
+            }
+        }
+        for (way, count) in [(way_a, a.len()), (way_b, b.len())] {
+            self.see_along(side, &way);
+            self.seen_leaving(side, &way, count);
+        }
+        self.selected.retain(|id| !a.contains(id) && !b.contains(id));
+        if self.selected.is_empty() {
+            self.deselect();
+        }
+        Ok(events)
     }
 
     /// True if units of the order of `first` (which stands on a hex with
@@ -1069,15 +1194,31 @@ impl Game {
             },
         };
         let mut events = Vec::new();
-        let (mut halt, mut came) = (false, Vec::new());
+        let (mut halt, mut came, mut passed_by) = (false, Vec::new(), Vec::new());
         match look {
             Look::Go { hex: next, passed, coming, .. } if next == hex => {
-                let was: Vec<(UnitId, MarchState)> = coming
-                    .iter()
-                    .filter_map(|id| self.map.units().get(*id))
-                    .map(|u| (u.id(), MarchState::of(u)))
-                    .collect();
-                match self.move_units(side, &coming, hex) {
+                // Onto its own side's stack that comes the other way, with
+                // no room for both: the two change places (`passes`).
+                let full = !hostile(&self.map, side, hex) && !self.fits(hex, &coming);
+                let over = &way[..passed.min(way.len())];
+                let them = if full { self.passes(ids, at, over, true) } else { None };
+                // How each stood, the way it was on, where its step takes
+                // it and how many hexes on that is.
+                type Stood = Vec<(UnitId, MarchState, Vec<Hex>, Hex, usize)>;
+                let stood = |ids: &[UnitId], way: &[Hex], to: Hex, passed: usize| -> Stood {
+                    let units = ids.iter().filter_map(|id| self.map.units().get(*id));
+                    units.map(|u| (u.id(), MarchState::of(u), way.to_vec(), to, passed)).collect()
+                };
+                let mut was = stood(&coming, &way, hex, passed);
+                if let Some((them, back)) = &them {
+                    let theirs = them.first().and_then(|id| self.map.units().get(*id)).map(|u| u.way.clone());
+                    was.extend(stood(them, &theirs.unwrap_or_default(), at, back.len()));
+                }
+                let moved = match &them {
+                    Some((them, back)) => self.change_places(side, (&coming, over), (them, back)),
+                    None => self.move_units(side, &coming, hex),
+                };
+                match moved {
                     Ok(moved) => {
                         let battled = moved.iter().any(|e| matches!(e, Event::Battle { .. }));
                         let took = moved.iter().any(|e| matches!(e, Event::Taken { .. }));
@@ -1086,9 +1227,9 @@ impl Game {
                         // plan, until it has fought or taken a city;
                         // marauders maraud on, and wait for their player's
                         // word after a battle; a patrol as ever).
-                        for (id, was) in was {
+                        for (id, was, way, to, passed) in was {
                             let Some(unit) = self.map.unit_mut(id) else { continue };
-                            let there = unit.pos() == hex;
+                            let there = unit.pos() == to;
                             if was.patrol.is_some() {
                                 (unit.patrol, unit.stalled, unit.moved) = (was.patrol, false, false);
                                 unit.fought |= battled;
@@ -1113,6 +1254,15 @@ impl Game {
                             }
                         }
                         came = coming;
+                        // The stack passed is there too: its step is done,
+                        // at the moment it was to be.
+                        passed_by = them.map(|(them, _)| them).unwrap_or_default();
+                        for id in &passed_by {
+                            if let Some(unit) = self.map.unit_mut(*id) {
+                                let due = unit.step.map_or(play.now, |(_, due)| due);
+                                (unit.step, unit.clock) = (None, unit.clock.max(due).max(play.now));
+                            }
+                        }
                     }
                     Err(_) => halt = true,
                 }
@@ -1128,6 +1278,7 @@ impl Game {
         }
         if patrol.is_none() {
             events.extend(self.stops(side, &came));
+            events.extend(self.stops(side, &passed_by));
         }
         events
     }

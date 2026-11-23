@@ -1,6 +1,6 @@
 //! A hunt by chance: games played by random orders (moves the range
-//! offers, waypoints, marches by stops, patrols, marauders, undo, cities'
-//! work, rally points), on the continent and on random maps, in turns and
+//! offers, waypoints, marches by stops, stacks sent to each other's hexes,
+//! patrols, marauders, undo, cities' work, rally points), on the continent and on random maps, in turns and
 //! in rounds, with and without fog; after every order the rules' promises
 //! are held to:
 //!
@@ -26,6 +26,7 @@ static ONWARD: AtomicUsize = AtomicUsize::new(0);
 static MIXED: AtomicUsize = AtomicUsize::new(0);
 static BATTLES: AtomicUsize = AtomicUsize::new(0);
 static GROUPS: AtomicUsize = AtomicUsize::new(0);
+static PASSES: AtomicUsize = AtomicUsize::new(0);
 
 /// True if the units go at different tables (flyers with walkers...).
 fn mixed(game: &Game, ids: &[UnitId]) -> bool {
@@ -149,20 +150,27 @@ fn fuzz(seed: u64, mode: Mode, random: bool, rounds: u32) {
     while game.winner().is_none() && game.turn() <= rounds {
         let side = game.player();
         let orders = 4 + rng.below(10);
+        // A stack to be sent to the hex of the one that was just sent to
+        // its own: the two pass each other (from where, to where).
+        let mut back: Option<(Hex, Hex)> = None;
         for _ in 0..orders {
             let stacks = game.stacks_of(side);
             if stacks.is_empty() {
                 break;
             }
-            let at = stacks[rng.below(stacks.len())];
+            let sent_back = back.take().filter(|(from, _)| stacks.contains(from));
+            let at = match sent_back {
+                Some((from, _)) => from,
+                None => stacks[rng.below(stacks.len())],
+            };
             let mut ids: Vec<UnitId> = game.map.units_at(at).to_vec();
-            if rng.chance(30) && ids.len() > 1 {
+            if sent_back.is_none() && rng.chance(30) && ids.len() > 1 {
                 let keep = 1 + rng.below(ids.len() - 1);
                 while ids.len() > keep {
                     ids.remove(rng.below(ids.len()));
                 }
             }
-            let pick = rng.below(100);
+            let pick = if sent_back.is_some() { 50 } else { rng.below(100) };
             let order = if pick < 35 {
                 // A move to a hex the range offers: it has to be taken.
                 game.deselect();
@@ -207,7 +215,22 @@ fn fuzz(seed: u64, mode: Mode, random: bool, rounds: u32) {
                     Order::Onward { units: ids.clone(), to: random_hex(&mut rng, &game, at, 4) }
                 }
             } else if pick < 57 {
-                Order::Toward { units: ids.clone(), to: random_hex(&mut rng, &game, at, 12) }
+                // Now and then to the hex of a stack of its side beside it,
+                // which is sent to this one's next.
+                let beside: Vec<Hex> = stacks.iter().copied().filter(|hex| hex.distance(at) == 1).collect();
+                let to = match sent_back {
+                    Some((_, to)) => {
+                        PASSES.fetch_add(1, Ordering::Relaxed);
+                        to
+                    }
+                    None if !beside.is_empty() && rng.chance(40) => {
+                        let to = beside[rng.below(beside.len())];
+                        back = Some((to, at));
+                        to
+                    }
+                    None => random_hex(&mut rng, &game, at, 12),
+                };
+                Order::Toward { units: ids.clone(), to }
             } else if pick < 68 {
                 let via = (0..rng.below(3)).map(|_| random_hex(&mut rng, &game, at, 8)).collect();
                 Order::GoTo { units: ids.clone(), to: random_hex(&mut rng, &game, at, 20), via }
@@ -347,11 +370,12 @@ fn seeds() -> std::ops::Range<u64> {
 fn stats(what: &str) {
     let n = |a: &AtomicUsize| a.load(Ordering::Relaxed);
     eprintln!(
-        "{what}: onward {}, mixed {}, battles {}, stacks held {}",
+        "{what}: onward {}, mixed {}, battles {}, stacks held {}, stacks sent to each other's hexes {}",
         n(&ONWARD),
         n(&MIXED),
         n(&BATTLES),
-        n(&GROUPS)
+        n(&GROUPS),
+        n(&PASSES)
     );
 }
 

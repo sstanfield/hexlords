@@ -48,7 +48,7 @@ touching the rules.
 |---|---|
 | `src/state/` | Map, tiles, roads, units and their kinds, cities, movement range; `combat`, the battles (pure); `rng`, the game's chance; `scenario`, the reader of a map's files. No UI, no graphics |
 | `src/files.rs`, `build.rs` | Reading the game's files: from the disk, or in a browser (the WebAssembly build) from the copy of `assets/` inside the program, which `build.rs` lists. Everything that reads a file of the game's asks here, not `std::fs` |
-| `src/game.rs`, `src/game/patrol.rs`, `src/game/rounds.rs`, `src/orders.rs`, `src/setup.rs` | `Game`: the map, whose turn it is, and the rules: `Game::apply` carries out an `Order` and says what came of it (`Event`s); the selected unit and its range for the screen; `game::patrol`: patrols, and marauding's flag, as rules; `game::rounds`: the second mode (an order to move is a plan with its way, and the round plays out on a clock, each step taking a unit its cost over its movement a turn; a stack attacks who it finds on its way; stacks join to go as one; a plan is sent on from where it ends, a waypoint, `Order::Onward`; `Game::play_out`). `Setup`: a game before it starts (the mode, the order of turns, who plays each side, the seed) |
+| `src/game.rs`, `src/game/patrol.rs`, `src/game/rounds.rs`, `src/orders.rs`, `src/setup.rs` | `Game`: the map, whose turn it is, and the rules: `Game::apply` carries out an `Order` and says what came of it (`Event`s); the selected unit and its range for the screen; `game::patrol`: patrols, and marauding's flag, as rules; `game::rounds`: the second mode (an order to move is a plan with its way, and the round plays out on a clock, each step taking a unit its cost over its movement a turn; a stack attacks who it finds on its way; stacks join to go as one; two of a side that meet with no room for both pass each other, `Map::change_places`; a plan is sent on from where it ends, a waypoint, `Order::Onward`; `Game::play_out`). `Setup`: a game before it starts (the mode, the order of turns, who plays each side, the seed) |
 | `src/agents.rs`, `src/planner.rs`, `src/planner/wary.rs`, `src/planner/rounds.rs`, `src/marauder.rs`, `src/headless.rs` | The computer's players (`Agent`: `passive`, `simple`, `cmd:<program>` over a text protocol; `planner`: `steady`, `bold`, `careful`, which read the rules in effect, keep clear of stacks they could not beat (`src/planner/wary.rs`), and play a game of rounds in a way of their own, `src/planner/rounds.rs`: `<style>/turns` is one that does not, to measure against); with fog of war each is given its side's view (`Game::view_for`); `marauder`: the computer leading a side's marauding stacks; a game played without a window (`--headless`) |
 | `src/view.rs`, `src/minimap_view.rs` | Pure math: zoom, scale factors, visible hexes, picking, panning, recentering; the minimap's fit and marker |
 | `src/render/` | miniquad drawing: hex meshes, shaders, textures, the map and minimap renderers, the PNG writer; the units' icons for the panels (`unit_icon`, on the CPU) |
@@ -208,7 +208,9 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
   clock or another source, so a seed and a set of orders always make the
   same game. Keep the agents and `--headless` working for every rule: they
   are how the game is balanced. A saved game depends on it (`src/save.rs`):
-  it is the map, the setup and the steps done since, done again. An
+  it is the map, the setup and the steps done since, done again, and
+  `Game::digest` says it came out the same: what the rules keep in a new
+  field goes into it. An
   order that is refused changes nothing: refuse before the first change
   (a refusal after `see_along` once made a saved game another game). So
   whatever changes a game goes through `Game::apply` (or is a `Step` of
@@ -219,7 +221,10 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
 - **One way to change the map:** `Map` owns its units and cities, and they
   change only through its methods (`new_unit`, `place_unit`, `move_unit`,
   `kill_unit`, `unit_mut`, `tile_mut`, `add_city` ...), which keep the tiles'
-  unit lists and the units' positions in step and count revisions. What is
+  unit lists and the units' positions in step and count revisions, and
+  refuse a unit a hex that is full (8 and a commander): no rule can put
+  more on one, so none needs to try (`change_places` for two stacks that
+  swap). What is
   derived from the map checks a revision instead of being told: `Game::refresh`
   recomputes the selected unit's range, and the session asks for a new minimap
   picture when `terrain_revision` moves. Add new mutations as `Map` methods

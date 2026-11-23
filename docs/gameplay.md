@@ -575,6 +575,21 @@ changed.
     review, 2026-11-23: a stack sent where a bigger one stood, which left
     by way of its hex, was stopped though the hex was empty a moment
     later.)
+  - Two stacks of a side that come toward each other, each with the hex
+    of the other as its next step (side by side, or with stacks that stay
+    between them, which both go through) and too many for one hex,
+    **pass each other**: they change places at once, when the step of the
+    first of them is up, and each pays its step. Only if, with whoever
+    stays on those hexes, neither then holds more than a stack; else they
+    wait as above. (Each waited for the other to leave before, and both
+    stood still for the round.) A hex never holds more than a stack and a
+    commander, at any moment: the map refuses the unit that would be one
+    too many (`Map::move_unit`), and two stacks change places in one go
+    (`Map::change_places`), not one after the other. A plan to a hex
+    where a stack of the side stays and leaves no room is still refused
+    when it is given: to have two such stacks change places, send one
+    away first, the other to its hex, and then the first where the other
+    stands (or send both with Go to).
   - The units of one order go as a stack; those of another order on their
     hex, with the same end, go on their own (`Unit::party`).
   - A plan or a march that stops on a temple seeks its blessing there

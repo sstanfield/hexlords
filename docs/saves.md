@@ -56,7 +56,7 @@ check 9f3c2a17d05be481
 | `seen <side> <n>` | How much of the game's history that person had seen (the log marks the rest as new) |
 | `terrain <n>`, `units <n>`, `cities <n>` | The `n` lines that follow are the map's files as they were read (`docs/map-format.md`); `units` and `cities` only if the map has them |
 | `steps <n>` | The `n` lines that follow are what was done, in its order |
-| `check` | The last line: a number that says how the game stood (`Game::digest`). A file without it was not written whole |
+| `check` | The last line: a number that says how the game stood (`Game::digest`): the round and whose turn, the game's chance, the treasuries and rally points, every unit with its orders, every city with its work, what each side has seen and remembers under fog of war. A file without it was not written whole |
 
 ## The steps
 

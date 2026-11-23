@@ -260,6 +260,82 @@ impl MarchState {
     }
 }
 
+/// The number `Game::digest` makes of a game (FNV-1a, a number at a time):
+/// written out field by field, so that it stays the same from one build of
+/// the game to the next.
+pub(crate) struct Digest(u64);
+
+impl Digest {
+    fn new() -> Digest {
+        Digest(0xcbf2_9ce4_8422_2325)
+    }
+
+    pub(crate) fn n(&mut self, n: u64) {
+        for byte in n.to_le_bytes() {
+            self.0 = (self.0 ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+
+    /// One or none (none is not a zero).
+    fn option(&mut self, n: Option<u64>) {
+        match n {
+            Some(n) => {
+                self.n(1);
+                self.n(n);
+            }
+            None => self.n(0),
+        }
+    }
+
+    pub(crate) fn flags(&mut self, flags: &[bool]) {
+        self.n(flags.iter().fold(1, |bits, on| bits << 1 | u64::from(*on)));
+    }
+
+    fn hex(&mut self, hex: Hex) {
+        self.n(u64::from(hex.row) << 16 | u64::from(hex.col));
+    }
+
+    fn hexes(&mut self, hexes: &[Hex]) {
+        self.n(hexes.len() as u64);
+        for hex in hexes {
+            self.hex(*hex);
+        }
+    }
+
+    fn text(&mut self, text: &str) {
+        self.n(text.len() as u64);
+        for byte in text.bytes() {
+            self.n(u64::from(byte));
+        }
+    }
+
+    /// Which of `bits` are set (a list not made yet is one with none set).
+    fn set(&mut self, bits: &[bool]) {
+        let mut count = 0u64;
+        for (i, _) in bits.iter().enumerate().filter(|(_, on)| **on) {
+            self.n(i as u64);
+            count += 1;
+        }
+        self.n(count);
+    }
+
+    fn sends(&mut self, sends: &Sends) {
+        match sends {
+            Sends::Stay => self.n(0),
+            Sends::Defend => self.n(1),
+            Sends::Route(stops) => {
+                self.n(2);
+                self.hexes(stops);
+            }
+            Sends::Point { n, bless } => {
+                self.n(3);
+                self.n(u64::from(*n));
+                self.flags(&[*bless]);
+            }
+        }
+    }
+}
+
 /// Units that go together (`Game::group`): those that move, each at the
 /// prices of a table (its own, or a commander's with flyers, theirs), and
 /// those carried by the ships among them, who pay nothing.
@@ -981,43 +1057,153 @@ impl Game {
         Ok(Game::from_scenario(Scenario { map, assets, warnings }).with_source(source))
     }
 
-    /// A number that says how the game stands: whose turn in which round,
-    /// the game's chance, every unit and city, the treasuries. Two games
-    /// that went the same way have the same; a saved game keeps it, to know
-    /// that it was made again as it was (`save`).
+    /// A number that says how the game stands: whose turn in which round
+    /// (and how far a round has played out), the game's chance, the
+    /// treasuries and the rally points, every unit with its orders and its
+    /// place in its stack, every city with its work, what each side has
+    /// seen and remembers under fog of war, how much has happened. Two
+    /// games that went the same way have the same; a saved game keeps it,
+    /// to know that it was made again as it was (`save`). (All of what the
+    /// rules keep, the owner's word, 2026-11-23: it left out what a side
+    /// remembers, the rally points and a city's work, and a game that came
+    /// out otherwise in those was taken for the same.) Not what a screen
+    /// keeps in it: the selection, what is watched.
     pub fn digest(&self) -> u64 {
-        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-        let mut add = |n: u64| {
-            for byte in n.to_le_bytes() {
-                hash = (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
-            }
-        };
-        add(u64::from(self.round));
-        add(self.player().index() as u64);
-        add(u64::from(self.playing.is_some()));
-        add(self.rng.state());
-        add(self.winner.map_or(99, |side| side.index() as u64));
-        for gold in self.treasury {
-            add(u64::from(gold));
+        let mut sum = Digest::new();
+        sum.n(u64::from(self.round));
+        sum.n(self.current as u64);
+        sum.n(self.order.len() as u64);
+        for side in &self.order {
+            sum.n(side.index() as u64);
         }
+        match &self.playing {
+            Some(play) => play.digest(&mut sum),
+            None => sum.n(0),
+        }
+        sum.n(u64::from(self.parties));
+        sum.n(self.rng.state());
+        sum.option(self.winner.map(|side| side.index() as u64));
+        sum.n(self.out.len() as u64);
+        for side in &self.out {
+            sum.n(side.index() as u64);
+        }
+        for gold in self.treasury {
+            sum.n(u64::from(gold));
+        }
+        sum.n(self.raised.len() as u64);
+        for city in &self.raised {
+            sum.n(u64::from(city.0));
+        }
+        sum.option(self.eased.map(|(round, side)| u64::from(round) << 8 | side.index() as u64));
+        for points in &self.rally_points {
+            for point in points {
+                sum.option(point.map(|p| u64::from(p.at.row) << 24 | u64::from(p.at.col) << 8 | u64::from(p.defend)));
+            }
+        }
+        sum.n(self.history.len() as u64);
+        sum.n(self.fights.len() as u64);
+        sum.flags(&[self.undo.is_some()]);
         for unit in self.map.units().iter() {
             let id = unit.id();
-            for n in [id.side.index() as u32, id.index, id.generation, unit.movement, unit.wounds] {
-                add(u64::from(n));
+            for n in [id.side.index() as u32, id.index, id.generation] {
+                sum.n(u64::from(n));
             }
-            add(u64::from(unit.pos().row) << 16 | u64::from(unit.pos().col));
-            add(u64::from(unit.level));
-            // (What it is about: a march, a patrol, marauding, waiting.)
-            let flags = [unit.fought, unit.marauding, unit.done, unit.stalled, unit.patrol.is_some()];
-            add(flags.iter().fold(0, |bits, on| bits << 1 | u64::from(*on)));
-            add(unit.route.len() as u64);
+            sum.hex(unit.pos());
+            // (Its place in its stack: the order they stand in is kept.)
+            sum.option(self.map.units_at(unit.pos()).iter().position(|u| *u == id).map(|i| i as u64));
+            sum.option(unit.kind.map(|kind| kind.0 as u64));
+            sum.n(unit.move_cost.0 as u64);
+            for n in [unit.movement, unit.base_move_points, unit.strength, unit.upkeep, unit.wounds, unit.experience] {
+                sum.n(u64::from(n));
+            }
+            sum.n(u64::from(unit.level));
+            sum.text(unit.given_name.as_deref().unwrap_or(""));
+            sum.n(unit.blessings.len() as u64);
+            for (at, blessing) in &unit.blessings {
+                sum.hex(*at);
+                sum.flags(&[*blessing == Blessing::Strength]);
+            }
+            // What it is about: a march, a plan and its way, a patrol,
+            // marauding, waiting; and, as a round plays out, its step.
+            sum.hexes(&unit.route);
+            sum.hexes(&unit.way);
+            sum.option(unit.bound.map(u64::from));
+            let flags = [unit.stalled, unit.moved, unit.done, unit.defending, unit.marauding, unit.fought];
+            sum.flags(&flags);
+            sum.flags(&[unit.planned, unit.halted]);
+            sum.n(u64::from(unit.party));
+            sum.n(unit.clock);
+            match unit.step {
+                Some((hex, due)) => {
+                    sum.hex(hex);
+                    sum.n(due);
+                }
+                None => sum.n(0),
+            }
+            match &unit.patrol {
+                Some(patrol) => {
+                    sum.hexes(&patrol.stops);
+                    sum.flags(&[patrol.round, patrol.back]);
+                    sum.option(patrol.attack.map(u64::from));
+                    sum.n(patrol.next as u64);
+                }
+                None => sum.n(0),
+            }
         }
         for city in self.map.cities().iter() {
-            add(city.side.index() as u64);
-            add(u64::from(city.walls));
-            add(u64::from(city.progress));
+            sum.n(city.side.index() as u64);
+            for n in [city.walls, city.progress, city.income, u32::from(city.trains)] {
+                sum.n(u64::from(n));
+            }
+            sum.option(city.building.map(|i| i as u64));
+            sum.flags(&[city.resting]);
+            sum.sends(&city.sends);
+            let queue = &city.queue;
+            sum.n(queue.items.len() as u64);
+            for item in &queue.items {
+                sum.n(item.what as u64);
+                sum.n(u64::from(item.count));
+                sum.sends(&item.sends);
+            }
+            match queue.end {
+                QueueEnd::Stop => sum.n(0),
+                QueueEnd::Repeat { from, times } => {
+                    sum.n(1 + from as u64);
+                    sum.option(times.map(u64::from));
+                }
+            }
+            sum.n(queue.at as u64);
+            sum.n(u64::from(queue.made));
+            sum.n(u64::from(queue.rounds));
         }
-        hash
+        // With fog of war, each side's: what it sees of an order being
+        // carried out, the stacks it remembers, who it last saw hold each
+        // city, the land it has ever seen.
+        for trail in &self.trail {
+            sum.set(trail);
+        }
+        for ghosts in &self.memory {
+            sum.n(ghosts.len() as u64);
+            for ghost in ghosts {
+                sum.hex(ghost.at);
+                sum.n(ghost.side.index() as u64);
+                sum.n(ghost.count as u64);
+                sum.n(u64::from(ghost.round));
+            }
+        }
+        for held in &self.held {
+            sum.n(held.len() as u64);
+            for (at, side, round, walls) in held {
+                sum.hex(*at);
+                sum.n(side.index() as u64);
+                sum.n(u64::from(*round));
+                sum.n(u64::from(*walls));
+            }
+        }
+        for explored in &self.explored {
+            sum.set(explored);
+        }
+        sum.0
     }
 
     /// The game is a copy of how it was (or no longer): it takes no orders
