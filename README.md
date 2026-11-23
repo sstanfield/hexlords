@@ -27,7 +27,8 @@ direction. So far:
   last side left wins. [docs/gameplay.md](docs/gameplay.md) is the plan for
   the rules, in two modes, both built: sides taking turns; or rounds, where
   all give their orders and the round then plays out at once, every stack
-  a hex at a time;
+  a hex at a time; a game that is not over is kept as it goes, and the new
+  game screen plays it on ([docs/saves.md](docs/saves.md));
 - a [map editor](#the-map-editor) for the terrain and the roads;
 - a random map generator, `mapgen`, with a ruler for any map
   ([docs/mapgen.md](docs/mapgen.md)): the terrain so far; rivers, cities,
@@ -74,7 +75,8 @@ What is different in a browser:
 
 - The maps are the ones in `assets/maps` when it was built, and random maps.
   There is no command line, so no `--map` and no agents of your own (`cmd:`).
-- Nothing is kept: loading the page again is a new game.
+- Nothing is kept, a game in progress neither (a page has no files): loading
+  the page again is a new game.
 - Fullscreen and closing are the browser's (F11; on a Mac Ctrl+Cmd+F), and it
   keeps some keys for itself: Ctrl+T and Ctrl+N do not reach the game (use
   the End turn button and the Game menu), and Cmd is not Ctrl there (undo is
@@ -124,7 +126,7 @@ as it shows from outside.
 | M, A | A list of your cities, or of all of them, with a minimap that rings the one you choose; open it in full, or go to it |
 | F1, or `?` | The help: every key and what the mouse does (Esc closes it). The Help menu also has the rules of the game in play: battles (the system and chance it was set up with), movement (what each of the map's kinds of unit pays), cities and gold, units and captains, orders and turns, what you see |
 | Ctrl+Cmd+F, or F11 | Fullscreen on and off (macOS keeps F11 for itself) |
-| Ctrl+N (or Cmd+N), or Game > New game... | Back to the new game screen: at once if the game is over, else after asking (the game is not saved) |
+| Ctrl+N (or Cmd+N), or Game > New game... | Back to the new game screen: at once if the game is over, else after asking (a game that is not over is kept, and can be played on from there) |
 | Ctrl+Q (or Cmd+Q) | Quit |
 
 A unit is a disc in its side's color with the sign of its kind. A city shows
@@ -167,6 +169,22 @@ one screen (hotseat): between two people's turns a screen hides the map
 until the next one says they are there.
 
 ![The new game screen](docs/screenshots/new_game.png)
+
+Under the list of maps a line says how big the map shown is and how many
+cities it has (a random map: once it is made).
+
+**Games in progress.** A game that is not over is kept by itself, in a file:
+when it starts, each time a turn passes, when it is left for a new game and
+when the window closes, in the middle of a turn or of a round if that is
+where it was. The new game screen lists those games first, the last played
+first: Play on goes on with one as it was left, Delete (pressed twice)
+takes it away. A game that is over is kept no more. The files are where the
+system keeps a program's data (macOS: `~/Library/Application
+Support/Hexlords/saves`; Linux: `~/.local/share/hexlords/saves`; Windows:
+`%APPDATA%\Hexlords\saves`), or where `--saves` says. A saved game is the
+map, the setup and every order given since, which make the same game again
+([docs/saves.md](docs/saves.md)): one saved by another version of the rules
+may no longer come out the same, and then says so and is not played on.
 
 The sides play one after the other. On a side's turn only its units move and
 only its cities can be set to build ("my cities"); End turn passes to the
@@ -217,7 +235,7 @@ hexlords [--map <file.map or map directory>] [--players <side>=<who>,...] [--mod
         [--order fixed|drawn] [--seed <n>]
         [--chance <0-10>] [--battles lines|strength|dice] [--dice-exact hits|misses|defenders] [--wounds] [--blows-back]
         [--cap <n>] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] [--log]]
-        [--script <steps>]
+        [--saves <dir>] [--script <steps>]
         [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
 ```
 
@@ -252,6 +270,9 @@ Without `--map` the window opens on the new game screen.
   side is left or `--rounds` (200) have gone by, and says how it went
   (`--log`: and all that happened). [docs/agents.md](docs/agents.md) says
   more, and how a program of one's own plays a side.
+- `--saves <dir>`: keep the games in progress in this directory. Without it:
+  where the system keeps a program's data (above); a run with `--script`,
+  `--screenshot` or `--frames` keeps nothing unless it is told where.
 - `--assets <dir>`: where the assets are. Without it: `../assets` next to the
   executable if that exists, else `assets` in the source tree (so `cargo run`
   works).

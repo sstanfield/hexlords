@@ -1,7 +1,7 @@
 //! What a side can do, as values: orders. The rules (`Game::apply`) carry an
 //! order out, or refuse it, and say what came of it as events. A person's
-//! clicks become orders, an agent makes them, and (later) a saved game and a
-//! network game are made of them (`docs/gameplay.md`).
+//! clicks become orders, an agent makes them, a saved game is made of them
+//! (`save`), and (later) a network game (`docs/gameplay.md`).
 
 use crate::state::{Blessing, CityId, Hex, QueueEnd, QueueItem, Sends, Side, UnitId};
 
@@ -99,6 +99,21 @@ pub enum Order {
     /// `Move`; into another side's units, a battle), and maraud on: the
     /// computer's moves for them.
     Roam { units: Vec<UnitId>, to: Hex },
+}
+
+/// Something that was done to the game: what, done again in its order to
+/// the game as it was, makes the same game (`Game::record`, `replay`,
+/// `save`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Step {
+    /// An order of the side whose turn it was, carried out.
+    Order(Order),
+    /// In rounds: the round that was playing out went on a beat
+    /// (`Game::play_out`).
+    Beat,
+    /// Whoever leads a side's marauders let those of its units that had
+    /// fought and were left alone go on (`Game::stand_easy`).
+    Ease(Side),
 }
 
 /// What happened.

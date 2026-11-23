@@ -4,7 +4,8 @@
 //! game starts with the button (`Shell`, in `shell.rs`, then hands the window
 //! to a `Session`). Or a random map (`mapgen`, the plan's G8): its preset,
 //! size, sides, cities, temples, cities at sea and in the air, and seed, made
-//! with a button and shown before the game starts.
+//! with a button and shown before the game starts. And the games that were
+//! left before they were over (`save`): each can be played on, or deleted.
 //!
 //! Not a port: the C++ started its demo at once.
 
@@ -21,6 +22,7 @@ use crate::help::HelpSection;
 use crate::mapgen::config::{Config, DENSITIES, PRESETS, SIZES, Size as MapSize, TEMPLE_CHOICES};
 use crate::mapgen::reach::{MoveClass, movement_class};
 use crate::platform;
+use crate::save::{self, Summary};
 use crate::screen::{MapScreen, Scene};
 use crate::setup::{Controller, Fog, Mode, Setup, TurnOrder};
 use crate::state::combat::{Exact, MAX_CHANCE, System, UNIT_CAP};
@@ -69,6 +71,8 @@ pub const SEA_ID: &str = "random_sea";
 pub const AIR_ID: &str = "random_air";
 pub const SEED_ID: &str = "random_seed";
 pub const MAKE_ID: &str = "random_make";
+/// The line that says how big the map shown is, and how many cities it has.
+pub const MAP_FACTS_ID: &str = "map_facts";
 /// The units template random maps get, relative to the asset directory.
 pub const UNITS_TEMPLATE: &str = "mapgen/units.txt";
 /// How much a press of Gold's - or + changes it, and the most it can be.
@@ -79,6 +83,29 @@ pub const COMPUTER: &str = "steady";
 /// The computer's players a seat can have, in the order a click on its
 /// Computer button goes through them (`agents`, `planner`).
 pub const COMPUTERS: [&str; 4] = ["steady", "bold", "careful", "simple"];
+
+/// The buttons of the `i`th game in progress: play on, delete.
+pub fn continue_id(i: usize) -> String {
+    format!("saved_continue_{i}")
+}
+
+pub fn delete_id(i: usize) -> String {
+    format!("saved_delete_{i}")
+}
+
+/// How big a map is and how many cities it has, in a line: `88 wide, 77
+/// high: 34 cities, 4 of them a side's`.
+pub fn map_facts(map: &Map) -> String {
+    let cities = map.cities().iter().count();
+    let held = map.cities().iter().filter(|c| c.side != Side::Grey).count();
+    let cities = match cities {
+        0 => "no cities".to_string(),
+        1 => "1 city".to_string(),
+        n => format!("{n} cities"),
+    };
+    let held = if held > 0 { format!(", {held} of them a side's") } else { String::new() };
+    format!("{} wide, {} high: {cities}{held}", map.cols(), map.rows())
+}
 
 /// The button of the `i`th map.
 pub fn map_id(i: usize) -> String {
@@ -135,6 +162,17 @@ pub struct NewGame {
     /// The units template's text, if the assets have it (no random maps
     /// without it), and whether it has a ship and a flyer.
     template: Option<(String, bool, bool)>,
+    /// Where the games in progress are kept, if anywhere (`save`), and
+    /// those there are: each one's file, and what it says of itself (or
+    /// why it cannot be read).
+    saves: Option<PathBuf>,
+    saved: Vec<(PathBuf, Result<Summary, String>)>,
+    /// The one whose Delete was pressed once: again, and it is gone.
+    deleting: Option<usize>,
+    /// The one to play on, once asked for; and why the last one asked for
+    /// could not be.
+    resume: Option<PathBuf>,
+    resume_problem: Option<String>,
 }
 
 /// A random map's settings (a generator's config), and whether one was made
@@ -194,6 +232,7 @@ impl NewGame {
                 ("Fog: Total", "And the land a side has never seen is black, shut to its units"),
                 ("Person, Computer", "Who plays each side: several people take turns at the screen"),
                 ("Start the game", "Play"),
+                ("Games in progress", "Games left before they were over: Play on; or Delete, pressed twice"),
             ],
         )]);
         let find = |screen: &MapScreen, id: &str| {
@@ -228,6 +267,11 @@ impl NewGame {
             start: false,
             random: None,
             template,
+            saves: None,
+            saved: Vec::new(),
+            deleting: None,
+            resume: None,
+            resume_problem: None,
         };
         new_game.apply_layout_sizes();
         match pick {
@@ -236,6 +280,56 @@ impl NewGame {
         }
         new_game.screen.settle();
         Ok(new_game)
+    }
+
+    /// The games in progress are kept in `dir` (or nowhere): those there
+    /// are listed, to be played on or deleted.
+    pub fn set_saves(&mut self, dir: Option<PathBuf>) {
+        self.saves = dir;
+        self.list_saved();
+        self.rebuild();
+    }
+
+    fn list_saved(&mut self) {
+        self.saved = self.saves.as_deref().map(save::list).unwrap_or_default();
+        self.deleting = None;
+    }
+
+    /// The games in progress: each one's file, and what it says of itself.
+    pub fn saved(&self) -> &[(PathBuf, Result<Summary, String>)] {
+        &self.saved
+    }
+
+    /// The game in progress that was asked for, to be played on: once.
+    pub fn take_resume(&mut self) -> Option<PathBuf> {
+        self.resume.take()
+    }
+
+    /// The game asked for could not be played on: the screen says why.
+    pub fn resume_failed(&mut self, why: String) {
+        self.resume_problem = Some(why);
+        self.rebuild();
+    }
+
+    /// Why the last game asked for could not be played on, if it could not.
+    pub fn resume_problem(&self) -> Option<&str> {
+        self.resume_problem.as_deref()
+    }
+
+    /// Delete the `i`th game in progress: asked once it says so, asked
+    /// again it is gone.
+    pub fn delete_saved(&mut self, i: usize) {
+        let Some((path, _)) = self.saved.get(i) else { return };
+        if self.deleting != Some(i) {
+            self.deleting = Some(i);
+        } else {
+            match save::delete(path) {
+                Ok(()) => self.resume_problem = None,
+                Err(why) => self.resume_problem = Some(why),
+            }
+            self.list_saved();
+        }
+        self.rebuild();
     }
 
     /// The maps it offers.
@@ -287,7 +381,15 @@ impl NewGame {
                 Ok(map) => {
                     random.made = true;
                     random.failures = made.failures.clone();
-                    let game = Game::from_scenario(crate::state::Scenario { map, assets: None, warnings: Vec::new() });
+                    // (The texts the map is, for a saved game to keep.)
+                    let source = crate::state::MapSource {
+                        name: "random".to_string(),
+                        terrain: made.terrain_text(),
+                        units: Some(units.clone()),
+                        cities: Some(made.cities_text()),
+                    };
+                    let game = Game::from_scenario(crate::state::Scenario { map, assets: None, warnings: Vec::new() })
+                        .with_source(source);
                     self.seat(game);
                     self.problem = None;
                 }
@@ -400,6 +502,27 @@ impl NewGame {
             ui.set_value(button, i32::from(on));
         };
 
+        if !self.saved.is_empty() || self.resume_problem.is_some() {
+            build::heading(ui, c, "Games in progress");
+            for (i, (path, summary)) in self.saved.iter().enumerate() {
+                let (line, players) = match summary {
+                    Ok(summary) => (summary.line(), summary.players()),
+                    Err(why) => (format!("{}: it cannot be read", map_name(path)), why.clone()),
+                };
+                build::text(ui, c, &line);
+                let row = build::row(ui, c, space);
+                let play = build::button(ui, row, &continue_id(i), "Play on");
+                ui.set_disabled(play, summary.is_err());
+                let delete = if self.deleting == Some(i) { "Delete it for good" } else { "Delete" };
+                build::button(ui, row, &delete_id(i), delete);
+                build::text(ui, row, &players);
+            }
+            if let Some(problem) = &self.resume_problem {
+                build::text(ui, c, problem);
+            }
+            build::gap(ui, c, space);
+        }
+
         build::heading(ui, c, "Map");
         let scroll = ui.add(c, ScrollContainer::new(ScrollMode::YAuto).with_adapt_content_size(true));
         let side_w = ui.layout_params(self.sidebar).and_then(|lp| lp.max_w).unwrap_or(200);
@@ -424,6 +547,14 @@ impl NewGame {
         }
         if let Some(problem) = &self.problem {
             build::text(ui, c, problem);
+        }
+        // How big the map shown is, and how many cities it has (a random
+        // map: once it is made).
+        let shown = self.chosen.is_some() || self.random.as_ref().is_some_and(|r| r.made);
+        let facts = (shown && self.problem.is_none()).then(|| map_facts(&self.screen.game.map));
+        if let (Some(facts), None) = (&facts, &self.random) {
+            let line = build::text(ui, c, facts);
+            ui.set_id(line, TbId::new(MAP_FACTS_ID));
         }
         if let (Some(random), Some((_, ships, flyers))) = (&self.random, &self.template) {
             let cfg = &random.config;
@@ -457,6 +588,10 @@ impl NewGame {
             build::text(ui, row, &format!("Seed {}", cfg.seed));
             build::button(ui, row, SEED_ID, "New seed");
             build::primary_button(ui, row, MAKE_ID, if random.made { "Make it again" } else { "Make the map" });
+            if let Some(facts) = &facts {
+                let line = build::text(ui, c, facts);
+                ui.set_id(line, TbId::new(MAP_FACTS_ID));
+            }
             if !random.made {
                 build::text(ui, c, "Make the map to see it and play it.");
             } else if !random.failures.is_empty() {
@@ -579,6 +714,10 @@ impl NewGame {
             let RootCommand::Click(id) = command else { continue };
             if id == TbId::new(START_ID) {
                 self.start = true;
+            } else if let Some(i) = (0..self.saved.len()).find(|i| id == TbId::new(&continue_id(*i))) {
+                self.resume = self.saved.get(i).map(|(path, _)| path.clone());
+            } else if let Some(i) = (0..self.saved.len()).find(|i| id == TbId::new(&delete_id(*i))) {
+                self.delete_saved(i);
             } else if id == TbId::new(RANDOM_ID) {
                 self.choose_random();
             } else if id == TbId::new(MAKE_ID) {

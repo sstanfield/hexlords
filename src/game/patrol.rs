@@ -218,6 +218,17 @@ impl Game {
     /// to wait for). Whoever leads the side's marauders at the end of its
     /// turn says so first (`marauder::maraud`); the turn's end does too.
     pub fn stand_easy(&mut self, side: Side) {
+        // (Outside an order: kept as a step of its own, `record`.)
+        if self.eased != Some((self.turn(), side)) {
+            if let Some(journal) = &mut self.journal {
+                journal.push(crate::orders::Step::Ease(side));
+            }
+        }
+        self.ease(side);
+    }
+
+    /// What `stand_easy` does, for the rules themselves (a turn's end).
+    pub(crate) fn ease(&mut self, side: Side) {
         let now = (self.turn(), side);
         if self.eased == Some(now) {
             return;

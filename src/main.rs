@@ -25,6 +25,11 @@
 //! - `--headless`: no window: the computer plays every side of `--map` until
 //!   one is left or `--rounds <n>` (200) have gone by, then says how it went
 //!   (`--log`: and everything that happened on the way);
+//! - `--saves <dir>`: keep the games that are not over in this directory
+//!   (without it, where the system keeps a program's data: a game is saved as
+//!   its turns pass and when the window closes, and the new game screen
+//!   lists those to play on; not with `--frames`, `--screenshot` or
+//!   `--script`, which keep nothing unless told where);
 //! - `--assets <dir>`: use this asset directory;
 //! - `--frames <n>`: quit after drawing `n` frames (a smoke test);
 //! - `--screenshot <file>`: draw a frame into a PNG file and quit (the last frame
@@ -72,12 +77,14 @@ struct Args {
     cap: Option<u32>,
     gold: Option<u32>,
     fog: Fog,
+    /// `--saves <dir>`
+    saves: Option<PathBuf>,
 }
 
 fn usage() -> String {
     format!(
         "usage: hexlords [--map <file.map or map directory>] [--players <side>=<person|agent>,...] [--mode turns|rounds] [--order fixed|drawn] \
-         [--seed <n>] [--chance <0-10>] [--battles lines|strength|dice] [--dice-exact hits|misses|defenders] [--wounds] [--blows-back] [--cap <n>] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] \
+         [--seed <n>] [--chance <0-10>] [--battles lines|strength|dice] [--dice-exact hits|misses|defenders] [--wounds] [--blows-back] [--cap <n>] [--gold <n>] [--fog | --total-fog] [--saves <dir>] [--headless [--rounds <n>] \
          [--log]] \
          [--script <steps>] {OPTIONS_USAGE}"
     )
@@ -94,6 +101,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
         match arg.as_str() {
             "--map" => parsed.map = Some(PathBuf::from(value("a map")?)),
             "--script" => parsed.script = Some(value("steps")?),
+            "--saves" => parsed.saves = Some(PathBuf::from(value("a directory")?)),
             "--players" => parsed.players = Some(value("who plays which side")?),
             "--mode" => {
                 parsed.mode = Some(match value("turns or rounds")?.as_str() {
@@ -185,6 +193,7 @@ fn main() {
         cap,
         gold,
         fog,
+        saves,
     } = args;
     // A map that cannot be read ends the run before a window opens.
     let game = match &map {
@@ -255,12 +264,20 @@ fn main() {
         }
         return;
     }
+    // Where the games that are not over are kept: where told, or where the
+    // system keeps such things; a run that is a test or a picture keeps
+    // nothing unless told where.
+    let played = script.is_none() && window.screenshot.is_none() && window.frames.is_none();
+    let saves = saves.or_else(|| hexlords::platform::saves_dir().filter(|_| played));
     let spec = WindowSpec { program: "hexlords", title: WINDOW_TITLE, size: WINDOW_SIZE };
     app::run(spec, window, move |assets, viewport, dpi| {
         let mut shell = match game {
             Some(game) => Shell::playing(assets, Session::with_game(assets, viewport, dpi, game)?),
             None => Shell::new_game(assets, viewport, dpi, None)?,
         };
+        if let Some(dir) = &saves {
+            shell.keep_games_in(dir.clone());
+        }
         if let Some(steps) = &script {
             script::run(&mut shell, steps).map_err(|e| format!("--script: {e}"))?;
         }
@@ -316,6 +333,8 @@ mod tests {
         assert_eq!(o.window.screenshot, Some(PathBuf::from("shot.png")));
         assert_eq!(o.script.as_deref(), Some("enter,1"));
         assert_eq!(o.map, Some(PathBuf::from("maps/one.map")));
+        assert_eq!(parse(&["--saves", "my games"]).unwrap().saves, Some(PathBuf::from("my games")));
+        assert_eq!(parse(&["--saves"]).unwrap_err(), "--saves needs a directory");
     }
 
     #[test]

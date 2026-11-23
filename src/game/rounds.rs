@@ -417,7 +417,7 @@ impl Game {
         }
         // The stacks left alone after a battle on patrol or marauding go on.
         for side in self.order.clone() {
-            self.stand_easy(side);
+            self.ease(side);
         }
         self.note_sightings();
         // The order the sides step in, if it is drawn, is drawn now: when
@@ -430,7 +430,10 @@ impl Game {
         // Everybody sets off as the clock starts.
         self.rest(false);
         self.playing = Some(PlayOut::default());
-        if self.watched.is_some() {
+        // Whoever watches the game, or keeps what is done to it, plays the
+        // round out, a beat at a time (each beat is then a step of its
+        // own, `Game::record`); else it plays out here and now.
+        if self.watched.is_some() || self.journal.is_some() {
             return Vec::new();
         }
         let mut events = Vec::new();
@@ -490,6 +493,16 @@ impl Game {
     /// (However it is called, the round is the same: a beat is only how
     /// much a screen is shown at a time.)
     pub fn play_out(&mut self) -> Vec<Event> {
+        // (No order: kept as a step of its own, `record`.)
+        if self.playing.is_some() {
+            if let Some(journal) = &mut self.journal {
+                journal.push(crate::orders::Step::Beat);
+            }
+        }
+        self.beat()
+    }
+
+    fn beat(&mut self) -> Vec<Event> {
         let Some(mut play) = self.playing.clone() else { return Vec::new() };
         let round = self.round;
         let mut events = Vec::new();

@@ -66,7 +66,8 @@ Built (2026-11-19):
   round plays out on a clock, the faster units first, on the turns' own
   rules.
 
-Not built: saved games.
+- **saved games** (below, "Saved games"): a game that is not over is kept
+  in a file as it goes, and played on later from the new game screen.
 
 ## One set of rules, two modes
 
@@ -393,7 +394,9 @@ and the rules use integers, not floats.
    nothing, Next stack and the lists of cities are the person's own, and
    their city's buttons give no orders. Rounds need fog far more than turns
    do.
-10. **Saved games.** The state and the orders, in text, like the maps.
+10. **Saved games.** The map, the setup and the orders, in text, like the
+    maps (built: "Saved games", below; the state itself is not written,
+    the orders make it again).
 11. **Movement points.** A unit that does not use all its points keeps up
     to 2 of them for the next turn (decided: as now, from the C++).
 12. **Ships and flyers** (built; the owner's word, 2026-11-20). A kind of
@@ -622,8 +625,8 @@ changed.
   it is, the orders already given this turn with it, is as it was left.
   (It works because the rules are deterministic: the steps done again to
   a copy make the same game. The orders are kept by the game itself,
-  `Game::record`; a saved game can be made of the same record: the setup,
-  the map and the orders from the start. Not built.)
+  `Game::record`; a saved game is made of the same record: the setup,
+  the map and the orders from the start, "Saved games" below.)
 - **Hotseat**: each person plans in turn behind the hiding screen; the
   last of them watches the round play out, and each of the others is
   shown it as their next orders begin, once their log is out of the way
@@ -652,6 +655,54 @@ changed.
   short as in turns (it fights: one rule for every stack on its way);
   whether a stack that would run into far worse odds should hold back;
   plans by way of hexes of the player's choosing.
+
+## Saved games
+
+The owner's word (2026-11-22): "save the current game's state in a file with
+start conditions and logs to deterministically recreate the current game ...
+a simple save game, when exiting make sure the current game is saved", and
+"allow an in-progress game to be restarted or deleted from the new game
+screen"; finished games need not be kept for now.
+
+- **What a saved game is**: how the game began (the texts its map was read
+  from, so that the map's files may change or go; the setup with its seed)
+  and everything done to it since, in its order: the orders carried out,
+  each beat of a round playing out, and the one thing done outside an order
+  (the computer letting a side's marauders go on, `Game::stand_easy`).
+  `Game::record` keeps them as `Step`s, `Game::redo` does one again. The
+  rules are deterministic, so that is the game: to load it is to begin it
+  again and do it all again. Nothing of the state is written but a number
+  that says how it stood (`Game::digest`), so that a game that comes out
+  otherwise is known: the rules have changed since it was saved, and it is
+  not played on (the screen says so; the file stays until it is deleted).
+  `docs/saves.md` is the file's format; `src/save.rs` reads and writes it.
+- **When it is written**: by itself. A game gets a file when it starts
+  (`<map>-<n>.save`), written again each time a turn passes (a side's, in
+  either mode), when the game is left for a new one, and when the window
+  closes (Ctrl+Q, the close button): with the orders given so far in the
+  turn, and, in rounds, as far as the round has played out. There is no
+  Save button and nothing to name. Once a game is over its file is taken
+  away. The window that asks before a game is left says that it is kept.
+- **Where**: where the system keeps a program's data (macOS:
+  `~/Library/Application Support/Hexlords/saves`; Linux:
+  `$XDG_DATA_HOME/hexlords/saves` or `~/.local/share/hexlords/saves`;
+  Windows: `%APPDATA%\Hexlords\saves`), or `--saves <dir>`. A run with
+  `--script`, `--screenshot` or `--frames` keeps nothing unless told where
+  (it is a test or a picture, not somebody's game). A browser has no files:
+  there no game is kept, and the window says a game left is lost.
+- **Playing on**: the new game screen lists the games in progress first,
+  the last played first, each in a line (its map, its round, its mode, who
+  plays), with Play on and Delete. Delete asks once ("Delete it for good")
+  and then takes the file away. A file that cannot be read is listed with
+  why, and can only be deleted.
+- **What comes back and what does not**: the game, exactly, in the middle
+  of a turn or a round as it was left; the log and what each person had
+  seen of it. Not kept: the replay of the time before (it begins anew),
+  where the map was looked at, the person's options, and what the
+  computer's players had in mind (they think again from what they see,
+  so the game may go on otherwise than it would have: it is the same game
+  up to where it was left, not after).
+- A map made by hand in a test has no texts, and is not kept.
 
 ## Easy to play
 

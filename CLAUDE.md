@@ -57,6 +57,7 @@ touching the rules.
 | `src/new_game.rs`, `src/shell.rs` | The new game screen (a scene on a map screen of its own: the maps, or a random map made there with `mapgen`), and the window's scene from it to the game and back |
 | `src/session.rs`, `src/showing.rs`, `src/info.rs`, `src/guide.rs`, `src/city_windows.rs`, `src/log_window.rs`, `src/battle_window.rs`, `src/tasks_window.rs`, `src/temple_window.rs`, `src/disband_window.rs`, `src/patrol_window.rs` | `Session`: the game on a map screen (its layout, the menus and their keys, what a click and Enter do, what a click picks after Go to, the panels around the map: the treasury, the stack's boxes, the box the pointer opens over a unit, the city in the sidebar; what the person at the screen sees). `info`: what the panels say, as plain functions of the game's state (and what the game's history says to a side). `city_windows`: a city in full (in a window, or smaller in the sidebar), where its holder sets what it builds and where its new units go, and the lists of cities. `log_window`: a side's log of battles and cities. `battle_window`: a battle played out. `tasks_window`: what a side has left to do this turn. `temple_window`: whether a stack on a temple seeks its blessing, and what each was given. `disband_window`: whether the selected units go home for good. `patrol_window`: whether a patrol attacks, and at what odds. `showing` (pure): what the screen shows happening, the stacks going hex by hex and the battles in their turn (the game keeps what happens only while watched, `Game::watch`). `guide`: the Help menu's topics, written from the game in play. Tests drive them all |
 | `src/replay.rs` | What happened, kept to be looked at again: the game as it was and the steps done to it since (orders, `Game::record`; in rounds, beats of the round), which make it happen again on a frozen copy (`Game::freeze`). The session's Replay button and slider |
+| `src/save.rs` | A game that is not over, kept in a file to be played on (`docs/saves.md`): the texts its map was read from, the setup, and every step done to it from the start (`Game::record`, `Step`), which done again make the same game (`Game::redo`), checked by a number (`Game::digest`). The session writes it as the turns pass and when the window closes; the new game screen lists the games in progress, plays them on and deletes them; `platform::saves_dir` says where (nowhere in a browser) |
 | `src/script.rs` | Scripted input (`--script`) for any scene, for screenshots and tests |
 | `src/app.rs`, `src/main.rs` | The miniquad window (`App<S: Scene>`, `app::run`): forwards input to the scene, draws the frame. `main.rs` is the game's command line |
 | `tools/mapeditor/` | The map editor, a workspace member on the game's library: `Editor` (a scene: the sidebar, painting, files), `brush`, `history` (undo), `check` (`--check`) |
@@ -66,7 +67,7 @@ touching the rules.
 | `tools/assetgen/` | The picture generator, a workspace member with no dependencies: `terrain` (a function for each terrain's art), `noise` and `scatter` (what repeats on the hex grid), `tile` (the image, the atlas), `overlay`, `road` and `icons` (the pictures that go over a tile), `skin` (the windows' and buttons' pictures), `preview` (maps drawn without the game), `png` (the writer) |
 | `assets/` | `layouts/main.tb.txt` (the game), `layouts/editor.tb.txt` (the editor), Turbo Badger's default skin and `skin/hexlords.tb.txt` (our changes, loaded on top), `tiles/`, `roads/`, the signs in `units/` and the `hg_*.png` of `skin/` (what `assetgen` makes, and nothing else), `units/default_unit.png` (the C++ demo's), `maps/` (`*.map` files and map directories), `mapgen/` (the generator's presets and units template) |
 | `tests/`, `tools/*/tests/` | Headless tests of the layouts, the widgets and the interaction; of the generator against the game |
-| `docs/` | `map-format.md` (the map file, for people and agents who write maps); `tiles.md` (the tiles, for those who draw them); `gameplay.md` (the plan for the rules); `deviations.md`; `screenshots/` |
+| `docs/` | `map-format.md` (the map file, for people and agents who write maps); `tiles.md` (the tiles, for those who draw them); `gameplay.md` (the plan for the rules); `saves.md` (a saved game's file); `deviations.md`; `screenshots/` |
 | `reference/hexGame/` | The C++ original, for reference. **Read-only, never edit it.** Gitignored: if it is missing, `git clone https://github.com/sstanfield/hexGame reference/hexGame` |
 | `encumbered/` | The owner's private maps that are not ours to give away (one built from an existing game, for nostalgia). Gitignored: **never commit anything from it, and never copy its names, maps, numbers or pictures into the game.** The game plays them with `--map encumbered/<map>` |
 
@@ -92,6 +93,7 @@ cargo run -- --map assets/maps/continent --screenshot target/shot.png   # draws 
 cargo run -- --map assets/maps/continent --screenshot target/shot.png --script "enter,1,cursor:0:0"   # after some input
 cargo run -- --map assets/maps/example.map  # the game on a map file
 cargo run --release -- --headless --map assets/maps/continent --seed 7 --log   # agents against agents, no window
+cargo run -- --saves target/saves           # keep the games in progress there (without it: the system's place for a program's data)
 cargo run -p mapeditor -- assets/maps/example.map                # the map editor
 cargo run -p mapeditor -- --check assets/maps/*.map              # report on map files, no window
 cargo run -p mapeditor -- x.map --screenshot target/ed.png --script "press:brush_7,key:w"
@@ -203,7 +205,13 @@ steps are listed at the top of `src/script.rs`; `press:ID` clicks a button.
   game's own generator (`state::Rng`, seeded by the setup), never from the
   clock or another source, so a seed and a set of orders always make the
   same game. Keep the agents and `--headless` working for every rule: they
-  are how the game is balanced.
+  are how the game is balanced. A saved game depends on it (`src/save.rs`):
+  it is the map, the setup and the steps done since, done again. So
+  whatever changes a game goes through `Game::apply` (or is a `Step` of
+  its own that `Game::record` keeps and `Game::redo` does again), a new
+  order is written and read by `agents::order_text` and `parse_order` (a
+  test goes through every kind), and a run with a script or a screenshot
+  keeps no game unless given `--saves`.
 - **One way to change the map:** `Map` owns its units and cities, and they
   change only through its methods (`new_unit`, `place_unit`, `move_unit`,
   `kill_unit`, `unit_mut`, `tile_mut`, `add_city` ...), which keep the tiles'

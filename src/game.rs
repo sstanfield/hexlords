@@ -6,11 +6,12 @@
 //! cursor keys of src/gui/mapwidget.cpp MapWidget::OnEvent
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-use crate::orders::{Event, Fallen, Order, RALLY_POINTS, RallyPoint, Record};
+use crate::orders::{Event, Fallen, Order, RALLY_POINTS, RallyPoint, Record, Step};
 use crate::setup::{Controller, Fog, Setup, TurnOrder, WhenOut};
 use crate::state::combat::{self, Fighter};
-use crate::state::scenario::{self, Scenario, side_name};
+use crate::state::scenario::{self, MapSource, Scenario, side_name};
 use crate::state::{ATTACK_COST, Blessing};
 use crate::state::{
     City, CityId, Direction, Hex, MAX_QUEUE, MAX_STACK, Map, MoveCost, MoveCostId, MoveRange, NUM_SIDES, Passage,
@@ -598,11 +599,15 @@ pub struct Game {
     /// and how many plans have been made this round (`Unit::party`).
     playing: Option<rounds::PlayOut>,
     parties: u32,
-    /// The orders carried out since they were last taken (`take_orders`),
-    /// while they are kept (`record`): with the game as it was before
-    /// them, they are what happened since (a seed and a set of orders
-    /// always make the same game). `None`: not kept.
-    journal: Option<Vec<Order>>,
+    /// What was done to the game since it was last taken (`take_steps`),
+    /// while it is kept (`record`): the orders carried out, the beats of a
+    /// round playing out. With the game as it was before them, they are
+    /// what happened since (a seed and a set of orders always make the
+    /// same game). `None`: not kept.
+    pub(crate) journal: Option<Vec<Step>>,
+    /// The texts the map was read from, if it was (`with_source`): what a
+    /// saved game keeps of it.
+    source: Option<Rc<MapSource>>,
     /// It is a copy of the game as it was (`freeze`): it takes no orders.
     frozen: bool,
 }
@@ -646,6 +651,7 @@ impl Game {
             playing: None,
             parties: 0,
             journal: None,
+            source: None,
             frozen: false,
             undo: None,
             undo_mark: 0,
@@ -722,15 +728,15 @@ impl Game {
     /// Read a map (a `.map` file or a map directory, `docs/map-format.md`)
     /// and start the game on it. Also returns what the reader warns of.
     pub fn load(path: &Path) -> Result<(Game, Vec<String>), String> {
-        let scenario = scenario::load(path).map_err(|e| e.to_string())?;
+        let (scenario, source) = scenario::load_with_source(path).map_err(|e| e.to_string())?;
         let warnings = scenario.warnings.clone();
-        Ok((Game::from_scenario(scenario), warnings))
+        Ok((Game::from_scenario(scenario).with_source(source), warnings))
     }
 
     /// The same game started over with another setup (the new game screen's).
     pub fn with_setup(self, setup: Setup) -> Game {
-        let Game { map, assets, .. } = self;
-        Game { assets, ..Game::start(map, setup) }
+        let Game { map, assets, source, .. } = self;
+        Game { assets, source, ..Game::start(map, setup) }
     }
 
     /// Give every commander on the map that has no name one (the game's
@@ -789,9 +795,23 @@ impl Game {
         let kept = self.journal.is_some().then(|| order.clone());
         let done = self.obey(order);
         if let (Ok(_), Some(order), Some(journal)) = (&done, kept, &mut self.journal) {
-            journal.push(order);
+            journal.push(Step::Order(order));
         }
         done
+    }
+
+    /// Do again what was done (`record`): an order is carried out, a round
+    /// goes on a beat. To the game as it was then, it does the same.
+    pub fn redo(&mut self, step: &Step) -> Result<Vec<Event>, String> {
+        match step {
+            Step::Order(order) => self.apply(order.clone()),
+            Step::Beat if self.playing_out() => Ok(self.play_out()),
+            Step::Beat => Err("no round is playing out".to_string()),
+            Step::Ease(side) => {
+                self.stand_easy(*side);
+                Ok(Vec::new())
+            }
+        }
     }
 
     fn obey(&mut self, order: Order) -> Result<Vec<Event>, String> {
@@ -881,22 +901,82 @@ impl Game {
         }
     }
 
-    /// Keep the orders carried out from now on (`take_orders`), or no
-    /// longer. With a copy of the game as it is now, they are a record of
-    /// what happens next: carried out on the copy in their order (and, in
-    /// rounds, `play_out` after the last side's `EndTurn` until the round
-    /// has played out), they make the same game again. For a screen that
-    /// shows a turn again; a saved game can be made of the same.
+    /// Keep what is done to the game from now on (`take_steps`), or no
+    /// longer: the orders carried out, and in rounds each beat of a round
+    /// playing out. With a copy of the game as it is now, they are a record
+    /// of what happens next: done again on the copy in their order
+    /// (`redo`), they make the same game again. For a screen that shows a
+    /// turn again, and for a saved game (`save`). (While they are kept, a
+    /// round does not play out within the last side's `EndTurn`: whoever
+    /// keeps them plays it, `play_out`, so that each beat is one of them.)
     pub fn record(&mut self, on: bool) {
         if on != self.journal.is_some() {
             self.journal = on.then(Vec::new);
         }
     }
 
-    /// The orders carried out since this was last asked, while they are
-    /// kept (`record`), in their order.
-    pub fn take_orders(&mut self) -> Vec<Order> {
+    /// What was done since this was last asked, while it is kept
+    /// (`record`), in its order.
+    pub fn take_steps(&mut self) -> Vec<Step> {
         self.journal.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
+    /// The same game, which knows the texts its map was read from.
+    pub fn with_source(mut self, source: MapSource) -> Game {
+        self.source = Some(Rc::new(source));
+        self
+    }
+
+    /// The texts the map was read from, if the game knows them.
+    pub fn source(&self) -> Option<&MapSource> {
+        self.source.as_deref()
+    }
+
+    /// The game on the map these texts are (and the map's own pictures, if
+    /// it has some): as `load` starts one.
+    pub fn from_source(source: MapSource, assets: Option<PathBuf>) -> Result<Game, String> {
+        let (map, warnings) = scenario::parse(&source.terrain, source.units.as_deref(), source.cities.as_deref())
+            .map_err(|e| e.to_string())?;
+        Ok(Game::from_scenario(Scenario { map, assets, warnings }).with_source(source))
+    }
+
+    /// A number that says how the game stands: whose turn in which round,
+    /// the game's chance, every unit and city, the treasuries. Two games
+    /// that went the same way have the same; a saved game keeps it, to know
+    /// that it was made again as it was (`save`).
+    pub fn digest(&self) -> u64 {
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        let mut add = |n: u64| {
+            for byte in n.to_le_bytes() {
+                hash = (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        };
+        add(u64::from(self.round));
+        add(self.player().index() as u64);
+        add(u64::from(self.playing.is_some()));
+        add(self.rng.state());
+        add(self.winner.map_or(99, |side| side.index() as u64));
+        for gold in self.treasury {
+            add(u64::from(gold));
+        }
+        for unit in self.map.units().iter() {
+            let id = unit.id();
+            for n in [id.side.index() as u32, id.index, id.generation, unit.movement, unit.wounds] {
+                add(u64::from(n));
+            }
+            add(u64::from(unit.pos().row) << 16 | u64::from(unit.pos().col));
+            add(u64::from(unit.level));
+            // (What it is about: a march, a patrol, marauding, waiting.)
+            let flags = [unit.fought, unit.marauding, unit.done, unit.stalled, unit.patrol.is_some()];
+            add(flags.iter().fold(0, |bits, on| bits << 1 | u64::from(*on)));
+            add(unit.route.len() as u64);
+        }
+        for city in self.map.cities().iter() {
+            add(city.side.index() as u64);
+            add(u64::from(city.walls));
+            add(u64::from(city.progress));
+        }
+        hash
     }
 
     /// The game is a copy of how it was (or no longer): it takes no orders
@@ -2370,7 +2450,7 @@ impl Game {
         // fought and was left alone goes on). What they see on their way is
         // noted as they pass (the other sides' stacks stay as ghosts where
         // they were seen), and seen no longer once they have passed.
-        self.stand_easy(ending);
+        self.ease(ending);
         let mut events = self.marches(ending);
         events.extend(self.patrols(ending));
         // Its units' wounds heal (`combat::Rules::wounds`; the owner's word,
@@ -2922,6 +3002,7 @@ impl Game {
     pub fn view_for(&self, side: Side) -> Game {
         let mut view = self.clone();
         (view.history, view.fights, view.fought, view.undo) = (Vec::new(), Vec::new(), Vec::new(), None);
+        view.journal = None;
         (view.watched, view.journal, view.frozen) = (None, None, false);
         for (i, ((memory, trail), (held, explored))) in view
             .memory

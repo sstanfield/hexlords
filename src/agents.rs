@@ -18,7 +18,7 @@ use crate::orders::{Event, Order, RALLY_POINTS, RallyPoint};
 use crate::setup::Controller;
 use crate::state::combat::System;
 use crate::state::scenario::{side_name, side_named};
-use crate::state::{Hex, MAX_STACK, QueueEnd, QueueItem, Sends, Side, UnitId};
+use crate::state::{CityId, Hex, MAX_STACK, QueueEnd, QueueItem, Sends, Side, UnitId};
 
 /// What a side's agent is asked for.
 pub trait Agent {
@@ -659,6 +659,70 @@ fn queue_item(game: &Game, word: &str) -> Result<QueueItem, String> {
     Ok(QueueItem { what, count, sends })
 }
 
+/// An order as a line of text that `parse_order` reads as the same order
+/// (`docs/agents.md`): what a saved game keeps of it (`save`). A city is
+/// named by its hex, so `game` is the game the order was given in.
+pub fn order_text(game: &Game, order: &Order) -> String {
+    let units = |ids: &[UnitId]| match ids {
+        [] => "-".to_string(),
+        ids => ids.iter().map(|id| unit_name(*id)).collect::<Vec<_>>().join(","),
+    };
+    let hex = |h: &Hex| format!("{} {}", h.row, h.col);
+    let hexes = |hs: &[Hex]| hs.iter().map(hex).collect::<Vec<_>>().join(" ");
+    // (A city that is not there: a hex off the map, which no reader takes.)
+    let city = |id: &CityId| game.map.cities().get(*id).map_or("65535 65535".to_string(), |c| hex(&c.pos));
+    let sends = |to: &Sends| match to {
+        Sends::Stay => "stay".to_string(),
+        Sends::Defend => "defend".to_string(),
+        Sends::Point { n, bless } => format!("point{n}{}", if *bless { "+bless" } else { "" }),
+        Sends::Route(stops) => stops.iter().map(|h| format!("{}.{}", h.row, h.col)).collect::<Vec<_>>().join(","),
+    };
+    match order {
+        Order::Undo => "undo".to_string(),
+        Order::EndTurn => "end".to_string(),
+        Order::Move { units: u, to } => format!("move {} {}", units(u), hex(to)),
+        Order::Toward { units: u, to } => format!("toward {} {}", units(u), hex(to)),
+        Order::Roam { units: u, to } => format!("roam {} {}", units(u), hex(to)),
+        Order::GoTo { units: u, to, via } => {
+            format!("goto {} {}", units(u), hexes(&via.iter().chain([to]).copied().collect::<Vec<_>>()))
+        }
+        Order::Done { units: u } => format!("done {}", units(u)),
+        Order::Defend { units: u, on } => format!("{} {}", if *on { "defend" } else { "undefend" }, units(u)),
+        Order::Maraud { units: u, on } => format!("{} {}", if *on { "maraud" } else { "unmaraud" }, units(u)),
+        Order::Bless { units: u } => format!("bless {}", units(u)),
+        Order::Disband { units: u } => format!("disband {}", units(u)),
+        Order::Build { city: c, what } => {
+            format!("build {} {}", city(c), what.map_or("none".to_string(), |n| n.to_string()))
+        }
+        Order::Walls { city: c } => format!("walls {}", city(c)),
+        Order::Rally { city: c, to } => match to {
+            Sends::Stay => format!("rally {} none", city(c)),
+            Sends::Defend => format!("rally {} defend", city(c)),
+            Sends::Point { n, bless } => format!("rally {} point {n}{}", city(c), if *bless { " bless" } else { "" }),
+            Sends::Route(stops) => format!("rally {} {}", city(c), hexes(stops)),
+        },
+        Order::RallyPoint { n, point: None } => format!("point {n} none"),
+        Order::RallyPoint { n, point: Some(point) } => {
+            format!("point {n} {}{}", hex(&point.at), if point.defend { " defend" } else { "" })
+        }
+        Order::Queue { city: c, items, .. } if items.is_empty() => format!("queue {} none", city(c)),
+        Order::Queue { city: c, items, end } => {
+            let items: Vec<String> =
+                items.iter().map(|item| format!("{}x{}@{}", item.what, item.count, sends(&item.sends))).collect();
+            let end = match end {
+                QueueEnd::Stop => String::new(),
+                QueueEnd::Repeat { from, times: None } => format!(" repeat {from}"),
+                QueueEnd::Repeat { from, times: Some(times) } => format!(" repeat {from} {times}"),
+            };
+            format!("queue {} {}{end}", city(c), items.join(" "))
+        }
+        Order::Patrol { units: u, waypoints, attack } => {
+            let attack = attack.map_or(String::new(), |odds| format!(" attack {odds}"));
+            format!("patrol {} {}{attack}", units(u), hexes(waypoints))
+        }
+    }
+}
+
 /// An order in a line of text (`docs/agents.md`): `move <units> <row> <col>`,
 /// `toward <units> <row> <col>` (units: names with commas between),
 /// `goto <units> <row> <col> [<row> <col> ...]` (stops in order, the last
@@ -683,6 +747,10 @@ pub fn parse_order(game: &Game, line: &str) -> Result<Option<Order>, String> {
         if game.map.contains(hex) { Ok(hex) } else { Err(format!("{hex} is not on the map")) }
     };
     let units = |names: &str| -> Result<Vec<UnitId>, String> {
+        // (`-`: none of them, as `order_text` writes an empty list.)
+        if names == "-" {
+            return Ok(Vec::new());
+        }
         names.split(',').map(|name| parse_unit(name).ok_or(format!("\"{name}\" is not a unit's name"))).collect()
     };
     // A rally point's number, 0 to 9.

@@ -13,29 +13,25 @@
 //! every move and battle shown as it was. The copies are frozen
 //! (`Game::freeze`): they can be looked at, not given orders.
 //!
-//! (The same record, from a game's start, is what a saved game can be made
-//! of: the setup, the map and the orders. Not built yet.)
+//! (The same record, from a game's start, is what a saved game is made of:
+//! the map, the setup and the steps, `save`.)
 //!
 //! Pure: no window. `Session` keeps one for each person at the screen (what
 //! happened since their last turn) and shows them.
 
 use crate::game::Game;
-use crate::orders::{Event, Order};
+use crate::orders::Event;
 
-/// Something that was done to the game.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Step {
-    /// An order of the side whose turn it was, carried out.
-    Order(Order),
-    /// In rounds: the round that was playing out went on a beat.
-    Beat,
-}
+pub use crate::orders::Step;
 
 /// The game as it was, and what was done to it since.
 #[derive(Clone)]
 pub struct Replay {
     start: Game,
     steps: Vec<Step>,
+    /// What was done that is no step to look at (`Step::Ease`: it shows
+    /// nothing), each with the step it came before: done again with it.
+    quiet: Vec<(usize, Step)>,
 }
 
 impl Replay {
@@ -43,17 +39,34 @@ impl Replay {
     /// for whoever watches it is not the copy's.)
     pub fn begin(game: &Game) -> Replay {
         let mut start = game.clone();
-        start.take_orders();
+        start.take_steps();
         start.record(false);
         start.watch(true);
         start.take_happened();
         start.deselect();
-        Replay { start, steps: Vec::new() }
+        Replay { start, steps: Vec::new(), quiet: Vec::new() }
     }
 
-    /// `step` was done next.
+    /// `step` was done next. (One that shows nothing is no step of the
+    /// record's own: it is done again with the step after it.)
     pub fn push(&mut self, step: Step) {
-        self.steps.push(step);
+        match step {
+            Step::Ease(_) => self.quiet.push((self.steps.len(), step)),
+            step => self.steps.push(step),
+        }
+    }
+
+    /// Do the `at`th step to `game`, and what was done before it that is
+    /// no step of its own.
+    fn take(&self, game: &mut Game, at: usize) {
+        for (_, quiet) in self.quiet.iter().filter(|(before, _)| *before == at) {
+            let _ = game.redo(quiet);
+        }
+        if let Some(step) = self.steps.get(at) {
+            // (What was carried out then is carried out now: the game is
+            // the same.)
+            let _ = game.redo(step);
+        }
     }
 
     /// How many steps it has.
@@ -74,8 +87,8 @@ impl Replay {
     /// of them: as it was when the last was done), frozen.
     pub fn state(&self, at: usize) -> Game {
         let mut game = self.start.clone();
-        for step in self.steps.iter().take(at) {
-            take(&mut game, step);
+        for i in 0..at.min(self.steps.len()) {
+            self.take(&mut game, i);
         }
         game.take_happened();
         game.freeze(true);
@@ -86,30 +99,20 @@ impl Replay {
     /// step is done to it, and what happened is what a screen shows
     /// (`Game::take_happened`). Nothing, past the last step.
     pub fn advance(&self, game: &mut Game, at: usize) -> Vec<(Option<usize>, Event)> {
-        let Some(step) = self.steps.get(at) else { return Vec::new() };
+        if at >= self.steps.len() {
+            return Vec::new();
+        }
         game.freeze(false);
-        take(game, step);
+        self.take(game, at);
         game.freeze(true);
         game.take_happened()
-    }
-}
-
-/// Do `step` to `game`. (An order that was carried out then is carried out
-/// now: the game is the same.)
-fn take(game: &mut Game, step: &Step) {
-    match step {
-        Step::Order(order) => {
-            let _ = game.apply(order.clone());
-        }
-        Step::Beat => {
-            game.play_out();
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::orders::Order;
     use crate::setup::{Mode, Setup};
     use crate::state::scenario::{self, Scenario};
     use crate::state::{Hex, Side, UnitId};
@@ -166,13 +169,17 @@ mod tests {
         }
         // (An order refused is not one that was carried out.)
         assert!(game.apply(Order::Move { units: vec![b], to: Hex::new(10, 7) }).is_err());
-        let taken = game.take_orders();
+        let taken = game.take_steps();
         assert_eq!(taken.len(), 5);
-        assert!(game.take_orders().is_empty(), "taken once");
-        for order in taken {
-            replay.push(Step::Order(order));
+        assert!(game.take_steps().is_empty(), "taken once");
+        for step in taken {
+            assert!(matches!(step, Step::Order(_)));
+            replay.push(step);
         }
         assert_eq!((replay.len(), replay.is_empty()), (5, false));
+        // (What shows nothing is no step to stop at: it goes with the next.)
+        replay.push(Step::Ease(Side::Red));
+        assert_eq!(replay.len(), 5);
         for (at, state) in states.iter().enumerate() {
             assert_eq!(&places(&replay.state(at)), state, "after {at} orders");
         }

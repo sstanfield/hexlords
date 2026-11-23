@@ -5,8 +5,9 @@
 //! web`) holds every file of `assets/` in a [`Table`] that `build.rs` lists,
 //! and these functions look there; every other build goes to the disk, as
 //! before. Whatever reads a file of the game's (a map, a picture, a layout)
-//! asks here, not `std::fs`, and so works in both. Nothing is written
-//! through this module: a browser build has nowhere to write.
+//! asks here, not `std::fs`, and so works in both. The one thing written
+//! is a saved game (`write_whole`, `remove`), on a disk: a browser build
+//! has nowhere to write, and is never asked to (`platform::saves_dir`).
 
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -138,6 +139,36 @@ pub fn list(dir: &Path) -> io::Result<Vec<PathBuf>> {
     }
 }
 
+/// Write a file, whole or not at all: beside it first, then put in its
+/// place (what was there stays until then). Its directory is made if it is
+/// not there. In a browser there is nowhere to write: an error.
+pub fn write_whole(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    #[cfg(target_arch = "wasm32")]
+    return Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!("{} bytes for {path:?}: nowhere to write", bytes.len()),
+    ));
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir)?;
+        }
+        let mut beside = path.as_os_str().to_owned();
+        beside.push(".part");
+        let beside = PathBuf::from(beside);
+        std::fs::write(&beside, bytes)?;
+        std::fs::rename(&beside, path)
+    }
+}
+
+/// Take a file away (one written with `write_whole`).
+pub fn remove(path: &Path) -> io::Result<()> {
+    #[cfg(target_arch = "wasm32")]
+    return Err(io::Error::new(io::ErrorKind::Unsupported, format!("{path:?}: nothing was written")));
+    #[cfg(not(target_arch = "wasm32"))]
+    std::fs::remove_file(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,6 +182,21 @@ mod tests {
 
     fn paths(names: &[&str]) -> Vec<PathBuf> {
         names.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn a_file_is_written_whole_and_taken_away() {
+        let dir = std::env::temp_dir().join(format!("hexlords-files-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("deep").join("a.txt");
+        write_whole(&file, b"one").unwrap();
+        write_whole(&file, b"two").unwrap();
+        assert_eq!(read_to_string(&file).unwrap(), "two");
+        // Nothing is left beside it.
+        assert_eq!(list(&dir.join("deep")).unwrap(), std::slice::from_ref(&file));
+        remove(&file).unwrap();
+        assert!(!is_file(&file) && remove(&file).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

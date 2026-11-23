@@ -20,7 +20,7 @@
 //! MapWidget::OnEvent (what input does to the map)
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use turbo_ferret::widgets::{ImageWidget, Slider};
 use turbo_ferret::{ImageHandle, LayoutParams, Modifiers, Point, Rect, Size, TbId, Visibility, WidgetId};
@@ -340,6 +340,7 @@ fn help_section() -> Vec<HelpSection> {
                     "End turn's button: the round then plays out, a hex at a time; a plan attacks where it ends",
                 ),
                 (&new_game, "A new game (once this one is over at once; before, it asks)"),
+                ("Leaving a game", "It is kept as it goes: the new game screen plays it on (not in a browser)"),
                 (&options, "Options: what the game does for you as a turn goes (selects, asks, tells)"),
             ],
         ),
@@ -532,6 +533,12 @@ pub struct Session {
     game_over: Option<WindowParts>,
     /// A new game was asked for (the game over window's button, the menu).
     wants_new_game: bool,
+    /// All that was done to the game from its start (`Game::record`): what
+    /// a saved game is made of (`save`). The file the game is kept in, if
+    /// it is; and the turn it was last written in.
+    journal: Vec<Step>,
+    save_to: Option<PathBuf>,
+    saved_in: Option<(u32, Side)>,
     /// The last person here is out, and their log said so.
     told_out: bool,
     /// The window that asks whether to leave the game for a new one, while
@@ -763,6 +770,9 @@ impl Session {
             last_person: None,
             game_over: None,
             wants_new_game: false,
+            journal: Vec::new(),
+            save_to: None,
+            saved_in: None,
             told_out: false,
             ask_new: None,
             battle: None,
@@ -803,6 +813,73 @@ impl Session {
         session.refresh();
         session.screen.settle();
         Ok(session)
+    }
+
+    /// Keep the game in this file from now on (`save`): it is written when
+    /// a turn has passed, when the window is closed and when the game is
+    /// left for a new one; and taken away once the game is over.
+    pub fn keep_in(&mut self, path: PathBuf) {
+        self.save_to = Some(path);
+        self.saved_in = None;
+        self.keep();
+    }
+
+    /// The game is one that was saved (`save::load`): `steps` is all that
+    /// was done to it from its start, `seen` how much of its history each
+    /// person here had seen.
+    pub fn restore(&mut self, steps: Vec<Step>, seen: Vec<(Side, usize)>) {
+        (self.journal, self.seen) = (steps, seen);
+    }
+
+    /// The file the game is kept in, if it is.
+    pub fn kept_in(&self) -> Option<&Path> {
+        self.save_to.as_deref()
+    }
+
+    /// The game as it is (not as it was, while that is looked at).
+    fn present(&self) -> &Game {
+        self.past.as_ref().map_or(&self.screen.game, |past| &past.present)
+    }
+
+    /// Write the game to its file now, if it has one (`keep_in`): as it
+    /// is, whatever the screen shows of how it was. Once it is over, the
+    /// file is taken away instead: a game that is over is not kept.
+    pub fn save_now(&mut self) {
+        let Some(path) = self.save_to.clone() else { return };
+        let game = self.present();
+        if game.winner().is_some() {
+            if crate::files::is_file(&path) {
+                if let Err(why) = crate::save::delete(&path) {
+                    crate::platform::complain(&format!("hexlords: {why}"));
+                }
+            }
+            self.save_to = None;
+            return;
+        }
+        // (With what was done since the screen last took it.)
+        let steps: Vec<Step> = self.journal.iter().chain(game.journal.iter().flatten()).cloned().collect();
+        let stamp = (crate::platform::clock_nanos() / 1_000_000_000) as u64;
+        let Some(text) = crate::save::text(game, &steps, &self.seen, stamp) else {
+            // A map made by hand has no texts to keep.
+            self.save_to = None;
+            return;
+        };
+        self.saved_in = Some((game.turn(), game.player()));
+        if let Err(why) = crate::save::write(&path, &text) {
+            crate::platform::complain(&format!("hexlords: the game was not saved: {why}"));
+        }
+    }
+
+    /// Write the game to its file if a turn has passed since it last was
+    /// (or the game is over).
+    fn keep(&mut self) {
+        if self.save_to.is_none() {
+            return;
+        }
+        let game = self.present();
+        if game.winner().is_some() || self.saved_in != Some((game.turn(), game.player())) {
+            self.save_now();
+        }
     }
 
     /// True if it is the turn of a person at this screen: in the game, and
@@ -1317,8 +1394,8 @@ impl Session {
     }
 
     /// New game (the Game menu, Ctrl+N): once the game is over, straight to
-    /// the new game screen; while it goes on, a window asks first (the game
-    /// is not saved: it would be lost).
+    /// the new game screen; while it goes on, a window asks first (and says
+    /// whether the game is kept, `keep_in`, or would be lost).
     pub fn ask_new_game(&mut self) {
         if self.screen.game.winner().is_some() {
             self.wants_new_game = true;
@@ -1331,7 +1408,12 @@ impl Session {
         let ui = &mut self.screen.ui;
         let parts = build::window(ui, root, ASK_NEW_GAME_ID, "New game");
         build::heading(ui, parts.content, "Leave this game for a new one?");
-        build::text(ui, parts.content, "It is not over, and it is not saved: it will be lost.");
+        let kept = if self.save_to.is_some() {
+            "It is not over: it is kept, to be played on from the new game screen."
+        } else {
+            "It is not over, and it is not saved: it will be lost."
+        };
+        build::text(ui, parts.content, kept);
         let space = ui.dimension_converter().dp_to_px(SPACING_DP * 2);
         build::gap(ui, parts.content, space);
         let buttons = build::row(ui, parts.content, space);
@@ -1487,6 +1569,7 @@ impl Session {
     /// it changed (the cities' holders, the land seen).
     fn see(&mut self) {
         self.take_orders();
+        self.keep();
         let happened = self.screen.game.take_happened();
         self.see_what(happened);
     }
@@ -1494,15 +1577,18 @@ impl Session {
     /// The orders carried out since this was last done (`Game::record`) go
     /// into what is being kept of each person's time between two turns.
     fn take_orders(&mut self) {
-        let orders = self.screen.game.take_orders();
+        let steps = self.screen.game.take_steps();
         if self.past.is_some() {
             return;
         }
         for (_, replay) in self.recording.iter_mut().filter(|(whose, _)| whose.is_some()) {
-            for order in &orders {
-                replay.push(Step::Order(order.clone()));
+            // (A round's beats are kept as it plays, `play_round`.)
+            for step in steps.iter().filter(|step| **step != Step::Beat) {
+                replay.push(step.clone());
             }
         }
+        // All of it, from the game's start: what a saved game is made of.
+        self.journal.extend(steps);
     }
 
     /// What was being kept for `whose` is whole: it is what they can look
@@ -4801,6 +4887,12 @@ impl Scene for Session {
 
     fn frame(&mut self, now_ms: u64) {
         Session::frame(self, now_ms);
+    }
+
+    /// The window closes: the game is kept first (`keep_in`).
+    fn confirm_quit(&mut self) -> bool {
+        self.save_now();
+        true
     }
 
     fn next_turn(&mut self) -> bool {

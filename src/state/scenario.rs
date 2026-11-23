@@ -537,29 +537,49 @@ pub fn terrain_path(path: &Path) -> PathBuf {
     if files::is_dir(path) { path.join(TERRAIN_FILE) } else { path.to_path_buf() }
 }
 
+/// The texts a map is read from (`docs/map-format.md`): what makes the same
+/// map again, wherever its files have gone since (a saved game keeps them).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MapSource {
+    /// What the map is called: its file's or directory's name.
+    pub name: String,
+    /// `terrain.map`, or the `.map` file.
+    pub terrain: String,
+    /// `units.txt` and `cities.txt`, if the map has them.
+    pub units: Option<String>,
+    pub cities: Option<String>,
+}
+
 /// Read a map: a `.map` file (terrain and roads only), or a map directory.
 /// Errors name the file as it was asked for.
 pub fn load(path: &Path) -> Result<Scenario, ScenarioError> {
+    load_with_source(path).map(|(scenario, _)| scenario)
+}
+
+/// Read a map (`load`), and give the texts it was read from as well.
+pub fn load_with_source(path: &Path) -> Result<(Scenario, MapSource), ScenarioError> {
     let read = |file: &Path| -> Result<String, ScenarioError> {
         files::read_to_string(file).or_else(|e| error(&file.display().to_string(), 0, e.to_string()))
     };
     let optional = |file: PathBuf| -> Result<Option<String>, ScenarioError> {
         if files::is_file(&file) { read(&file).map(Some) } else { Ok(None) }
     };
+    let name = path.file_stem().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
     // In a directory, the errors name its files by their whole path.
     let within = |e: ScenarioError| ScenarioError { file: path.join(&e.file).display().to_string(), ..e };
     if !files::is_dir(path) {
-        let text = read(path)?;
-        let map = Map::parse(&text).map_err(|e| from_map_error(&path.display().to_string(), e))?;
+        let terrain = read(path)?;
+        let map = Map::parse(&terrain).map_err(|e| from_map_error(&path.display().to_string(), e))?;
         let (map, warnings) = build(map, Vec::new(), &[])?;
-        return Ok(Scenario { map, assets: None, warnings });
+        let source = MapSource { name, terrain, units: None, cities: None };
+        return Ok((Scenario { map, assets: None, warnings }, source));
     }
     let terrain = read(&path.join(TERRAIN_FILE))?;
     let units = optional(path.join(UNITS_FILE))?;
     let cities = optional(path.join(CITIES_FILE))?;
     let (map, warnings) = parse(&terrain, units.as_deref(), cities.as_deref()).map_err(within)?;
     let assets = Some(path.join(ASSETS_DIR)).filter(|dir| files::is_dir(dir));
-    Ok(Scenario { map, assets, warnings })
+    Ok((Scenario { map, assets, warnings }, MapSource { name, terrain, units, cities }))
 }
 
 #[cfg(test)]

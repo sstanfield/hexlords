@@ -14,6 +14,12 @@ impl Rng {
         Rng { state: seed }
     }
 
+    /// Where it is in its numbers: two that are at the same place give the
+    /// same numbers from here on.
+    pub fn state(&self) -> u64 {
+        self.state
+    }
+
     /// The next number, any of the 2^64.
     pub fn next_u64(&mut self) -> u64 {
         self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);

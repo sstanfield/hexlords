@@ -1,7 +1,9 @@
 //! The game's window, from start to end: the new game screen, then the game
 //! it sets up, and the new game screen again when a game is over and a new
 //! one is asked for. The window runs one scene (`app::App`); this is a scene
-//! that is now the one, now the other.
+//! that is now the one, now the other. A game that is left before it is
+//! over is kept in a file (`save`), if the shell was told where
+//! (`keep_games_in`): the new game screen lists those, to be played on.
 //!
 //! Not a port: the C++ started its demo at once.
 
@@ -25,19 +27,33 @@ pub struct Shell {
     now: Now,
     /// The person's options, from one game to the next.
     options: Options,
+    /// Where the games in progress are kept, if anywhere.
+    saves: Option<PathBuf>,
 }
 
 impl Shell {
     /// Begin with the new game screen, `chosen` (a map's path) chosen.
     pub fn new_game(assets: &Path, viewport: Size, dpi: i32, chosen: Option<&Path>) -> Result<Shell, String> {
         let screen = NewGame::new(assets, viewport, dpi, chosen)?;
-        Ok(Shell { assets: assets.to_path_buf(), now: Now::NewGame(Box::new(screen)), options: Options::default() })
+        let now = Now::NewGame(Box::new(screen));
+        Ok(Shell { assets: assets.to_path_buf(), now, options: Options::default(), saves: None })
     }
 
     /// Begin with a game.
     pub fn playing(assets: &Path, session: Session) -> Shell {
         let options = session.options();
-        Shell { assets: assets.to_path_buf(), now: Now::Playing(Box::new(session)), options }
+        Shell { assets: assets.to_path_buf(), now: Now::Playing(Box::new(session)), options, saves: None }
+    }
+
+    /// Keep the games that are not over in files in `dir` (`save`), from
+    /// now on: the one being played, if one is, in a new file there; and
+    /// the new game screen lists those there are.
+    pub fn keep_games_in(&mut self, dir: PathBuf) {
+        match &mut self.now {
+            Now::NewGame(screen) => screen.set_saves(Some(dir.clone())),
+            Now::Playing(session) => keep(session, &dir),
+        }
+        self.saves = Some(dir);
     }
 
     /// The new game screen, while it shows.
@@ -78,19 +94,52 @@ impl Shell {
             Now::NewGame(screen) if screen.wants_to_start() => {
                 let game = screen.take_game();
                 match Session::with_options(&self.assets, viewport, dpi, game, self.options) {
-                    Ok(session) => self.now = Now::Playing(Box::new(session)),
+                    Ok(mut session) => {
+                        if let Some(dir) = &self.saves {
+                            keep(&mut session, dir);
+                        }
+                        self.now = Now::Playing(Box::new(session));
+                    }
                     Err(e) => crate::platform::complain(&format!("hexlords: the game did not start: {e}")),
                 }
             }
+            // A game in progress, to be played on: as it was left.
+            Now::NewGame(screen) => {
+                let Some(path) = screen.take_resume() else { return };
+                let session = crate::save::load_file(&path).and_then(|loaded| {
+                    let mut session = Session::with_options(&self.assets, viewport, dpi, loaded.game, self.options)?;
+                    session.restore(loaded.steps, loaded.seen);
+                    session.keep_in(path);
+                    Ok(session)
+                });
+                match session {
+                    Ok(session) => self.now = Now::Playing(Box::new(session)),
+                    Err(why) => screen.resume_failed(why),
+                }
+            }
             Now::Playing(session) if session.wants_new_game() => {
+                // (Left before it is over: kept, to be played on.)
+                session.save_now();
                 self.options = session.options();
                 match NewGame::new(&self.assets, viewport, dpi, None) {
-                    Ok(screen) => self.now = Now::NewGame(Box::new(screen)),
+                    Ok(mut screen) => {
+                        screen.set_saves(self.saves.clone());
+                        self.now = Now::NewGame(Box::new(screen));
+                    }
                     Err(e) => crate::platform::complain(&format!("hexlords: {e}")),
                 }
             }
-            _ => {}
+            Now::Playing(_) => {}
         }
+    }
+}
+
+/// Keep `session`'s game in a new file in `dir`, if it can be kept (it
+/// knows the texts its map was read from).
+fn keep(session: &mut Session, dir: &Path) {
+    if let Some(source) = session.screen.game.source() {
+        let path = crate::save::fresh(dir, &source.name);
+        session.keep_in(path);
     }
 }
 

@@ -25,7 +25,7 @@ pub use movement::{
 };
 pub use patrol::Patrol;
 pub use rng::Rng;
-pub use scenario::{Scenario, ScenarioError};
+pub use scenario::{MapSource, Scenario, ScenarioError};
 pub use terrain::{MoveCost, TileType};
 pub use units::{
     Blessing, DEFAULT_UNIT_IMAGE, LEVEL_EXPERIENCE, MAX_LEVEL, MoveCostId, NUM_SIDES, Side, Travel, Unit, UnitId,

@@ -362,7 +362,9 @@ end
 
 ### What it writes
 
-A line each, in the order they are to be carried out:
+A line each, in the order they are to be carried out (a saved game keeps
+the orders that were carried out as the same lines, `docs/saves.md`;
+`agents::order_text` writes them, and writes `-` for no units at all):
 
 | Order | What it does |
 |---|---|
