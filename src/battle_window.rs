@@ -18,7 +18,7 @@ use turbo_ferret::{ImageHandle, LayoutParams, Rect, TbId, Ui, WidgetId};
 
 use crate::game::{Combatant, Fight, describe_terrain};
 use crate::gui::build::{self, WindowParts};
-use crate::state::combat::{Exact, HITS, QUARTER, System, dice_numbers};
+use crate::state::combat::{HITS, QUARTER, System};
 use crate::state::scenario::side_name;
 
 /// The window and its buttons.
@@ -183,14 +183,6 @@ impl BattleWindow {
         let system = match rules.system {
             System::Lines => format!("in lines, chance {} of 10", rules.chance),
             System::Strength => format!("strength against strength, chance {} of 10", rules.chance),
-            System::Dice => format!(
-                "on the dice (a roll of exactly its number {})",
-                match rules.exact {
-                    Exact::Hits => "wins",
-                    Exact::Misses => "misses",
-                    Exact::Defenders => "wins for the defenders",
-                }
-            ),
         };
         build::heading(ui, c, &format!("{} attacks {defender} at {place}", title(fight.attacker)));
         let cap = rules.cap.map_or(String::new(), |cap| format!(" No unit fights stronger than {cap}."));
@@ -423,15 +415,8 @@ impl BattleWindow {
                     units.iter().enumerate().filter(standing).map(|(i, u)| with(which, i, u)).sum()
                 };
                 let (a, d) = (total(ATTACKERS, &self.fight.attackers), total(DEFENDERS, &self.fight.defenders));
-                // On the dice, and the numbers they were brought to.
-                let dice = if self.fight.rules.system == System::Dice {
-                    let (x, y) = dice_numbers(a, d);
-                    format!(": {x} against {y} on the dice")
-                } else {
-                    String::new()
-                };
                 let (a, d) = (points(a), points(d));
-                format!("{} {a} against {} {d}{dice}.", capital(&whose(ATTACKERS)), whose(DEFENDERS))
+                format!("{} {a} against {} {d}.", capital(&whose(ATTACKERS)), whose(DEFENDERS))
             }
         };
         (fought, fate)

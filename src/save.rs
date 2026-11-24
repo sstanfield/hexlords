@@ -28,7 +28,7 @@ use crate::orders::Step;
 use crate::setup::{Controller, Fog, Mode, Seat, Setup, TurnOrder};
 use crate::state::MapSource;
 use crate::state::Side;
-use crate::state::combat::{Exact, System};
+use crate::state::combat::System;
 use crate::state::scenario::{side_name, side_named};
 
 /// The first line of a saved game, with the format's number.
@@ -126,10 +126,9 @@ pub fn text(game: &Game, steps: &[Step], seen: &[(Side, usize)], stamp: u64) -> 
     line(format!("fog {}", setup.fog.word()));
     let combat = &setup.combat;
     line(format!(
-        "battles {} chance {} exact {} wounds {} back {} cap {}",
+        "battles {} chance {} wounds {} back {} cap {}",
         combat.system.name(),
         combat.chance,
-        combat.exact.name(),
         u8::from(combat.wounds),
         u8::from(combat.blows_back),
         combat.cap.map_or("none".to_string(), |cap| cap.to_string())
@@ -208,13 +207,20 @@ fn read(text: &str) -> Result<Read<'_>, String> {
             }
             "battles" => {
                 let words: Vec<&str> = rest.split_whitespace().collect();
-                let [system, "chance", chance, "exact", exact, "wounds", wounds, "back", back, "cap", cap] = words[..]
-                else {
+                // (A file from before the dice were taken out, 2026-11-24,
+                // says what an exact roll of them did: nothing now. One
+                // whose battles were on the dice is refused.)
+                let words = match words[..] {
+                    [system, "chance", chance, "exact", _, ref rest @ ..] => {
+                        [&[system, "chance", chance][..], rest].concat()
+                    }
+                    _ => words,
+                };
+                let [system, "chance", chance, "wounds", wounds, "back", back, "cap", cap] = words[..] else {
                     return Err(format!("line {n}: not the battles' rules"));
                 };
                 combat.system = System::named(system).ok_or(format!("line {n}: \"{system}\" is not a way to fight"))?;
                 combat.chance = number(n, chance)? as u8;
-                combat.exact = Exact::named(exact).ok_or(format!("line {n}: \"{exact}\" is not a rule of the dice"))?;
                 (combat.wounds, combat.blows_back) = (wounds == "1", back == "1");
                 combat.cap = if cap == "none" { None } else { Some(number(n, cap)? as u32) };
             }
@@ -550,6 +556,14 @@ mod tests {
         // The same orders, another outcome.
         let other = text.replace("seed 77", "seed 78");
         assert!(why(&other).contains("it came out another way"), "{}", why(&other));
+        // Written before the dice were taken out (2026-11-24): what an exact
+        // roll did is passed over; battles on the dice are refused.
+        let battles = text.lines().find(|l| l.starts_with("battles ")).unwrap();
+        let old = battles.replace(" wounds ", " exact hits wounds ");
+        let before = text.replace(battles, &old);
+        assert!(before != text && load(&before).is_ok());
+        let dice = before.replace(&old, &old.replacen("battles lines", "battles dice", 1));
+        assert!(why(&dice).contains("\"dice\" is not a way to fight"), "{}", why(&dice));
         // A map that is no map.
         let no_map = text.replace("terrain 22\n20\n", "terrain 22\n2x\n");
         assert!(why(&no_map).starts_with("its map: "), "{}", why(&no_map));

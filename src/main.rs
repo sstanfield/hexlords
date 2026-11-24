@@ -8,13 +8,11 @@
 //! - `--mode turns|rounds`: the sides play one after the other (turns), or
 //!   all give their orders and the round plays out at once (rounds);
 //! - `--order fixed|drawn`: the sides play in the same order each round, or
-//!   one drawn anew; `--seed <n>`: the seed of the game's chance (without
+//!   one drawn anew (in rounds always drawn, `Setup::drawn`); `--seed <n>`: the seed of the game's chance (without
 //!   it, one from the clock in a window, each game its own; 1 headless, or
 //!   with a script or a screenshot, so a run can be made again);
 //! - `--chance <0-10>`: how much chance there is in a battle (5); `--battles
-//!   lines|strength|dice`: how a battle goes (lines); `--dice-exact
-//!   hits|misses|defenders`: on the dice, what a roll of exactly a side's
-//!   number is (hits); `--wounds`: a unit's hits last until its side's turn
+//!   lines|strength`: how a battle goes (lines); `--wounds`: a unit's hits last until its side's turn
 //!   ends, and it fights at half strength while wounded (they do not);
 //!   `--blows-back`: the loser of an exchange may hit back (it does not);
 //!   `--cap <n>`: no unit fights stronger than `n`, its bonuses counted
@@ -49,7 +47,7 @@ use hexlords::script;
 use hexlords::session::Session;
 use hexlords::setup::{Controller, Fog, Mode, Setup, TurnOrder};
 use hexlords::shell::Shell;
-use hexlords::state::combat::{Exact, MAX_CHANCE, System};
+use hexlords::state::combat::{MAX_CHANCE, System};
 
 /// The command line.
 #[derive(Clone, Debug, Default)]
@@ -71,7 +69,6 @@ struct Args {
     log: bool,
     chance: Option<u8>,
     battles: Option<System>,
-    exact: Option<Exact>,
     wounds: bool,
     blows_back: bool,
     cap: Option<u32>,
@@ -84,7 +81,7 @@ struct Args {
 fn usage() -> String {
     format!(
         "usage: hexlords [--map <file.map or map directory>] [--players <side>=<person|agent>,...] [--mode turns|rounds] [--order fixed|drawn] \
-         [--seed <n>] [--chance <0-10>] [--battles lines|strength|dice] [--dice-exact hits|misses|defenders] [--wounds] [--blows-back] [--cap <n>] [--gold <n>] [--fog | --total-fog] [--saves <dir>] [--headless [--rounds <n>] \
+         [--seed <n>] [--chance <0-10>] [--battles lines|strength] [--wounds] [--blows-back] [--cap <n>] [--gold <n>] [--fog | --total-fog] [--saves <dir>] [--headless [--rounds <n>] \
          [--log]] \
          [--script <steps>] {OPTIONS_USAGE}"
     )
@@ -140,20 +137,14 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
                 parsed.gold = Some(n.parse().map_err(|_| format!("--gold: \"{n}\" is not a number"))?);
             }
             "--battles" => {
-                let name = value("lines, strength or dice")?;
-                let system =
-                    System::named(&name).ok_or(format!("--battles: \"{name}\" is not lines, strength or dice"));
+                let name = value("lines or strength")?;
+                let system = System::named(&name).ok_or(format!("--battles: \"{name}\" is not lines or strength"));
                 parsed.battles = Some(system?);
             }
             "--cap" => {
                 let n = value("a number")?;
                 let cap = n.parse::<u32>().ok().filter(|n| *n > 0);
                 parsed.cap = Some(cap.ok_or(format!("--cap: \"{n}\" is not a number above 0"))?);
-            }
-            "--dice-exact" => {
-                let name = value("hits, misses or defenders")?;
-                let exact = Exact::named(&name);
-                parsed.exact = Some(exact.ok_or(format!("--dice-exact: \"{name}\" is not hits, misses or defenders"))?);
             }
             "--log" => parsed.log = true,
             "-h" | "--help" => return Err(String::new()),
@@ -187,7 +178,6 @@ fn main() {
         log,
         chance,
         battles,
-        exact,
         wounds,
         blows_back,
         cap,
@@ -233,7 +223,6 @@ fn main() {
             setup.seed = game_seed(seed, again, setup.seed);
             setup.combat.chance = chance.unwrap_or(setup.combat.chance);
             setup.combat.system = battles.unwrap_or(setup.combat.system);
-            setup.combat.exact = exact.unwrap_or(setup.combat.exact);
             setup.combat.wounds |= wounds;
             setup.combat.blows_back |= blows_back;
             setup.combat.cap = cap.or(setup.combat.cap);
@@ -354,11 +343,9 @@ mod tests {
         let o = parse(&["--chance", "0", "--battles", "strength"]).unwrap();
         assert_eq!((o.chance, o.battles), (Some(0), Some(System::Strength)));
         assert_eq!(parse(&["--chance", "11"]).unwrap_err(), "--chance: \"11\" is not a number from 0 to 10");
-        let o = parse(&["--battles", "dice", "--dice-exact", "defenders"]).unwrap();
-        assert_eq!((o.battles, o.exact), (Some(System::Dice), Some(Exact::Defenders)));
-        let lances = "--battles: \"lances\" is not lines, strength or dice";
+        let lances = "--battles: \"lances\" is not lines or strength";
         assert_eq!(parse(&["--battles", "lances"]).unwrap_err(), lances);
-        assert_eq!(parse(&["--dice-exact", "x"]).unwrap_err(), "--dice-exact: \"x\" is not hits, misses or defenders");
+        assert_eq!(parse(&["--battles", "dice"]).unwrap_err(), "--battles: \"dice\" is not lines or strength");
         assert!(parse(&["--wounds"]).unwrap().wounds && !parse(&[]).unwrap().wounds);
         assert!(parse(&["--blows-back"]).unwrap().blows_back && !parse(&[]).unwrap().blows_back);
         assert_eq!((parse(&["--cap", "9"]).unwrap().cap, parse(&[]).unwrap().cap), (Some(9), None));

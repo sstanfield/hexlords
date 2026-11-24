@@ -684,8 +684,10 @@ fn a_round_in_one_step_whoever_is_first_and_in_hotseat() {
     hexlords::script::run(&mut s, "turn").unwrap();
     assert_eq!((s.screen.game.turn(), s.screen.game.player(), s.covered()), (2, Side::Red, false));
     assert!(button(&s).starts_with("Orders done"), "{}", button(&s));
+    // (Two turns a round, in the round's draw from round 2.)
     hexlords::script::run(&mut s, "turn*4,wait:300").unwrap();
-    assert_eq!((s.screen.game.turn(), s.screen.game.player()), (4, Side::Red));
+    let game = &s.screen.game;
+    assert_eq!((game.turn(), game.player()), (4, game.order()[0]));
 }
 
 /// FINDING: the round is shown again from the moment the cover goes, while

@@ -11,7 +11,7 @@ use crate::game::{CITY_SIGHT, Game, HARD_ODDS, UNIT_SIGHT, emerge_chance};
 use crate::help::HelpSection;
 use crate::info;
 use crate::setup::{Fog, TurnOrder};
-use crate::state::combat::{BLOW_BACK_MOST, DICE_MOST, Exact, HITS, MAX_CHANCE, System, dice_odds, walls_bonus};
+use crate::state::combat::{BLOW_BACK_MOST, HITS, MAX_CHANCE, System, walls_bonus};
 use crate::state::{Blessing, LEVEL_EXPERIENCE, MAX_STACK, Travel, WALL_PRICE, WALLS_CAP};
 
 /// How long a line of a topic's words is, at most, in characters.
@@ -91,41 +91,13 @@ fn battles(game: &Game) -> Vec<HelpSection> {
                              and the loser takes the hit on one of its units drawn by chance: cheap units do not \
                              shield the dear ones."
             .to_string(),
-        System::Dice => format!(
-            "On the dice. Each exchange the two stacks' whole strengths are brought to numbers from 1 to \
-             {DICE_MOST} (as they are when neither is over {DICE_MOST}; else the greater to {DICE_MOST}, the \
-             other as much down), and each side rolls a ten-sided die: the side that rolls under its number \
-             while the other rolls over wins the exchange (else they roll again), and the loser takes the hit \
-             on one of its units drawn by chance."
-        ),
     };
-    let chance = match (rules.system, rules.chance) {
-        (System::Dice, _) => {
-            let exact = match rules.exact {
-                Exact::Hits => "a roll of exactly its number is under it",
-                Exact::Misses => "a roll of exactly its number is over it",
-                Exact::Defenders => {
-                    "a roll of exactly its number is under it for the defenders, over it for \
-                                     the attackers"
-                }
-            };
-            let wins = |x, y| {
-                let (a, b) = dice_odds(x, y, rules.exact);
-                (100 * a + (a + b) / 2) / (a + b)
-            };
-            format!(
-                "The dice: the chance set with the game plays no part. For each side, {exact}: 9 against 1 \
-                 wins {}% of the exchanges, 9 against 8 {}%, 5 against 5 {}%.",
-                wins(9, 1),
-                wins(9, 8),
-                wins(5, 5)
-            )
-        }
-        (_, 0) => "0 of 10: the stronger always wins (a tie is the defender's).".to_string(),
-        (_, c) if c >= MAX_CHANCE => {
+    let chance = match rules.chance {
+        0 => "0 of 10: the stronger always wins (a tie is the defender's).".to_string(),
+        c if c >= MAX_CHANCE => {
             format!("{c} of 10: strength counts for nothing; every exchange is a coin toss.")
         }
-        (_, c) => format!(
+        c => format!(
             "{c} of 10. Only the ratio of the strengths counts: one twice as strong as the other wins {}% of \
              the exchanges. (Less chance: strength counts more.)",
             twice_wins(c)
@@ -169,7 +141,7 @@ fn battles(game: &Game) -> Vec<HelpSection> {
                     "A commander",
                     "Every other unit of a stack with a commander is as much stronger as it gives \
                                  (a point more when it is at its highest level). In lines the commander fights last; by \
-                                 strength and on the dice a hit may fall on it as on any other."
+                                 strength a hit may fall on it as on any other."
                         .to_string(),
                 ),
                 ("The ground", "A defender is a point stronger on hills and in forests, two on mountains.".to_string()),
@@ -484,13 +456,10 @@ fn orders(game: &Game) -> Vec<HelpSection> {
     let order = match (game.rounds(), game.setup().order) {
         (false, TurnOrder::Fixed) => "The sides play one after the other, in the same order every round.",
         (false, TurnOrder::Drawn) => "The sides play one after the other, in an order drawn anew every round.",
-        (true, TurnOrder::Fixed) => {
+        (true, _) => {
             "Rounds: every side gives its orders, then the round plays out at once. Of stacks that get \
-             somewhere at the same moment, the sides go in the same order every round."
-        }
-        (true, TurnOrder::Drawn) => {
-            "Rounds: every side gives its orders, then the round plays out at once. Of stacks that get \
-             somewhere at the same moment, the sides go in an order drawn anew every round."
+             somewhere at the same moment, the sides go in an order drawn anew every round (always, in \
+             rounds)."
         }
     };
     // In rounds: how a round goes.
@@ -527,7 +496,8 @@ fn orders(game: &Game) -> Vec<HelpSection> {
                  two stacks making for the same hex fight there, the one that got there first defending; two \
                  that cross fight where they meet; a stack sent against one that has left finds the hex \
                  empty, and takes it. A march (Go to) fights on its way too. A patrol goes round, and \
-                 attacks at its odds. A battle is the attackers' round: they go no further."
+                 attacks at its odds. A battle is the round of whoever wins it, attackers or attacked: they \
+                 go no further."
                     .to_string(),
             ),
             (

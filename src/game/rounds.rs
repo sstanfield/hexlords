@@ -31,8 +31,8 @@
 //!   at the pace of its slowest. Each stack sets off on the next hex of its
 //!   way, and is there when the step's time is up; the stacks get there in
 //!   the order of the clock (at the same moment: in the round's order of
-//!   the sides, drawn anew as each round begins to play out, if the game
-//!   is set up so). A stack that gets to a hex another side stands on
+//!   the sides, drawn anew as each round begins to play out: always, in
+//!   rounds, `Setup::drawn`). A stack that gets to a hex another side stands on
 //!   attacks it, there and then, wherever its way was taking it ("stacks
 //!   that run into each other should probably fight vs just block each
 //!   other"): it does not go round who has come to stand on its way. So
@@ -44,9 +44,11 @@
 //!   others of its side that are on their way and leave it no room, and
 //!   goes through those that stay; two of a side that come toward each
 //!   other and have no room on one hex pass each other: they change places
-//!   at once (`passes`). A battle ends the attackers' round (they
-//!   have no movement left); a patrol goes round and attacks at its odds,
-//!   as ever.
+//!   at once (`passes`). A battle ends the round of whoever wins it, the
+//!   attackers or those they attacked (they have no movement left: the
+//!   owner's word, 2026-11-24, "unexpected combat leaves the victor out of
+//!   MPs as if they attacked"); a patrol goes round and attacks at its
+//!   odds, as ever.
 //! - **The round ends** when nobody is on a step any more: the plans end,
 //!   got there or not; the standing orders use what movement is left as
 //!   they do at a turn's end (and say if they are stopped short); wounds
@@ -62,7 +64,7 @@
 
 use super::{Game, Group, MarchState, SEE_ALL, Sight, UNSEEN, Undo};
 use crate::orders::Event;
-use crate::setup::{Mode, TurnOrder};
+use crate::setup::Mode;
 use crate::state::{Hex, MAX_STACK, MoveCostId, Passage, Side, TileType, Unit, UnitId, hostile, path_with, reach_with};
 
 /// A round on the clock a round plays out by: the time a unit takes to
@@ -572,8 +574,9 @@ impl Game {
         // The order the sides step in, if it is drawn, is drawn now: when
         // the orders were given nobody knew who would step first (the
         // review, 2026-11-22: drawn before, it was the order the orders
-        // were given in, and everybody knew).
-        if self.setup.order == TurnOrder::Drawn {
+        // were given in, and everybody knew). In rounds it always is
+        // (`Setup::drawn`).
+        if self.setup.drawn() {
             self.rng.shuffle(&mut self.order);
         }
         // Everybody sets off as the clock starts.

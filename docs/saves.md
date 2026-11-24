@@ -26,7 +26,7 @@ order fixed
 seed 1795379000123456789
 gold 50
 fog on
-battles strength chance 3 exact hits wounds 1 back 1 cap none
+battles strength chance 3 wounds 1 back 1 cap none
 seat red person
 seat green steady
 seat blue bold
@@ -51,7 +51,7 @@ check 9f3c2a17d05be481
 | `round` | The round the game is in, for the list |
 | `saved` | When it was written, in seconds since 1970: the list shows the last first |
 | `assets` | The map's own pictures, if it had a directory of them (used if it is still there) |
-| `mode`, `order`, `seed`, `gold`, `fog`, `battles` | The setup (`src/setup.rs`): `turns` or `rounds`; `fixed` or `drawn`; the seed of the game's chance; each side's gold at the start; `off`, `on` or `total`; the battles' system, chance, what an exact roll is, whether wounds last, whether losers hit back, the cap or `none` |
+| `mode`, `order`, `seed`, `gold`, `fog`, `battles` | The setup (`src/setup.rs`): `turns` or `rounds`; `fixed` or `drawn`; the seed of the game's chance; each side's gold at the start; `off`, `on` or `total`; the battles' system, chance, whether wounds last, whether losers hit back, the cap or `none` |
 | `seat <side> <who>` | A side in the game, in the order of the turns: `person`, or an agent's name |
 | `seen <side> <n>` | How much of the game's history that person had seen (the log marks the rest as new) |
 | `terrain <n>`, `units <n>`, `cities <n>` | The `n` lines that follow are the map's files as they were read (`docs/map-format.md`); `units` and `cities` only if the map has them |

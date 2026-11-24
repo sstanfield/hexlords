@@ -31,7 +31,7 @@
 use crate::agents::Agent;
 use crate::game::{Game, Sight};
 use crate::orders::Order;
-use crate::state::combat::{DEFAULT_CHANCE, MAX_CHANCE, System, walls_bonus};
+use crate::state::combat::{System, walls_bonus};
 use crate::state::{
     CityId, Hex, HexSide, MAX_STACK, Side, TileType, Travel, Unit, UnitId, UnitProd, compute_range, hostile,
 };
@@ -212,8 +212,8 @@ const WALLS_GOAL: u32 = 3;
 /// How much a unit is worth in battle under the rules in effect, against
 /// one of strength 1: in lines a unit fights its duels alone, and its odds go
 /// as its strength to the power the chance gives (`combat`: `k = 2 (10 -
-/// chance) / 5`); in strength against strength and on the dice, a stack's
-/// strengths add up.
+/// chance) / 5`); in strength against strength, a stack's strengths add
+/// up.
 ///
 /// (In plain arithmetic, with no `powf`: `k` is a fifth of a whole number,
 /// so `s^k` is the fifth root of `s` to that number; the same on every
@@ -228,9 +228,6 @@ pub fn worth(strength: u32, game: &Game) -> f64 {
     match rules.system {
         System::Lines => fifth_root(power(s, m.max(2))),
         System::Strength => s * (1.0 + f64::from(m) / 20.0),
-        // Whole stacks too, and the game's chance plays no part: as by
-        // strength at the chance a game has unless it is set.
-        System::Dice => s * (1.0 + f64::from(MAX_CHANCE - DEFAULT_CHANCE) / 10.0),
     }
 }
 

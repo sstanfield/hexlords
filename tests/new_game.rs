@@ -8,15 +8,15 @@ mod common;
 use common::{assets, click, widget};
 use hexlords::game::Game;
 use hexlords::new_game::{
-    BATTLES_DICE_ID, BATTLES_STRENGTH_ID, BLOWS_BACK_ID, CAP_ID, CHANCE_LESS_ID, CHANCE_MORE_ID, EXACT_DEFENDERS_ID,
-    EXACT_MISSES_ID, FOG_ON_ID, FOG_TOTAL_ID, GOLD_LESS_ID, GOLD_MORE_ID, MODE_ROUNDS_ID, MODE_TURNS_ID,
-    ORDER_DRAWN_ID, START_ID, map_id, map_name, seat_id,
+    BATTLES_LINES_ID, BATTLES_STRENGTH_ID, BLOWS_BACK_ID, CAP_ID, CHANCE_LESS_ID, CHANCE_MORE_ID, FOG_ON_ID,
+    FOG_TOTAL_ID, GOLD_LESS_ID, GOLD_MORE_ID, MODE_ROUNDS_ID, MODE_TURNS_ID, ORDER_DRAWN_ID, ORDER_FIXED_ID, START_ID,
+    map_id, map_name, seat_id,
 };
 use hexlords::screen::Scene;
 use hexlords::session::{BEGIN_TURN_ID, COVER_ID, END_TURN_ID, GAME_OVER_ID, NEW_GAME_ID, Session};
 use hexlords::setup::{Controller, Fog, Setup, TurnOrder};
 use hexlords::shell::Shell;
-use hexlords::state::combat::{Exact, Rules, System};
+use hexlords::state::combat::{Rules, System};
 use hexlords::state::scenario::{self, Scenario};
 use hexlords::state::{Hex, Side};
 use turbo_ferret::{Point, Size, TbId};
@@ -158,29 +158,26 @@ fn the_battles_are_set_up_on_the_screen_and_carried_into_the_game() {
     assert_eq!(game.setup().fog, Fog::Total);
 }
 
-/// The dice and the loser hitting back (the owner's word, 2026-11-21): on
-/// the dice the chance has no say, and what a roll of exactly a side's
-/// number does is chosen instead.
+/// The loser hitting back and the cap (the owner's word, 2026-11-21); the
+/// two systems, the dice taken out (the owner's word, 2026-11-24: "You can
+/// remove Dice from the combat options for now").
 #[test]
-fn the_dice_and_hitting_back_are_chosen_on_the_screen() {
+fn hitting_back_and_the_cap_are_chosen_on_the_screen_and_there_are_no_dice() {
     let mut shell = shell();
     let says = |shell: &Shell| descendants_of(shell, "new_game_settings");
     assert!(says(&shell).iter().any(|t| t == "Chance 5 of 10"));
-    push(&mut shell, BATTLES_DICE_ID);
-    assert!(!says(&shell).iter().any(|t| t.starts_with("Chance")), "{:?}", says(&shell));
-    assert!(says(&shell).iter().any(|t| t == "Exact roll"));
-    push(&mut shell, EXACT_MISSES_ID);
+    assert!(!says(&shell).iter().any(|t| t == "Dice" || t == "Exact roll"), "{:?}", says(&shell));
+    assert!(shell.screen().ui.find(shell.screen().ui.root(), TbId::new("battles_dice")).is_none());
+    push(&mut shell, BATTLES_STRENGTH_ID);
     push(&mut shell, BLOWS_BACK_ID);
     let combat = shell.new_game_screen().unwrap().setup().combat;
-    let dice = Rules { system: System::Dice, exact: Exact::Misses, blows_back: true, ..Rules::default() };
-    assert_eq!(combat, dice);
-    // Pressed again, it is off; and back to strength, the chance again.
+    let chosen = Rules { system: System::Strength, blows_back: true, ..Rules::default() };
+    assert_eq!(combat, chosen);
+    // Pressed again, it is off; and back to lines.
     push(&mut shell, BLOWS_BACK_ID);
     push(&mut shell, BLOWS_BACK_ID);
-    push(&mut shell, EXACT_DEFENDERS_ID);
-    push(&mut shell, BATTLES_STRENGTH_ID);
+    push(&mut shell, BATTLES_LINES_ID);
     assert!(says(&shell).iter().any(|t| t == "Chance 5 of 10"));
-    push(&mut shell, BATTLES_DICE_ID);
     // A cap on a unit's strength: 9, or none.
     push(&mut shell, CAP_ID);
     assert_eq!(shell.new_game_screen().unwrap().setup().combat.cap, Some(9));
@@ -188,7 +185,33 @@ fn the_dice_and_hitting_back_are_chosen_on_the_screen() {
     push(&mut shell, CAP_ID);
     push(&mut shell, START_ID);
     let game = &shell.session().unwrap().screen.game;
-    assert_eq!(game.setup().combat, Rules { exact: Exact::Defenders, cap: Some(9), ..dice });
+    assert_eq!(game.setup().combat, Rules { system: System::Lines, cap: Some(9), ..chosen });
+}
+
+/// In rounds the order is always drawn (the owner's word, 2026-11-24: "it
+/// should always be random (you can grey out that option in rounds
+/// mode)"): the two buttons are greyed out, Drawn pressed; back in turns,
+/// what was chosen there.
+#[test]
+fn in_rounds_the_order_is_drawn_and_its_buttons_greyed_out() {
+    let mut shell = shell();
+    let button = |shell: &Shell, name: &str| {
+        let ui = &shell.screen().ui;
+        let id = ui.find(ui.root(), TbId::new(name)).unwrap();
+        (ui.node(id).is_some_and(|n| n.is_disabled()), ui.value(id) != turbo_ferret::Value::Int(0))
+    };
+    assert_eq!((button(&shell, ORDER_FIXED_ID), button(&shell, ORDER_DRAWN_ID)), ((false, true), (false, false)));
+    push(&mut shell, MODE_ROUNDS_ID);
+    assert_eq!((button(&shell, ORDER_FIXED_ID), button(&shell, ORDER_DRAWN_ID)), ((true, false), (true, true)));
+    // The seats are not numbered: there is no first.
+    let says = descendants_of(&shell, "new_game_settings");
+    assert!(says.iter().any(|t| t == "red") && !says.iter().any(|t| t.starts_with("1. ")), "{says:?}");
+    // A click on a greyed out button does nothing.
+    push(&mut shell, ORDER_FIXED_ID);
+    assert!(shell.new_game_screen().unwrap().setup().drawn());
+    push(&mut shell, MODE_TURNS_ID);
+    assert_eq!(shell.new_game_screen().unwrap().setup().order, TurnOrder::Fixed, "the turns' choice, as it was");
+    assert_eq!(button(&shell, ORDER_FIXED_ID), (false, true));
 }
 
 fn descendants_of(shell: &Shell, name: &str) -> Vec<String> {

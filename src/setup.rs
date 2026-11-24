@@ -89,6 +89,8 @@ impl Fog {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Setup {
     pub mode: Mode,
+    /// In turns; a game of rounds draws its order whatever this says
+    /// (`drawn`).
     pub order: TurnOrder,
     /// The sides in the game, in the order of their turns (if it is fixed).
     pub seats: Vec<Seat>,
@@ -108,6 +110,17 @@ pub struct Setup {
 pub const START_GOLD: u32 = 50;
 
 impl Setup {
+    /// True if the order of the sides is drawn anew every round. In rounds
+    /// it always is, as each round begins to play out (the owner's word,
+    /// 2026-11-24: "if the side order has any bearing on Rounds mode ...
+    /// then it should always be random"): there it says who of stacks that
+    /// get somewhere at the same moment is first, and whose standing orders
+    /// go first as the round ends. The sides give their orders in it too,
+    /// which nobody learns anything by.
+    pub fn drawn(&self) -> bool {
+        self.order == TurnOrder::Drawn || self.mode == Mode::Rounds
+    }
+
     /// The sides of a map that are in a game on it: those that hold a city at
     /// the start, or, on a map where none does, those that have units; in the
     /// sides' order.

@@ -181,7 +181,8 @@ fn a_stack_sent_against_one_that_has_left_finds_the_hex_empty() {
 #[test]
 fn two_stacks_making_for_one_hex_fight_there_and_the_first_in_the_order_holds_it() {
     // Both two hexes from the hex between them: red, first in the round's
-    // order, steps in first; blue's step into it is an attack.
+    // order (drawn: so it falls, with this seed), steps in first; blue's
+    // step into it is an attack.
     let (mut a, mut b) = (None, None);
     let mut g = game(|g| {
         a = Some(put(g, Side::Red, "levy", Hex::new(10, 5)));
@@ -193,6 +194,7 @@ fn two_stacks_making_for_one_hex_fight_there_and_the_first_in_the_order_holds_it
     g.end_turn();
     g.apply(Order::Move { units: vec![b], to: between }).unwrap();
     let events = g.end_turn();
+    assert_eq!(g.order()[0], Side::Red, "the round's draw");
     assert_eq!(battles(&events), [(between, Side::Blue, true)], "blue attacks red, who got there first");
     assert_eq!((pos(&g, a), pos(&g, b)), (None, Some(between)));
 }
@@ -209,7 +211,9 @@ fn two_stacks_that_would_swap_hexes_fight() {
     g.end_turn();
     g.apply(Order::Move { units: vec![b], to: Hex::new(10, 5) }).unwrap();
     let events = g.end_turn();
-    // Red steps first: it attacks blue on blue's hex, before blue has left.
+    // Red steps first (the round's draw): it attacks blue on blue's hex,
+    // before blue has left.
+    assert_eq!(g.order()[0], Side::Red, "the round's draw");
     assert_eq!(battles(&events), [(Hex::new(10, 6), Side::Red, true)]);
     assert_eq!((pos(&g, a), pos(&g, b)), (Some(Hex::new(10, 6)), None));
 }
@@ -699,4 +703,59 @@ fn a_program_is_told_the_game_is_played_in_rounds() {
     let mut agents = Agents::for_game(&g).unwrap();
     agents::play_computers(&mut g, &mut agents);
     assert_eq!((g.turn(), g.player()), (2, Side::Red));
+}
+
+/// The owner's word, 2026-11-24: "unexpected combat leaves the victor out
+/// of MPs as if they attacked". Blue's soldiers are on their way east when
+/// red's riders, faster, attack them before their first step: blue holds,
+/// and that is its round, as an attack would have been (it went on east
+/// before).
+#[test]
+fn a_stack_that_holds_against_an_attack_takes_no_more_steps_that_round() {
+    let (mut a, mut b) = (None, None);
+    let mut g = game(|g| {
+        a = Some(put(g, Side::Red, "riders", Hex::new(10, 7)));
+        b = Some(put(g, Side::Blue, "soldiers", Hex::new(10, 8)));
+    });
+    let (a, b) = (a.unwrap(), b.unwrap());
+    g.apply(Order::Move { units: vec![a], to: Hex::new(10, 8) }).unwrap();
+    g.end_turn();
+    g.apply(Order::Move { units: vec![b], to: Hex::new(10, 12) }).unwrap();
+    let events = g.end_turn();
+    assert_eq!(battles(&events), [(Hex::new(10, 8), Side::Red, false)], "the riders lose");
+    assert_eq!((pos(&g, a), pos(&g, b)), (None, Some(Hex::new(10, 8))), "blue holds where it stood");
+    assert!(steps(&events).iter().all(|(from, _)| *from != Hex::new(10, 8)), "{events:?}");
+    // Its movement was spent: none carried over to the new round.
+    let soldiers = g.map.units().get(b).unwrap();
+    assert_eq!((soldiers.movement, soldiers.planned), (12, false));
+}
+
+/// The owner's word, 2026-11-24: in rounds the order of the sides is always
+/// drawn, as each round plays out (it says who of two stacks that get
+/// somewhere at the same moment is first). Set up "the same" or "drawn",
+/// the game is the same; and the order changes.
+#[test]
+fn in_rounds_the_order_is_drawn_whatever_the_setup_says() {
+    let play = |order: hexlords::setup::TurnOrder| {
+        let (mut game, _) = Game::load(std::path::Path::new("assets/maps/continent")).unwrap();
+        let mut setup = Setup::solo(&game.map, None, "steady");
+        for seat in &mut setup.seats {
+            seat.controller = hexlords::setup::Controller::Computer("steady".to_string());
+        }
+        (setup.mode, setup.seed, setup.order) = (Mode::Rounds, 5, order);
+        assert!(setup.drawn());
+        game = game.with_setup(setup);
+        let first = game.order().to_vec();
+        let mut orders = vec![first];
+        for _ in 0..8 {
+            headless::play(&mut game, 1, &mut |_, _| {}).unwrap();
+            orders.push(game.order().to_vec());
+        }
+        (orders, game.digest())
+    };
+    let (fixed, digest) = play(hexlords::setup::TurnOrder::Fixed);
+    assert_eq!(play(hexlords::setup::TurnOrder::Drawn), (fixed.clone(), digest), "the same game");
+    assert!(fixed.windows(2).any(|w| w[0] != w[1]), "drawn anew: {fixed:?}");
+    // The first round's orders are given in the seats' order.
+    assert_eq!(fixed[0], [Side::Red, Side::Green, Side::Blue, Side::Yellow]);
 }

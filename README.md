@@ -223,10 +223,10 @@ build.
 **A new game** starts on its own screen: the map (one of the game's, or a
 random map made there; the preview beside the settings can be looked over
 like the game's), how to play (turns or rounds, above), the order of the
-turns (the same each round, or drawn anew; in rounds, who goes first of two
-there at the same moment), the battles (lines, strength or dice; how much
-chance, from 0 to 10, or on the dice what a roll of exactly a side's number
-does; whether wounds last and whether the loser of an exchange may hit back;
+turns (the same each round, or drawn anew; in rounds always drawn, since it
+says who goes first of two there at the same moment, and the choice is
+greyed out), the battles (lines, or strength against strength; how much
+chance, from 0 to 10; whether wounds last and whether the loser of an exchange may hit back;
 a cap of 9 on a unit's strength), the gold each side starts with, fog of war
 (off, on, or total), and who plays each side, a person or the computer (a
 click on Computer again goes through its styles). Several people take turns
@@ -302,7 +302,7 @@ for gold; a city that is taken loses a level.
 ```
 hexlords [--map <file.map or map directory>] [--players <side>=<who>,...] [--mode turns|rounds]
         [--order fixed|drawn] [--seed <n>]
-        [--chance <0-10>] [--battles lines|strength|dice] [--dice-exact hits|misses|defenders] [--wounds] [--blows-back]
+        [--chance <0-10>] [--battles lines|strength] [--wounds] [--blows-back]
         [--cap <n>] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] [--log]]
         [--saves <dir>] [--script <steps>]
         [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
@@ -323,15 +323,13 @@ with `--map`, and without it are not used.
   it is said), or all give their orders and the round plays out at once
   ([docs/gameplay.md](docs/gameplay.md), "Rounds").
 - `--order fixed|drawn`: the sides play in the same order each round, or one
-  drawn anew; `--seed <n>`: the seed of the game's chance (without it: one
+  drawn anew (in rounds it is always drawn, whatever this says); `--seed <n>`: the seed of the game's chance (without it: one
   from the clock in a window, each game its own; 1 without a window, or
   with a script or a screenshot, so that a run can be made again).
 - `--chance <0-10>`: how much chance there is in a battle: 0 none (the
   stronger always wins), 10 nothing else; 5 unless it is said.
-  `--battles lines|strength|dice`: how a battle goes (lines unless it is said;
-  [docs/gameplay.md](docs/gameplay.md), "Fighting"); on the dice the chance
-  plays no part, and `--dice-exact hits|misses|defenders` says what a roll of
-  exactly a side's number does (hits unless it is said). `--wounds`: a unit's
+  `--battles lines|strength`: how a battle goes (lines unless it is said;
+  [docs/gameplay.md](docs/gameplay.md), "Fighting"). `--wounds`: a unit's
   hits stay with it until its side's turn ends, and it fights at half
   strength while wounded. `--blows-back`: the loser of an exchange may hit
   back, a quarter of the time at most. `--cap <n>`: no unit fights stronger

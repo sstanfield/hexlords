@@ -28,7 +28,8 @@ Built (2026-11-19 to 2026-11-23):
   upkeep, price, what each terrain costs to enter); cities (holder, walls,
   what they can build at what cost, garrison);
 - **a new game screen**: the map, the mode (turns or rounds), the
-  order of turns (the same each round, or drawn anew), who plays each side
+  order of turns (the same each round, or drawn anew; in rounds always
+  drawn, the choice greyed out), who plays each side
   (a person, or the computer); several people play hotseat;
 - **turns**: one side after the other, in the round's order; only that
   side's units move and its cities can be set; a side's turn begins with
@@ -41,7 +42,7 @@ Built (2026-11-19 to 2026-11-23):
 - **stacks, battles and commanders** (below, "Fighting"): the units of a hex
   are selected together and move together, or some of them; units sent into
   another side's fight them, and go in if they win; the chance (0 to 10),
-  the system (lines, strength against strength, or dice) and its choices
+  the system (lines, or strength against strength) and its choices
   (wounds that last, losers hitting back, a cap) are set with the
   game; the ground, walls and a commander make units stronger; the odds
   are shown before an attack, a report after it, and the news to whoever
@@ -182,20 +183,15 @@ and the rules use integers, not floats.
        loser drawn by chance, so that cheap units in front do not shield the
        dear ones behind. Many weak units beat one strong one here, where in
        lines they lose one by one.
-     - *Dice* (`dice`, the owner's design 2026-11-21, to try): each
-       exchange the two stacks' whole strengths are brought to numbers from
-       1 to 9 (`combat::dice_numbers`: as they are when neither is over 9;
-       else the greater to 9 and the other in the same measure, to the
-       nearest, never under 1), and each side rolls a ten-sided die: the
-       side whose roll is under its number while the other's is over wins
-       the exchange (both under or both over: they roll again; drawn at once
-       as their odds, `p (10 - q) : q (10 - p)`), and the loser takes the
-       hit on one of its units drawn by chance, as by strength. The game's
-       chance plays no part. A roll of exactly a side's number (the owner's
-       three, `combat::Exact`, chosen with the game, `--dice-exact`): it
-       wins (9 against 1, 99 in 100; 9 against 8, 69; even, even), it
-       misses (a 1 never wins a roll), or it wins for the defenders only
-       (even numbers are theirs: 5 against 5, 60 in 100; 9 against 9, 69).
+     - *Dice* (the owner's design 2026-11-21, tried, and taken out on
+       2026-11-24: "I may introduce another dice mode later but I don't
+       think we need that one"; it is in the history, with what it
+       measured): the two stacks' strengths brought to numbers from 1 to
+       9, a ten-sided die each, the chance set with the game playing no
+       part. A lead ran away (the greater side, a 9, missed one roll in
+       ten): even battles ended one-sided, and quality counted more than
+       by strength, less than in lines (three 6s against eight 2s: about
+       even; strength 14 in 100, lines 99).
    - **Losers hit back** (built, a choice made with the game, off unless
      chosen: the new game screen's Losers hit back, `--blows-back`; the
      owner's word 2026-11-21: "the strong stack taking some hits is
@@ -213,7 +209,7 @@ and the rules use integers, not floats.
    - **Measured** (2026-11-21; single battles, 20,000 each, at chance 5:
      the winner's units lost when the attackers win, of 8):
 
-     | Battle | Lines | Strength | + hit back | Dice | + hit back |
+     | Battle | Lines | Strength | + hit back | Dice (taken out) | + hit back |
      |---|---|---|---|---|---|
      | 8×5 against a pair of 2s | 0.16 | 0 | 0 | 0 | 0 |
      | 8×5 against 8×2 | 1.05 | 0.12 | 0.92 | 0.03 | 0.67 |
@@ -221,7 +217,7 @@ and the rules use integers, not floats.
      | 8×4 against 8×3: wins | 95% | 90% | 86% | 99% | 98% |
      | 3×6 against 8×2: wins | 99% | 14% | 3% | 48% | 13% |
 
-     On the dice the greater side of two stacks like these is a 9 and misses one roll in
+     On the dice (since taken out) the greater side of two stacks like these is a 9 and misses one roll in
      ten, so a lead runs away: an even battle ends one-sided, and quality
      counts more than by strength (three 6s against eight 2s, about even;
      lines 99 in 100, strength 14). A roll of exactly the number winning for
@@ -465,7 +461,7 @@ and the rules use integers, not floats.
 - The sides play in an order, chosen when the game is set up (decided):
   always the order of the seats, which the new game screen shows, or one
   drawn at the start and again after every round. A **round** is every side
-  once. (Built.)
+  once. (Built.) In rounds the order is always drawn (below, "Rounds").
 - A side's turn begins with its cities' work and its gold: income, upkeep,
   production. (Built.)
 - Moving into an enemy stack or city is an attack: the battle is fought then
@@ -516,11 +512,15 @@ changed.
   - Each stack sets off on the next hex of its way, and is there when the
     step's time is up; the stacks get there in the order of the clock.
     Of those there at the same moment, the sides go in the round's
-    order: the one thing the order decides. With the order drawn anew
-    each round (the new game screen's choice) it is drawn as the round
-    begins to play out, after every side's orders are given: nobody
-    knows. (The orders are given in the order the round before was
-    played in.)
+    order, and their standing orders go in it as the round ends: what
+    the order decides. So it is always drawn in rounds (the owner's word,
+    2026-11-24: "if the side order has any bearing on Rounds mode ...
+    then it should always be random (you can grey out that option in
+    rounds mode)"; `Setup::drawn`): as each round begins to play out,
+    after every side's orders are given, so nobody knows. The new game
+    screen greys out the choice, which is the turns'. (The first round's
+    orders are given in the seats' order, the others' in the order the
+    round before was played in: nobody learns anything by it.)
   - A stack that gets to a hex another side stands on attacks it, there
     and then, wherever its way was taking it (the owner: "stacks that run
     into each other should probably fight vs just block each other. This
@@ -579,7 +579,7 @@ changed.
     later, starts afresh: the next click is a new plan from where it
     stands. Undo takes back the last leg. A plan that ends in a battle or
     in a city to take has nothing after it (the battle ends the
-    attackers' round); nor has one that ends on a temple that has yet to
+    attackers' round, if they win); nor has one that ends on a temple that has yet to
     bless them, which stops them there for the round as any stop on one
     does: nothing is offered from there, and a leg after it is refused.
     A stop the stack goes through without standing on it (others of its
@@ -618,7 +618,15 @@ changed.
   - A plan or a march that stops on a temple seeks its blessing there
     (nobody can be asked as the round plays out).
   - A battle ends the attackers' round: an attack uses up their movement.
-    A plan ends with it, and with a city taken on the way.
+    A plan ends with it, and with a city taken on the way. It ends the
+    round of those it attacked too, if they hold (the owner's word,
+    2026-11-24: "unexpected combat leaves the victor out of MPs as if
+    they attacked"): their movement is spent, and they take no more
+    steps that round, though they keep their orders (a plan ends with
+    the round as ever; a march goes on next round). Before, a stack
+    attacked on its way that held went on with it. (In turns nothing
+    changes: whoever is attacked is attacked in another side's turn, and
+    its own gives it its movement.)
 - **The round ends** when nobody is on a step any more. The plans
   end, got there or not (a stack that did not get there waits for orders
   next round). The standing orders use what movement is left as at a
@@ -1202,7 +1210,8 @@ it; the rules are written once for both modes from the first step.
    when one side is left.
 
 7. **The order of turns** is a choice when the game is set up: always the
-   same, or drawn anew after every round.
+   same, or drawn anew after every round. In rounds it is always drawn
+   (2026-11-24).
 8. **Sub-orders** for what happens in a turn are wanted, but can wait; what
    matters more is an interface that is easy, with good defaults (see
    "Easy to play").

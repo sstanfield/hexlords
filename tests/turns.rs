@@ -7,7 +7,7 @@ use hexlords::game::Game;
 use hexlords::headless::{self, order_line};
 use hexlords::orders::{Event, Order};
 use hexlords::setup::{Controller, Setup, TurnOrder};
-use hexlords::state::combat::{Exact, System};
+use hexlords::state::combat::System;
 use hexlords::state::scenario::{self, Scenario};
 use hexlords::state::{Hex, Side};
 
@@ -227,13 +227,13 @@ fn the_game_as_text_and_orders_from_text() {
     assert_eq!(lines[0], "turn 1 red");
     assert_eq!(lines[1], "order red green blue");
     assert_eq!(lines[2], "battles lines chance 5");
-    // On the dice, what an exact roll does; wounds; the loser hitting back.
-    let dice = crate::game(|s| {
-        (s.combat.system, s.combat.exact) = (System::Dice, Exact::Misses);
+    // Strength against strength; wounds; the loser hitting back.
+    let strength = crate::game(|s| {
+        s.combat.system = System::Strength;
         (s.combat.wounds, s.combat.blows_back) = (true, true);
     });
-    let text = describe(&dice, Side::Red);
-    assert_eq!(text.lines().nth(2), Some("battles dice chance 5 exact misses wounds last blows back"));
+    let text = describe(&strength, Side::Red);
+    assert_eq!(text.lines().nth(2), Some("battles strength chance 5 wounds last blows back"));
     assert_eq!(lines[3], "fog off");
     assert_eq!(lines[4], "gold 50 income 10 upkeep 0", "its treasury, its taxes, its upkeep");
     assert_eq!(lines[5], "terrain");

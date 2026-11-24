@@ -50,7 +50,7 @@ fn game(system: System) -> Game {
 
 #[test]
 fn each_stack_stands_from_its_weakest_to_its_strongest_with_its_commander_on_the_right() {
-    for system in [System::Lines, System::Strength, System::Dice] {
+    for system in System::ALL {
         let mut s = Session::with_options(&common::assets(), Size::new(1024, 768), 96, game(system), Options::manual())
             .unwrap();
         for hex in [FROM, HOLD] {

@@ -36,8 +36,7 @@ anywhere else.
 
 The same options set up a game in the window: `--map` with `--players`,
 `--mode turns|rounds`, `--order fixed|drawn`, `--seed`, `--chance <0-10>`,
-`--battles lines|strength|dice`, `--dice-exact hits|misses|defenders`,
-`--wounds`, `--blows-back`, `--cap <n>`, `--gold <n>`, and `--fog` or
+`--battles lines|strength`, `--wounds`, `--blows-back`, `--cap <n>`, `--gold <n>`, and `--fog` or
 `--total-fog` (without `--map`, the new game screen sets them). To compare
 two ways of fighting, play the same seeds with each:
 
@@ -334,18 +333,17 @@ end
   the line is
   not there. In rounds `toward` may name land the side has never seen
   (total fog of war): the units set off toward it and find their way as
-  they come to see more. With `--order drawn` the `order` line is the
-  order the orders are given in; who goes first of stacks that get
-  somewhere at the same moment is drawn after them.
+  they come to see more. The `order` line is the order the orders are
+  given in; who goes first of stacks that get somewhere at the same
+  moment is drawn after them (in rounds the order is always drawn,
+  whatever `--order` says).
 - `order`: this round's order of turns.
-- `battles <lines, strength or dice> chance <0 to 10>`: how the game's
-  battles go (`docs/gameplay.md`, "Fighting"; on the dice the chance plays
-  no part); then, on the dice, `exact <hits, misses or defenders>`: what a
-  roll of exactly a side's number does (`--dice-exact`); `wounds last` when
+- `battles <lines or strength> chance <0 to 10>`: how the game's
+  battles go (`docs/gameplay.md`, "Fighting"); then `wounds last` when
   a unit's hits stay with it until its side's turn ends (`--wounds`); and
   `blows back` when the loser of an exchange may hit back (`--blows-back`);
   `cap <n>` when no unit fights stronger than `n`, its bonuses counted
-  (`--cap`): `battles dice chance 5 exact hits wounds last blows back cap 9`.
+  (`--cap`): `battles strength chance 5 wounds last blows back cap 9`.
 - `fog <off, on or total>`: fog of war (`docs/gameplay.md`).
 - `gold <n> income <n> upkeep <n>`: the side's treasury, what its cities
   bring in a turn, what its units cost a turn.

@@ -32,26 +32,16 @@ pub enum System {
     /// loser takes the hit on one of its units drawn by chance: cheap units do
     /// not shield the dear ones behind them.
     Strength,
-    /// The owner's design (2026-11-21), to try: each exchange the two
-    /// stacks' whole strengths are brought to numbers from 1 to 9
-    /// (`dice_numbers`) and each side rolls a ten-sided die; the side whose
-    /// roll is under its number while the other's is over wins the exchange
-    /// (both under or both over: they roll again; a roll of exactly its
-    /// number is as `Rules::exact` says), and the loser takes the hit on one
-    /// of its units drawn by chance, as by strength. The game's chance
-    /// plays no part: the dice are the chance.
-    Dice,
 }
 
 impl System {
-    pub const ALL: [System; 3] = [System::Lines, System::Strength, System::Dice];
+    pub const ALL: [System; 2] = [System::Lines, System::Strength];
 
     /// Its name, in files and on the command line.
     pub fn name(self) -> &'static str {
         match self {
             System::Lines => "lines",
             System::Strength => "strength",
-            System::Dice => "dice",
         }
     }
 
@@ -60,42 +50,6 @@ impl System {
         System::ALL.into_iter().find(|s| s.name() == name)
     }
 }
-
-/// On the dice, what a roll of exactly a side's number is (the owner,
-/// 2026-11-21: "hitting the number exactly on the d10 could be considered a
-/// hit or a miss or the a hit for the defender and a miss for the
-/// attacker").
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Exact {
-    /// Under: a 5 wins its rolls of 1 to 5.
-    Hits,
-    /// Over: a 5 wins its rolls of 1 to 4 (a 1 never wins one).
-    Misses,
-    /// Under for the defenders, over for the attackers.
-    Defenders,
-}
-
-impl Exact {
-    pub const ALL: [Exact; 3] = [Exact::Hits, Exact::Misses, Exact::Defenders];
-
-    /// Its name, on the command line.
-    pub fn name(self) -> &'static str {
-        match self {
-            Exact::Hits => "hits",
-            Exact::Misses => "misses",
-            Exact::Defenders => "defenders",
-        }
-    }
-
-    /// The rule of a name.
-    pub fn named(name: &str) -> Option<Exact> {
-        Exact::ALL.into_iter().find(|e| e.name() == name)
-    }
-}
-
-/// The highest number on the dice, and the sides of the die.
-pub const DICE_MOST: u32 = 9;
-pub const DIE: u32 = 10;
 
 /// The most a loser hits back, in percent (`Rules::blows_back`).
 pub const BLOW_BACK_MOST: u32 = 25;
@@ -150,8 +104,6 @@ pub struct Rules {
     /// exchange), one of the winner's units takes a hit too (in lines, the
     /// one at the front), unless the exchange left the loser with nobody.
     pub blows_back: bool,
-    /// On the dice, what a roll of exactly a side's number is.
-    pub exact: Exact,
     /// The most a unit fights with, in points, all its bonuses counted
     /// (the owner's idea, 2026-11-21: cap each unit at 9, to keep stacks in
     /// check and still let a strong stack shine); `None`, no cap.
@@ -167,14 +119,7 @@ impl Rules {
 
 impl Default for Rules {
     fn default() -> Rules {
-        Rules {
-            chance: DEFAULT_CHANCE,
-            system: System::Lines,
-            wounds: false,
-            blows_back: false,
-            exact: Exact::Hits,
-            cap: None,
-        }
+        Rules { chance: DEFAULT_CHANCE, system: System::Lines, wounds: false, blows_back: false, cap: None }
     }
 }
 
@@ -217,8 +162,8 @@ pub struct Battle {
 }
 
 /// One exchange of a battle, by the fighters' places in the lists `fight`
-/// was given: who fought (in lines, the two at the front; by strength and on
-/// the dice, the whole stacks: `None`), and who took the hit.
+/// was given: who fought (in lines, the two at the front; by strength, the
+/// whole stacks: `None`), and who took the hit.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct Exchange {
     pub attacker: Option<usize>,
@@ -262,49 +207,6 @@ pub fn exchange(a: u32, b: u32, chance: u8, rng: &mut Rng) -> bool {
     rng.below(wa + wb) < wa
 }
 
-/// The numbers two strengths (in quarters) fight with on the dice: as they
-/// are, in points, when neither is over `DICE_MOST`; else both brought down
-/// in the same measure, the greater to `DICE_MOST`. Each to the nearest
-/// whole number (a half up), and never under 1: 40 against 4 is 9 against
-/// 1; 10 against 5, 9 against 5; 4 against 2, as it is.
-pub fn dice_numbers(a: u32, b: u32) -> (u32, u32) {
-    let most = a.max(b);
-    // A side's number is its strength times `by`, over `over`.
-    let (by, over) = if most <= DICE_MOST * QUARTER { (1, QUARTER) } else { (DICE_MOST, most) };
-    let number = |s: u32| {
-        let n = (2 * u64::from(s) * u64::from(by) + u64::from(over)) / (2 * u64::from(over));
-        (n.min(u64::from(DICE_MOST)) as u32).max(1)
-    };
-    (number(a), number(b))
-}
-
-/// The odds of one exchange on the dice between the numbers `x` (the
-/// attackers') and `y`, as two weights, `x`'s and `y`'s: each side wins
-/// `p` and `q` of the die's ten rolls (`x` and `y`, or one fewer when a roll
-/// of exactly its number misses: `exact`), and a side wins the exchange when
-/// it wins its roll and the other does not (else they roll again), so the
-/// odds are `p (10 - q) : q (10 - p)`. When neither can ever win its roll
-/// (two 1s, an exact roll missing), even.
-pub fn dice_odds(x: u32, y: u32, exact: Exact) -> (u64, u64) {
-    let (x, y) = (x.clamp(1, DICE_MOST), y.clamp(1, DICE_MOST));
-    let (p, q) = match exact {
-        Exact::Hits => (x, y),
-        Exact::Misses => (x - 1, y - 1),
-        Exact::Defenders => (x - 1, y),
-    };
-    let (wa, wb) = (u64::from(p * (DIE - q)), u64::from(q * (DIE - p)));
-    if wa + wb == 0 { (1, 1) } else { (wa, wb) }
-}
-
-/// One exchange on the dice between strengths `a` (the attackers', in
-/// quarters) and `b`: true if `a` wins. The rolls again until one side wins
-/// are drawn at once, as their odds (`dice_odds`).
-pub fn dice(a: u32, b: u32, exact: Exact, rng: &mut Rng) -> bool {
-    let (x, y) = dice_numbers(a, b);
-    let (wa, wb) = dice_odds(x, y, exact);
-    rng.below(wa + wb) < wa
-}
-
 /// Whether the loser of an exchange, of strength `loser` against the
 /// winner's `winner`, hits back: with a chance of its share, at most
 /// `BLOW_BACK_MOST` in 100.
@@ -326,7 +228,6 @@ pub fn fight(attackers: &[Fighter], defenders: &[Fighter], rules: &Rules, rng: &
     match rules.system {
         System::Lines => lines(attackers, defenders, rules, rng),
         System::Strength => pooled(attackers, defenders, rules, rng, |a, b, rng| exchange(a, b, rules.chance, rng)),
-        System::Dice => pooled(attackers, defenders, rules, rng, |a, b, rng| dice(a, b, rules.exact, rng)),
     }
 }
 
@@ -409,7 +310,7 @@ fn lines(attackers: &[Fighter], defenders: &[Fighter], rules: &Rules, rng: &mut 
     battle
 }
 
-/// A battle of whole stacks (by strength, on the dice): each exchange
+/// A battle of whole stacks (by strength): each exchange
 /// matches the two sides' totals (`exchange` says whether the attackers'
 /// wins), and the loser takes the hit on one of its units drawn by chance.
 fn pooled(
@@ -692,58 +593,11 @@ mod tests {
         for system in System::ALL {
             assert_eq!(System::named(system.name()), Some(system));
         }
-        for exact in Exact::ALL {
-            assert_eq!(Exact::named(exact.name()), Some(exact));
-        }
-        assert_eq!((System::named("lances"), Exact::named("lances")), (None, None));
-        let default =
-            Rules { chance: 5, system: System::Lines, wounds: false, blows_back: false, exact: Exact::Hits, cap: None };
+        assert_eq!(System::named("lances"), None);
+        let default = Rules { chance: 5, system: System::Lines, wounds: false, blows_back: false, cap: None };
         assert_eq!(Rules::default(), default);
         let capped = Rules { cap: Some(9), ..default };
         assert_eq!((capped.capped(40), capped.capped(36), capped.capped(13), default.capped(40)), (36, 36, 13, 40));
-    }
-
-    /// The owner's dice (2026-11-21): the stacks' strengths brought to 1
-    /// to 9, the greater to 9 when either is over.
-    #[test]
-    fn on_the_dice_the_strengths_are_brought_to_one_to_nine() {
-        let q = |points: u32| points * QUARTER;
-        assert_eq!(dice_numbers(q(40), q(4)), (9, 1));
-        assert_eq!(dice_numbers(q(4), q(40)), (1, 9));
-        assert_eq!(dice_numbers(q(10), q(5)), (9, 5), "4.5, a half up");
-        assert_eq!(dice_numbers(q(4), q(2)), (4, 2), "as they are");
-        assert_eq!(dice_numbers(q(9), q(9)), (9, 9));
-        assert_eq!(dice_numbers(q(100), 1), (9, 1), "never under 1");
-        assert_eq!(dice_numbers(10, 4), (3, 1), "2½ is 3, in points");
-        assert_eq!(dice_numbers(q(18), q(16)), (9, 8));
-    }
-
-    #[test]
-    fn on_the_dice_the_side_under_its_number_while_the_other_is_over_wins() {
-        // Out of the die's ten rolls: 9 against 1 wins 81 : 1; even, even;
-        // 9 against 8, 18 : 8.
-        assert_eq!(dice_odds(9, 1, Exact::Hits), (81, 1));
-        assert_eq!(dice_odds(5, 5, Exact::Hits), (25, 25));
-        assert_eq!(dice_odds(9, 8, Exact::Hits), (18, 8));
-        // A roll of exactly the number misses: a 1 never wins a roll; two
-        // 1s, even.
-        assert_eq!(dice_odds(1, 9, Exact::Misses), (0, 80));
-        assert_eq!(dice_odds(1, 1, Exact::Misses), (1, 1));
-        assert_eq!(dice_odds(9, 9, Exact::Misses), (16, 16));
-        // It hits for the defenders only: even numbers favour them.
-        assert_eq!(dice_odds(5, 5, Exact::Defenders), (20, 30));
-        assert_eq!(dice_odds(9, 9, Exact::Defenders), (8, 18));
-        // Drawn, the odds come out: 9 against 8 about 69 in 100.
-        let mut rng = Rng::new(3);
-        let won = (0..8000).filter(|_| dice(9 * QUARTER, 8 * QUARTER, Exact::Hits, &mut rng)).count();
-        assert!((5300..5750).contains(&won), "{won}");
-        // The game's chance plays no part.
-        let (a, d) = (fighters(Side::Red, &[3, 3, 2]), fighters(Side::Blue, &[4, 2]));
-        let rules = |chance| Rules { chance, system: System::Dice, ..Rules::default() };
-        for seed in 0..20 {
-            let battle = fight(&a, &d, &rules(0), &mut Rng::new(seed));
-            assert_eq!(battle, fight(&a, &d, &rules(10), &mut Rng::new(seed)));
-        }
     }
 
     /// How many of the exchanges of `a` against `d` the loser hit back in,
@@ -769,14 +623,12 @@ mod tests {
     /// even battle does not cost its winner half its stack.
     #[test]
     fn the_loser_hits_back_by_its_share_at_most_a_quarter_of_the_time() {
-        for system in [System::Strength, System::Dice] {
-            // Even: its share is a half, kept to a quarter.
-            let even = blown_back(&[3; 8], &[3; 8], system);
-            assert!((21..=27).contains(&even), "{system:?}: {even}");
-            // A pair of 2s against eight 5s: 4 in 44.
-            let pair = blown_back(&[5; 8], &[2; 2], system);
-            assert!((5..=13).contains(&pair), "{system:?}: {pair}");
-        }
+        // Even: its share is a half, kept to a quarter.
+        let even = blown_back(&[3; 8], &[3; 8], System::Strength);
+        assert!((21..=27).contains(&even), "{even}");
+        // A pair of 2s against eight 5s: 4 in 44.
+        let pair = blown_back(&[5; 8], &[2; 2], System::Strength);
+        assert!((5..=13).contains(&pair), "{pair}");
         // In lines, the two at the front: a 2 against a 5, 2 in 7, kept to
         // a quarter; a 1 against a 4, 1 in 5.
         let front = blown_back(&[5], &[2; 8], System::Lines);

@@ -404,7 +404,9 @@ fn a_side_put_out_as_the_round_plays_takes_no_more_part_and_the_game_goes_on() {
     // The next round: red, then blue; green has no say.
     assert_eq!(g.end_turn(), [Event::Began { side: Side::Blue, round: 2 }]);
     let events = g.end_turn();
-    assert_eq!((g.turn(), g.player()), (3, Side::Red));
+    // (Who gives the next round's orders first is the round's draw.)
+    assert_eq!(g.turn(), 3);
+    assert!([Side::Red, Side::Blue].contains(&g.player()), "{:?}", g.player());
     assert!(!events.iter().any(|e| matches!(e, Event::Built { unit, .. } if unit.side == Side::Green)));
     round_begins_clean(&g).unwrap();
 }
@@ -450,11 +452,15 @@ fn every_side_is_paid_once_a_round_as_in_turns() {
             let moves: Vec<u32> = g.map.units().of_side(side).map(|u| u.movement).collect();
             seen.push((g.turn(), side, g.gold(side), moves));
         }
+        // (In rounds the sides give their orders in the round's draw: so
+        // each round's in the sides' order; the last, begun, left out.)
+        seen.retain(|(turn, _, _, _)| *turn < 6);
+        seen.sort_by_key(|(turn, side, _, _)| (*turn, side.index()));
         seen
     };
     let rounds = run(Mode::Rounds);
     assert_eq!(rounds, run(Mode::Turns));
-    assert_eq!(rounds[9], (6, Side::Red, 100, vec![14, 14]), "ten gold a round");
+    assert!(rounds.contains(&(5, Side::Red, 90, vec![14, 14])), "ten gold a round: {rounds:?}");
 }
 
 #[test]

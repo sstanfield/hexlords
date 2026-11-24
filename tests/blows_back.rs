@@ -1,7 +1,7 @@
-//! Two ways of fighting to try (the owner's word, 2026-11-21): the loser
-//! of an exchange may hit back, a quarter of the time at most
-//! (`combat::Rules::blows_back`); and the dice (`System::Dice`): the stacks'
-//! strengths brought to 1 to 9, a ten-sided die each.
+//! A way of fighting to try (the owner's word, 2026-11-21): the loser of an
+//! exchange may hit back, a quarter of the time at most
+//! (`combat::Rules::blows_back`). (The dice, tried with it, were taken out
+//! on 2026-11-24.)
 
 mod common;
 
@@ -11,7 +11,7 @@ use hexlords::options_window::Options;
 use hexlords::orders::Order;
 use hexlords::session::Session;
 use hexlords::setup::Setup;
-use hexlords::state::combat::{Exact, System};
+use hexlords::state::combat::System;
 use hexlords::state::scenario::{self, Scenario};
 use hexlords::state::{Hex, Side, UnitId};
 use turbo_ferret::Size;
@@ -58,20 +58,20 @@ fn attack(game: &mut Game, reds: &[UnitId]) -> hexlords::game::Fight {
     fights.next_back().cloned().expect("a battle")
 }
 
-fn dice_back(s: &mut Setup) {
-    (s.combat.system, s.combat.blows_back) = (System::Dice, true);
+fn strength_back(s: &mut Setup) {
+    (s.combat.system, s.combat.blows_back) = (System::Strength, true);
 }
 
 #[test]
-fn the_battle_window_shows_the_dice_and_the_loser_hitting_back() {
+fn the_battle_window_shows_the_loser_hitting_back() {
     // The first seed whose battle has a blow back in it.
     let seed = (1..200)
         .find(|seed| {
-            let (mut game, reds) = game(*seed, dice_back);
+            let (mut game, reds) = game(*seed, strength_back);
             attack(&mut game, &reds).trace.iter().any(|b| b.back)
         })
         .expect("a seed");
-    let (game, _) = game(seed, dice_back);
+    let (game, _) = game(seed, strength_back);
     let mut s = Session::with_options(&common::assets(), Size::new(1024, 768), 96, game, Options::manual()).unwrap();
     for hex in [FROM, HOLD] {
         s.screen.view.center_on(hex);
@@ -88,8 +88,8 @@ fn the_battle_window_shows_the_dice_and_the_loser_hitting_back() {
             said.push(lines);
         }
     }
-    // 10 against 8, brought to 9 against 7 (7.2) on the dice.
-    assert_eq!(said[1][0], "Red 10 against blue 8: 9 against 7 on the dice.", "{said:?}");
+    // 10 against 8, the stacks' whole strengths.
+    assert_eq!(said[1][0], "Red 10 against blue 8.", "{said:?}");
     // The loser hits back, and the winner is hit.
     let back = said.iter().position(|l| l[0].ends_with("hits back.")).expect("a blow back");
     let (fought, hit) = (&said[back - 1], &said[back]);
@@ -123,18 +123,15 @@ fn a_winner_hit_back_keeps_its_wound_when_wounds_last() {
 }
 
 #[test]
-fn the_help_says_how_the_dice_go_and_that_losers_hit_back() {
+fn the_help_says_that_losers_hit_back() {
     let words = |rules: fn(&mut Setup)| {
         let (game, _) = game(1, rules);
         let (_, sections) = guide::topic(&game, "help_battles").unwrap();
         sections.iter().flat_map(|sec| sec.rows.iter().map(|(_, w)| w.clone())).collect::<Vec<_>>().join(" ")
     };
-    let all = words(dice_back);
-    assert!(all.contains("On the dice") && all.contains("plays no part"), "{all}");
-    assert!(all.contains("9 against 1 wins 99% of the exchanges, 9 against 8 69%, 5 against 5 50%"), "{all}");
+    let all = words(strength_back);
+    assert!(all.contains("Strength against strength") && !all.contains("dice"), "{all}");
     assert!(all.contains("may hit back") && all.contains("never more than 25%"), "{all}");
-    // A roll of exactly the number for the defenders only: 5 against 5 is
-    // theirs, 3 in 5.
-    let all = words(|s| (s.combat.system, s.combat.exact) = (System::Dice, Exact::Defenders));
-    assert!(all.contains("5 against 5 40%") && all.contains("never hit"), "{all}");
+    let all = words(|s| s.combat.system = System::Strength);
+    assert!(all.contains("never hit"), "{all}");
 }

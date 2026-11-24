@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::orders::{Event, Fallen, Order, RALLY_POINTS, RallyPoint, Record, Step};
-use crate::setup::{Controller, Fog, Setup, TurnOrder, WhenOut};
+use crate::setup::{Controller, Fog, Mode, Setup, WhenOut};
 use crate::state::combat::{self, Fighter};
 use crate::state::scenario::{self, MapSource, Scenario, side_name};
 use crate::state::{ATTACK_COST, Blessing, Together, Walker, reach_together};
@@ -763,7 +763,9 @@ impl Game {
     pub fn start(map: Map, setup: Setup) -> Game {
         let mut rng = Rng::new(setup.seed);
         let mut order: Vec<Side> = setup.seats.iter().map(|seat| seat.side).collect();
-        if setup.order == TurnOrder::Drawn {
+        // (In rounds the order is drawn as each round plays out, and the
+        // sides give their first orders in the seats' order.)
+        if setup.drawn() && setup.mode == Mode::Turns {
             rng.shuffle(&mut order);
         }
         let first_walls = map.cities().iter().map(|c| (c.pos, c.walls)).collect();
@@ -2630,6 +2632,18 @@ impl Game {
         if !battle.attackers_won {
             self.alarm(at);
         }
+        // In rounds, who held is spent as its attackers would be (the
+        // owner's word, 2026-11-24: "unexpected combat leaves the victor out
+        // of MPs as if they attacked"): it takes no more steps this round.
+        // (In turns its own turn is still to come, and gives it its
+        // movement.)
+        if !battle.attackers_won && self.rounds() {
+            for id in self.map.units_at(at).to_vec() {
+                if let Some(unit) = self.map.unit_mut(id) {
+                    (unit.movement, unit.step, unit.halted) = (0, None, true);
+                }
+            }
+        }
         // Those who lived through it won it: experience, a point more if the
         // odds were against them; and, if no commander led them and it was a
         // hard fight, maybe a captain from their ranks.
@@ -2806,7 +2820,7 @@ impl Game {
             if self.current >= self.order.len() {
                 self.current = 0;
                 self.round += 1;
-                if self.setup.order == TurnOrder::Drawn {
+                if self.setup.drawn() {
                     self.rng.shuffle(&mut self.order);
                 }
                 // The units of the sides that have no turn (nobody's, a

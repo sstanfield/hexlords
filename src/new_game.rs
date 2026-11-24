@@ -25,7 +25,7 @@ use crate::platform;
 use crate::save::{self, Summary};
 use crate::screen::{MapScreen, Scene};
 use crate::setup::{Controller, Fog, Mode, Setup, TurnOrder};
-use crate::state::combat::{Exact, MAX_CHANCE, System, UNIT_CAP};
+use crate::state::combat::{MAX_CHANCE, System, UNIT_CAP};
 use crate::state::scenario::side_name;
 use crate::state::{Hex, Map, Side, TileType};
 
@@ -40,11 +40,6 @@ pub const ORDER_FIXED_ID: &str = "order_fixed";
 pub const ORDER_DRAWN_ID: &str = "order_drawn";
 pub const BATTLES_LINES_ID: &str = "battles_lines";
 pub const BATTLES_STRENGTH_ID: &str = "battles_strength";
-pub const BATTLES_DICE_ID: &str = "battles_dice";
-/// On the dice, what a roll of exactly a side's number is.
-pub const EXACT_HITS_ID: &str = "exact_hits";
-pub const EXACT_MISSES_ID: &str = "exact_misses";
-pub const EXACT_DEFENDERS_ID: &str = "exact_defenders";
 pub const CHANCE_LESS_ID: &str = "chance_less";
 pub const CHANCE_MORE_ID: &str = "chance_more";
 pub const WOUNDS_ID: &str = "wounds";
@@ -225,9 +220,8 @@ impl NewGame {
                 ("A random map", "Its preset, size, sides, cities, temples, cities at sea and in the air, seed: then Make the map"),
                 ("Drag on the map", "Move it"),
                 ("Turns, Rounds", "How to play: one side after the other; or all sides give their orders, then the round plays out at once"),
-                ("Order of turns", "The same each round, or drawn anew (in rounds: who steps first as a round plays out)"),
-                ("Battles", "Lines of duels, strength against strength, or dice; how much chance, 0 to 10"),
-                ("Battles, on the dice", "What a roll of exactly a side's number does, in place of the chance"),
+                ("Order of turns", "The same each round, or drawn anew (in rounds always drawn: who steps first as a round plays out)"),
+                ("Battles", "Lines of duels, or strength against strength; how much chance, 0 to 10"),
                 ("Wounds last, Losers hit back", "Wounds stay until a side's turn ends; the loser of an exchange may hit back"),
                 ("Cap 9", "No unit fights stronger than 9, its bonuses counted"),
                 ("Gold", "What each side's treasury holds at the start"),
@@ -613,10 +607,15 @@ impl NewGame {
         build::gap(ui, c, space);
         build::heading(ui, c, "Order of turns");
         let row = build::row(ui, c, space);
+        // In rounds the order is always drawn (`Setup::drawn`): the
+        // choice is the turns', shown greyed out.
         let fixed = build::button(ui, row, ORDER_FIXED_ID, "The same");
-        press(ui, fixed, "order", self.setup.order == TurnOrder::Fixed);
+        press(ui, fixed, "order", !self.setup.drawn());
         let drawn = build::button(ui, row, ORDER_DRAWN_ID, "Drawn each round");
-        press(ui, drawn, "order", self.setup.order == TurnOrder::Drawn);
+        press(ui, drawn, "order", self.setup.drawn());
+        let rounds = self.setup.mode == Mode::Rounds;
+        ui.set_disabled(fixed, rounds);
+        ui.set_disabled(drawn, rounds);
 
         build::gap(ui, c, space);
         build::heading(ui, c, "Battles");
@@ -625,25 +624,10 @@ impl NewGame {
         press(ui, lines, "battles", self.setup.combat.system == System::Lines);
         let strength = build::button(ui, row, BATTLES_STRENGTH_ID, "Strength");
         press(ui, strength, "battles", self.setup.combat.system == System::Strength);
-        let dice = build::button(ui, row, BATTLES_DICE_ID, "Dice");
-        press(ui, dice, "battles", self.setup.combat.system == System::Dice);
         let row = build::row(ui, c, space);
-        if self.setup.combat.system == System::Dice {
-            // The dice are the chance: what a roll of exactly a number does.
-            build::text(ui, row, "Exact roll");
-            for (id, word, exact) in [
-                (EXACT_HITS_ID, "Wins", Exact::Hits),
-                (EXACT_MISSES_ID, "Misses", Exact::Misses),
-                (EXACT_DEFENDERS_ID, "Wins defending", Exact::Defenders),
-            ] {
-                let button = build::button(ui, row, id, word);
-                press(ui, button, "exact", self.setup.combat.exact == exact);
-            }
-        } else {
-            build::button(ui, row, CHANCE_LESS_ID, "-");
-            build::text(ui, row, &format!("Chance {} of {MAX_CHANCE}", self.setup.combat.chance));
-            build::button(ui, row, CHANCE_MORE_ID, "+");
-        }
+        build::button(ui, row, CHANCE_LESS_ID, "-");
+        build::text(ui, row, &format!("Chance {} of {MAX_CHANCE}", self.setup.combat.chance));
+        build::button(ui, row, CHANCE_MORE_ID, "+");
         let row = build::row(ui, c, space);
         let wounds = build::button(ui, row, WOUNDS_ID, "Wounds last");
         press(ui, wounds, "wounds", self.setup.combat.wounds);
@@ -672,7 +656,7 @@ impl NewGame {
         if self.setup.seats.is_empty() {
             build::text(ui, c, "This map has no sides: nothing to play.");
         }
-        let fixed_order = self.setup.order == TurnOrder::Fixed;
+        let fixed_order = !self.setup.drawn();
         let mut names = Vec::new();
         for (i, seat) in self.setup.seats.iter().enumerate() {
             let row = build::row(ui, c, space);
@@ -773,22 +757,11 @@ impl NewGame {
             } else if id == TbId::new(MODE_ROUNDS_ID) {
                 self.setup.mode = Mode::Rounds;
                 self.rebuild();
-            } else if let Some(system) = [
-                (BATTLES_LINES_ID, System::Lines),
-                (BATTLES_STRENGTH_ID, System::Strength),
-                (BATTLES_DICE_ID, System::Dice),
-            ]
-            .into_iter()
-            .find_map(|(button, system)| (id == TbId::new(button)).then_some(system))
+            } else if let Some(system) = [(BATTLES_LINES_ID, System::Lines), (BATTLES_STRENGTH_ID, System::Strength)]
+                .into_iter()
+                .find_map(|(button, system)| (id == TbId::new(button)).then_some(system))
             {
                 self.setup.combat.system = system;
-                self.rebuild();
-            } else if let Some(exact) =
-                [(EXACT_HITS_ID, Exact::Hits), (EXACT_MISSES_ID, Exact::Misses), (EXACT_DEFENDERS_ID, Exact::Defenders)]
-                    .into_iter()
-                    .find_map(|(button, exact)| (id == TbId::new(button)).then_some(exact))
-            {
-                self.setup.combat.exact = exact;
                 self.rebuild();
             } else if id == TbId::new(WOUNDS_ID) {
                 self.setup.combat.wounds = !self.setup.combat.wounds;
@@ -822,7 +795,9 @@ impl NewGame {
                     (*gold + GOLD_STEP).min(MAX_GOLD)
                 };
                 self.rebuild();
-            } else if id == TbId::new(ORDER_FIXED_ID) || id == TbId::new(ORDER_DRAWN_ID) {
+            } else if (id == TbId::new(ORDER_FIXED_ID) || id == TbId::new(ORDER_DRAWN_ID))
+                && self.setup.mode == Mode::Turns
+            {
                 self.setup.order = if id == TbId::new(ORDER_FIXED_ID) { TurnOrder::Fixed } else { TurnOrder::Drawn };
                 self.rebuild();
             } else if let Some(i) = (0..self.maps.len()).find(|i| id == TbId::new(&map_id(*i))) {
