@@ -32,6 +32,7 @@
 // and only in `platform` (today: `platform::bring_to_front` on macOS).
 #![deny(unsafe_code)]
 
+pub mod about;
 pub mod agents;
 pub mod app;
 pub mod battle_window;

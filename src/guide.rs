@@ -43,7 +43,7 @@ pub fn topic(game: &Game, id: &str) -> Option<(&'static str, Vec<HelpSection>)> 
 
 /// A section: rows of a word and what it says, the words cut into lines (a
 /// row each, the word only on the first).
-fn section(title: &str, rows: &[(&str, String)]) -> HelpSection {
+pub fn section(title: &str, rows: &[(&str, String)]) -> HelpSection {
     let mut out = Vec::new();
     for (word, text) in rows {
         for (i, line) in wrap(text, WIDTH).into_iter().enumerate() {

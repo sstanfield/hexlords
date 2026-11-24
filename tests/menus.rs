@@ -192,6 +192,43 @@ fn the_help_menu_has_the_keys_and_the_rules_of_this_game() {
     assert!(!s.screen.help_open());
 }
 
+/// The owner's word, 2026-11-24: "Add an about dialog": the version and the
+/// commit the game was built from, last in the Help menu.
+#[test]
+fn about_says_the_version_and_what_the_game_was_built_from() {
+    let mut s = session(|_| {});
+    push_widget(&mut s, MENU_HELP_ID);
+    let last = s
+        .open_menu_items()
+        .and_then(|(_, items)| items.last().map(|(id, words, _)| (id.to_string(), words.to_string())));
+    assert_eq!(
+        last,
+        Some((hexlords::about::ABOUT_ID.to_string(), "About Hexlords".to_string())),
+        "last in the Help menu"
+    );
+    push_widget(&mut s, hexlords::about::ABOUT_ID);
+    assert_eq!(s.screen.help_title(), Some("About Hexlords"));
+    let rows: Vec<(String, String)> = hexlords::about::sections().into_iter().flat_map(|sec| sec.rows).collect();
+    assert!(rows.contains(&("Version".to_string(), env!("CARGO_PKG_VERSION").to_string())), "{rows:?}");
+    let built = rows.iter().find(|(k, _)| k == "Built from").map(|(_, w)| w.as_str()).unwrap();
+    // (Built in a repository the commit is known.)
+    match hexlords::about::commit() {
+        Some((commit, _)) => assert!(built.starts_with(commit), "{built}"),
+        None => assert_eq!(built, "sources outside git"),
+    }
+    assert!(rows.iter().all(|(_, w)| w.chars().count() <= 64), "{rows:?}");
+    // On the screen, in the help window.
+    let texts: Vec<String> = common::descendants(&s, hexlords::screen::HELP_ID)
+        .iter()
+        .filter_map(|id| s.screen.ui.text(*id))
+        .map(str::to_string)
+        .collect();
+    assert!(texts.iter().any(|t| t == env!("CARGO_PKG_VERSION")), "{texts:?}");
+    assert!(texts.iter().any(|t| t == built), "{texts:?}");
+    press(&mut s, SpecialKey::Esc);
+    assert!(!s.screen.help_open());
+}
+
 #[test]
 fn h_goes_to_the_capital_and_hotseat_turns_start_there() {
     let mut s = session(|_| {});
@@ -214,7 +251,7 @@ fn h_goes_to_the_capital_and_hotseat_turns_start_there() {
 
 #[test]
 fn the_menus_items_do_not_need_the_mouse() {
-    // Every item but the help's topics has its keys, and they are the ones
+    // Every item but the help's topics (and About) has its keys, and they are the ones
     // that do it (spot checks: Ctrl+Z is Undo, F1 the help).
     let mut s = session(|_| {});
     for (menu, _) in MENU_TITLES {

@@ -143,7 +143,8 @@ and the selected hex's city: one of yours in full (set what it builds, where
 its new units go), another's as it shows from outside.
 
 The help in the game (F1 or `?`) says every key, and the Help menu has the
-rules of the game in play. The most used:
+rules of the game in play, and About Hexlords: the version, and the commit
+it was built from. The most used:
 
 | Input | What it does |
 |---|---|
@@ -306,7 +307,14 @@ hexlords [--map <file.map or map directory>] [--players <side>=<who>,...] [--mod
         [--cap <n>] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] [--log]]
         [--saves <dir>] [--script <steps>]
         [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
+hexlords --version
 ```
+
+`--version` says which version this is and what it was built from (the
+branch and the commit, `+` if the sources had changes not committed; the
+profile, the target, when, the compiler), as About Hexlords does. The
+version goes `0.<rules>.<patch>`: the middle number moves when the rules
+change, and games saved before may not load; the last for any other change.
 
 Without `--map` the window opens on the new game screen, which sets the
 game up; the options that set up a game (`--players` to `--total-fog`) go

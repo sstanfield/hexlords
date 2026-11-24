@@ -1,6 +1,8 @@
 //! Hexlords in a window, or without one.
 //!
-//! Without `--map` the window opens on the new game screen. Options:
+//! Without `--map` the window opens on the new game screen. `--version`
+//! says which version this is and what it was built from, and quits.
+//! Options:
 //! - `--map <file or directory>`: play this map at once (one person, the first
 //!   side; the computer plays the others);
 //! - `--players red=person,blue=bold`: who plays which side (`person`, or an
@@ -76,6 +78,8 @@ struct Args {
     fog: Fog,
     /// `--saves <dir>`
     saves: Option<PathBuf>,
+    /// `--version`
+    version: bool,
 }
 
 fn usage() -> String {
@@ -83,7 +87,7 @@ fn usage() -> String {
         "usage: hexlords [--map <file.map or map directory>] [--players <side>=<person|agent>,...] [--mode turns|rounds] [--order fixed|drawn] \
          [--seed <n>] [--chance <0-10>] [--battles lines|strength] [--wounds] [--blows-back] [--cap <n>] [--gold <n>] [--fog | --total-fog] [--saves <dir>] [--headless [--rounds <n>] \
          [--log]] \
-         [--script <steps>] {OPTIONS_USAGE}"
+         [--script <steps>] {OPTIONS_USAGE} | --version"
     )
 }
 
@@ -148,6 +152,7 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
             }
             "--log" => parsed.log = true,
             "-h" | "--help" => return Err(String::new()),
+            "-V" | "--version" => parsed.version = true,
             _ => return Err(format!("unknown option {arg}")),
         }
     }
@@ -165,6 +170,10 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if args.version {
+        println!("{}", hexlords::about::line());
+        return;
+    }
     let Args {
         window,
         map,
@@ -184,6 +193,7 @@ fn main() {
         gold,
         fog,
         saves,
+        version: _,
     } = args;
     // A map that cannot be read ends the run before a window opens.
     let game = match &map {
@@ -347,6 +357,9 @@ mod tests {
         assert_eq!(parse(&["--battles", "lances"]).unwrap_err(), lances);
         assert_eq!(parse(&["--battles", "dice"]).unwrap_err(), "--battles: \"dice\" is not lines or strength");
         assert!(parse(&["--wounds"]).unwrap().wounds && !parse(&[]).unwrap().wounds);
+        assert!(
+            parse(&["--version"]).unwrap().version && parse(&["-V"]).unwrap().version && !parse(&[]).unwrap().version
+        );
         assert!(parse(&["--blows-back"]).unwrap().blows_back && !parse(&[]).unwrap().blows_back);
         assert_eq!((parse(&["--cap", "9"]).unwrap().cap, parse(&[]).unwrap().cap), (Some(9), None));
         assert_eq!(parse(&["--cap", "0"]).unwrap_err(), "--cap: \"0\" is not a number above 0");

@@ -32,7 +32,6 @@ use crate::game::{Game, SelectOutcome, Sight, Task};
 use crate::gui::build::{self, WindowParts};
 use crate::gui::menu::{ItemWords, Menu, MenuBar};
 use crate::gui::{MapCommand, MapKey, RootCommand};
-use crate::guide;
 use crate::help::{HelpSection, command_key, fullscreen_keys};
 use crate::info;
 use crate::log_window::{self, LogWindow};
@@ -53,6 +52,7 @@ use crate::state::{
 };
 use crate::tasks_window::{self, TasksWindow};
 use crate::temple_window::{self, TempleWindow};
+use crate::{about, guide};
 
 /// The layout, relative to the asset directory.
 pub const LAYOUT: &str = "layouts/main.tb.txt";
@@ -4714,7 +4714,7 @@ impl Session {
             for (topic, title) in guide::TOPICS {
                 menu = menu.item(topic, title, "", true);
             }
-            menu
+            menu.separator().item(about::ABOUT_ID, about::TITLE, "", true)
         } else {
             return None;
         };
@@ -4909,6 +4909,9 @@ impl Session {
                     self.screen.game.deselect();
                 }
                 RootCommand::Click(id) if id == TbId::new(CAPITAL_ID) => self.go_to_capital(),
+                RootCommand::Click(id) if id == TbId::new(about::ABOUT_ID) => {
+                    self.screen.show_topic(about::TITLE, &about::sections());
+                }
                 RootCommand::Click(id) if guide::TOPICS.iter().any(|(topic, _)| id == TbId::new(topic)) => {
                     let topic = guide::TOPICS.iter().find(|(topic, _)| id == TbId::new(topic)).map(|(t, _)| *t);
                     if let Some((title, sections)) = topic.and_then(|t| guide::topic(&self.screen.game, t)) {
