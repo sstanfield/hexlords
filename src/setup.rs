@@ -115,8 +115,10 @@ impl Setup {
     /// 2026-11-24: "if the side order has any bearing on Rounds mode ...
     /// then it should always be random"): there it says who of stacks that
     /// get somewhere at the same moment is first, and whose standing orders
-    /// go first as the round ends. The sides give their orders in it too,
-    /// which nobody learns anything by.
+    /// go first as the round ends (`Game::stepping_order`). The sides give
+    /// their orders in the seats' order all the same, every round (nobody
+    /// learns anything by it, and in hotseat the same order every round is
+    /// more natural).
     pub fn drawn(&self) -> bool {
         self.order == TurnOrder::Drawn || self.mode == Mode::Rounds
     }

@@ -516,11 +516,13 @@ changed.
     the order decides. So it is always drawn in rounds (the owner's word,
     2026-11-24: "if the side order has any bearing on Rounds mode ...
     then it should always be random (you can grey out that option in
-    rounds mode)"; `Setup::drawn`): as each round begins to play out,
-    after every side's orders are given, so nobody knows. The new game
-    screen greys out the choice, which is the turns'. (The first round's
-    orders are given in the seats' order, the others' in the order the
-    round before was played in: nobody learns anything by it.)
+    rounds mode)"; `Setup::drawn`, `Game::stepping_order`): as each
+    round begins to play out, after every side's orders are given, so
+    nobody knows. The new game screen greys out the choice, which is the
+    turns'. The orders are given in the seats' order, the same every
+    round (the owner's word, 2026-11-24: nobody learns anything by going
+    first, and in hotseat "keeping it the same every turn will be more
+    natural to the players").
   - A stack that gets to a hex another side stands on attacks it, there
     and then, wherever its way was taking it (the owner: "stacks that run
     into each other should probably fight vs just block each other. This
@@ -725,13 +727,19 @@ changed.
   a copy make the same game. The orders are kept by the game itself,
   `Game::record`; a saved game is made of the same record: the setup,
   the map and the orders from the start, "Saved games" below.)
-- **Hotseat**: each person plans in turn behind the hiding screen; the
-  last of them watches the round play out, and each of the others is
+- **Hotseat**: each person plans in turn behind the hiding screen, in the
+  seats' order every round (only the order the round plays out in is
+  drawn); the last of them watches the round play out, and each of the others is
   shown it as their next orders begin, once their log is out of the way
   (what is still there to be shown: their own stacks going, the others'
   where they saw them at the time, their battles, each held until its
   window is closed). A click on the map ends the moves shown (the battles
   still play), and nothing of it goes on under the next person's cover.
+  - *An idea to revisit* (the owner, 2026-11-24, not built): in hotseat
+    rounds the order the orders are given in decides nothing, so the
+    hiding screen between two people could let any of those who have not
+    given theirs yet go next, and the players plan in whatever order
+    suits them. For now it is the seats' order.
 - **The agents**: the planners (`steady`, `bold`, `careful`) play rounds
   in a way of their own (`src/planner/rounds.rs`, `docs/agents.md`, "The
   planner in rounds"; the owner's word, 2026-11-22: "Round based games

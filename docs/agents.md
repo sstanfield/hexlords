@@ -334,9 +334,9 @@ end
   not there. In rounds `toward` may name land the side has never seen
   (total fog of war): the units set off toward it and find their way as
   they come to see more. The `order` line is the order the orders are
-  given in; who goes first of stacks that get somewhere at the same
-  moment is drawn after them (in rounds the order is always drawn,
-  whatever `--order` says).
+  given in, the seats' every round; who goes first of stacks that get
+  somewhere at the same moment is drawn after them, as the round plays
+  out (whatever `--order` says).
 - `order`: this round's order of turns.
 - `battles <lines or strength> chance <0 to 10>`: how the game's
   battles go (`docs/gameplay.md`, "Fighting"); then `wounds last` when

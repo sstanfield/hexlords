@@ -674,8 +674,14 @@ pub struct Game {
     pub assets: Option<PathBuf>,
     /// How the game was set up: the mode, who plays which side.
     setup: Setup,
-    /// This round's order of the sides' turns.
+    /// This round's order of the sides' turns (in rounds, the order they
+    /// give their orders in: always the seats').
     order: Vec<Side>,
+    /// In rounds, the order the sides step in as this round plays out:
+    /// who of stacks that get somewhere at the same moment is first, whose
+    /// standing orders go first as it ends. Drawn as each round begins to
+    /// play out (`Setup::drawn`).
+    stepping: Vec<Side>,
     /// Whose turn it is: an index into `order`.
     current: usize,
     /// The round: every side once. 1 at the start.
@@ -777,6 +783,7 @@ impl Game {
             range_revision: 0,
             onward: false,
             assets: None,
+            stepping: order.clone(),
             order,
             current: 0,
             round: 1,
@@ -832,9 +839,15 @@ impl Game {
         self.setup.controller(side)
     }
 
-    /// This round's order of turns.
+    /// This round's order of turns (in rounds, of giving orders).
     pub fn order(&self) -> &[Side] {
         &self.order
+    }
+
+    /// In rounds, the order the sides step in as this round plays out
+    /// (drawn as it begins to; the seats' until the first does).
+    pub fn stepping_order(&self) -> &[Side] {
+        &self.stepping
     }
 
     /// The sides that are out of the game.
@@ -1105,7 +1118,7 @@ impl Game {
         sum.n(u64::from(self.round));
         sum.n(self.current as u64);
         sum.n(self.order.len() as u64);
-        for side in &self.order {
+        for side in self.order.iter().chain(&self.stepping) {
             sum.n(side.index() as u64);
         }
         match &self.playing {

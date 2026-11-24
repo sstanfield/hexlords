@@ -457,9 +457,9 @@ fn orders(game: &Game) -> Vec<HelpSection> {
         (false, TurnOrder::Fixed) => "The sides play one after the other, in the same order every round.",
         (false, TurnOrder::Drawn) => "The sides play one after the other, in an order drawn anew every round.",
         (true, _) => {
-            "Rounds: every side gives its orders, then the round plays out at once. Of stacks that get \
-             somewhere at the same moment, the sides go in an order drawn anew every round (always, in \
-             rounds)."
+            "Rounds: every side gives its orders, in the same order every round, then the round plays out \
+             at once. Of stacks that get somewhere at the same moment, the sides go in an order drawn anew \
+             as each round plays out (always, in rounds)."
         }
     };
     // In rounds: how a round goes.

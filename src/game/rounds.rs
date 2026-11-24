@@ -5,8 +5,9 @@
 //!
 //! The rules are the turns' own, applied at another moment:
 //!
-//! - **Planning.** The sides give their orders one after the other (who
-//!   plans first learns nothing by it: nothing moves). What moves no unit is
+//! - **Planning.** The sides give their orders one after the other, in the
+//!   seats' order every round (who plans first learns nothing by it:
+//!   nothing moves). What moves no unit is
 //!   carried out at once (a city's work, its walls, a rally point, Defend,
 //!   Done, a blessing sought, a unit sent home). An order to move is a
 //!   **plan**: `Order::Move`, `Toward` and `Roam` give the units a route to
@@ -31,8 +32,8 @@
 //!   at the pace of its slowest. Each stack sets off on the next hex of its
 //!   way, and is there when the step's time is up; the stacks get there in
 //!   the order of the clock (at the same moment: in the round's order of
-//!   the sides, drawn anew as each round begins to play out: always, in
-//!   rounds, `Setup::drawn`). A stack that gets to a hex another side stands on
+//!   the sides, drawn anew as each round begins to play out,
+//!   `Game::stepping_order`). A stack that gets to a hex another side stands on
 //!   attacks it, there and then, wherever its way was taking it ("stacks
 //!   that run into each other should probably fight vs just block each
 //!   other"): it does not go round who has come to stand on its way. So
@@ -571,14 +572,14 @@ impl Game {
             self.ease(side);
         }
         self.note_sightings();
-        // The order the sides step in, if it is drawn, is drawn now: when
-        // the orders were given nobody knew who would step first (the
-        // review, 2026-11-22: drawn before, it was the order the orders
-        // were given in, and everybody knew). In rounds it always is
-        // (`Setup::drawn`).
-        if self.setup.drawn() {
-            self.rng.shuffle(&mut self.order);
-        }
+        // The order the sides step in is drawn now: when the orders were
+        // given nobody knew who would step first (the review, 2026-11-22:
+        // drawn before, it was the order the orders were given in, and
+        // everybody knew). The orders are given in the seats' order every
+        // round (the owner's word, 2026-11-24: in hotseat "keeping it the
+        // same every turn will be more natural to the players").
+        self.stepping = self.order.clone();
+        self.rng.shuffle(&mut self.stepping);
         // Everybody sets off as the clock starts.
         self.rest(false);
         self.playing = Some(PlayOut::default());
@@ -740,7 +741,7 @@ impl Game {
     /// the round's order: each side, and its stack.
     fn idle_stacks(&self) -> Vec<(Side, Vec<UnitId>)> {
         let mut stacks: Vec<(Side, Vec<UnitId>)> = Vec::new();
-        for side in self.order.iter().filter(|side| !self.out.contains(side)) {
+        for side in self.stepping.iter().filter(|side| !self.out.contains(side)) {
             let from = stacks.len();
             for unit in self.map.units().of_side(*side).filter(|u| u.step.is_none() && self.goes(u)) {
                 if stacks[from..].iter().any(|(_, stack)| stack.contains(&unit.id())) {
@@ -827,7 +828,7 @@ impl Game {
     fn next_there(&self) -> Option<(u64, Side, Vec<UnitId>, Hex)> {
         let mut first: Option<(u64, &Unit, Hex)> = None;
         let mut moving = false;
-        for side in self.order.iter().filter(|side| !self.out.contains(side)) {
+        for side in self.stepping.iter().filter(|side| !self.out.contains(side)) {
             for unit in self.map.units().of_side(*side).filter(|u| self.goes(u)) {
                 let Some((hex, due)) = unit.step else { continue };
                 moving |= hex != unit.pos();
@@ -1368,7 +1369,7 @@ impl Game {
             }
         }
         self.parties = 0;
-        for side in self.order.clone() {
+        for side in self.stepping.clone() {
             if self.out.contains(&side) || self.winner.is_some() {
                 continue;
             }
