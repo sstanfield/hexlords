@@ -275,7 +275,11 @@ fn n_and_c_go_from_stack_to_stack_and_city_to_city() {
     assert_eq!(s.shown(), SOUTHWICK);
     assert!(s.screen.game.selection().is_empty());
     let southwick = s.screen.game.map.city_at(SOUTHWICK).map(|c| c.id);
-    assert_eq!(s.city_panel().map(|p| p.city()), southwick, "red's own: in full in the sidebar");
+    assert_eq!(
+        s.city()[0],
+        s.screen.game.map.cities().get(southwick.unwrap()).unwrap().name,
+        "red's own, in the sidebar"
+    );
     choose(&mut s, MENU_CITIES_ID, NEXT_CITY_ID);
     assert_eq!(s.shown(), REDHOLD);
     type_char(&mut s, 'C');

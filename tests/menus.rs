@@ -124,9 +124,12 @@ fn an_item_does_what_its_key_does_and_is_greyed_when_it_can_do_nothing() {
     click(&mut s, p);
     choose(&mut s, MENU_UNITS_ID, DESELECT_ID);
     assert!(s.screen.game.selected().is_none());
-    // The view's: the tasks, the log, the zoom.
+    // The view's: the next that needs orders (after Redhold's stack, which
+    // waits, its city, which builds nothing: in production), the log, the
+    // zoom.
     choose(&mut s, MENU_VIEW_ID, TASKS_ID);
-    assert!(s.tasks_window().is_some());
+    assert!(s.production().and_then(|p| p.chosen_city()).is_some(), "Redhold, idle");
+    press(&mut s, SpecialKey::Esc);
     choose(&mut s, MENU_VIEW_ID, LOG_ID);
     let log_open = |s: &Session| s.screen.ui.find(s.screen.ui.root(), TbId::new(LOG_WINDOW_ID)).is_some();
     assert!(log_open(&s));

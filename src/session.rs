@@ -27,7 +27,7 @@ use turbo_ferret::{ImageHandle, LayoutParams, Modifiers, Point, Rect, Size, TbId
 
 use crate::agents::{self, Agents};
 use crate::battle_window::{self, BattleWindow};
-use crate::city_windows::{self, CityList, CityOrder, CityPanel, CityWindow};
+use crate::city_windows::{self, CityList, CityOrder, CityWindow};
 use crate::game::{Game, SelectOutcome, Sight, Task};
 use crate::gui::build::{self, WindowParts};
 use crate::gui::menu::{ItemWords, Menu, MenuBar};
@@ -37,6 +37,7 @@ use crate::info;
 use crate::log_window::{self, LogWindow};
 use crate::options_window::{self, Options, OptionsWindow};
 use crate::orders::{Event, Order, RallyPoint};
+use crate::orders_list::{self, OrdersList};
 use crate::patrol_window::{self, PatrolClick, PatrolWindow};
 use crate::platform::WEB;
 use crate::production_window::{self, ProductionClick, ProductionWindow};
@@ -52,7 +53,6 @@ use crate::state::scenario::side_name;
 use crate::state::{
     CityId, DEFAULT_UNIT_IMAGE, Hex, MAX_QUEUE, MAX_STACK, Patrol, QueueEnd, QueueItem, Sends, Side, UnitId,
 };
-use crate::tasks_window::{self, TasksWindow};
 use crate::temple_window::{self, TempleWindow};
 use crate::{about, guide};
 
@@ -180,7 +180,6 @@ pub const GAME_OVER_CLOSE_ID: &str = "game_over_close";
 /// Where the windows go on the map: the list in its left part, a city in its
 /// right, a third of the way down (see `gui::build::place`).
 const LIST_ALIGN: (f32, f32) = (0.0, 0.33);
-const TASKS_ALIGN: (f32, f32) = (1.0, 0.0);
 
 /// What a click on the map picks, when it does not choose (`Session::picking`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -415,7 +414,14 @@ fn help_section() -> Vec<HelpSection> {
         HelpSection::new(
             "View",
             &[
-                ("T", "Tasks: what you have left to do, stacks with no orders and idle cities first"),
+                (
+                    "T  (Shift+T: back)",
+                    "The next stack or city that needs orders: the stack selected, the city in Production",
+                ),
+                (
+                    "The list in the sidebar",
+                    "Needs orders (gold), then your army (garrisons blue-grey, those done dim): a click goes to it",
+                ),
                 ("L", "Your log: your battles, who won and who died, the cities you took and lost"),
                 ("Watch, in the log", "A battle you fought, played out again: both stacks, a hit at a time"),
                 (
@@ -452,15 +458,15 @@ pub struct Session {
     unit_line: Line,
     tip: WidgetId,
     tip_lines: Vec<Line>,
-    /// Another side's city, as it shows from outside, a line at a time (in
-    /// `city_text`); one of the player's own in full (in `city_box`).
+    /// The selected hex's city, a line at a time: what shows of it (one's
+    /// own in full in the production panel, O).
     city: Vec<Line>,
-    city_text: WidgetId,
-    city_box: WidgetId,
-    city_scroll: WidgetId,
-    city_panel: Option<CityPanel>,
-    /// The city, and its holder, the panel was made for.
-    panel_of: Option<(CityId, Side)>,
+    /// The sidebar's list of what needs orders, and the army (`orders_list`),
+    /// in a box that scrolls, as tall as the sidebar leaves it (the height
+    /// it was given last).
+    orders: OrdersList,
+    orders_scroll: WidgetId,
+    orders_h: i32,
     /// A press on the map closed a menu: the click it makes does nothing.
     swallow_click: bool,
     city_details: WidgetId,
@@ -513,9 +519,6 @@ pub struct Session {
     /// Why the last pick was refused, said until the next one.
     refused: Option<String>,
 
-    /// The list of tasks, while it is open; and the map's revision and the
-    /// side it was last brought up to date for.
-    tasks: Option<TasksWindow>,
     /// The production window, while it is open.
     production: Option<ProductionWindow>,
     /// A temple's window: whether the stack there seeks its blessing, and
@@ -523,7 +526,6 @@ pub struct Session {
     temple: Option<TempleWindow>,
     /// The window that asks before the selected units are disbanded.
     disband: Option<crate::disband_window::DisbandWindow>,
-    tasks_of: Option<(u64, Side)>,
     /// The log, while it is open.
     log: Option<LogWindow>,
     /// How long the game's history was when each person at this screen last
@@ -754,11 +756,9 @@ impl Session {
             tip,
             tip_lines: lines(&screen, "tip", TIP_LINES)?,
             city: lines(&screen, "city", CITY_LINES)?,
-            city_text: find(&screen, "city_panel")?,
-            city_box: find(&screen, "city_box")?,
-            city_scroll: find(&screen, "city_scroll")?,
-            city_panel: None,
-            panel_of: None,
+            orders: OrdersList::new(find(&screen, "orders_heading")?, find(&screen, "orders_list")?),
+            orders_scroll: find(&screen, "orders_scroll")?,
+            orders_h: -1,
             swallow_click: false,
             city_details: find(&screen, CITY_DETAILS_ID)?,
             menu_bar: find(&screen, "menu_bar")?,
@@ -793,11 +793,9 @@ impl Session {
             reopen: None,
             refused: None,
 
-            tasks: None,
             production: None,
             temple: None,
             disband: None,
-            tasks_of: None,
             log: None,
             seen: Vec::new(),
             between: false,
@@ -1558,18 +1556,15 @@ impl Session {
         let slider_h = ui.preferred_size_free(self.replay_slider).pref.h;
         let slider_w = (side_w - button_w - 3 * spacing).max(4 * spacing);
         ui.set_layout_params(self.replay_slider, Some(LayoutParams::fixed(slider_w, slider_h)));
-        ui.set_layout_params(self.city_box, Some(narrow));
+
         // The panel is as tall as its lines and its slots (an empty slot keeps
         // its room), and the map has the rest.
         let panel_h = ui.preferred_size_free(self.panel).pref.h;
         let map_h = (h - spacing - panel_h).max(0);
         let minimap_h = h - (h as f32 * (1.0 - MINIMAP_HEIGHT_SHARE)).floor() as i32;
-        // The city's box has what the minimap and the turn's buttons leave
-        // of the sidebar (and scrolls if the city needs more).
-        let turn_h = ui.preferred_size_free(self.turn_row).pref.h;
-        let replay_h = ui.preferred_size_free(self.replay_row).pref.h;
-        let city_h = (h - minimap_h - turn_h - replay_h - 3 * spacing).max(0);
-        ui.set_layout_params(self.city_scroll, Some(LayoutParams::fixed(side_w, city_h)));
+        // (The list under the city has what the rest leaves: it is sized
+        // as it fills, `refresh_orders`.)
+        self.orders_h = -1;
         self.screen.set_map_sizes(Size::new(map_w, map_h), Size::new(side_w, minimap_h.min(h)));
     }
 
@@ -2248,21 +2243,17 @@ impl Session {
             }
             lines
         });
-        let city_tip = self.city_panel.as_ref().and_then(|panel| {
-            let (button, what) = panel.hovered(&self.screen.ui)?;
-            let city = map.cities().get(panel.city())?;
-            Some((button, info::production_details(map, city.units.get(what)?, city.trains)))
-        });
-        let (mut tip, tip_at) = match (unit_tip, city_tip) {
-            (Some(lines), _) => (lines, tipped.map(|i| (self.slot(i).button, false))),
-            (None, Some((button, lines))) => (lines, Some((button, true))),
-            (None, None) => (Vec::new(), None),
+        let (mut tip, tip_at) = match unit_tip {
+            Some(lines) => (lines, tipped.map(|i| (self.slot(i).button, false))),
+            None => (Vec::new(), None),
         };
         tip.truncate(TIP_LINES);
         // (A city on land never seen is not known to be there.)
+        // (Brief: what it can build is production's, O.)
         let city = map.city_at(self.shown).filter(|c| self.sight.knows(c.pos)).map_or(Vec::new(), |city| {
             let known = info::Known::of(city, self.seer(), &self.sight);
-            info::city_lines_for(map, city, CITY_LINES, known)
+            let lines = info::city_lines_for(map, city, CITY_LINES, known);
+            lines.into_iter().take_while(|l| !l.starts_with("Can build")).collect()
         });
 
         self.status.set(&mut self.screen, &status);
@@ -2309,20 +2300,22 @@ impl Session {
             Some((button, beside)) => self.open_tip(button, beside),
             None => set_visibility(&mut self.screen, self.tip, Visibility::Gone),
         }
-        // The city: one of the player's in full in its panel; another's in
-        // lines.
-        let own = self.refresh_city_panel();
-        let city = if own { Vec::new() } else { city };
+        // The city, in lines (the owner's word, 2026-11-24: the sidebar
+        // "Does not need to display city production info. Can keep basic
+        // city info when one is selected"); one's own has a button to its
+        // production (O). Another side's is all here.
         for (i, line) in self.city.iter_mut().enumerate() {
-            line.set(&mut self.screen, city.get(i).map_or("", String::as_str));
+            let text = city.get(i).map_or("", String::as_str);
+            line.set(&mut self.screen, text);
+            // (An empty line takes no room: the list under it moves up.)
+            let shown = if text.is_empty() { Visibility::Gone } else { Visibility::Visible };
+            set_visibility(&mut self.screen, line.widget, shown);
         }
-        let (text, panel) =
-            if own { (Visibility::Gone, Visibility::Visible) } else { (Visibility::Visible, Visibility::Gone) };
-        set_visibility(&mut self.screen, self.city_text, text);
-        set_visibility(&mut self.screen, self.city_scroll, panel);
-        // (Another side's city is all here: O opens one's own only, in the
-        // production panel.)
-        set_visibility(&mut self.screen, self.city_details, Visibility::Gone);
+        let viewer = self.viewer();
+        let own = self.people_in_play()
+            && self.screen.game.map.city_at(self.shown).is_some_and(|c| c.side == viewer && viewer != Side::Grey);
+        set_visibility(&mut self.screen, self.city_details, if own { Visibility::Visible } else { Visibility::Gone });
+        self.refresh_orders();
         // The button says whose turn it ends (on a map without sides,
         // nobody's), or, between turns, that the next can start; while the
         // computer plays, whose turn it waits for.
@@ -2412,20 +2405,6 @@ impl Session {
         if self.battle.as_ref().is_some_and(|battle| !battle.is_open(&self.screen.ui)) {
             self.battle = None;
         }
-        // The tasks: the person's, as the game is now (a refill is worked
-        // out only when the map changed).
-        if self.tasks.as_ref().is_some_and(|tasks| !tasks.is_open(&self.screen.ui)) {
-            self.tasks = None;
-        }
-        let revision = self.screen.game.map.revision();
-        if let Some(tasks) = &mut self.tasks {
-            if self.tasks_of != Some((revision, viewer))
-                && tasks.refresh(&mut self.screen.ui, &self.screen.game, viewer)
-            {
-                self.screen.settle();
-            }
-        }
-        self.tasks_of = Some((revision, viewer));
         if let Some(log) = &mut self.log {
             let refilled = log.refresh(&mut self.screen.ui, &self.screen.game, viewer, new_from);
             log.set_status(&mut self.screen.ui, &status);
@@ -2524,44 +2503,48 @@ impl Session {
         keys.iter().map(|key| self.icon(key)).collect()
     }
 
-    /// The selected hex's city in the sidebar, if it is one the person at
-    /// the screen knows in full (their own): made anew for another city, or
-    /// when its holder changed; brought up to date. True if it shows.
-    fn refresh_city_panel(&mut self) -> bool {
-        let seer = self.seer();
-        let wanted = self.screen.game.map.city_at(self.shown).and_then(|city| {
-            (info::Known::of(city, seer, &self.sight) == info::Known::All).then_some((city.id, city.side))
-        });
-        // Made anew for another city, or for the same one under another
-        // holder (its icons are in its holder's colors).
-        if self.panel_of != wanted || self.city_panel.is_none() != wanted.is_none() {
-            if let Some(panel) = self.city_panel.take() {
-                panel.close(&mut self.screen.ui);
-            }
-            if let Some((id, _)) = wanted {
-                let (icons, actor) = (self.production_icons(id), self.actor());
-                let (ui, game) = (&mut self.screen.ui, &self.screen.game);
-                self.city_panel = CityPanel::open(ui, self.city_box, &game.map, id, (actor, info::Known::All), &icons);
-            }
-            self.panel_of = wanted;
-        }
-        let actor = self.actor();
-        let points = self.screen.game.rally_points(self.viewer()).map(|p| p.is_some());
-        let (ui, game) = (&mut self.screen.ui, &self.screen.game);
-        if let Some(panel) = &mut self.city_panel {
-            panel.set_points(points);
-            if !panel.refresh(ui, &game.map, (actor, info::Known::All)) {
-                if let Some(panel) = self.city_panel.take() {
-                    panel.close(ui);
+    /// The sidebar's list of what needs orders, and the army, as the game
+    /// is (made again only when it changed), as tall as the sidebar leaves
+    /// it.
+    fn refresh_orders(&mut self) {
+        let side = if self.people_in_play() && !self.covered() { self.viewer() } else { Side::Grey };
+        let rows = orders_list::rows(&self.screen.game, side);
+        let map = &self.screen.game.map;
+        let keys: Vec<Option<IconKey>> = rows
+            .iter()
+            .map(|row| match row.task {
+                crate::game::Task::Stack { at, .. } => {
+                    let about = self.screen.game.task_units(side, at);
+                    let unit = about.first().or(map.units_at(at).first()).and_then(|id| map.units().get(*id))?;
+                    let image = map.units().kind_of(unit).map_or(DEFAULT_UNIT_IMAGE, |kind| kind.image.as_str());
+                    Some((image.to_string(), unit.side(), unit.level, unit.defending))
                 }
-            }
+                crate::game::Task::City { .. } => None,
+            })
+            .collect();
+        let icons: Vec<Option<ImageHandle>> = keys.iter().map(|k| k.as_ref().map(|k| self.icon(k))).collect();
+        let width = self.screen.minimap_rect().w - self.screen.ui.dimension_converter().dp_to_px(18);
+        if self.orders.show(&mut self.screen.ui, rows, &icons, width) {
+            self.orders_h = -1;
         }
-        self.city_panel.is_some()
+        // Its box: what the minimap, the buttons and the city leave.
+        let ui = &self.screen.ui;
+        let sidebar = ui.rect(self.sidebar);
+        let top = ui.rect(self.orders_scroll).y;
+        let h = (sidebar.h - top).max(ui.dimension_converter().dp_to_px(40));
+        if h != self.orders_h && top > 0 {
+            let w = self.screen.minimap_rect().w;
+            self.screen.ui.set_layout_params(self.orders_scroll, Some(LayoutParams::fixed(w, h)));
+            if let Some(parent) = self.screen.ui.parent(self.orders_scroll) {
+                self.screen.ui.invalidate_layout(parent);
+            }
+            self.orders_h = h;
+        }
     }
 
-    /// The selected hex's city in the sidebar, while it shows there.
-    pub fn city_panel(&self) -> Option<&CityPanel> {
-        self.city_panel.as_ref()
+    /// The rows of the sidebar's list.
+    pub fn orders_rows(&self) -> &[orders_list::Row] {
+        self.orders.rows()
     }
 
     /// The list of cities, every one or the player's (`own`); the same list
@@ -2617,7 +2600,6 @@ impl Session {
             self.log.as_ref().and_then(|w| open(w.window())),
             self.city_window.as_ref().and_then(|w| open(w.window())),
             self.city_list.as_ref().and_then(|w| open(w.window())),
-            self.tasks.as_ref().and_then(|w| open(w.window())),
             self.temple.as_ref().and_then(|w| open(w.window())),
             self.disband.as_ref().and_then(|w| open(w.window())),
             self.options_window.as_ref().and_then(|w| open(w.window())),
@@ -2640,19 +2622,18 @@ impl Session {
             Some(2) => self.log.take().map(|w| w.close(ui)).is_some(),
             Some(3) => self.city_window.take().map(|w| w.close(ui)).is_some(),
             Some(4) => self.city_list.take().map(|w| w.close(ui)).is_some(),
-            Some(5) => self.tasks.take().map(|w| w.close(ui)).is_some(),
-            Some(6) => self.temple.take().map(|w| w.close(ui)).is_some(),
-            Some(7) => self.disband.take().map(|w| w.close(ui)).is_some(),
-            Some(8) => self.options_window.take().map(|w| w.close(ui)).is_some(),
-            Some(9) => self.end_ask.take().map(|w| build::close(ui, w.window)).is_some(),
-            Some(10) => self.rally_window.take().map(|w| w.close(ui)).is_some(),
-            Some(11) => {
+            Some(5) => self.temple.take().map(|w| w.close(ui)).is_some(),
+            Some(6) => self.disband.take().map(|w| w.close(ui)).is_some(),
+            Some(7) => self.options_window.take().map(|w| w.close(ui)).is_some(),
+            Some(8) => self.end_ask.take().map(|w| build::close(ui, w.window)).is_some(),
+            Some(9) => self.rally_window.take().map(|w| w.close(ui)).is_some(),
+            Some(10) => {
                 self.let_patrol_go();
                 true
             }
-            Some(12) => self.mission_ask.take().map(|(w, _, _)| build::close(ui, w.window)).is_some(),
-            Some(13) => self.refusal.take().map(|w| build::close(ui, w.window)).is_some(),
-            Some(14) => {
+            Some(11) => self.mission_ask.take().map(|(w, _, _)| build::close(ui, w.window)).is_some(),
+            Some(12) => self.refusal.take().map(|w| build::close(ui, w.window)).is_some(),
+            Some(13) => {
                 self.close_production();
                 true
             }
@@ -2981,7 +2962,6 @@ impl Session {
         let ui = &self.screen.ui;
         let parts = |p: &Option<WindowParts>| p.as_ref().is_some_and(|p| build::is_open(ui, p.window));
         let open = [
-            self.tasks.as_ref().is_some_and(|w| w.is_open(ui)),
             self.temple.as_ref().is_some_and(|w| w.is_open(ui)),
             self.disband.as_ref().is_some_and(|w| w.is_open(ui)),
             self.patrol_window.as_ref().is_some_and(|w| w.is_open(ui)),
@@ -3311,8 +3291,8 @@ impl Session {
             self.obey(order);
             return true;
         }
-        if let Some(order) = self.city_panel.as_mut().and_then(|p| p.click(id)) {
-            self.obey(order);
+        if let Some(task) = self.orders.click(id) {
+            self.see_to(task);
             return true;
         }
         let (ui, map, sight) = (&mut self.screen.ui, &self.screen.game.map, &self.sight);
@@ -4683,22 +4663,24 @@ impl Session {
         }
     }
 
-    /// Open the list of tasks (T, or the Tasks button), or close it.
-    pub fn toggle_tasks(&mut self) {
-        if let Some(tasks) = self.tasks.take() {
-            if tasks.is_open(&self.screen.ui) {
-                tasks.close(&mut self.screen.ui);
-                return;
-            }
-        }
-        if self.covered() {
+    /// Go to the next stack or city that needs orders (T; `back`: the one
+    /// before, Shift+T), in the sidebar's list: the stack selected, the city
+    /// in production (the owner's word, 2026-11-24: the Tasks window went,
+    /// "T steps the list").
+    pub fn next_needing(&mut self, back: bool) {
+        if self.covered() || !self.people_in_play() {
             return;
         }
-        let (root, area) = (self.screen.root_window(), self.window_area());
-        let side = self.viewer();
-        let window = TasksWindow::open(&mut self.screen.ui, root, &self.screen.game, side, (area, TASKS_ALIGN));
-        self.tasks = Some(window);
-        self.screen.settle();
+        self.refresh_orders();
+        let shown = self.shown;
+        let map = &self.screen.game.map;
+        let here = self.orders.rows().iter().map(|r| r.task).find(|t| match t {
+            crate::game::Task::Stack { at, .. } => *at == shown,
+            crate::game::Task::City { city, .. } => map.cities().get(*city).is_some_and(|c| c.pos == shown),
+        });
+        if let Some(task) = self.orders.next_needing(here.as_ref(), back) {
+            self.see_to(task);
+        }
     }
 
     /// Open the rally points' window (R, or the Units menu's), or close it.
@@ -4794,10 +4776,6 @@ impl Session {
     /// The production window, while it is open.
     pub fn production(&self) -> Option<&ProductionWindow> {
         self.production.as_ref().filter(|w| w.is_open(&self.screen.ui))
-    }
-
-    pub fn tasks_window(&self) -> Option<&TasksWindow> {
-        self.tasks.as_ref().filter(|t| t.is_open(&self.screen.ui))
     }
 
     /// What the next click on the map picks, if anything.
@@ -4904,7 +4882,7 @@ impl Session {
                 .item(PRODUCTION_ID, "Production...", "E", people)
         } else if id == TbId::new(MENU_VIEW_ID) {
             let menu = Menu::new(MENU_VIEW_ID)
-                .item(TASKS_ID, "Tasks", "T", people)
+                .item(TASKS_ID, "Next that needs orders", "T", people)
                 .item(LOG_ID, "Log", "L", true)
                 .item(ORDERS_SHOWN_ID, orders_shown, "V", people && self.screen.game.rounds())
                 .item(REPLAY_ID, "Replay what happened", "W", self.can_replay())
@@ -5111,9 +5089,7 @@ impl Session {
                 }
                 RootCommand::Click(id) if id == TbId::new(END_TASKS_ID) => {
                     self.close_end_ask();
-                    if self.tasks_window().is_none() {
-                        self.toggle_tasks();
-                    }
+                    self.next_needing(false);
                 }
                 RootCommand::Click(id) if id == TbId::new(END_KEEP_ID) => self.close_end_ask(),
                 RootCommand::Click(id) if id == TbId::new(REFUSED_OK_ID) => self.close_refusal(),
@@ -5183,7 +5159,7 @@ impl Session {
                         self.patrol_chosen(odds);
                     }
                 }
-                RootCommand::Click(id) if id == TbId::new(TASKS_ID) => self.toggle_tasks(),
+                RootCommand::Click(id) if id == TbId::new(TASKS_ID) => self.next_needing(false),
                 RootCommand::Click(id) if id == TbId::new(ORDERS_SHOWN_ID) => self.toggle_orders_shown(),
                 RootCommand::Click(id) if id == TbId::new(REPLAY_ID) => self.play_replay(),
                 RootCommand::Click(id) if id == TbId::new(OPTIONS_ID) => self.toggle_options(),
@@ -5219,16 +5195,6 @@ impl Session {
                         self.options_window.as_ref().and_then(|w| w.click(&self.screen.ui, id, self.options))
                     {
                         self.options = options;
-                    }
-                }
-                RootCommand::Click(id) if id == TbId::new(tasks_window::TASKS_CLOSE_ID) => {
-                    if let Some(tasks) = self.tasks.take() {
-                        tasks.close(&mut self.screen.ui);
-                    }
-                }
-                RootCommand::Click(id) if self.tasks.as_ref().and_then(|t| t.click(id)).is_some() => {
-                    if let Some(task) = self.tasks.as_ref().and_then(|t| t.click(id)).cloned() {
-                        self.see_to(task);
                     }
                 }
                 RootCommand::Click(id) if id == TbId::new(log_window::LOG_CLOSE_ID) => {
@@ -5286,7 +5252,8 @@ impl Session {
                         'f' | 'F' => self.defend_stack(),
                         'b' | 'B' => self.seek_blessing(),
                         'x' | 'X' => self.ask_disband(),
-                        't' | 'T' => self.toggle_tasks(),
+                        't' => self.next_needing(false),
+                        'T' => self.next_needing(true),
                         'e' | 'E' => self.toggle_production(),
                         'm' | 'M' => self.toggle_list(true),
                         'a' | 'A' => self.toggle_list(false),

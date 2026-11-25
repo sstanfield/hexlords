@@ -157,6 +157,18 @@ elements
 		text-color #ffd24a
 		cut 7
 		bitmap item_selected.png
+	# The sidebar's list of what needs orders (`orders_list`): a list's row
+	# in a colour by how the stack stands: bright, it needs orders; blue-
+	# grey, a garrison; dim, done with for the turn.
+	OrderNeeds
+		clone ListRow
+		text-color #ffd24a
+	OrderGarrison
+		clone ListRow
+		text-color #9fb7d4
+	OrderDone
+		clone ListRow
+		text-color #8a8a8a
 	# What covers the window between two people's turns (hotseat), so that
 	# neither sees the other's map.
 	Cover

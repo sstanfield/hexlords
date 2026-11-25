@@ -8,10 +8,10 @@ mod common;
 use common::{assets, choose, click, descendants, pixel_of, press, type_char, widget};
 use hexlords::city_windows::CityList;
 use hexlords::city_windows::{
-    BUILD_NOTHING_ID, CITY_RALLY_ID, CITY_WINDOW_ID, LIST_CLOSE_ID, LIST_DETAILS_ID, LIST_GOTO_ID, LIST_WINDOW_ID,
-    PANEL_OPEN_ID, PANEL_PREFIX, build_id, row_id,
+    BUILD_NOTHING_ID, CITY_WINDOW_ID, LIST_CLOSE_ID, LIST_DETAILS_ID, LIST_GOTO_ID, LIST_WINDOW_ID, build_id, row_id,
 };
 use hexlords::game::{Game, Sight};
+use hexlords::session::CITY_DETAILS_ID as PANEL_OPEN_ID;
 use hexlords::session::{ALL_CITIES_ID, CITY_DETAILS_ID, MENU_CITIES_ID, MY_CITIES_ID, Session};
 use hexlords::setup::Setup;
 use hexlords::state::scenario::{self, Scenario};
@@ -265,51 +265,47 @@ fn esc_and_the_close_buttons_shut_the_windows_one_at_a_time() {
 }
 
 #[test]
-fn the_sidebar_has_ones_own_city_in_full_and_anothers_from_outside() {
+fn the_sidebar_has_the_city_briefly_and_ones_own_has_its_production_a_button_away() {
     let mut s = session();
     let visible = |s: &Session| s.screen.ui.node(widget(s, CITY_DETAILS_ID)).map(|n| n.visibility());
-    // Wrenfold, the player's: in full, and what it builds is set there.
-    assert_eq!(s.city_panel().map(|p| p.city()), Some(city_id(&s, WRENFOLD)));
-    assert_eq!(visible(&s), Some(Visibility::Gone));
-    push(&mut s, &format!("{PANEL_PREFIX}{}", build_id(0)));
-    assert_eq!(s.screen.game.map.city_at(WRENFOLD).unwrap().building, Some(0));
-    assert!(pressed(&s, &format!("{PANEL_PREFIX}{}", build_id(0))));
-    // Low Tarn, nobody's: its lines from outside, and a button for its window.
+    // Wrenfold, the player's: its lines (the owner's word, 2026-11-24: the
+    // sidebar "Does not need to display city production info. Can keep
+    // basic city info"), and Production (O), which opens it there.
+    assert_eq!(s.city()[0], "Wrenfold");
+    assert!(!s.city().iter().any(|l| l.starts_with("Can build")), "{:?}", s.city());
+    assert_eq!(visible(&s), Some(Visibility::Visible));
+    push(&mut s, CITY_DETAILS_ID);
+    assert_eq!(s.production().and_then(|p| p.chosen_city()), Some(city_id(&s, WRENFOLD)));
+    type_char(&mut s, 'e');
+    // Low Tarn, nobody's: its lines from outside, and nothing to open.
     s.screen.view.center_on(LOW_TARN);
     let p = pixel_of(&s, LOW_TARN);
     click(&mut s, p);
-    assert!(s.city_panel().is_none());
     assert_eq!(s.city()[0], "Low Tarn");
     assert_eq!(visible(&s), Some(Visibility::Gone), "nothing more to open: what shows is all");
     // No city: neither.
     let p = pixel_of(&s, Hex::new(15, 5));
     click(&mut s, p);
-    assert!(s.city_panel().is_none() && s.city().is_empty());
+    assert!(s.city().is_empty());
     assert_eq!(visible(&s), Some(Visibility::Gone));
 }
 
-/// The sidebar is narrow: the buttons that say where a city's new units go
-/// all show in it (the third, Defend, once ran off its edge), and so do
-/// the rally points' numbers, all ten of them set.
+/// The sidebar is narrow: the rows of its list of what needs orders fit in
+/// it, clear of its scroll bar, at 1x and at 2x.
 #[test]
-fn the_sidebars_buttons_for_new_units_fit_in_it() {
+fn the_sidebars_list_fits_in_it() {
     for (w, h, dpi) in [(1024, 768, 96), (2048, 1536, 192)] {
         let mut s = session_at(w, h, dpi);
-        for n in 0..10 {
-            let point = hexlords::orders::RallyPoint { at: Hex::new(15, 3 + n as u16), defend: false };
-            let order = hexlords::orders::Order::RallyPoint { n, point: Some(point) };
-            s.screen.game.apply(order).unwrap();
-        }
         s.pump();
         s.screen.settle();
-        let side = frame(&s, "city_scroll");
-        let names = [CITY_RALLY_ID, hexlords::city_windows::CITY_NO_RALLY_ID, hexlords::city_windows::CITY_DEFEND_ID];
-        let points = (0..10).map(hexlords::city_windows::point_id);
-        for name in names.iter().map(|n| n.to_string()).chain(points) {
-            let r = frame(&s, &format!("{PANEL_PREFIX}{name}"));
-            // (Clear of the scroll bar at the sidebar's edge, too.)
-            let right = side.right() - 10 * dpi / 96;
-            assert!(r.w > 0 && side.x <= r.x && r.right() <= right, "{name} at {w}: {r:?} in {side:?}");
+        s.frame(0);
+        let side = frame(&s, "main_sidebar");
+        assert!(!s.orders_rows().is_empty(), "the stack that waits, at least");
+        for i in 0..s.orders_rows().len() {
+            let r = frame(&s, &hexlords::orders_list::row_id(i));
+            let right = side.right() - 8 * dpi / 96;
+            assert!(r.w > 0 && side.x <= r.x && r.right() <= right, "row {i} at {w}: {r:?} in {side:?}");
+            assert!(r.bottom() <= side.bottom(), "row {i} at {w}: {r:?} in {side:?}");
         }
     }
 }

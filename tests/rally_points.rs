@@ -214,7 +214,7 @@ fn a_sides_rally_points_are_its_own() {
 mod screen {
     use super::*;
     use crate::common::{self, assets, click, pixel_of, push_widget, type_char};
-    use hexlords::city_windows::{CITY_BLESS_ID, CITY_RALLY_ID, PANEL_PREFIX, point_id};
+    use hexlords::city_windows::{CITY_BLESS_ID, CITY_RALLY_ID, point_id};
     use hexlords::rally_window::{defend_id, place_id, remove_id};
     use hexlords::screen::Scene;
     use hexlords::session::{Pick, Session};
@@ -268,17 +268,17 @@ mod screen {
         let mut s = session(game);
         click_hex(&mut s, REDHOLD);
         press_esc(&mut s);
-        // The sidebar has a button for each point that is set.
-        push_widget(&mut s, &format!("{PANEL_PREFIX}{}", point_id(4)));
+        // The city in production has a button for each point that is set.
+        type_char(&mut s, 'o');
+        push_widget(&mut s, &point_id(4));
         let sends = |s: &Session| s.screen.game.map.city_at(REDHOLD).unwrap().sends.clone();
         assert_eq!(sends(&s), Sends::Point { n: 4, bless: false });
         // A blessing on the way: its box (shown now: a frame lays it out).
         s.frame(0);
-        push_widget(&mut s, &format!("{PANEL_PREFIX}{CITY_BLESS_ID}"));
+        push_widget(&mut s, CITY_BLESS_ID);
         assert_eq!(sends(&s), Sends::Point { n: 4, bless: true });
-        assert!(s.city().is_empty() && s.city_panel().is_some());
         // Send to..., then the flag: to that point.
-        push_widget(&mut s, &format!("{PANEL_PREFIX}{CITY_RALLY_ID}"));
+        push_widget(&mut s, CITY_RALLY_ID);
         click_hex(&mut s, POINT);
         assert_eq!(sends(&s), Sends::Point { n: 0, bless: false });
     }

@@ -8,7 +8,7 @@
 mod common;
 
 use common::{assets, click, pixel_of, press, push_widget, shift_click, type_char};
-use hexlords::city_windows::{CITY_RALLY_ID, PANEL_PREFIX, build_id, point_id, queue_item_id, queue_remove_id};
+use hexlords::city_windows::{CITY_RALLY_ID, build_id, point_id, queue_item_id, queue_remove_id};
 use hexlords::game::Game;
 use hexlords::options_window::Options;
 use hexlords::orders::{Order, RallyPoint};
@@ -104,10 +104,12 @@ fn a_click_that_starts_the_turn_is_not_given_to_a_stack_the_screen_selects() {
     assert!(routes(b).is_empty(), "nor was sent anywhere");
 }
 
-/// The sidebar's buttons are about the item a city builds now: a kind
-/// there changes that item, and the queue stays.
+/// A city's queue stays: in production a unit's box adds an item after it,
+/// going where the last one's go (the sidebar's buttons, which changed the
+/// item it built now, went with its production: the owner's word,
+/// 2026-11-24).
 #[test]
-fn the_sidebar_keeps_a_citys_queue() {
+fn a_unit_box_keeps_a_citys_queue() {
     let mut game = game(Fog::Off);
     let city = game.map.city_at(REDHOLD).unwrap().id;
     let items = vec![
@@ -118,11 +120,14 @@ fn the_sidebar_keeps_a_citys_queue() {
     let mut s = session(game, Options::manual());
     click_hex(&mut s, REDHOLD);
     press(&mut s, SpecialKey::Esc);
+    type_char(&mut s, 'o');
     s.frame(0);
-    press_widget(&mut s, &format!("{PANEL_PREFIX}{}", build_id(1)));
+    press_widget(&mut s, &build_id(1));
     let queue = s.screen.game.map.city_at(REDHOLD).unwrap().queue.clone();
-    assert_eq!(queue.items.len(), 2, "the queue stays");
-    assert_eq!(queue.items[0].what, 1, "the item it builds now builds riders");
+    assert_eq!(queue.items.len(), 3, "the queue stays, and grows");
+    assert_eq!((queue.items[0].what, queue.items[2].what), (0, 1));
+    assert_eq!(queue.items[2].sends, Sends::Defend, "where the last went");
+    assert_eq!(queue.end, QueueEnd::Repeat { from: 0, times: None });
 }
 
 /// A pick under way (Go to's stops) is over when Next stack goes to
@@ -217,8 +222,9 @@ fn a_city_order_refused_says_why() {
     let mut s = session(game, Options::manual());
     click_hex(&mut s, REDHOLD);
     press(&mut s, SpecialKey::Esc);
+    type_char(&mut s, 'o');
     s.frame(0);
-    press_widget(&mut s, &format!("{PANEL_PREFIX}{}", point_id(1)));
+    press_widget(&mut s, &point_id(1));
     assert_eq!(s.screen.game.map.city_at(REDHOLD).unwrap().sends, Sends::Stay);
     let says = s.refusal().expect("a window says so");
     assert_eq!(says[..2], ["The city cannot do that.", "Nothing Redhold builds can get there."]);

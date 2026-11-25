@@ -915,8 +915,19 @@ thing to happen. Ideas to try, as the rules grow:
   (`guide`): battles as this game was set up, what each of the map's kinds
   of unit pays to move, cities and gold, units and captains, orders and
   turns, what one sees.
-- **A list of tasks** (built): T, or the Tasks button, opens what the
-  player has left to do this turn (`Game::tasks`), most pressing first:
+- **A list of tasks** (built; since 2026-11-24 in the sidebar, the Tasks
+  window gone: "Lets try putting the sides stack list over there ... In
+  fact making it show all needs orders items might be the best use of
+  the space ... cities that need orders should go away but stacks can
+  stay as a list of your army"; `orders_list`). Under the selected city's
+  lines (one's own with Production, O: the sidebar "Does not need to
+  display city production info"), what needs orders first, in gold (the
+  stacks with no orders, stopped short or that fought, the cities that
+  build nothing), then the rest of the side's stacks: garrisons in
+  blue-grey, those done with for the turn dimmed. A row selects its
+  stack, or opens its city in production; T goes to the next that needs
+  orders (Shift+T the one before), as does the end of turn's question.
+  What the player has left to do this turn (`Game::tasks`), most pressing first:
   stacks that have had no orders (or whose march stopped short) and cities
   that build nothing; then cities whose work is done and waits (for gold,
   or for room); then the rest (marching, spent, building, and the stacks

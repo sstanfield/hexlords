@@ -18,7 +18,6 @@ use hexlords::session::{self, END_TURN_ID, MISSION_ASK_ID, Session};
 use hexlords::setup::{Fog, Mode, Setup};
 use hexlords::state::scenario::{self, Scenario};
 use hexlords::state::{Hex, Side, TileType, UnitId};
-use hexlords::tasks_window::row_id;
 use turbo_ferret::{Size, SpecialKey};
 
 /// 30 x 30 grass, Redhold (5, 5) red's, Bluemoor (24, 24) blue's; red a
@@ -66,13 +65,22 @@ fn button(s: &Session) -> String {
     s.screen.ui.text(widget(s, END_TURN_ID)).unwrap_or("").to_string()
 }
 
-/// The tasks' rows, the window opened if it is not.
+/// The tasks of the side at the screen, in words (the Tasks window's rows
+/// were these; the sidebar's list has them now, `orders_list`).
 fn tasks(s: &mut Session) -> Vec<String> {
-    if s.tasks_window().is_none() {
-        s.toggle_tasks();
-    }
     s.frame(0);
-    s.tasks_window().unwrap().lines().to_vec()
+    let game = &s.screen.game;
+    game.tasks(game.player()).iter().map(|t| hexlords::info::task_line(game, t)).collect()
+}
+
+/// Click the sidebar's row of the task whose words start with `words`.
+fn push_task(s: &mut Session, words: &str) {
+    s.frame(0);
+    let game = &s.screen.game;
+    let task = game.tasks(game.player()).into_iter().find(|t| hexlords::info::task_line(game, t).starts_with(words));
+    let task = task.unwrap_or_else(|| panic!("no task {words}"));
+    let i = s.orders_rows().iter().position(|r| r.task == task).unwrap_or_else(|| panic!("no row for {words}"));
+    common::push_widget(s, &hexlords::orders_list::row_id(i));
 }
 
 /// What a window says, its lines in a row.
@@ -128,7 +136,7 @@ fn a_tasks_row_selects_the_units_it_counts() {
     let rows = tasks(&mut s);
     let row = rows.iter().position(|l| l.contains("in Redhold:")).expect("the stack's row");
     assert_eq!(rows[row], "2 units in Redhold: moved, with moves left");
-    push_widget(&mut s, &row_id(row));
+    push_task(&mut s, "2 units in Redhold");
     s.frame(0);
     let selected = s.screen.game.selection().to_vec();
     // A click on the map: asked, and Enter sends them.

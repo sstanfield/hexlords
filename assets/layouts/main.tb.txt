@@ -58,13 +58,9 @@ TBLayout: id: main_layout, axis: y, distribution-position: left top, position: l
 			TBLayout: id: replay_row, axis: x, spacing: 5
 				TBButton: id: replay, text: Replay, is-focusable: 0, squeezable: 1
 				TBSlider: id: replay_slider, axis: x, min: 0, max: 1, is-focusable: 0
-			# The selected hex's city. One of the player's own: all of it, built
-			# by Session in `city_box` (`city_windows::CityPanel`: what it builds,
-			# where its new units go, a button for its window). Another's: what
-			# shows from outside, a line at a time, and a button for its window.
-			# (In a box that scrolls, when the city is taller than the room left.)
-			TBScrollContainer: id: city_scroll, scroll-mode: y-auto, adapt-content: 1
-				TBLayout: id: city_box, axis: y, distribution-position: top, position: left, spacing: 0
+			# The selected hex's city, a line at a time (what shows of it: all
+			# of one's own, another's from outside), and for one's own a
+			# button that opens it in the production panel.
 			TBLayout: id: city_panel, axis: y, distribution-position: top, position: left, spacing: 0
 				TBTextField: id: city_0, text-align: left
 				TBTextField: id: city_1, text-align: left
@@ -75,7 +71,12 @@ TBLayout: id: main_layout, axis: y, distribution-position: left top, position: l
 				TBTextField: id: city_6, text-align: left
 				TBTextField: id: city_7, text-align: left
 				TBTextField: id: city_8, text-align: left
-			TBButton: id: city_details, text: City details, is-focusable: 0, visibility: gone
+			TBButton: id: city_details, text: Production (O), is-focusable: 0, visibility: gone
+			# What needs orders, then the side's army (`orders_list`): Session
+			# fills them; the list scrolls in what the sidebar has left.
+			TBTextField: id: orders_heading, skin: Heading, text-align: left
+			TBScrollContainer: id: orders_scroll, scroll-mode: y-auto, adapt-content: 1
+				TBLayout: id: orders_list, axis: y, distribution-position: top, position: left, spacing: 1
 # All about the unit under the pointer (or what a city can build), in a box
 # over its button: Session fills it, places it and shows it while the pointer
 # is on one. It takes no input, so it never comes between the pointer and

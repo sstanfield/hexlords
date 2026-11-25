@@ -176,12 +176,13 @@ fn end_turn_says_how_many_wait_and_asks_first() {
     push_widget(&mut s, END_TURN_ID);
     assert!(s.asks_end_turn());
     assert_eq!(s.screen.game.turn(), 1, "not yet");
-    // Keep playing: nothing ends. Show the tasks: they open.
+    // Keep playing: nothing ends. Show the tasks: the first that needs
+    // orders (a stack, selected).
     push_widget(&mut s, END_KEEP_ID);
     assert!(!s.asks_end_turn());
     push_widget(&mut s, END_TURN_ID);
     push_widget(&mut s, END_TASKS_ID);
-    assert!(!s.asks_end_turn() && s.tasks_window().is_some());
+    assert!(!s.asks_end_turn() && s.screen.game.selected().is_some());
     // End the turn: it ends.
     push_widget(&mut s, END_TURN_ID);
     push_widget(&mut s, END_ANYWAY_ID);

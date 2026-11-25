@@ -356,7 +356,7 @@ fn a_click_on_the_selected_stacks_hex_keeps_the_selection() {
 /// from the sidebar is let go.
 #[test]
 fn a_task_row_ends_a_pick_and_its_window_does_not_come_back() {
-    use hexlords::city_windows::{CITY_RALLY_ID, PANEL_PREFIX};
+    use hexlords::city_windows::CITY_RALLY_ID;
     use turbo_ferret::SpecialKey;
     let mut game = game();
     put(&mut game, Side::Red, "soldiers", Hex::new(10, 5), 1);
@@ -368,22 +368,24 @@ fn a_task_row_ends_a_pick_and_its_window_does_not_come_back() {
     s.frame(0);
     assert!(s.city_window().is_none(), "out of the way");
     assert!(s.picking().is_some());
-    // The tasks: a stack's row.
-    common::type_char(&mut s, 't');
-    s.frame(0);
-    common::push_widget(&mut s, &hexlords::tasks_window::row_id(0));
+    // The sidebar's list: a stack's row.
+    common::push_widget(&mut s, &hexlords::orders_list::row_id(0));
     s.frame(0);
     assert!(s.picking().is_none(), "the pick is over");
-    // Later: Redhold in the sidebar, its Send to..., let go with Esc.
+    // The first pick's panel does not come back with it; later, Redhold's
+    // Send to... again, let go with Esc: that panel is back, on Redhold.
+    assert!(s.city_window().is_none() && s.production().is_none(), "the panel from long ago does not come back");
     click_hex(&mut s, Hex::new(5, 5));
     common::press(&mut s, SpecialKey::Esc);
+    common::type_char(&mut s, 'o');
     s.frame(0);
-    common::push_widget(&mut s, &format!("{PANEL_PREFIX}{CITY_RALLY_ID}"));
+    common::push_widget(&mut s, CITY_RALLY_ID);
     s.frame(0);
-    assert!(s.picking().is_some());
+    assert!(s.picking().is_some() && s.production().is_none());
     common::press(&mut s, SpecialKey::Esc);
     s.frame(0);
-    assert!(s.city_window().is_none(), "the window from long ago does not come back");
+    let redhold = s.screen.game.map.city_at(Hex::new(5, 5)).map(|c| c.id);
+    assert_eq!(s.production().and_then(|p| p.chosen_city()), redhold, "this pick's panel, back");
 }
 
 /// A city's new unit sent to a rally point waits in the city through the

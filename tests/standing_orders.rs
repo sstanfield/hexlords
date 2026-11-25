@@ -7,14 +7,14 @@
 mod common;
 
 use common::{assets, choose, click, pixel_of, press, type_char, widget};
-use hexlords::city_windows::{CITY_NO_RALLY_ID, CITY_RALLY_ID, PANEL_OPEN_ID};
+use hexlords::city_windows::{CITY_NO_RALLY_ID, CITY_RALLY_ID};
 use hexlords::game::{CityState, Game, StackState, Task};
 use hexlords::orders::{Event, Order};
+use hexlords::session::CITY_DETAILS_ID as PANEL_OPEN_ID;
 use hexlords::session::{DONE_ID, GO_TO_ID, MENU_VIEW_ID, Pick, Session, TASKS_ID};
 use hexlords::setup::Setup;
 use hexlords::state::scenario::{self, Scenario};
 use hexlords::state::{Hex, Sends, Side, TileType, UnitId};
-use hexlords::tasks_window::row_id;
 use turbo_ferret::{Point, Size, SpecialKey};
 
 const REDHOLD: Hex = Hex::new(5, 5);
@@ -24,6 +24,24 @@ const FAR: Hex = Hex::new(5, 20);
 
 /// 30 x 30 grass: red's Redhold with `red` and Southwick with nobody in it,
 /// blue's Bluemoor far to the east. Soldiers go 6 hexes a turn, riders 10.
+/// The tasks of the side at the screen, in words (the Tasks window's rows
+/// were these; the sidebar's list has them now, `orders_list`).
+fn tasks(s: &mut Session) -> Vec<String> {
+    s.frame(0);
+    let game = &s.screen.game;
+    game.tasks(game.player()).iter().map(|t| hexlords::info::task_line(game, t)).collect()
+}
+
+/// Click the sidebar's row of the task whose words start with `words`.
+fn push_task(s: &mut Session, words: &str) {
+    s.frame(0);
+    let game = &s.screen.game;
+    let task = game.tasks(game.player()).into_iter().find(|t| hexlords::info::task_line(game, t).starts_with(words));
+    let task = task.unwrap_or_else(|| panic!("no task {words}"));
+    let i = s.orders_rows().iter().position(|r| r.task == task).unwrap_or_else(|| panic!("no row for {words}"));
+    common::push_widget(s, &hexlords::orders_list::row_id(i));
+}
+
 fn game(red: &str) -> Game {
     let mut rows = vec!["g".repeat(30); 30];
     rows[5] = format!("{}c{}c{}", "g".repeat(5), "g".repeat(19), "g".repeat(4));
@@ -408,28 +426,25 @@ fn done_goes_on_to_the_next_stack_and_tasks_lists_what_is_left() {
     push(&mut s, DONE_ID);
     assert!(s.screen.game.map.units().get(first).unwrap().done);
     assert_eq!(s.screen.game.selected(), Some(other), "on to the next");
-    // The list: Southwick's soldiers first, Redhold's put aside, the cities.
-    type_char(&mut s, 't');
-    let lines = s.tasks_window().unwrap().lines().to_vec();
+    // The tasks: Southwick's soldiers first, Redhold's put aside, the cities.
+    let lines = tasks(&mut s);
     assert_eq!(lines[0], "Soldiers in Southwick: no orders yet");
     assert!(lines.contains(&"Soldiers in Redhold: put aside, with moves left".to_string()), "{lines:?}");
-    // A row of a stack selects it; of a city, opens it.
-    let i = lines.iter().position(|l| l.starts_with("Soldiers in Redhold")).unwrap();
-    push(&mut s, &row_id(i));
+    // In the sidebar's list, a row of a stack selects it; of a city, opens
+    // it (in production).
+    push_task(&mut s, "Soldiers in Redhold");
     assert_eq!(s.screen.game.selected(), Some(first));
-    let i = lines.iter().position(|l| l.starts_with("Southwick:")).unwrap();
-    push(&mut s, &row_id(i));
+    push_task(&mut s, "Southwick:");
     assert_eq!(s.city_window().map(|w| w.city()), s.screen.game.map.city_at(SOUTHWICK).map(|c| c.id));
     // It follows the game: D on Southwick's, and its row says so.
     press(&mut s, SpecialKey::Esc);
-    assert!(s.city_window().is_none() && s.tasks_window().is_some());
+    assert!(s.city_window().is_none());
     click_hex(&mut s, SOUTHWICK);
     type_char(&mut s, 'd');
-    let lines = s.tasks_window().unwrap().lines().to_vec();
+    let lines = tasks(&mut s);
     assert!(lines.iter().all(|l| !l.contains("no orders")), "{lines:?}");
-    // T, or the menu, closes it.
+    // T, or the menu: the next that needs orders (none: nothing changes).
     choose(&mut s, MENU_VIEW_ID, TASKS_ID);
-    assert!(s.tasks_window().is_none());
 }
 
 #[test]
@@ -598,7 +613,8 @@ fn on_another_side_s_turn_the_screen_looks_and_orders_nothing() {
     // And red's own city's buttons give no orders while blue plays.
     press(&mut s, SpecialKey::Esc);
     click_hex(&mut s, REDHOLD);
-    push(&mut s, &format!("{}{}", hexlords::city_windows::PANEL_PREFIX, hexlords::city_windows::build_id(0)));
+    type_char(&mut s, 'o');
+    push(&mut s, &hexlords::city_windows::build_id(0));
     assert_eq!(s.screen.game.map.city_at(REDHOLD).unwrap().building, None);
 }
 
@@ -668,8 +684,7 @@ fn f_marks_defenders_and_stands_them_down() {
     type_char(&mut s, 'f');
     assert!(s.screen.game.map.units().get(first).unwrap().defending);
     assert_eq!(s.screen.game.selected(), Some(other), "on to the next");
-    type_char(&mut s, 't');
-    let lines = s.tasks_window().unwrap().lines().to_vec();
+    let lines = tasks(&mut s);
     assert!(lines.contains(&"Soldiers in Redhold: defending: stays put".to_string()), "{lines:?}");
     // F on a defender: it stands down, and stays selected.
     click_hex(&mut s, REDHOLD);

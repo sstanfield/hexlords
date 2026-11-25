@@ -108,13 +108,15 @@ fn at_the_start_the_panels_are_about_the_hex_the_cursor_starts_on() {
     // Nothing is selected yet: a word on what to do. No box is open.
     assert_eq!(s.unit_line(), HINT);
     assert!(s.tip().is_empty());
-    // Green's own city: in full in the sidebar (no lines of another's).
-    assert_eq!(s.city_panel().map(|p| p.city()), s.screen.game.map.city_at(CITY).map(|c| c.id));
-    assert!(s.city().is_empty());
-    let panel = texts_in(&s, "city_box");
-    for line in ["Wrenfold", "Walls 1, taxes 10", "Garrison: 3 units", "Building nothing", "New units stay here"] {
+    // Green's own city: briefly in the sidebar (the owner's word,
+    // 2026-11-24: "Can keep basic city info when one is selected"), and a
+    // button to its production.
+    let panel = texts_in(&s, "city_panel");
+    for line in ["Wrenfold", "Garrison: 3 units", "Building nothing"] {
         assert!(panel.iter().any(|t| t == line), "{line} is not in {panel:?}");
     }
+    assert!(!panel.iter().any(|t| t.starts_with("Can build")), "{panel:?}");
+    assert_eq!(s.screen.ui.text(widget(&s, "city_details")), Some("Production (O)"));
     // The widgets say the same.
     assert_eq!(s.screen.ui.text(widget(&s, "status")), Some(s.status()));
     assert_eq!(s.screen.ui.text(widget(&s, "hex_title")), Some(s.hex_title()));
@@ -172,17 +174,18 @@ fn the_map_takes_all_the_room_the_panels_leave() {
         assert!(icon.x >= slots[1].x && icon.right() <= slots[1].right(), "{w}x{h}");
         let next = rect(&s, "next_stack");
         assert!(next.x >= slots[8].right() && next.right() <= map.right() && inside(next), "{w}x{h}: {next:?}");
-        // Beside it all, the sidebar: the minimap, the button, the city (the
-        // player's own, in a box that scrolls if it needs more room).
+        // Beside it all, the sidebar: the minimap, the button, the city's
+        // lines, the list of what needs orders (in a box that scrolls).
         assert_eq!((mini.x, mini.y), (map.right() + dp(5), map.y), "{w}x{h}");
         assert_eq!(mini.right(), w);
         let end_turn = rect(&s, "end_turn");
         assert!(end_turn.y >= mini.bottom());
-        let city = rect(&s, "city_scroll");
+        let (city, list) = (rect(&s, "city_panel"), rect(&s, "orders_scroll"));
         assert!(
             city.y >= end_turn.bottom() && city.x >= mini.x && city.right() <= w && inside(city),
             "{w}x{h}: {city:?}"
         );
+        assert!(list.y >= city.bottom() && list.right() <= w && inside(list), "{w}x{h}: {list:?}");
 
         // A full stack fills the eight boxes; the leader's stays empty.
         let riders = s.screen.game.map.units().kind_named("riders").unwrap();
@@ -342,7 +345,7 @@ fn the_selected_unit_goes_where_it_is_sent_and_the_panels_follow() {
     assert!(pressed(&s, "unit_0") && pressed(&s, "unit_1"));
     assert_eq!(s.stack().len(), 2);
     assert_eq!(s.slot_icon(0), Some(("units/militia.png", Side::Green)));
-    assert!(texts_in(&s, "city_box").iter().any(|t| t == "Garrison: 2 units"));
+    assert!(texts_in(&s, "city_panel").iter().any(|t| t == "Garrison: 2 units"));
     assert!(s.unit_line().starts_with("2 units selected"), "{}", s.unit_line());
     // A click on its own hex keeps it selected (the review, 2026-11-21: the
     // screen selects stacks by itself, and a click on one is to take it);

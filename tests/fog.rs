@@ -85,10 +85,9 @@ fn in_the_fog_the_panels_tell_no_more_than_is_seen() {
     assert_eq!(s.hex_title(), "Row 5, column 25: city (Bluemoor), not seen");
     assert_eq!(s.city(), ["Bluemoor", "Not seen", "Walls 0, taxes 9"]);
     assert!(s.stack().is_empty());
-    // Red's own: all of it, in the sidebar.
+    // Red's own: all of it, in the sidebar (briefly: its production is O's).
     look(&mut s, REDHOLD);
-    assert_eq!(s.city_panel().map(|p| p.city()), s.screen.game.map.city_at(REDHOLD).map(|c| c.id));
-    assert!(s.city().is_empty());
+    assert_eq!(s.city()[..2], ["Redhold", "Held by red"]);
     assert_eq!(s.stack().len(), 1);
 }
 

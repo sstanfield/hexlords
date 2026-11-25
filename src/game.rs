@@ -129,7 +129,7 @@ impl CityBefore {
 }
 
 /// Something a side has left to do, or to look at, this turn (`Game::tasks`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Task {
     /// A stack of the side's, on its hex: how it stands, and how many of
     /// its units that is about (of five, three of which defend while two

@@ -171,7 +171,7 @@ fn the_menu_bar_shows_the_treasury_and_a_city_its_taxes() {
     s.frame(0);
     assert_eq!(says(&s, "cities_held"), "2/2", "it follows the cities' holders");
     // The city's window says what it brings in.
-    let r = s.screen.area(widget(&s, hexlords::city_windows::PANEL_OPEN_ID));
+    let r = s.screen.area(widget(&s, hexlords::session::CITY_DETAILS_ID));
     click(&mut s, Point::new(r.x + r.w / 2, r.y + r.h / 2));
     let window = widget(&s, hexlords::city_windows::CITY_WINDOW_ID);
     let mut texts = Vec::new();

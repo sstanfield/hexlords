@@ -7,10 +7,11 @@
 mod common;
 
 use common::{assets, click, pixel_of, press, push_widget, shift_click, shift_press, type_char};
-use hexlords::city_windows::{CITY_RALLY_ID, PANEL_OPEN_ID};
+use hexlords::city_windows::CITY_RALLY_ID;
 use hexlords::game::{Game, StackState, Task};
 use hexlords::orders::{Event, Order};
 use hexlords::screen::Scene;
+use hexlords::session::CITY_DETAILS_ID as PANEL_OPEN_ID;
 use hexlords::session::{Pick, Session};
 use hexlords::setup::Setup;
 use hexlords::shell::Shell;
