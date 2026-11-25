@@ -233,14 +233,18 @@ fn the_map_records_its_keys_and_consumes_them() {
     assert!(s.screen.ui.key(None, SpecialKey::Esc, Modifiers::NONE, false));
     assert_eq!(map_commands(&mut s), [MapCommand::Key(MapKey::Esc)]);
 
-    // 1 and 2 zoom.
-    assert!(s.screen.ui.key(Some('1'), SpecialKey::None, Modifiers::NONE, true));
-    assert!(s.screen.ui.key(Some('2'), SpecialKey::None, Modifiers::NONE, true));
-    assert_eq!(map_commands(&mut s), [MapCommand::Key(MapKey::ZoomOut), MapCommand::Key(MapKey::ZoomIn)]);
-    assert!(!s.screen.ui.key(Some('1'), SpecialKey::None, Modifiers::NONE, false), "their releases pass through");
+    // - zooms out, = (or +) in.
+    assert!(s.screen.ui.key(Some('-'), SpecialKey::None, Modifiers::NONE, true));
+    assert!(s.screen.ui.key(Some('='), SpecialKey::None, Modifiers::NONE, true));
+    assert!(s.screen.ui.key(Some('+'), SpecialKey::None, Modifiers::NONE, true));
+    let zooms = [MapKey::ZoomOut, MapKey::ZoomIn, MapKey::ZoomIn].map(MapCommand::Key);
+    assert_eq!(map_commands(&mut s), zooms);
+    assert!(!s.screen.ui.key(Some('-'), SpecialKey::None, Modifiers::NONE, false), "their releases pass through");
 
-    // Other keys are not the map's.
+    // Other keys are not the map's: the digits are the rally points' (the
+    // game's, as root keys).
     assert!(!s.screen.ui.key(Some('x'), SpecialKey::None, Modifiers::NONE, true));
+    assert!(!s.screen.ui.key(Some('1'), SpecialKey::None, Modifiers::NONE, true));
     assert!(!s.screen.ui.key(Some('3'), SpecialKey::None, Modifiers::NONE, true));
     assert!(!down(&mut s, SpecialKey::F5));
     assert!(!down(&mut s, SpecialKey::PageUp));

@@ -375,8 +375,11 @@ impl<S: Scene> App<S> {
             self.map_renderer.draw(ctx, &self.pipelines, &screen.game.map, &screen.view, &marks);
         }
         if set_viewport(ctx, screen.minimap_rect(), framebuffer) {
-            let battles = crate::render::battle_marks(&screen.mini_view, &scene.battles());
-            self.minimap_renderer.draw(ctx, &self.pipelines, screen.mini_view.marker(&screen.view), &battles);
+            let mut marks = crate::render::battle_marks(&screen.mini_view, &scene.battles());
+            // The rally points' flags, as on the main map, in the viewer's color.
+            let flag = crate::render::side_color(scene.viewer().unwrap_or(crate::state::Side::Grey));
+            marks.extend(crate::render::flag_marks(&screen.mini_view, scene.flags(), flag));
+            self.minimap_renderer.draw(ctx, &self.pipelines, screen.mini_view.marker(&screen.view), &marks);
         }
         // Back to the whole framebuffer for the UI, which draws on top.
         set_viewport(ctx, Rect::from_size(framebuffer), framebuffer);

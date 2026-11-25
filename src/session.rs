@@ -378,6 +378,7 @@ fn help_section() -> Vec<HelpSection> {
                     "Aside this turn, on to the next; F: defend, or stand down; B: a temple's blessing; X: disband",
                 ),
                 ("R", "Rally points: place them; Go to (or a city's Send to) onto one's flag sends units there"),
+                ("0 to 9", "Go to that rally point (the view and the cursor; its flag is on the minimap too)"),
                 (
                     "P",
                     "Patrol: Shift+click waypoints, click the last (its own: a loop), say if it attacks (Enter: Patrol)",
@@ -4635,6 +4636,23 @@ impl Session {
         }
     }
 
+    /// Look at the person's rally point `n` (0 to 9, its digit; the owner's
+    /// word, 2026-11-24: "Jumping to rally points will be useful to manage
+    /// games on huge maps even if not rallying there"): the view and the
+    /// cursor go there. One that is not set says so, under the stack.
+    pub fn go_to_rally_point(&mut self, n: usize) {
+        if self.covered() || !self.people_in_play() {
+            return;
+        }
+        match self.screen.game.rally_point(self.seer(), n as u8) {
+            Some(point) => {
+                self.look_at(point.at);
+                self.notice = None;
+            }
+            None => self.notice = Some(format!("Rally point {n} is not set: R to place it.")),
+        }
+    }
+
     /// Open the menu with the title `id`, as it is now.
     fn open_menu(&mut self, id: TbId) {
         let Some(menu) = self.menu(id) else { return };
@@ -4705,8 +4723,8 @@ impl Session {
                 .item(REPLAY_ID, "Replay what happened", "W", self.can_replay())
                 .separator()
                 .item(CAPITAL_ID, "Your capital", "H", people)
-                .item(ZOOM_IN_ID, "Zoom in", "2", true)
-                .item(ZOOM_OUT_ID, "Zoom out", "1", true);
+                .item(ZOOM_IN_ID, "Zoom in", "=", true)
+                .item(ZOOM_OUT_ID, "Zoom out", "-", true);
             // (In a browser fullscreen is the browser's: `help::window_section`.)
             if WEB { menu } else { menu.item(FULLSCREEN_ID, "Fullscreen", fullscreen_keys(), true) }
         } else if id == TbId::new(MENU_HELP_ID) {
@@ -5041,6 +5059,7 @@ impl Session {
                         'u' | 'U' => self.toggle_maraud(),
                         'v' | 'V' => self.toggle_orders_shown(),
                         'w' | 'W' => self.play_replay(),
+                        '0'..='9' => self.go_to_rally_point(ch as usize - '0' as usize),
                         _ => {}
                     }
                 }

@@ -90,7 +90,7 @@ Other useful ones:
 cargo run                                   # the new game screen, in a window
 cargo run -- --frames 30                    # smoke test: draws 30 frames and quits
 cargo run -- --map assets/maps/continent --screenshot target/shot.png   # draws the start view into a PNG and quits
-cargo run -- --map assets/maps/continent --screenshot target/shot.png --script "enter,1,cursor:0:0"   # after some input
+cargo run -- --map assets/maps/continent --screenshot target/shot.png --script "enter,minus,cursor:0:0"   # after some input
 cargo run -- --map assets/maps/example.map  # the game on a map file
 cargo run --release -- --headless --map assets/maps/continent --seed 7 --log   # agents against agents, no window
 cargo run -- --saves target/saves           # keep the games in progress there (without it: the system's place for a program's data)

@@ -84,8 +84,8 @@ fn clicking_beyond_reach_sends_them_there_or_says_why_not() {
     let mut s = session();
     let &[cav] = s.screen.game.map.units_at(START) else { panic!() };
     // Zoom out twice: at the start zoom everything in view is within reach.
-    type_char(&mut s, '1');
-    type_char(&mut s, '1');
+    type_char(&mut s, '-');
+    type_char(&mut s, '-');
     let p = pixel_of(&s, START);
     click(&mut s, p);
     assert_eq!(s.screen.game.selected(), Some(cav));
@@ -217,17 +217,17 @@ fn the_cursor_stops_at_the_map_edge_and_the_view_does_not_jump() {
 }
 
 #[test]
-fn one_and_two_zoom_and_center_on_the_cursor() {
+fn minus_and_equals_zoom_and_center_on_the_cursor() {
     let mut s = session();
     let hex = Hex::new(47, 55);
     let p = pixel_of(&s, hex);
     hover(&mut s, p);
     assert_eq!(s.screen.view.center(), START);
 
-    assert!(type_char(&mut s, '1'));
+    assert!(type_char(&mut s, '-'));
     assert_eq!((s.screen.view.zoom_level(), s.screen.view.center()), (2, hex));
     for _ in 0..5 {
-        type_char(&mut s, '1');
+        type_char(&mut s, '-');
     }
     assert_eq!(s.screen.view.zoom_level(), 4, "the widest level");
     // At the last level the key does nothing at all: with the cursor somewhere
@@ -235,12 +235,12 @@ fn one_and_two_zoom_and_center_on_the_cursor() {
     let other = Hex::new(40, 62);
     let p = pixel_of(&s, other);
     hover(&mut s, p);
-    assert!(type_char(&mut s, '1'));
+    assert!(type_char(&mut s, '-'));
     assert_eq!((s.screen.view.zoom_level(), s.screen.view.center()), (4, hex));
     let p = pixel_of(&s, hex);
     hover(&mut s, p);
     for _ in 0..10 {
-        type_char(&mut s, '2');
+        type_char(&mut s, '=');
     }
     assert_eq!((s.screen.view.zoom_level(), s.screen.view.center()), (0, hex), "the closest level");
     // Zooming changes neither the cursor nor the selection.
@@ -251,10 +251,10 @@ fn one_and_two_zoom_and_center_on_the_cursor() {
 #[test]
 fn picking_follows_the_zoom_and_the_center() {
     let mut s = session();
-    type_char(&mut s, '2');
+    type_char(&mut s, '=');
     press(&mut s, SpecialKey::Left);
-    type_char(&mut s, '1');
-    type_char(&mut s, '1');
+    type_char(&mut s, '-');
+    type_char(&mut s, '-');
     assert_eq!((s.screen.view.zoom_level(), s.screen.view.center()), (2, Hex::new(50, 49)));
     for hex in [Hex::new(44, 40), Hex::new(57, 58), Hex::new(50, 49)] {
         let p = pixel_of(&s, hex);
@@ -349,4 +349,30 @@ fn the_overlay_and_the_minimap_follow_changes_to_the_map() {
     s.frame(64);
     assert!(s.screen.game.selected().is_none() && s.screen.game.range().is_none());
     assert!(!s.screen.take_minimap_dirty());
+}
+
+/// The owner's word, 2026-11-24: "letting 0-9 on the main map jump to
+/// them [the rally points] is a great idea ... useful to manage games on
+/// huge maps even if not rallying there". A digit takes the view and the
+/// cursor to that point; one not set says so under the stack.
+#[test]
+fn a_digit_goes_to_that_rally_point() {
+    use hexlords::orders::{Order, RallyPoint};
+    let mut s = session();
+    let far = Hex::new(20, 80);
+    let point = RallyPoint { at: far, defend: false };
+    s.screen.game.apply(Order::RallyPoint { n: 3, point: Some(point) }).unwrap();
+    assert!(!s.screen.view.shows(far));
+    assert!(!type_char(&mut s, '3'), "the map does not take a digit: the game does");
+    assert_eq!(s.screen.game.map.cursor, far);
+    assert!(s.screen.view.shows(far) && s.shown() == far);
+    // The zoom is as it was: the digits zoom no more.
+    let zoom = s.screen.view.zoom_level();
+    type_char(&mut s, '1');
+    assert_eq!((s.screen.view.zoom_level(), s.screen.game.map.cursor), (zoom, far));
+    let line = |s: &hexlords::session::Session| s.screen.ui.text(common::widget(s, "unit_line")).map(str::to_string);
+    assert_eq!(line(&s).as_deref(), Some("Rally point 1 is not set: R to place it."));
+    // Its flag is the minimap's too (the scene's flags, drawn on both).
+    use hexlords::screen::Scene;
+    assert_eq!(s.flags(), [(far, 3)]);
 }

@@ -13,7 +13,7 @@
 use miniquad::{PassAction, RenderPass, RenderingBackend, TextureId};
 
 use super::hex_mesh::{HEX_INDICES, HEX_VERTICES, HexVariant};
-use super::map_renderer::{BATTLE_BORDER, RING_COLOR, side_color};
+use super::map_renderer::{BATTLE_BORDER, DIGIT_BARS, RING_COLOR, flag_number, side_color};
 use super::mesh::{BufferPool, MAX_VERTICES, Mesh};
 use super::shaders::{BlitVertex, FlatVertex, Pipelines};
 use super::textures::texture_params;
@@ -104,6 +104,58 @@ pub fn battle_marks(view: &MiniMapView, battles: &[(Hex, f32)]) -> Vec<FlatVerte
                     [along - across, along * way + across * way],
                 ];
                 quads.extend(corners.map(|[dx, dy]| FlatVertex { pos: [x + dx * 2.0 / w, y + dy * 2.0 / h], color }));
+            }
+        }
+    }
+    quads
+}
+
+/// The rally points' flags on the minimap (the owner's word, 2026-11-24:
+/// "marking rally points on the minimap"): for each, as on the main map, a
+/// pole and a cloth in the side's `color` from its hex up and to the right,
+/// dark around them, and on the cloth the point's number (0 to 9) in seven
+/// bars, as big as the minimap lets them be (they grow with the widget, as
+/// the cities' marks do). Quads of four vertices.
+pub fn flag_marks(view: &MiniMapView, flags: &[(Hex, u8)], color: [f32; 3]) -> Vec<FlatVertex> {
+    let (w, h) = view.size();
+    let (w, h) = (w.max(1) as f32, h.max(1) as f32);
+    // A unit of the flag, in pixels: 9 of them tall, 6.5 wide.
+    let u = (view.city_mark_reach() / 2.5).max(1.0);
+    let [r, g, b] = color;
+    let mut quads = Vec::with_capacity(flags.len() * 44);
+    for (hex, n) in flags {
+        let [x, y] = view.to_ndc(view.hex_center(*hex));
+        // A rectangle in units from the hex's middle (x right, y up).
+        let mut rect = |x0: f32, x1: f32, y0: f32, y1: f32, color: [f32; 4]| {
+            let corners = quad_corners([x0, y0, x1, y1]);
+            quads.extend(
+                corners.map(|[dx, dy]| FlatVertex { pos: [x + dx * u * 2.0 / w, y + dy * u * 2.0 / h], color }),
+            );
+        };
+        let (pole, cloth) = ((-0.5, 0.5, 0.0, 9.0), (0.5, 6.5, 4.0, 9.0));
+        let grow = 0.6;
+        for (x0, x1, y0, y1) in [pole, cloth] {
+            rect(x0 - grow, x1 + grow, y0 - grow, y1 + grow, RING_COLOR);
+        }
+        rect(pole.0, pole.1, pole.2, pole.3, [0.85, 0.80, 0.68, 1.0]);
+        rect(cloth.0, cloth.1, cloth.2, cloth.3, [r, g, b, 1.0]);
+        // The number: seven bars, a unit thick at the least.
+        let (x0, x1, y0, y1) = (2.2, 4.8, 4.8, 8.2);
+        let t = (0.7f32).max(1.0 / u);
+        let ym = (y0 + y1) / 2.0;
+        let bars = [
+            (x0, x1, y1 - t, y1),
+            (x1 - t, x1, ym, y1),
+            (x1 - t, x1, y0, ym),
+            (x0, x1, y0, y0 + t),
+            (x0, x0 + t, y0, ym),
+            (x0, x0 + t, ym, y1),
+            (x0, x1, ym - t / 2.0, ym + t / 2.0),
+        ];
+        let number = flag_number(color);
+        for (bar, lit) in bars.iter().zip(DIGIT_BARS[usize::from(n % 10)]) {
+            if lit {
+                rect(bar.0, bar.1, bar.2, bar.3, number);
             }
         }
     }
@@ -379,6 +431,39 @@ mod tests {
         assert!(quad.iter().all(|v| v.color == [0.0, 0.0, 0.0, 0.3]));
         // Two triangles that share the diagonal.
         assert_eq!(QUAD_INDICES, [0, 1, 2, 0, 2, 3]);
+    }
+
+    /// The owner's word, 2026-11-24: "marking rally points on the
+    /// minimap". A flag for each point: dark behind a pole and a cloth in
+    /// the side's color, from the hex up and to the right, and its number
+    /// in bars on the cloth.
+    #[test]
+    fn a_rally_point_is_a_numbered_flag_in_the_sides_color() {
+        let mut view = MiniMapView::new(30, 40);
+        view.resize(200, 231);
+        let hex = Hex::new(12, 20);
+        let color = [0.8, 0.2, 0.2];
+        let one = flag_marks(&view, &[(hex, 1)], color);
+        let eight = flag_marks(&view, &[(hex, 8)], color);
+        // Two dark, the pole, the cloth; then the lit bars (2 of a 1, 7 of an 8).
+        assert_eq!((one.len(), eight.len()), (4 * (4 + 2), 4 * (4 + 7)));
+        let colors: Vec<[f32; 4]> = one.chunks(4).map(|q| q[0].color).collect();
+        assert_eq!(colors[..2], [RING_COLOR, RING_COLOR]);
+        assert_eq!(colors[3], [0.8, 0.2, 0.2, 1.0], "the cloth");
+        assert_eq!(colors[4], flag_number(color), "the number, light on a dark cloth");
+        // From the hex's middle, up and to the right, about three times a
+        // city's mark tall.
+        let [x, y] = view.to_ndc(view.hex_center(hex));
+        let px = |v: &FlatVertex| [(v.pos[0] - x) * 100.0, (v.pos[1] - y) * 115.5];
+        let tops = one.iter().map(|v| px(v)[1]).fold(f32::MIN, f32::max);
+        let bottom = one[8..12].iter().map(|v| px(v)[1]).fold(f32::MAX, f32::min);
+        assert!(bottom.abs() < 1e-3, "the pole stands on the hex: {bottom}");
+        let reach = view.city_mark_reach();
+        assert!(tops > reach * 3.0 && tops < reach * 5.0, "{tops} against {reach}");
+        assert!(one[12..].iter().all(|v| px(v)[0] > 0.0), "the cloth and its number to the right");
+        // None, nothing; a small minimap, still finite.
+        assert!(flag_marks(&view, &[], color).is_empty());
+        assert!(flag_marks(&MiniMapView::new(20, 20), &[(hex, 3)], color).iter().all(|v| v.pos[0].is_finite()));
     }
 
     /// The owner's word, 2026-11-22: "Marking the battle locations on the

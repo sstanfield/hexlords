@@ -189,7 +189,8 @@ it was built from. The most used:
 | Click or drag on the minimap | The main map goes to that part of the map (and the cursor with it) |
 | Two fingers or the wheel over the minimap | The view goes the same way as over the main map, but much farther: a pixel of the minimap for a pixel of the fingers |
 | Arrow keys | Move the cursor; the view follows when the cursor leaves it, and comes back to it if it was moved away |
-| `1` / `2` | Zoom out / in, centered on the cursor |
+| `-` / `=` (or `+`) | Zoom out / in, centered on the cursor |
+| `0` to `9` | Go to that rally point: the view and the cursor go to its flag (rally points also show on the minimap). R places them |
 | F1, or `?` | The help: every key and what the mouse does (Esc closes it). The Help menu also has the rules of the game in play: battles (the system and chance it was set up with), movement (what each of the map's kinds of unit pays), cities and gold, units and captains, orders and turns, what you see |
 | Ctrl+, (Cmd+,) | Options: what the screen does for you as a turn goes (selects the next stack, asks before a turn ends, plays battles out or tells them in a line, shows moves as they happen). They are yours, not rules |
 | Ctrl+Cmd+F, or F11 | Fullscreen on and off (macOS keeps F11 for itself) |
@@ -373,7 +374,8 @@ with `--map`, and without it are not used.
   too), else 100. The map editor takes it as well.
 - `--script <steps>`: play some input before the first frame. Steps are
   separated by commas: `left`, `right`, `up`, `down`, `enter`, `esc`, `space`,
-  `1`, `2`, `key:X` (any character; `key:ctrl+s` with modifiers),
+  `minus`, `plus` (zoom out, in), `0` to `9` (that digit: a rally point),
+  `key:X` (any character; `key:ctrl+s` with modifiers),
   `click:ROW:COL`, `shiftclick:ROW:COL` (a click with Shift held),
   `hover:ROW:COL`, `drag:ROW:COL:ROW:COL`, `minimap:ROW:COL`
   (click the minimap there), `press:ID` (click the widget with that id),
@@ -387,7 +389,7 @@ with `--map`, and without it are not used.
   turns, a battle being watched), and `*N` repeats a step.
 
 ```sh
-cargo run -- --map assets/maps/continent --screenshot shot.png --script "enter,1"   # a unit's range, zoomed out
+cargo run -- --map assets/maps/continent --screenshot shot.png --script "enter,minus"   # a unit's range, zoomed out
 cargo run -- --map assets/maps/continent --players green=person    # two people, red and green
 cargo run --release -- --headless --map assets/maps/continent --seed 7   # the computer against itself
 ```

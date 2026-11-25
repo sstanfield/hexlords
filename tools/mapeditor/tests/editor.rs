@@ -550,7 +550,7 @@ fn the_minimap_and_the_keys_move_around_as_in_the_game() {
     special(&mut e, SpecialKey::Left);
     assert_eq!(e.map().cursor.col, cursor.col - 1);
     let zoom = e.screen.view.zoom_level();
-    type_char(&mut e, '1');
+    type_char(&mut e, '-');
     assert_eq!(e.screen.view.zoom_level(), zoom + 1);
     assert_eq!(count(&e, TileType::Grass), 100 * 100, "moving around paints nothing");
     assert!(!e.modified());

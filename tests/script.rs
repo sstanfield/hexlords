@@ -11,9 +11,9 @@ fn keys_go_through_the_ui() {
     let mut s = session();
     script::run(&mut s, "left*3, up, down*2,right").unwrap();
     assert_eq!(s.screen.game.map.cursor, Hex::new(51, 48));
-    script::run(&mut s, "1,1").unwrap();
+    script::run(&mut s, "minus,minus").unwrap();
     assert_eq!((s.screen.view.zoom_level(), s.screen.view.center()), (3, Hex::new(51, 48)));
-    script::run(&mut s, "2*9").unwrap();
+    script::run(&mut s, "plus*9").unwrap();
     assert_eq!(s.screen.view.zoom_level(), 0);
     // Esc does nothing, and an empty script is fine.
     script::run(&mut s, "esc").unwrap();
@@ -75,7 +75,7 @@ fn hex_pixels_are_inside_the_map_or_none() {
 fn characters_drags_and_buttons() {
     let mut s = session();
     // `key:` types any character, with modifiers if asked: Ctrl+Q quits.
-    script::run(&mut s, "key:1,key:2,key:x,key:+,space").unwrap();
+    script::run(&mut s, "key:-,key:=,key:x,key:1,space").unwrap();
     assert_eq!(s.screen.view.zoom_level(), 1);
     assert!(!s.screen.quit_requested());
     script::run(&mut s, "key:ctrl+q").unwrap();

@@ -3,7 +3,8 @@
 //!
 //! - `left`, `right`, `up`, `down`, `enter`, `esc`, `space`: press and release
 //!   that key;
-//! - `1`, `2`: type that character (zoom out, zoom in);
+//! - `minus`, `plus`: zoom out, zoom in (`-` and `=`); `0` to `9`: type that
+//!   digit (in the game, go to that rally point);
 //! - `key:X`: type the character X; with modifiers, `key:ctrl+s`,
 //!   `key:shift+cmd+z` (`ctrl`, `shift`, `alt`, `cmd`);
 //! - `click:ROW:COL`, `hover:ROW:COL`: click on, or point at, the middle of that
@@ -162,8 +163,11 @@ fn parse_step(action: &str) -> Result<Step, String> {
             Step::Wait(ms.parse().map_err(|_| format!("\"{ms}\" is not a number of ms"))?)
         }
         "space" => Step::Char(' ', Modifiers::NONE),
-        "1" => Step::Char('1', Modifiers::NONE),
-        "2" => Step::Char('2', Modifiers::NONE),
+        "minus" => Step::Char('-', Modifiers::NONE),
+        "plus" => Step::Char('=', Modifiers::NONE),
+        digit if digit.len() == 1 && digit.chars().all(|c| c.is_ascii_digit()) => {
+            Step::Char(digit.chars().next().unwrap_or('0'), Modifiers::NONE)
+        }
         "click" => Step::Click(hex()?, Modifiers::NONE),
         "shiftclick" => Step::Click(hex()?, Modifiers::SHIFT),
         "hover" => Step::Hover(hex()?),

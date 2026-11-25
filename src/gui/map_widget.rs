@@ -19,9 +19,10 @@ pub enum MapKey {
     ShiftEnter,
     /// Esc: close what is open over the map (the help).
     Esc,
-    /// `1`
+    /// `-` (the digits are the game's rally points: the owner's word,
+    /// 2026-11-24; before, 1 and 2 zoomed)
     ZoomOut,
-    /// `2`
+    /// `=`, or `+`
     ZoomIn,
 }
 
@@ -110,8 +111,8 @@ impl Widget for MapWidget {
                     (SpecialKey::Enter, _) if ev.mods.contains(Modifiers::SHIFT) => MapKey::ShiftEnter,
                     (SpecialKey::Enter, _) => MapKey::Enter,
                     (SpecialKey::Esc, _) => MapKey::Esc,
-                    (SpecialKey::None, Some('1')) => MapKey::ZoomOut,
-                    (SpecialKey::None, Some('2')) => MapKey::ZoomIn,
+                    (SpecialKey::None, Some('-')) => MapKey::ZoomOut,
+                    (SpecialKey::None, Some('=' | '+')) => MapKey::ZoomIn,
                     _ => return false,
                 };
                 self.commands.push(MapCommand::Key(key));

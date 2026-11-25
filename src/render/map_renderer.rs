@@ -349,14 +349,14 @@ pub const FLAG_NUMBER_DARK: [f32; 4] = [0.12, 0.09, 0.05, 1.0];
 pub const FLAG_NUMBER_LIGHT: [f32; 4] = [0.97, 0.95, 0.90, 1.0];
 
 /// The number's color on a cloth of `color`: dark on a light one.
-fn flag_number(color: [f32; 3]) -> [f32; 4] {
+pub(crate) fn flag_number(color: [f32; 3]) -> [f32; 4] {
     let [r, g, b] = color;
     if 0.299 * r + 0.587 * g + 0.114 * b > 0.55 { FLAG_NUMBER_DARK } else { FLAG_NUMBER_LIGHT }
 }
 
 /// Which of a digit's seven bars are lit: top, top right, bottom right,
 /// bottom, bottom left, top left, middle.
-const DIGIT_BARS: [[bool; 7]; 10] = [
+pub(crate) const DIGIT_BARS: [[bool; 7]; 10] = [
     [true, true, true, true, true, true, false],
     [false, true, true, false, false, false, false],
     [true, true, false, true, true, false, true],

@@ -108,7 +108,8 @@ fn it_says_every_key_of_the_game() {
     let titles: Vec<&str> = help.iter().map(|section| section.title.as_str()).collect();
     assert_eq!(titles, ["The map", "The game", "Units", "Cities", "View", "The window"]);
     let keys: Vec<&str> = help.iter().flat_map(|section| section.rows.iter().map(|(keys, _)| keys.as_str())).collect();
-    for expected in ["Arrow keys", "1  /  2", "F1  or  ?", fullscreen_keys(), &format!("{}+Q", command_key())] {
+    for expected in ["Arrow keys", "-  /  =", "0 to 9", "F1  or  ?", fullscreen_keys(), &format!("{}+Q", command_key())]
+    {
         assert!(keys.contains(&expected), "{expected} is not in {keys:?}");
     }
     assert!(keys.iter().any(|k| k.contains(&format!("{}+T", command_key()))), "{keys:?}");

@@ -278,7 +278,7 @@ cargo run -- --map assets/maps/mine             # the game
 ```
 
 Both take `--screenshot shot.png`, which draws the window into a file and
-quits (add `--script "1,1,1"` to zoom all the way out first). The editor's
+quits (add `--script "minus,minus,minus"` to zoom all the way out first). The editor's
 minimap shows the whole map at once. The editor paints terrain and lays roads;
 the units and the cities are text, to be edited as text, and when the editor
 saves a map directory it says what `cities.txt` has to say about the new

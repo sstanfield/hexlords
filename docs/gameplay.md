@@ -875,7 +875,11 @@ thing to happen. Ideas to try, as the rules grow:
   `Order::RallyPoint`), its own (another side's view has none of them),
   placed on land it has seen (not open water, nor a city not its own): R, or the Units menu's Rally points, places,
   moves, looks at and removes them; a numbered flag in the side's colour
-  shows each on the map. Units sent to one (by Go to onto its flag, or by a city) are bound
+  shows each on the map, and on the minimap (the owner's word,
+  2026-11-24). The digits 0 to 9 go to that point: the view and the
+  cursor ("Jumping to rally points will be useful to manage games on huge
+  maps even if not rallying there"; zoom moved from 1 and 2 to `-` and
+  `=`). Units sent to one (by Go to onto its flag, or by a city) are bound
   to it (`Unit::bound`): if it moves they go to its new place; if it is
   removed they stop and wait for orders, and the cities that sent their
   units there keep them. Once it is full (`MAX_STACK`), those that come

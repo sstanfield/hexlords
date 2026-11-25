@@ -49,7 +49,7 @@ pub fn map_section_for(web: bool) -> HelpSection {
         &[
             ("Pointer on the map", "The hex under it is the cursor"),
             ("Arrow keys", "Move the cursor"),
-            ("1  /  2", "Zoom out  /  in"),
+            ("-  /  =", "Zoom out  /  in"),
             ("Wheel, two fingers", "Move the map (with Shift: sideways)"),
             (zoom, "Zoom in or out at the pointer"),
             ("Right or middle drag", "Pull the map along"),
