@@ -26,7 +26,7 @@ pub use map_renderer::{
     SELECTED_BORDER, city_image, side_color, tile_image,
 };
 pub use minimap_image::minimap_image;
-pub use minimap_renderer::{MiniMapRenderer, battle_marks, flag_marks};
+pub use minimap_renderer::{CHOSEN_COLOR, MiniMapRenderer, MiniMarks, battle_marks, flag_marks, mini_marks};
 pub use shaders::Pipelines;
 pub use textures::AssetDirs;
 pub use unit_icon::{city_icon, coin_icon, unit_icon};

@@ -794,6 +794,13 @@ pub trait Scene {
         &[]
     }
 
+    /// More to mark on the minimap: in the game, while production is open,
+    /// its cities that are idle or wait, the one chosen, and where that
+    /// one sends its units.
+    fn minimap_marks(&self) -> crate::render::MiniMarks {
+        crate::render::MiniMarks::default()
+    }
+
     /// The stacks shown going from hex to hex: in the game, the moves being
     /// shown.
     fn moving(&self) -> Vec<crate::render::Moving> {

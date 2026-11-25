@@ -162,6 +162,63 @@ pub fn flag_marks(view: &MiniMapView, flags: &[(Hex, u8)], color: [f32; 3]) -> V
     quads
 }
 
+/// What else the minimap marks (`Scene::minimap_marks`): hexes ringed, each
+/// in its color, and a line from one hex to another.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MiniMarks {
+    pub rings: Vec<(Hex, [f32; 3])>,
+    pub line: Option<(Hex, Hex)>,
+}
+
+/// The color of the line `MiniMarks` draws, and of a ring of the city it
+/// is about (the production's chosen city): gold.
+pub const CHOSEN_COLOR: [f32; 3] = [0.95, 0.78, 0.25];
+
+/// `marks` on the minimap: each ring a square frame around its city's mark,
+/// dark behind its color; the line from the middle of one hex to the
+/// other's, dark behind gold. Quads of four vertices (the line under the
+/// rings).
+pub fn mini_marks(view: &MiniMapView, marks: &MiniMarks) -> Vec<FlatVertex> {
+    let (w, h) = view.size();
+    let (w, h) = (w.max(1) as f32, h.max(1) as f32);
+    let reach = view.city_mark_reach();
+    let thick = (reach * 0.35).max(1.5);
+    let mut quads = Vec::new();
+    if let Some((from, to)) = marks.line {
+        let ([x0, y0], [x1, y1]) = (view.to_ndc(view.hex_center(from)), view.to_ndc(view.hex_center(to)));
+        // In pixels, so that the line's width is the same whichever way it goes.
+        let (dx, dy) = ((x1 - x0) * w / 2.0, (y1 - y0) * h / 2.0);
+        let len = (dx * dx + dy * dy).sqrt().max(1e-3);
+        let (nx, ny) = (-dy / len, dx / len);
+        for (half, color) in
+            [(thick * 0.5 + 1.0, RING_COLOR), (thick * 0.5, [CHOSEN_COLOR[0], CHOSEN_COLOR[1], CHOSEN_COLOR[2], 1.0])]
+        {
+            let (ox, oy) = (nx * half * 2.0 / w, ny * half * 2.0 / h);
+            let corners = [[x0 - ox, y0 - oy], [x1 - ox, y1 - oy], [x1 + ox, y1 + oy], [x0 + ox, y0 + oy]];
+            quads.extend(corners.map(|pos| FlatVertex { pos, color }));
+        }
+    }
+    for (hex, [r, g, b]) in &marks.rings {
+        let outer = view.city_mark(*hex, reach * 0.5 + thick);
+        let inner = view.city_mark(*hex, reach * 0.5);
+        let dark = view.city_mark(*hex, reach * 0.5 + thick + 1.0);
+        let dark_inner = view.city_mark(*hex, reach * 0.5 - 1.0);
+        for ((o, i), color) in [((dark, dark_inner), RING_COLOR), ((outer, inner), [*r, *g, *b, 1.0])] {
+            // The frame's four sides: [left, bottom, right, top].
+            let sides = [
+                [o[0], o[1], i[0], o[3]],
+                [i[2], o[1], o[2], o[3]],
+                [i[0], o[1], i[2], i[1]],
+                [i[0], i[3], i[2], o[3]],
+            ];
+            for side in sides {
+                quads.extend(quad_corners(side).map(|pos| FlatVertex { pos, color }));
+            }
+        }
+    }
+    quads
+}
+
 /// A rectangle `[left, bottom, right, top]` as four corners and two triangles.
 const QUAD_INDICES: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
@@ -431,6 +488,41 @@ mod tests {
         assert!(quad.iter().all(|v| v.color == [0.0, 0.0, 0.0, 0.3]));
         // Two triangles that share the diagonal.
         assert_eq!(QUAD_INDICES, [0, 1, 2, 0, 2, 3]);
+    }
+
+    /// Production's marks on the game minimap: a frame round a city, dark
+    /// behind its color, clear in its middle (the city's own mark shows);
+    /// a line, dark behind gold, from one hex to the other.
+    #[test]
+    fn production_rings_its_cities_and_draws_a_line() {
+        let mut view = MiniMapView::new(30, 40);
+        view.resize(200, 231);
+        let (a, b) = (Hex::new(5, 5), Hex::new(20, 30));
+        let orange = [1.0, 0.5, 0.0];
+        let marks = MiniMarks { rings: vec![(a, orange)], line: Some((a, b)) };
+        let quads = mini_marks(&view, &marks);
+        // The line's two quads, then the ring's eight sides (four dark, four
+        // in color).
+        assert_eq!(quads.len(), 4 * (2 + 8));
+        assert_eq!(quads[4].color, [CHOSEN_COLOR[0], CHOSEN_COLOR[1], CHOSEN_COLOR[2], 1.0]);
+        assert_eq!(quads[8].color, RING_COLOR);
+        assert_eq!(quads[24].color, [1.0, 0.5, 0.0, 1.0]);
+        // The line runs from the one hex's middle to the other's.
+        let ([x0, y0], [x1, y1]) = (view.to_ndc(view.hex_center(a)), view.to_ndc(view.hex_center(b)));
+        let mid = |q: &[FlatVertex], i: usize, j: usize| {
+            [(q[i].pos[0] + q[j].pos[0]) / 2.0, (q[i].pos[1] + q[j].pos[1]) / 2.0]
+        };
+        let (start, end) = (mid(&quads[4..8], 0, 3), mid(&quads[4..8], 1, 2));
+        assert!((start[0] - x0).abs() < 1e-4 && (start[1] - y0).abs() < 1e-4, "{start:?}");
+        assert!((end[0] - x1).abs() < 1e-4 && (end[1] - y1).abs() < 1e-4, "{end:?}");
+        // The frame leaves the city's mark clear: no side covers its middle.
+        let [cx, cy] = view.to_ndc(view.hex_center(a));
+        for side in quads[8..].chunks(4) {
+            let (l, r) = (side[0].pos[0].min(side[2].pos[0]), side[0].pos[0].max(side[2].pos[0]));
+            let (bt, t) = (side[0].pos[1].min(side[2].pos[1]), side[0].pos[1].max(side[2].pos[1]));
+            assert!(!(l < cx && cx < r && bt < cy && cy < t), "{side:?}");
+        }
+        assert!(mini_marks(&view, &MiniMarks::default()).is_empty());
     }
 
     /// The owner's word, 2026-11-24: "marking rally points on the

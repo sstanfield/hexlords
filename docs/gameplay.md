@@ -998,8 +998,11 @@ thing to happen. Ideas to try, as the rules grow:
   production in one place vs visiting a bunch of cities", "a birds eye
   view of current production as well as make changes (for instance late
   game we may need to start shutting down production to save money)"):
-  E, or the Cities menu, opens `production_window`. A map with the
-  side's cities and rally points; its gold, taxes and upkeep, what the
+  E, or the Cities menu, opens `production_window`. While it is open the
+  game's minimap rings the side's cities idle or waiting in orange, the
+  chosen one in gold, with a line to where it sends its units (it had a
+  map of its own before; the owner's word, 2026-11-24: "Use the game
+  minimap ... and remove the seperate minimap"); its gold, taxes and upkeep, what the
   next 5 rounds build and the upkeep after, and whether the gold pays
   the upkeep for 20 rounds or from which round it will not; every city
   with what it builds and where its units go (idle and waiting first);

@@ -2441,7 +2441,7 @@ impl Session {
         }
         let acting = self.can_act();
         if let Some(window) = &mut self.production {
-            if window.refresh(&mut self.screen.ui, &self.screen.game, (viewer, &self.sight, acting)) {
+            if window.refresh(&mut self.screen.ui, &self.screen.game, (viewer, acting)) {
                 self.screen.settle();
             }
         }
@@ -4466,11 +4466,10 @@ impl Session {
         let (side, acting) = (self.viewer(), self.can_act());
         let shown = self.screen.game.map.city_at(self.shown).filter(|c| c.side == side).map(|c| c.id);
         let ui = &mut self.screen.ui;
-        let mut window =
-            ProductionWindow::open(ui, root, &self.screen.game, (side, &self.sight, acting), (area, PRODUCTION_ALIGN));
+        let mut window = ProductionWindow::open(ui, root, &self.screen.game, (side, acting), (area, PRODUCTION_ALIGN));
         if let Some(city) = shown {
             window.choose_city(city);
-            window.refresh(&mut self.screen.ui, &self.screen.game, (side, &self.sight, acting));
+            window.refresh(&mut self.screen.ui, &self.screen.game, (side, acting));
         }
         self.production = Some(window);
         self.screen.settle();
@@ -5191,6 +5190,11 @@ impl Scene for Session {
     /// The person's rally points.
     fn flags(&self) -> &[(Hex, u8)] {
         &self.flags
+    }
+
+    fn minimap_marks(&self) -> crate::render::MiniMarks {
+        let open = self.production.as_ref().filter(|w| w.is_open(&self.screen.ui));
+        open.map(|w| w.minimap_marks(&self.screen.game)).unwrap_or_default()
     }
 
     fn outlined(&self) -> &[Hex] {

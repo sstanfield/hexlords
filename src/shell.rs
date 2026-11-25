@@ -202,6 +202,10 @@ impl Scene for Shell {
         self.scene().flags()
     }
 
+    fn minimap_marks(&self) -> crate::render::MiniMarks {
+        self.scene().minimap_marks()
+    }
+
     fn moving(&self) -> Vec<crate::render::Moving> {
         self.scene().moving()
     }

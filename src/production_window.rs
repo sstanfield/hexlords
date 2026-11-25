@@ -19,15 +19,15 @@
 //!
 //! Not a port: the C++ had no windows.
 
-use turbo_ferret::widgets::{ImageWidget, ScrollContainer, ScrollMode};
-use turbo_ferret::{ImageHandle, LayoutParams, Rect, TbId, Ui, Visibility, WidgetId};
+use turbo_ferret::widgets::{ScrollContainer, ScrollMode};
+use turbo_ferret::{LayoutParams, Rect, TbId, Ui, Visibility, WidgetId};
 
 use crate::city_windows::CityOrder;
-use crate::game::{CityState, Game, Sight};
+use crate::game::{CityState, Game};
 use crate::gui::build::{self, WindowParts};
 use crate::info;
 use crate::orders::{RALLY_POINTS, RallyPoint};
-use crate::render::minimap_image::{Marks, minimap_marked};
+use crate::render::{BATTLE_BORDER, CHOSEN_COLOR, MiniMarks};
 use crate::state::scenario::side_name;
 use crate::state::{CityId, Hex, Sends, Side, UnitId};
 
@@ -49,8 +49,7 @@ pub const PROD_STOP_ALL_NO_ID: &str = "prod_stop_all_no";
 pub const SHOWN_ROUNDS: usize = 5;
 pub const LOOKED_ROUNDS: usize = 20;
 
-/// The map's picture, the list, the left column, in dp.
-const MAP_DP: (i32, i32) = (240, 160);
+/// The list, in dp.
 const LIST_DP: (i32, i32) = (460, 330);
 const SPACING_DP: i32 = 8;
 const SCROLL_BAR_DP: i32 = 16;
@@ -161,11 +160,6 @@ struct Key {
 pub struct ProductionWindow {
     parts: WindowParts,
     side: Side,
-    picture: WidgetId,
-    image: ImageHandle,
-    made: u64,
-    /// What the picture shows.
-    shows: Option<(u64, Marks)>,
     economy: WidgetId,
     stop_all: WidgetId,
     confirm: WidgetId,
@@ -240,7 +234,7 @@ impl ProductionWindow {
         ui: &mut Ui,
         parent: WidgetId,
         game: &Game,
-        (side, sight, acting): (Side, &Sight, bool),
+        (side, acting): (Side, bool),
         (area, align): (Rect, (f32, f32)),
     ) -> ProductionWindow {
         let mut name = side_name(side).chars();
@@ -249,12 +243,9 @@ impl ProductionWindow {
         let space = dp(ui, SPACING_DP);
         let columns = build::top_row(ui, parts.content, space * 2);
 
-        // The left: the map, the money, Stop all.
+        // The left: the money, Stop all. (The minimap marks the cities:
+        // `minimap_marks`.)
         let left = build::column(ui, columns, space / 2);
-        let picture = ui.add(left, ImageWidget::new());
-        ui.set_layout_params(picture, Some(LayoutParams::fixed(dp(ui, MAP_DP.0), dp(ui, MAP_DP.1))));
-        build::text(ui, left, "Flags: rally points; orange: idle");
-        build::gap(ui, left, space / 2);
         build::heading(ui, left, "Gold");
         let economy = build::column(ui, left, 0);
         build::gap(ui, left, space);
@@ -312,10 +303,6 @@ impl ProductionWindow {
         let mut window = ProductionWindow {
             parts,
             side,
-            picture,
-            image: ImageHandle::default(),
-            made: 0,
-            shows: None,
             economy,
             stop_all,
             confirm,
@@ -348,7 +335,7 @@ impl ProductionWindow {
             acting,
             key: None,
         };
-        window.refresh(ui, game, (side, sight, acting));
+        window.refresh(ui, game, (side, acting));
         build::place(ui, parts, area, align);
         window
     }
@@ -364,7 +351,7 @@ impl ProductionWindow {
     /// Bring it up to date with the game, for `side` (whose it is; `acting`:
     /// whether the person may give orders now). True if it was laid out
     /// anew (the caller lays the screen out again).
-    pub fn refresh(&mut self, ui: &mut Ui, game: &Game, (side, sight, acting): (Side, &Sight, bool)) -> bool {
+    pub fn refresh(&mut self, ui: &mut Ui, game: &Game, (side, acting): (Side, bool)) -> bool {
         let key = Key {
             revision: game.map.revision(),
             side,
@@ -415,7 +402,6 @@ impl ProductionWindow {
             self.sending = None;
         }
         self.fill(ui, game);
-        self.draw_map(ui, game, sight);
         // The lists as tall as their rows, up to their room; the stacks,
         // when shown, take up to half of it.
         let (w, most) = self.list_size;
@@ -541,28 +527,28 @@ impl ProductionWindow {
             .count()
     }
 
-    /// The map: the side's cities as known, its rally points flagged, the
+    /// What the game's minimap marks while it is open (the owner's word,
+    /// 2026-11-24: its own map went, "use the game minimap"): the side's
     /// cities at no work or waiting ringed in orange, the chosen city in
-    /// gold, and a line to where it sends its units.
-    fn draw_map(&mut self, ui: &mut Ui, game: &Game, sight: &Sight) {
+    /// gold, and a line from it to where it sends its units.
+    pub fn minimap_marks(&self, game: &Game) -> MiniMarks {
         let map = &game.map;
-        let flags: Vec<Hex> = game.rally_points(self.side).iter().flatten().map(|p| p.at).collect();
-        let warned: Vec<Hex> = self
+        let mut rings: Vec<(Hex, [f32; 3])> = self
             .cities
             .iter()
             .filter_map(|id| map.cities().get(*id))
             .filter(|c| matches!(CityState::of(c), CityState::Idle | CityState::Waiting))
-            .map(|c| c.pos)
+            .map(|c| (c.pos, BATTLE_BORDER))
             .collect();
         let chosen = match self.chosen {
             Some(Chosen::City(id)) => map.cities().get(id),
             _ => None,
         };
-        let ringed = match self.chosen {
-            Some(Chosen::City(_)) => chosen.map(|c| c.pos),
-            Some(Chosen::Stack(at, _)) => Some(at),
-            None => None,
-        };
+        match self.chosen {
+            Some(Chosen::City(_)) => rings.extend(chosen.map(|c| (c.pos, CHOSEN_COLOR))),
+            Some(Chosen::Stack(at, _)) => rings.push((at, CHOSEN_COLOR)),
+            None => {}
+        }
         let line = chosen.filter(|c| c.production().is_some()).and_then(|c| {
             let to = match &c.sends {
                 Sends::Route(route) => route.last().copied(),
@@ -571,18 +557,7 @@ impl ProductionWindow {
             };
             to.map(|to| (c.pos, to))
         });
-        let marks = Marks { ringed, flags, warned, line };
-        let wanted = (map.terrain_revision(), marks);
-        if self.shows.as_ref() == Some(&wanted) {
-            return;
-        }
-        let size = ui.layout_params(self.picture).map_or((0, 0), |lp| (lp.pref_w.unwrap_or(0), lp.pref_h.unwrap_or(0)));
-        let image = minimap_marked(map, size.0, size.1, &wanted.1, sight);
-        self.made += 1;
-        let handle = ui.image_from_pixels(&format!("production's map {}", self.made), image.size, &image.rgba);
-        ui.with_widget::<ImageWidget, _>(self.picture, |w, cx| w.set_image(cx, handle.clone()));
-        self.image = handle;
-        self.shows = Some(wanted);
+        MiniMarks { rings, line }
     }
 
     /// True if `id` is one of its buttons (the session hands it the click).

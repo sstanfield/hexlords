@@ -327,3 +327,38 @@ fn in_hotseat_the_next_persons_cover_closes_it() {
     assert!(s.covered(), "the map is covered for blue");
     assert!(s.production().is_none(), "red's gold is not blue's to see");
 }
+
+/// The owner's word, 2026-11-24: "Use the game minimap ... (when the prod
+/// box is open the things that went on that map go on the game map now)".
+/// While it is open the minimap rings the cities at no work in orange and
+/// the chosen one in gold, with a line to where it sends its units; closed,
+/// nothing.
+#[test]
+fn the_game_minimap_marks_what_production_marked() {
+    use hexlords::render::{BATTLE_BORDER, CHOSEN_COLOR, MiniMarks};
+    use hexlords::screen::Scene;
+    let mut s = session();
+    assert_eq!(s.minimap_marks(), MiniMarks::default());
+    let point = RallyPoint { at: Hex::new(10, 10), defend: false };
+    s.screen.game.apply(Order::RallyPoint { n: 2, point: Some(point) }).unwrap();
+    let alder = city(&s.screen.game, ALDER);
+    s.screen.game.apply(Order::Build { city: alder, what: Some(1) }).unwrap();
+    s.screen.game.apply(Order::Rally { city: alder, to: Sends::Point { n: 2, bless: false } }).unwrap();
+    open(&mut s);
+    push_row(&mut s, ALDER);
+    let marks = s.minimap_marks();
+    for idle in [BIRCH, COBB] {
+        assert!(marks.rings.contains(&(idle, BATTLE_BORDER)), "{idle}: {marks:?}");
+    }
+    assert!(marks.rings.contains(&(ALDER, CHOSEN_COLOR)) && !marks.rings.contains(&(ALDER, BATTLE_BORDER)));
+    assert_eq!(marks.line, Some((ALDER, Hex::new(10, 10))));
+
+    common::press(&mut s, SpecialKey::Esc);
+    assert_eq!(s.minimap_marks(), MiniMarks::default(), "closed: nothing");
+    // The window's scene is the shell, which hands them on (it did not at
+    // first: nothing showed).
+    open(&mut s);
+    push_row(&mut s, ALDER);
+    let shell = hexlords::shell::Shell::playing(&assets(), s);
+    assert_eq!(shell.minimap_marks(), marks);
+}

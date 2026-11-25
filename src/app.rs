@@ -375,7 +375,10 @@ impl<S: Scene> App<S> {
             self.map_renderer.draw(ctx, &self.pipelines, &screen.game.map, &screen.view, &marks);
         }
         if set_viewport(ctx, screen.minimap_rect(), framebuffer) {
-            let mut marks = crate::render::battle_marks(&screen.mini_view, &scene.battles());
+            // What production marks (rings, a line), then the battles, then
+            // the flags, each over the last.
+            let mut marks = crate::render::mini_marks(&screen.mini_view, &scene.minimap_marks());
+            marks.extend(crate::render::battle_marks(&screen.mini_view, &scene.battles()));
             // The rally points' flags, as on the main map, in the viewer's color.
             let flag = crate::render::side_color(scene.viewer().unwrap_or(crate::state::Side::Grey));
             marks.extend(crate::render::flag_marks(&screen.mini_view, scene.flags(), flag));
