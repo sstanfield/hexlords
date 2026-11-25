@@ -41,7 +41,9 @@ use crate::patrol_window::{self, PatrolClick, PatrolWindow};
 use crate::platform::WEB;
 use crate::production_window::{self, ProductionClick, ProductionWindow};
 use crate::rally_window::{self, RallyClick, RallyWindow};
-use crate::render::{AssetDirs, BATTLE_BORDER, BATTLE_FLASH, OWN_WAY_BORDER, SELECTED_BORDER, coin_icon, unit_icon};
+use crate::render::{
+    AssetDirs, BATTLE_BORDER, BATTLE_FLASH, OWN_WAY_BORDER, SELECTED_BORDER, city_icon, coin_icon, unit_icon,
+};
 use crate::replay::{Replay, Step};
 use crate::screen::{FULLSCREEN_ID, HELP_KEYS_ID, MapScreen, QUIT_ID, Scene, ZOOM_IN_ID, ZOOM_OUT_ID};
 use crate::setup::Controller;
@@ -103,6 +105,9 @@ pub const CAPITAL_ID: &str = "capital";
 pub const GOLD_ID: &str = "gold";
 pub const GOLD_IN_ID: &str = "gold_in";
 pub const GOLD_OUT_ID: &str = "gold_out";
+/// Beside it, the side's cities of all the map's ("9/24", by a city's
+/// picture).
+pub const CITIES_HELD_ID: &str = "cities_held";
 /// The button that ends the turn, and the line about the cursor.
 pub const END_TURN_ID: &str = "end_turn";
 /// The buttons for the lists of cities, and the one for the selected city.
@@ -459,13 +464,14 @@ pub struct Session {
     swallow_click: bool,
     city_details: WidgetId,
     /// The menu bar, its menus, and the treasury at its end: the gold, what
-    /// comes in a turn, what goes out.
+    /// comes in a turn, what goes out; and the side's cities of all.
+    /// (`treasury` is the three lines of gold, then the cities' line.)
     menu_bar: WidgetId,
     menu_room: WidgetId,
     menu_titles: WidgetId,
     treasury_box: WidgetId,
     menus: MenuBar,
-    treasury: [Line; 3],
+    treasury: [Line; 4],
     sidebar: WidgetId,
     turn_row: WidgetId,
     undo: WidgetId,
@@ -720,6 +726,11 @@ impl Session {
         let coin_widget = find(&screen, "coin")?;
         screen.ui.set_layout_params(coin_widget, Some(LayoutParams::fixed(coin_px, coin_px)));
         screen.ui.with_widget::<ImageWidget, _>(coin_widget, |w, cx| w.set_image(cx, coin_image));
+        let city = city_icon(coin_px);
+        let city_image = screen.ui.image_from_pixels("city_icon", city.size, &city.rgba);
+        let city_widget = find(&screen, "city_icon")?;
+        screen.ui.set_layout_params(city_widget, Some(LayoutParams::fixed(coin_px, coin_px)));
+        screen.ui.with_widget::<ImageWidget, _>(city_widget, |w, cx| w.set_image(cx, city_image));
         let lines = |screen: &MapScreen, name: &str, n: usize| -> Result<Vec<Line>, String> {
             (0..n).map(|i| Line::find(screen, &format!("{name}_{i}"))).collect()
         };
@@ -758,6 +769,7 @@ impl Session {
                 Line::find(&screen, GOLD_ID)?,
                 Line::find(&screen, GOLD_IN_ID)?,
                 Line::find(&screen, GOLD_OUT_ID)?,
+                Line::find(&screen, CITIES_HELD_ID)?,
             ],
             sidebar: find(&screen, "main_sidebar")?,
             turn_row: find(&screen, "turn_row")?,
@@ -2337,13 +2349,21 @@ impl Session {
         self.screen.ui.set_disabled(self.end_turn.widget, !theirs && self.past.is_none());
         self.refresh_replay();
         // The treasury of the person at the screen (none on a map without
-        // sides): "34", "+40", "-32".
+        // sides): "34", "+40", "-32"; and its cities of all the map's,
+        // "9/24" (the owner's word, 2026-11-24: "my city count/total cities
+        // on the menu bar with the gold info"; how many there are is no
+        // secret, only who holds those in the fog).
         let viewer = self.viewer();
         let gold = if viewer == Side::Grey {
-            [String::new(), String::new(), String::new()]
+            [String::new(), String::new(), String::new(), String::new()]
         } else {
             let game = &self.screen.game;
-            [game.gold(viewer).to_string(), format!("+{}", game.income(viewer)), format!("-{}", game.upkeep(viewer))]
+            [
+                game.gold(viewer).to_string(),
+                format!("+{}", game.income(viewer)),
+                format!("-{}", game.upkeep(viewer)),
+                info::cities_held(&game.map, viewer),
+            ]
         };
         for (line, text) in self.treasury.iter_mut().zip(&gold) {
             line.set(&mut self.screen, text);

@@ -903,7 +903,9 @@ thing to happen. Ideas to try, as the rules grow:
   interface"): Game, Units, Cities, View and Help, each item with its keys
   (every one but the help's topics has one), so the sidebar keeps only End
   turn, Undo, Replay with its slider, and the city. The treasury sits at the bar's right end ("34
-  +40 -32"). The stack under the map is a box for its leader and one for
+  +40 -32"), and after it, by a city's picture, the side's cities of all
+  the map's ("9/24"; the owner's word, 2026-11-24: "my city count/total
+  cities on the menu bar with the gold info"). The stack under the map is a box for its leader and one for
   each of the eight units a hex holds, empty ones dimmed, with Go to, Done
   and Next beside them. One's own city on the selected hex is in full in
   the sidebar (what it builds, where its new units go; its window has more

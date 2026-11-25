@@ -14,7 +14,8 @@
 TBLayout: id: main_layout, axis: y, distribution-position: left top, position: left, spacing: 4
 	# The menus (Session puts a title for each in `menu_titles`; a click
 	# opens its menu, `gui::menu`), then room, then the player's treasury:
-	# its gold, what its cities bring in a turn, what its units cost.
+	# its gold, what its cities bring in a turn, what its units cost; and
+	# its cities, of all the map's ("9/24").
 	TBLayout: id: menu_bar, skin: MenuBar, axis: x, distribution: gravity, distribution-position: left, position: center, spacing: 6
 		TBLayout: id: menu_titles, axis: x, position: center, spacing: 0, gravity: left
 		TBWidget: id: menu_room, gravity: left right
@@ -23,6 +24,10 @@ TBLayout: id: main_layout, axis: y, distribution-position: left top, position: l
 			TBTextField: id: gold, text-align: right
 			TBTextField: id: gold_in, skin: GoldIn, text-align: left
 			TBTextField: id: gold_out, skin: GoldOut, text-align: left
+			TBWidget: id: treasury_gap
+				lp: width: 6
+			TBImageWidget: id: city_icon
+			TBTextField: id: cities_held, text-align: left
 	TBLayout: id: main_row, axis: x, distribution: gravity, distribution-position: left, position: top, spacing: 5
 		TBLayout: id: map_column, axis: y, distribution-position: top, position: left, spacing: 5
 			MapWidget: id: main_map, is-focusable: 1

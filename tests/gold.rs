@@ -158,7 +158,18 @@ fn the_menu_bar_shows_the_treasury_and_a_city_its_taxes() {
     assert!(s.next_turn());
     assert_eq!(treasury(&s)[0], "34");
     let (bar, gold) = (s.screen.area(widget(&s, "menu_bar")), s.screen.area(widget(&s, "gold_out")));
-    assert!(gold.y >= bar.y && gold.bottom() <= bar.bottom() && gold.right() > bar.right() - 40, "{gold:?} {bar:?}");
+    assert!(gold.y >= bar.y && gold.bottom() <= bar.bottom() && gold.right() > bar.right() - 120, "{gold:?} {bar:?}");
+    // And last, by a city's picture, the side's cities of all the map's
+    // (the owner's word, 2026-11-24).
+    let cities = s.screen.area(widget(&s, "cities_held"));
+    assert!(cities.x > gold.right() && cities.right() > bar.right() - 40, "{cities:?} {bar:?}");
+    let icon = s.screen.area(widget(&s, "city_icon"));
+    assert!(icon.x > gold.right() && icon.right() <= cities.x && icon.h > 8, "{icon:?}");
+    assert_eq!(says(&s, "cities_held"), "1/2");
+    let bluemoor = s.screen.game.map.city_at(Hex::new(5, 15)).unwrap().id;
+    s.screen.game.map.city_mut(bluemoor).unwrap().side = Side::Red;
+    s.frame(0);
+    assert_eq!(says(&s, "cities_held"), "2/2", "it follows the cities' holders");
     // The city's window says what it brings in.
     let r = s.screen.area(widget(&s, hexlords::city_windows::PANEL_OPEN_ID));
     click(&mut s, Point::new(r.x + r.w / 2, r.y + r.h / 2));

@@ -903,6 +903,12 @@ fn waits(map: &Map, city: &City, prod: &UnitProd) -> String {
     }
 }
 
+/// A side's cities of all the map's, for the menu bar: "9/24".
+pub fn cities_held(map: &Map, side: Side) -> String {
+    let held = map.cities().iter().filter(|c| c.side == side).count();
+    format!("{held}/{}", map.cities().len())
+}
+
 /// A side's treasury in two lines, for the sidebar: "Gold 34", and what comes
 /// in and goes out a turn, "Taxes +40, upkeep -32".
 pub fn treasury_lines(game: &Game, side: Side) -> [String; 2] {

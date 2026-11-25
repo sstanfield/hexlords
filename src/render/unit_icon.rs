@@ -1,4 +1,5 @@
-//! The panels' small pictures: a coin for the treasury ([`coin_icon`]), and
+//! The panels' small pictures: a coin for the treasury ([`coin_icon`]), a
+//! city by the count of the side's cities ([`city_icon`]), and
 //! a unit's icon: the disc of its side's color with the dark
 //! ring around it and its kind's picture on it, as the map draws a unit, but
 //! round (the map squeezes it with the hex) and filled to the edge. Drawn on
@@ -224,6 +225,84 @@ pub fn coin_icon(size: i32) -> Image {
     Image { size: Size::new(size, size), rgba }
 }
 
+/// A small city, `size` pixels across, for the menu bar's count of the
+/// side's cities (the owner's word, 2026-11-24): two towers and a wall
+/// between them, each with its battlements, a dark gate, in stone lit from
+/// the top left inside a dark line. Straight-alpha RGBA. (Drawn here, not
+/// taken from anywhere: rectangles and an arch.)
+pub fn city_icon(size: i32) -> Image {
+    const STONE: [f32; 3] = [0.78, 0.74, 0.66];
+    const LIGHT: [f32; 3] = [0.95, 0.92, 0.85];
+    const WALL: [f32; 3] = [0.62, 0.58, 0.51];
+    const LINE: [f32; 3] = [0.18, 0.15, 0.12];
+    const DARK: [f32; 3] = [0.14, 0.11, 0.09];
+    type Part = [f32; 4];
+    // In shares of the picture, x right and y down: [left, top, right, bottom].
+    // A tower: its body and its two merlons; the wall between them, lower.
+    const TOWERS: [[Part; 3]; 2] = [
+        [[0.06, 0.26, 0.36, 0.93], [0.06, 0.10, 0.15, 0.27], [0.27, 0.10, 0.36, 0.27]],
+        [[0.64, 0.26, 0.94, 0.93], [0.64, 0.10, 0.73, 0.27], [0.85, 0.10, 0.94, 0.27]],
+    ];
+    const WALL_PARTS: [Part; 3] = [[0.30, 0.50, 0.70, 0.93], [0.38, 0.38, 0.46, 0.51], [0.54, 0.38, 0.62, 0.51]];
+    // A window in each tower, and the gate's doorway (an arch on it).
+    const WINDOWS: [Part; 2] = [[0.18, 0.42, 0.24, 0.58], [0.76, 0.42, 0.82, 0.58]];
+    let line = 0.045;
+    let within = |parts: &[Part], x: f32, y: f32, grow: f32| {
+        parts.iter().any(|[l, t, r, b]| x >= l - grow && x <= r + grow && y >= t - grow && y <= b + grow)
+    };
+    let gate = |x: f32, y: f32| {
+        let (cx, top, half) = (0.5, 0.72, 0.075);
+        (x - cx).abs() <= half && y <= 0.93 && (y >= top || (x - cx).powi(2) + (y - top).powi(2) <= half * half)
+    };
+    // Lit from the top left.
+    let shade = |base: [f32; 3], x: f32, y: f32| -> [f32; 3] {
+        let light = ((1.0 - x - y) * 0.45).clamp(0.0, 1.0);
+        std::array::from_fn(|i| base[i] + (LIGHT[i] - base[i]) * light)
+    };
+    // What is at a point: the towers over the wall, each inside its line.
+    let at = |x: f32, y: f32| -> Option<[f32; 3]> {
+        for tower in &TOWERS {
+            if within(tower, x, y, 0.0) {
+                return Some(if within(&WINDOWS, x, y, 0.0) { DARK } else { shade(STONE, x, y) });
+            }
+            if within(tower, x, y, line) {
+                return Some(LINE);
+            }
+        }
+        if gate(x, y) {
+            return Some(DARK);
+        }
+        if within(&WALL_PARTS, x, y, 0.0) {
+            return Some(shade(WALL, x, y));
+        }
+        within(&WALL_PARTS, x, y, line).then_some(LINE)
+    };
+    let size = size.max(0);
+    let n = size as usize;
+    let mut rgba = Vec::with_capacity(n * n * 4);
+    for py in 0..n {
+        for px in 0..n {
+            let (mut color, mut cover) = ([0.0f32; 3], 0.0f32);
+            for sy in 0..SAMPLES {
+                for sx in 0..SAMPLES {
+                    let x = (px as f32 + (sx as f32 + 0.5) / SAMPLES as f32) / size as f32;
+                    let y = (py as f32 + (sy as f32 + 0.5) / SAMPLES as f32) / size as f32;
+                    let Some(c) = at(x, y) else { continue };
+                    for (s, v) in color.iter_mut().zip(c) {
+                        *s += v;
+                    }
+                    cover += 1.0;
+                }
+            }
+            let alpha = cover / (SAMPLES * SAMPLES) as f32;
+            let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+            let c = |i: usize| if cover > 0.0 { color[i] / cover } else { 0.0 };
+            rgba.extend([byte(c(0)), byte(c(1)), byte(c(2)), byte(alpha)]);
+        }
+    }
+    Image { size: Size::new(size, size), rgba }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::map_renderer::{DISC_RING, RING_COLOR};
@@ -318,5 +397,27 @@ mod tests {
         // So is one whose bytes run short.
         let short = Image { size: Size::new(8, 8), rgba: vec![255; 10] };
         assert_eq!(unit_icon(Some(&short), Side::Black, 1, 30).rgba, unit_icon(None, Side::Black, 1, 30).rgba);
+    }
+
+    /// The menu bar's city (the owner's word, 2026-11-24: "add a small city
+    /// icon and have my city count/total cities on the menu bar").
+    #[test]
+    fn the_city_is_stone_with_a_dark_gate_and_clear_around() {
+        let icon = city_icon(32);
+        assert_eq!((icon.size, icon.rgba.len()), (Size::new(32, 32), 32 * 32 * 4));
+        // The corners are clear; the gate is dark; a tower is stone.
+        assert_eq!(pixel(&icon, 0, 0)[3], 0);
+        assert_eq!(pixel(&icon, 31, 0)[3], 0);
+        let gate = pixel(&icon, 16, 28);
+        assert!(gate[3] == 255 && gate[0] < 60, "{gate:?}");
+        let tower = pixel(&icon, 4, 26);
+        assert!(tower[3] == 255 && tower[0] > 170, "{tower:?}");
+        // Over the wall between the towers, the sky; a tower's window, dark.
+        assert_eq!(pixel(&icon, 16, 6)[3], 0);
+        let window = pixel(&icon, 6, 16);
+        assert!(window[3] == 255 && window[0] < 60, "{window:?}");
+        // No size, no pixels; and it is the same each time.
+        assert!(city_icon(0).rgba.is_empty());
+        assert_eq!(city_icon(16).rgba, city_icon(16).rgba);
     }
 }

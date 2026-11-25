@@ -143,7 +143,8 @@ What is different in a browser:
 
 Along the top are the menus (Game, Units, Cities, View, Help: each item says
 its keys) and, at the right end, your treasury: your gold, what your cities
-bring in each turn (+), what your units cost (-). Under the map are the
+bring in each turn (+), what your units cost (-); and, by a city's picture,
+your cities of all the map's ("9/24"). Under the map are the
 selected hex's units, a box each: the leader's (its commander) on the left,
 then one for each of the eight units a hex holds, and beside them Go to, Done
 and Next. Beside the map, under the minimap, are End turn, Undo and Replay,
