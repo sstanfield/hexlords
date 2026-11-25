@@ -39,6 +39,8 @@ use crate::state::{CityId, Hex, Sends, Side, UnitId};
 pub const PRODUCTION_WINDOW_ID: &str = "production_window";
 pub const PRODUCTION_CLOSE_ID: &str = "production_close";
 pub const PROD_STACKS_ID: &str = "prod_stacks";
+/// The right column (the chosen city), which scrolls.
+pub const PROD_RIGHT_ID: &str = "prod_right";
 pub const PROD_SELECT_ID: &str = "prod_select";
 pub const PROD_DISBAND_ID: &str = "prod_disband";
 pub const PROD_STOP_ALL_ID: &str = "prod_stop_all";
@@ -62,8 +64,10 @@ pub const WARN_ROUNDS: u32 = 5;
 /// The size of an icon of what comes, in dp.
 const COMING_ICON_DP: i32 = 22;
 
-/// The left column's width, the spacing, a scroll bar's room, in dp.
+/// The left column's width (at most, and at least: it has two fifths of
+/// the panel between), the spacing, a scroll bar's room, in dp.
 const LEFT_DP: i32 = 300;
+const LEFT_LEAST_DP: i32 = 180;
 const SPACING_DP: i32 = 8;
 const SCROLL_BAR_DP: i32 = 16;
 
@@ -336,6 +340,7 @@ impl ProductionWindow {
 
         // The right: the city, or the stacks.
         let right_scroll = ui.add(columns, ScrollContainer::new(ScrollMode::YAuto).with_adapt_content_size(true));
+        ui.set_id(right_scroll, TbId::new(PROD_RIGHT_ID));
         let right = build::column(ui, right_scroll, space / 2);
         let city_host = build::column(ui, right, 0);
         let stack_box = build::column(ui, right, space / 2);
@@ -690,14 +695,13 @@ impl ProductionWindow {
         // short and scroll rather than run past its edge; the owner saw its
         // top row go off the screen.)
         let body = (inside.h - header - warning - bottom - space * 3).max(dp(ui, 40));
-        let left_w = dp(ui, LEFT_DP);
+        let (left_w, right_w) = self.columns(ui);
         let filters = ui.preferred_size_free(ui.parent(self.filters[0].1).unwrap_or(self.city_list)).pref.h;
         let heading = ui.preferred_size_free(self.coming_heading).pref.h;
         let lists = (body - filters - heading - space).max(dp(ui, 32));
         let coming_h = lists * 2 / 5;
         ui.set_layout_params(self.city_scroll, Some(LayoutParams::fixed(left_w, lists - coming_h)));
         ui.set_layout_params(self.coming_scroll, Some(LayoutParams::fixed(left_w, coming_h)));
-        let right_w = (inside.w - left_w - space * 2).max(dp(ui, 200));
         ui.set_layout_params(self.right_scroll, Some(LayoutParams::fixed(right_w, body)));
         // (A scroll container is a layout boundary: what holds it hears of
         // its new size only if told.)
@@ -709,9 +713,26 @@ impl ProductionWindow {
         build::arrange_panel(ui, self.parts, self.area);
     }
 
-    /// The width the city's view has in the right column.
-    pub fn city_width(&self, ui: &Ui) -> i32 {
-        (self.area.w - dp(ui, LEFT_DP + 4 * SPACING_DP + SCROLL_BAR_DP)).max(dp(ui, 200))
+    /// The columns' widths: the left, two fifths of the panel (between
+    /// `LEFT_LEAST_DP` and `LEFT_DP`), and the right, what is left (the
+    /// review, 2026-11-25: at 175% and more a fixed left column pushed the
+    /// right one off the panel).
+    fn columns(&self, ui: &mut Ui) -> (i32, i32) {
+        let inside = ui.padding_rect(self.parts.window).w;
+        let inside = if inside > 0 { inside } else { self.area.w };
+        let space = dp(ui, SPACING_DP);
+        // (Not narrower than what is in it but the lists: the filters'
+        // buttons, the heading of what comes.)
+        let filter_row = ui.parent(self.filters[0].1).unwrap_or(self.city_list);
+        let least = ui.preferred_size_free(filter_row).pref.w.max(ui.preferred_size_free(self.coming_heading).pref.w);
+        let left = (inside * 2 / 5).clamp(dp(ui, LEFT_LEAST_DP), dp(ui, LEFT_DP)).max(least);
+        (left, (inside - left - space * 2).max(dp(ui, 100)))
+    }
+
+    /// The width the city's view has in the right column (its scroll bar's
+    /// room taken off).
+    pub fn city_width(&self, ui: &mut Ui) -> i32 {
+        self.columns(ui).1 - dp(ui, SCROLL_BAR_DP + SPACING_DP)
     }
 
     /// Lay it out again (the city's view in it changed size).

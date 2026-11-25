@@ -21,12 +21,19 @@ pub fn ui_scale(dir: &Path) -> Option<u32> {
         .find_map(|value| crate::app::parse_ui_scale(value).ok())
 }
 
-/// Keep the interface's size in `dir`'s settings (the file made, or
-/// written again whole).
+/// Keep the interface's size in `dir`'s settings (the file made, or its
+/// line written again; the lines it does not know are kept, for the version
+/// that does).
 pub fn set_ui_scale(dir: &Path, percent: u32) -> Result<(), String> {
     let path = dir.join(FILE);
-    files::write_whole(&path, format!("ui-scale {percent}\n").as_bytes())
-        .map_err(|e| format!("{}: {e}", path.display()))
+    let old = files::read_to_string(&path).unwrap_or_default();
+    let mut text: String = old
+        .lines()
+        .filter(|line| line.split_whitespace().next() != Some("ui-scale"))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    text.push_str(&format!("ui-scale {percent}\n"));
+    files::write_whole(&path, text.as_bytes()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 #[cfg(test)]
@@ -42,6 +49,9 @@ mod tests {
         assert_eq!(ui_scale(&dir), Some(150));
         std::fs::write(dir.join(FILE), "colour blue\nui-scale 175\n").unwrap();
         assert_eq!(ui_scale(&dir), Some(175), "a line it does not know is passed over");
+        set_ui_scale(&dir, 125).unwrap();
+        let text = std::fs::read_to_string(dir.join(FILE)).unwrap();
+        assert_eq!(text, "colour blue\nui-scale 125\n", "and kept");
         std::fs::write(dir.join(FILE), "ui-scale big\n").unwrap();
         assert_eq!(ui_scale(&dir), None, "no size: none");
         let _ = std::fs::remove_dir_all(&dir);

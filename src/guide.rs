@@ -321,8 +321,9 @@ fn cities(game: &Game) -> Vec<HelpSection> {
                 ),
                 (
                     "Building",
-                    "Its holder sets what it builds (its window shows each unit's numbers, turns and \
-                              price). It goes on building the same until told otherwise."
+                    "Its holder sets what it builds, in Production (O, or E): a box for each unit it can \
+                     build (point at one: its numbers, turns and price). It goes on building the same until \
+                     told otherwise."
                         .to_string(),
                 ),
                 (
@@ -336,7 +337,7 @@ fn cities(game: &Game) -> Vec<HelpSection> {
                 (
                     "New units",
                     "A city can send what it builds to a hex of your choosing: Send to... in \
-                               its window (Send... in the sidebar)."
+                     Production, beside its queue."
                         .to_string(),
                 ),
                 (
@@ -616,8 +617,9 @@ fn orders_sections(order: &str) -> Vec<HelpSection> {
                 ),
                 (
                     "A queue",
-                    "In a city's window, + beside a kind adds it to the city's queue: so many of it, sent \
-                     somewhere (click an item to choose it, then set what it builds and where its units go). \
+                    "In Production, a unit's box adds it to the city's queue (on an empty one, a unit that \
+                     repeats, its units kept in the city): so many of it, sent somewhere (click an item to \
+                     choose it, then set where its units go; - and + change how many). \
                      After the last item it stops, or repeats from the chosen item, for ever or so many \
                      times. A city whose queue ran out needs orders; Nothing means nothing, on purpose."
                         .to_string(),

@@ -50,3 +50,51 @@ fn a_size_chosen_in_options_builds_the_screen_again_around_the_same_game() {
     assert_eq!(hexlords::settings::ui_scale(&dir), Some(100));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A hex of the continent with red's units, to find again.
+fn red_units(shell: &mut Shell) -> usize {
+    let game = &shell.session().unwrap().screen.game;
+    game.map.units().iter().filter(|u| u.side() == hexlords::state::Side::Red).count()
+}
+
+/// In hotseat, the screen built again in the middle of a person's turn is
+/// still theirs: not covered for them again (it did not know whose turn it
+/// had shown last).
+#[test]
+fn in_hotseat_a_new_size_leaves_the_turn_uncovered() {
+    let (game, _) = hexlords::game::Game::load(std::path::Path::new("assets/maps/continent")).unwrap();
+    let mut setup = hexlords::setup::Setup::solo(&game.map, Some(hexlords::state::Side::Red), "passive");
+    setup.set_players("blue=person").unwrap();
+    let game = game.with_setup(setup);
+    let session = common::with_game(&common::assets(), turbo_ferret::Size::new(1536, 1152), 96, game).unwrap();
+    let mut shell = Shell::playing(&common::assets(), session);
+    shell.set_ui_scale(100, 96);
+    if shell.session().unwrap().covered() {
+        script::run(&mut shell, &format!("press:{}", hexlords::session::BEGIN_TURN_ID)).unwrap();
+    }
+    assert!(!shell.session().unwrap().covered());
+    script::run(&mut shell, "press:menu_game,press:options").unwrap();
+    script::run(&mut shell, &format!("press:{}", ui_scale_id(150))).unwrap();
+    assert_eq!(dpi_of(&mut shell), 144);
+    script::run(&mut shell, "wait:100").unwrap();
+    assert!(!shell.session().unwrap().covered(), "still red's turn, uncovered");
+}
+
+/// A screen that cannot be built again (here: no assets where the shell
+/// looks) leaves the game as it was, at the size it was: it had a blank
+/// map in its place.
+#[test]
+fn a_size_that_cannot_be_built_leaves_the_game_as_it_was() {
+    let (game, _) = hexlords::game::Game::load(std::path::Path::new("assets/maps/continent")).unwrap();
+    let session = common::with_game(&common::assets(), turbo_ferret::Size::new(1536, 1152), 96, game).unwrap();
+    let mut shell = Shell::playing(std::path::Path::new("no/such/assets"), session);
+    shell.set_ui_scale(100, 96);
+    let units = red_units(&mut shell);
+    assert!(units > 0);
+    script::run(&mut shell, "press:menu_game,press:options").unwrap();
+    script::run(&mut shell, &format!("press:{}", ui_scale_id(150))).unwrap();
+    assert_eq!(dpi_of(&mut shell), 96, "at the size it was");
+    assert_eq!(red_units(&mut shell), units, "the same game");
+    assert_ne!(shell.session().unwrap().screen.game.map.rows(), 20, "not the blank map");
+    assert_eq!(shell.session().unwrap().options().ui_scale, 100);
+}

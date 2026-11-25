@@ -1098,8 +1098,8 @@ thing to happen. Ideas to try, as the rules grow:
   each battle's fight (who fought with what, each exchange, `Game::fight`)
   for `REPLAY_ROUNDS` (5) rounds; a battle is deterministic, but the fight
   is kept as it happened rather than fought again.
-- **What a city can build, before it is built** (built): the city's window
-  has a button for each, with the unit's icon, name, strength and moves,
+- **What a city can build, before it is built** (built): the city, in
+  Production, has a box for each, with the unit's icon, strength and moves,
   and all about the one under the pointer (turns, price, upkeep, what each
   terrain costs it).
 - **Mistakes cost little** (built): Esc drops the selection (a click on
@@ -1134,14 +1134,14 @@ thing to happen. Ideas to try, as the rules grow:
   with nothing) is building nothing on purpose (`City::resting`), and is
   no task (late in a game, a city left alone). Build takes the queue away
   (Undo gives it back). A queue changed goes on from the item it was
-  building if that is still there. The city's window has two columns: what
-  it can build (a + beside each adds one to the queue) and all about the
-  one under the pointer; the queue (an item a row, the one building marked,
-  one more, one less, out; Then: Stop, or Repeat from the chosen one, and
-  how many times) and where the units go. While it has a queue, the
-  window's buttons for what it builds and where the units go are about the
-  item chosen (the new one, after a +); the sidebar's are about the item it
-  builds now.
+  building if that is still there. The city, in Production, has what it
+  can build (a box each: a click adds one to the queue; on an empty queue,
+  one that repeats, its units kept) and all about the one under the
+  pointer; the queue (an item a row, the one building marked, one more,
+  one less, out; Then: Stop, or Repeat from the chosen one, and how many
+  times) and where the units go, which are about the item chosen (the new
+  one, after a box's click). The queue is the way to build there (the
+  owner's word, 2026-11-24); the sidebar only says what the city builds.
 - **Patrols** (built, the owner's word 2026-11-21: excess troops kept
   useful, and eyes open in the fog): P, or the Units menu's Patrol
   (`Order::Patrol`), then the waypoints, from where the stack stands, as

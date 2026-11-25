@@ -272,6 +272,26 @@ pub struct SessionParts {
     /// The file it is kept in, if it is.
     pub kept: Option<PathBuf>,
     pub options: Options,
+    /// What the screen keeps of the game that is no window (`carry`): in
+    /// hotseat, whose turn it showed last (else it would cover itself in
+    /// the middle of a turn); what is kept to be shown again; in rounds,
+    /// what the last round showed and to whom.
+    carried: Carried,
+}
+
+/// What a screen built again takes over of the one before (`SessionParts`).
+#[derive(Default)]
+struct Carried {
+    last_person: Option<Side>,
+    round_shown: Vec<RoundTick>,
+    round_seen: Vec<Side>,
+    round_live: bool,
+    round_before: Vec<(Side, Sight)>,
+    looked: Option<[f32; 2]>,
+    replays: Vec<(Option<Side>, Replay)>,
+    recording: Vec<(Option<Side>, Replay)>,
+    /// Where the map's middle was.
+    middle: Option<[f32; 2]>,
 }
 
 /// A unit's place in the stack: a button with the unit's icon and its numbers.
@@ -408,8 +428,8 @@ fn help_section() -> Vec<HelpSection> {
             "Cities",
             &[
                 ("C", "Go to your next city (Shift+C: the one before)"),
-                ("Your city, in the sidebar", "Set what it builds (point at one: all about it), where its units go"),
-                ("O,  or  Open the city's window", "Your selected city, in Production (another side's: the sidebar)"),
+                ("A city, in the sidebar", "What it is: its holder, walls, taxes, garrison, what it builds"),
+                ("O,  or  Production (O)", "Your selected city, in Production: what it builds, where its units go"),
                 (
                     "A unit's box, in Production",
                     "One more in the city's queue (the first starts one that repeats; its units stay)",
@@ -482,6 +502,22 @@ pub struct Session {
     /// in a box that scrolls, as tall as the sidebar leaves it (the height
     /// it was given last).
     orders: OrdersList,
+    /// Where T went last: of a stack and a city on one hex, the one it is
+    /// at (the review, 2026-11-25: T went back and forth between two and
+    /// never reached the rest).
+    t_went: Option<Task>,
+    /// What the list was last made from (the map's revision, the side, the
+    /// turn and its player, the round playing out, the person's orders
+    /// given): it is made again only when that moves, not at every move of
+    /// the pointer (the review, 2026-11-25: `Game::tasks` for every stack,
+    /// after every event).
+    orders_key: Option<(u64, Side, u32, Side, bool, u64, i32)>,
+    /// The person's orders given, counted (`order_given`).
+    orders_given: u64,
+    /// How many times the list's rows were made (`orders_made`).
+    orders_made: u64,
+    /// The rows' icons shown.
+    orders_icons: Vec<Option<IconKey>>,
     orders_scroll: WidgetId,
     orders_h: i32,
     /// A press on the map closed a menu: the click it makes does nothing.
@@ -777,6 +813,11 @@ impl Session {
             tip_lines: lines(&screen, "tip", TIP_LINES)?,
             city: lines(&screen, "city", CITY_LINES)?,
             orders: OrdersList::new(find(&screen, "orders_heading")?, find(&screen, "orders_list")?),
+            t_went: None,
+            orders_key: None,
+            orders_given: 0,
+            orders_made: 0,
+            orders_icons: Vec::new(),
             orders_scroll: find(&screen, "orders_scroll")?,
             orders_h: -1,
             swallow_click: false,
@@ -1466,7 +1507,57 @@ impl Session {
         let journal = std::mem::take(&mut self.journal);
         let seen = std::mem::take(&mut self.seen);
         self.wants_rebuild = false;
-        SessionParts { game, journal, seen, kept: self.save_to.take(), options: self.options }
+        let carried = Carried {
+            last_person: self.last_person.take(),
+            round_shown: std::mem::take(&mut self.round_shown),
+            round_seen: std::mem::take(&mut self.round_seen),
+            round_live: self.round_live,
+            round_before: std::mem::take(&mut self.round_before),
+            looked: self.looked.take(),
+            replays: std::mem::take(&mut self.replays),
+            recording: std::mem::take(&mut self.recording),
+            middle: Some(self.screen.view.middle()),
+        };
+        SessionParts { game, journal, seen, kept: self.save_to.take(), options: self.options, carried }
+    }
+
+    /// Take over what `take_parts` took (of this session, or of the one
+    /// before a screen built again), all but the game, which is this one's.
+    pub fn carry(&mut self, parts: SessionParts) {
+        let SessionParts { journal, seen, kept, options, carried, .. } = parts;
+        self.restore(journal, seen);
+        if let Some(path) = kept {
+            self.keep_in(path);
+        }
+        self.set_options(options);
+        self.last_person = carried.last_person;
+        (self.round_shown, self.round_seen, self.round_live) =
+            (carried.round_shown, carried.round_seen, carried.round_live);
+        self.round_before = carried.round_before;
+        self.looked = carried.looked;
+        (self.replays, self.recording) = (carried.replays, carried.recording);
+        // Built, it covered the turn for the person it is (it did not know
+        // they were here): theirs again, and the map where it was.
+        let side = self.screen.game.player();
+        if self.last_person == Some(side) {
+            if let Some(cover) = self.cover.take() {
+                build::close(&mut self.screen.ui, cover.window);
+            }
+        }
+        if let Some([x, y]) = carried.middle {
+            self.screen.view.set_middle(x, y);
+        }
+        self.refresh();
+    }
+
+    /// Put back what `take_parts` took, the game too: the screen was not
+    /// built again after all.
+    pub fn put_back(&mut self, mut parts: SessionParts) {
+        let blank = crate::state::Map::new(20, 20, crate::state::TileType::Water).map(Game::new);
+        let blank = blank.expect("a 20 x 20 map of water is a map");
+        self.screen.game = std::mem::replace(&mut parts.game, blank);
+        self.carry(parts);
+        self.refresh();
     }
 
     /// The game is over: a window says who won.
@@ -2575,6 +2666,16 @@ impl Session {
     /// it.
     fn refresh_orders(&mut self) {
         let side = if self.people_in_play() && !self.covered() { self.viewer() } else { Side::Grey };
+        let width = self.screen.minimap_rect().w - self.screen.ui.dimension_converter().dp_to_px(18);
+        let game = &self.screen.game;
+        let given = self.orders_given;
+        let key = (game.map.revision(), side, game.turn(), game.player(), game.playing_out(), given, width);
+        if self.orders_key == Some(key) {
+            self.size_orders();
+            return;
+        }
+        self.orders_key = Some(key);
+        self.orders_made += 1;
         let rows = orders_list::rows(&self.screen.game, side);
         let map = &self.screen.game.map;
         let keys: Vec<Option<IconKey>> = rows
@@ -2590,10 +2691,19 @@ impl Session {
             })
             .collect();
         let icons: Vec<Option<ImageHandle>> = keys.iter().map(|k| k.as_ref().map(|k| self.icon(k))).collect();
-        let width = self.screen.minimap_rect().w - self.screen.ui.dimension_converter().dp_to_px(18);
+        // (The same rows with other icons: made again.)
+        if keys != self.orders_icons {
+            self.orders.forget();
+            self.orders_icons = keys;
+        }
         if self.orders.show(&mut self.screen.ui, rows, &icons, width) {
             self.orders_h = -1;
         }
+        self.size_orders();
+    }
+
+    /// The sidebar list's box, as tall as the window leaves it.
+    fn size_orders(&mut self) {
         // Its box: what the minimap, the buttons and the city leave of the
         // window, down to its bottom. (Not the sidebar's height, which is
         // the box's too: as the city's lines grew the box kept its height,
@@ -2638,6 +2748,12 @@ impl Session {
             self.screen.ui.invalidate_layout(parent);
         }
         self.orders_h = h;
+    }
+
+    /// How many times the sidebar list's rows were made: when the game
+    /// moved on, not at every move of the pointer.
+    pub fn orders_made(&self) -> u64 {
+        self.orders_made
     }
 
     /// The rows of the sidebar's list.
@@ -3265,6 +3381,7 @@ impl Session {
     /// The person gave an order: their turn starts, if it has not (their log
     /// was open between turns): "so does any order".
     fn order_given(&mut self) {
+        self.orders_given += 1;
         if self.between && self.persons_turn() {
             self.start_turn_with(false);
         }
@@ -3313,11 +3430,16 @@ impl Session {
     fn edit_queue(&mut self, city: CityId, edit: impl FnOnce(&mut Vec<QueueItem>, &mut QueueEnd)) {
         let Some(c) = self.screen.game.map.cities().get(city) else { return };
         let (mut items, mut end) = (c.queue.items.clone(), c.queue.end);
+        let had = !items.is_empty();
         edit(&mut items, &mut end);
         // The queue emptied: the city builds nothing (the queue is the one
-        // way to build, `CityOrder::Enqueue`).
+        // way to build, `CityOrder::Enqueue`). An edit of one that was
+        // empty already changes nothing (the review, 2026-11-25: a key on
+        // no item stopped a city building without a queue).
         if items.is_empty() {
-            self.city_order(Order::Build { city, what: None });
+            if had {
+                self.city_order(Order::Build { city, what: None });
+            }
             return;
         }
         if let QueueEnd::Repeat { from, times } = end {
@@ -4514,6 +4636,9 @@ impl Session {
         let mine = self.persons_turn();
         match task {
             Task::Stack { at, .. } => {
+                // (The map, to send it: production goes, if it was over
+                // it.)
+                self.close_production();
                 // The units the row is about, not all on the hex (the
                 // review, 2026-11-23: a row that said "2 units" selected
                 // the garrison beside them too).
@@ -4631,7 +4756,7 @@ impl Session {
             MapKey::Up | MapKey::Down | MapKey::Left | MapKey::Right if focus == Area::Units => {
                 if let Some((_, _, kinds)) = city.filter(|c| c.2 > 0) {
                     let at = self.city_window.as_ref().and_then(|w| w.focused_unit()).unwrap_or(0);
-                    let row = city_windows::BOXES_A_ROW;
+                    let row = self.city_window.as_ref().map_or(city_windows::BOXES_A_ROW, |w| w.boxes_a_row());
                     let next = match key {
                         MapKey::Left => at.saturating_sub(1),
                         MapKey::Right => (at + 1).min(kinds - 1),
@@ -4707,10 +4832,11 @@ impl Session {
             return;
         };
         let icons = self.production_icons(id);
+        let width = self.production.as_ref().map_or(0, |w| w.city_width(&mut self.screen.ui));
         let (seer, actor) = (self.seer(), self.actor());
         let (ui, game) = (&mut self.screen.ui, &self.screen.game);
         let known = game.map.cities().get(id).map_or(info::Known::All, |c| info::Known::of(c, seer, &self.sight));
-        self.city_window = CityWindow::embed(ui, host, &game.map, id, (actor, known), &icons);
+        self.city_window = CityWindow::embed(ui, (host, width), &game.map, id, (actor, known), &icons);
         if let Some(window) = &mut self.city_window {
             window.set_walls(ui, &game.map, actor, walls_price(game, actor, id));
         }
@@ -4766,11 +4892,15 @@ impl Session {
         self.refresh_orders();
         let shown = self.shown;
         let map = &self.screen.game.map;
-        let here = self.orders.rows().iter().map(|r| r.task).find(|t| match t {
-            crate::game::Task::Stack { at, .. } => *at == shown,
-            crate::game::Task::City { city, .. } => map.cities().get(*city).is_some_and(|c| c.pos == shown),
-        });
+        let at = |t: &Task| match t {
+            Task::Stack { at, .. } => *at == shown,
+            Task::City { city, .. } => map.cities().get(*city).is_some_and(|c| c.pos == shown),
+        };
+        let rows = self.orders.rows();
+        let last = self.t_went.filter(|t| at(t) && rows.iter().any(|r| r.task == *t));
+        let here = last.or_else(|| rows.iter().map(|r| r.task).find(|t| at(t)));
         if let Some(task) = self.orders.next_needing(here.as_ref(), back) {
+            self.t_went = Some(task);
             self.see_to(task);
         }
     }
@@ -5067,8 +5197,15 @@ impl Session {
             // owner's word, 2026-11-24: "the game works well with the
             // keyboard as well as mouse"): Up and Down go from city to city;
             // the other arrows and Enter are its, not the hidden map's.
+            // (Not while a window over it holds the keys: a refusal, a
+            // battle, a question about a stack's orders, a patrol's; Enter
+            // is theirs.)
             let producing = self.production.as_ref().is_some_and(|w| w.is_open(&self.screen.ui));
-            if producing && !self.screen.help_open() {
+            let held = self.refusal.as_ref().is_some_and(|p| build::is_open(&self.screen.ui, p.window))
+                || self.battle_holds()
+                || self.asks_mission()
+                || self.patrol_window().is_some();
+            if producing && !held && !self.screen.help_open() {
                 if let MapCommand::Key(key) = command {
                     if key != MapKey::Esc {
                         self.production_key(key);

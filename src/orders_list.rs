@@ -15,7 +15,7 @@
 //!
 //! Not a port: the C++ had no such list.
 
-use turbo_ferret::widgets::ImageWidget;
+use turbo_ferret::widgets::{ImageWidget, TextField};
 use turbo_ferret::{ImageHandle, LayoutParams, TbId, Ui, WidgetId};
 
 use crate::game::{CityState, Game, StackState, Task};
@@ -173,6 +173,11 @@ impl OrdersList {
                 continue;
             };
             ui.set_text(text, &row.text);
+            // Too long for the sidebar: it ends in "...", not in half a
+            // letter (the owner's screen showed "on t").
+            ui.with_widget::<TextField, _>(text, |t, _| t.squeezable = true);
+            let room = width - icon_px - ui.dimension_converter().dp_to_px(16);
+            ui.set_layout_params(text, Some(LayoutParams { max_w: Some(room.max(0)), ..LayoutParams::default() }));
             build::set_width(ui, button, width);
             build::text_from_left(ui, button);
             match icons.get(i).cloned().flatten() {
@@ -185,6 +190,12 @@ impl OrdersList {
         }
         (self.rows, self.width) = (rows, width);
         true
+    }
+
+    /// Make the rows again at the next `show`, whatever it is given (their
+    /// icons changed: a unit went up a level).
+    pub fn forget(&mut self) {
+        (self.rows, self.width) = (Vec::new(), 0);
     }
 
     /// The task of a row clicked, if `id` is one.

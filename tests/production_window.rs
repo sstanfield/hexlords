@@ -569,6 +569,63 @@ fn it_fits_a_small_screen_or_a_big_interface() {
     }
 }
 
+/// A key about the queue's item, on a queue that has just emptied (two
+/// keys in one frame: Delete, then +), changes nothing more: it gave a
+/// second Build nothing, which Undo then undid instead of the first.
+#[test]
+fn a_key_on_an_empty_queue_changes_nothing() {
+    let mut s = session();
+    open(&mut s);
+    push_row(&mut s, BIRCH);
+    common::press(&mut s, SpecialKey::Tab);
+    common::press(&mut s, SpecialKey::Tab);
+    common::press(&mut s, SpecialKey::Enter);
+    assert_eq!(queue(&s, BIRCH).items.len(), 1);
+    s.screen.ui.key(None, SpecialKey::Tab, turbo_ferret::Modifiers::SHIFT, true);
+    s.screen.ui.key(None, SpecialKey::Tab, turbo_ferret::Modifiers::SHIFT, false);
+    s.pump();
+    assert_eq!(s.production().unwrap().focus(), Area::Queue);
+    common::press(&mut s, SpecialKey::Up);
+    s.frame(0);
+    // Delete and + before the panel hears the queue is empty.
+    let ui = &mut s.screen.ui;
+    ui.key(None, SpecialKey::Delete, turbo_ferret::Modifiers::NONE, true);
+    ui.key(None, SpecialKey::Delete, turbo_ferret::Modifiers::NONE, false);
+    ui.key(Some('+'), SpecialKey::None, turbo_ferret::Modifiers::NONE, true);
+    ui.key(Some('+'), SpecialKey::None, turbo_ferret::Modifiers::NONE, false);
+    s.pump();
+    assert!(queue(&s, BIRCH).items.is_empty());
+    // One Undo gives the queue back.
+    s.undo();
+    assert_eq!(queue(&s, BIRCH).items.len(), 1, "Undo undid the Delete");
+}
+
+/// With the interface made big, both columns stay in the panel and the
+/// city's unit boxes in the right one: fewer a row (the review, 2026-11-25:
+/// at 125% the last of six ran under its edge, and at 175% and more the
+/// right column ran off the panel onto the sidebar).
+#[test]
+fn the_columns_and_the_boxes_fit_a_big_interface() {
+    for dpi in [96, 120, 144, 168, 192] {
+        let mut s = session_at(game(|_| {}), 1024, 768, dpi);
+        open(&mut s);
+        push_row(&mut s, ALDER);
+        s.frame(0);
+        let ui = &s.screen.ui;
+        let to_root = |id| Rect::from_origin_size(ui.to_root(id, Point::ZERO), ui.rect(id).size());
+        let panel = to_root(widget(&s, PRODUCTION_WINDOW_ID));
+        let right = to_root(widget(&s, hexlords::production_window::PROD_RIGHT_ID));
+        assert!(right.right() <= panel.right(), "at {dpi}: {right:?} in {panel:?}");
+        let row = s.city_window().unwrap().boxes_a_row();
+        assert!(row >= 1);
+        let kinds = s.screen.game.map.city_at(ALDER).unwrap().units.len();
+        for i in 0..kinds {
+            let b = to_root(widget(&s, &city_windows::build_id(i)));
+            assert!(b.right() <= right.right(), "at {dpi}: box {i} {b:?} past {right:?} ({row} a row)");
+        }
+    }
+}
+
 /// What comes, as a strip a round (the owner's word, 2026-11-24: "I like
 /// the idea of a strip per round ... icons more and text less"): an icon
 /// for each unit finished; the pointer on one, its words.
@@ -585,4 +642,26 @@ fn what_comes_is_a_strip_of_icons_a_round_with_words_on_hover() {
     assert_eq!(s.tip(), ["Alder: Soldiers, 10 gold; stay"]);
     assert!(texts(&s).iter().any(|t| t == "+1 wait for gold"), "{:?}", texts(&s));
     assert!(texts(&s).iter().any(|t| t.starts_with("R") && t[1..].parse::<u32>().is_ok()));
+}
+
+/// A window over the panel keeps its keys: Enter on a full queue is
+/// refused, and Enter again closes the refusal (it went to the panel, which
+/// tried again and was refused again).
+#[test]
+fn enter_closes_a_refusal_over_the_panel() {
+    let mut s = session();
+    open(&mut s);
+    push_row(&mut s, BIRCH);
+    common::press(&mut s, SpecialKey::Tab);
+    common::press(&mut s, SpecialKey::Tab);
+    for _ in 0..hexlords::state::MAX_QUEUE {
+        common::press(&mut s, SpecialKey::Enter);
+    }
+    assert_eq!(queue(&s, BIRCH).items.len(), hexlords::state::MAX_QUEUE);
+    assert!(s.refusal().is_none());
+    common::press(&mut s, SpecialKey::Enter);
+    assert!(s.refusal().is_some(), "the queue is full");
+    common::press(&mut s, SpecialKey::Enter);
+    assert!(s.refusal().is_none(), "Enter closed it");
+    assert!(s.production().is_some(), "and the panel is still open");
 }

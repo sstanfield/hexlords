@@ -75,12 +75,9 @@ impl Shell {
         // The system's DPI (or, not told, from the one it was built at).
         let system = self.system_dpi.unwrap_or((dpi * 100 + self.ui_scale as i32 / 2) / self.ui_scale.max(1) as i32);
         let dpi = crate::app::ui_dpi(system, Some(options.ui_scale));
-        match Session::with_options(&self.assets, viewport, dpi, parts.game, options) {
+        match Session::with_options(&self.assets, viewport, dpi, parts.game.clone(), options) {
             Ok(mut fresh) => {
-                fresh.restore(parts.journal, parts.seen);
-                if let Some(path) = parts.kept {
-                    fresh.keep_in(path);
-                }
+                fresh.carry(parts);
                 self.now = Now::Playing(Box::new(fresh));
                 (self.ui_scale, self.options) = (options.ui_scale, options);
                 if let Some(dir) = &self.saves {
@@ -89,7 +86,16 @@ impl Shell {
                     }
                 }
             }
-            Err(e) => crate::platform::complain(&format!("hexlords: the screen was not built again: {e}")),
+            Err(e) => {
+                // (The game goes on as it was, at the size it was.)
+                crate::platform::complain(&format!("hexlords: the screen was not built again: {e}"));
+                if let Now::Playing(session) = &mut self.now {
+                    let size = self.ui_scale;
+                    let mut parts = parts;
+                    parts.options.ui_scale = size;
+                    session.put_back(parts);
+                }
+            }
         }
     }
 

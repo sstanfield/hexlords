@@ -155,3 +155,97 @@ fn the_sidebar_stays_in_the_window_as_the_citys_lines_come_and_go() {
         assert!(rect(&s, "orders_scroll").bottom() <= 768, "at {hex}");
     }
 }
+
+/// A row too long for the sidebar ends in "...", inside its button (the
+/// owner's screen showed "4\u{d7} Brindlewick: on t", cut through a letter at
+/// the sidebar's edge).
+#[test]
+fn a_long_row_stays_inside_its_button() {
+    let (mut s, city, _) = session();
+    let redhold = s.screen.game.map.city_at(REDHOLD).unwrap().id;
+    s.screen.game.apply(Order::Build { city: redhold, what: Some(0) }).unwrap();
+    s.screen.game.apply(Order::Defend { units: city, on: true }).unwrap();
+    s.screen.game.map.city_mut(redhold).unwrap().name = "Greatwatermoorhavenford".to_string();
+    s.frame(0);
+    s.frame(16);
+    let i = s.orders_rows().iter().position(|r| r.text.contains("Greatwater")).unwrap();
+    let ui = &s.screen.ui;
+    let right = |name: &str| {
+        let id = common::widget(&s, name);
+        ui.to_root(id, turbo_ferret::Point::ZERO).x + ui.rect(id).w
+    };
+    let (text, button) = (right(&format!("{}_text", row_id(i))), right(&row_id(i)));
+    assert!(text <= button, "the text ends at {text}, the button at {button}");
+}
+
+/// T goes round all that need orders, a stack and a city on one hex too
+/// (from the city it went back to the stack beside it, as if it were there,
+/// and never reached the rest); a stack it goes to is on the map, the
+/// production panel gone from over it.
+#[test]
+fn t_goes_round_all_with_a_stack_and_a_city_on_one_hex() {
+    let (mut s, _, _) = session();
+    s.frame(0);
+    let needing: Vec<Task> =
+        s.orders_rows().iter().map(|r| r.task).filter(hexlords::orders_list::needs_orders).collect();
+    assert_eq!(needing.len(), 3, "{needing:?}");
+    let mut went = Vec::new();
+    for _ in 0..needing.len() + 1 {
+        type_char(&mut s, 't');
+        let task = if let Some(city) = s.production().and_then(|p| p.chosen_city()) {
+            Task::City { city, state: hexlords::game::CityState::Idle }
+        } else {
+            let at = s.shown();
+            *needing.iter().find(|t| matches!(t, Task::Stack { at: a, .. } if *a == at)).unwrap()
+        };
+        went.push(task);
+        if matches!(task, Task::Stack { .. }) {
+            assert!(s.production().is_none(), "the stack is on the map");
+        }
+    }
+    let mut first: Vec<Task> = went[..3].to_vec();
+    first.sort_by_key(|t| format!("{t:?}"));
+    let mut all = needing.clone();
+    all.sort_by_key(|t| format!("{t:?}"));
+    assert_eq!(first, all, "each once: {went:?}");
+    assert_eq!(went[3], went[0], "and round again: {went:?}");
+}
+
+/// The list is made again when the game moves on, not at every move of the
+/// pointer (each time is `Game::tasks` for every stack).
+#[test]
+fn the_list_is_not_made_again_while_only_the_pointer_moves() {
+    let (mut s, _, _) = session();
+    s.frame(0);
+    let made = s.orders_made();
+    for x in 0..20 {
+        s.screen.ui.pointer_move(turbo_ferret::Point::new(100 + x * 10, 200), turbo_ferret::Modifiers::NONE);
+        s.pump();
+        s.frame(16 * x as u64);
+    }
+    assert_eq!(s.orders_made(), made, "the pointer alone");
+    // An order: made again, and says so.
+    let i = s.orders_rows().iter().position(|r| matches!(r.task, Task::Stack { at: FIELD, .. })).unwrap();
+    push_widget(&mut s, &row_id(i));
+    type_char(&mut s, 'd');
+    s.frame(0);
+    assert!(s.orders_made() > made);
+    assert!(s.orders_rows().iter().any(|r| matches!(r.task, Task::Stack { at: FIELD, .. }) && r.skin == DONE_SKIN));
+}
+
+/// A row whose words are the same but whose icon is not (its unit went up
+/// a level) is made again, with the new icon: it kept the old one.
+#[test]
+fn a_rows_icon_changes_with_its_unit() {
+    let (mut s, _, field) = session();
+    s.frame(0);
+    let i = s.orders_rows().iter().position(|r| matches!(r.task, Task::Stack { at: FIELD, .. })).unwrap();
+    let before = common::widget(&s, &row_id(i));
+    let text = s.orders_rows()[i].text.clone();
+    for id in &field {
+        s.screen.game.map.unit_mut(*id).unwrap().level += 1;
+    }
+    s.frame(16);
+    assert_eq!(s.orders_rows()[i].text, text, "the same words");
+    assert_ne!(common::widget(&s, &row_id(i)), before, "made again, with the new icon");
+}

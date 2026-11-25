@@ -105,10 +105,21 @@ fn box_resource(id: &str) -> String {
     )
 }
 
-/// How many boxes a row holds, a box's width and its icon's, in dp.
+/// How many boxes a row holds at most, a box's width and its icon's, and
+/// the space between two, in dp. (Fewer, if the panel's column is narrower:
+/// `boxes_a_row`.)
 pub const BOXES_A_ROW: usize = 6;
 const BOX_DP: i32 = 70;
 const BOX_ICON_DP: i32 = 34;
+const BOX_GAP_DP: i32 = 4;
+
+/// How many boxes a row of `width` pixels holds: one at least, and
+/// `BOXES_A_ROW` at most (the review, 2026-11-25: at 125% and more the
+/// last of six ran under the column's edge).
+pub fn boxes_a_row(ui: &Ui, width: i32) -> usize {
+    let each = dp(ui, BOX_DP + BOX_GAP_DP);
+    usize::try_from((width + dp(ui, BOX_GAP_DP)) / each.max(1)).unwrap_or(0).clamp(1, BOXES_A_ROW)
+}
 
 /// The list's size and its minimap's, and the space between things, in dp.
 const LIST_DP: (i32, i32) = (200, 240);
@@ -224,6 +235,8 @@ pub struct CityView {
     /// The production panel's form: the queue first, then the units it
     /// can build as boxes (`Enqueue`), then all about the one in focus.
     stacked: bool,
+    /// How many boxes a row holds (`boxes_a_row`).
+    per_row: usize,
     /// The box the keyboard is on (the panel's), and the one shown so.
     focus: Option<usize>,
     focus_shown: Option<usize>,
@@ -284,6 +297,7 @@ impl CityView {
         known: info::Known,
         icons: &[ImageHandle],
         (prefix, compact, stacked): (&'static str, bool, bool),
+        per_row: usize,
     ) -> Option<CityView> {
         let city = map.cities().get(id)?;
         let pid = |name: &str| format!("{prefix}{name}");
@@ -332,9 +346,9 @@ impl CityView {
             let id = pid(&build_id(i));
             if stacked {
                 // A box, as a stack's under the map: the unit's icon, and its
-                // price and turns under it ("9g 2t"); rows of `BOXES_A_ROW`.
-                if i % BOXES_A_ROW == 0 {
-                    box_row = Some(build::row(ui, options, dp(ui, 4)));
+                // price and turns under it ("9g 2t"); rows of `per_row`.
+                if i % per_row.max(1) == 0 {
+                    box_row = Some(build::row(ui, options, dp(ui, BOX_GAP_DP)));
                 }
                 let Some(row) = box_row else { continue };
                 if ui.inflate(row, &box_resource(&id)).is_err() {
@@ -502,6 +516,7 @@ impl CityView {
             prefix,
             compact,
             stacked,
+            per_row: per_row.max(1),
             focus: None,
             focus_shown: None,
             city: id,
@@ -883,21 +898,22 @@ impl CityWindow {
     }
 
     /// The city's view built into `host` (a column of the production
-    /// panel), with its walls' button over it and no Close. `None` if there
-    /// is no such city.
+    /// panel, `width` pixels wide), with its walls' button over it and no
+    /// Close. `None` if there is no such city.
     pub fn embed(
         ui: &mut Ui,
-        host: WidgetId,
+        (host, width): (WidgetId, i32),
         map: &Map,
         id: CityId,
         (player, known): (Side, info::Known),
         icons: &[ImageHandle],
     ) -> Option<Self> {
+        let per_row = boxes_a_row(ui, width);
         let column = build::column(ui, host, 0);
         // (The city's view has the window's id wherever it is.)
         ui.set_id(column, TbId::new(CITY_WINDOW_ID));
         let parts = WindowParts { window: column, content: column };
-        let Some(view) = CityView::build(ui, column, map, id, known, icons, ("", false, true)) else {
+        let Some(view) = CityView::build(ui, column, map, id, known, icons, ("", false, true), per_row) else {
             build::close(ui, column);
             return None;
         };
@@ -908,6 +924,11 @@ impl CityWindow {
         let mut window = CityWindow { parts, view, walls, walls_state: (String::new(), false, false), embedded: true };
         window.view.fill(ui, map, player);
         Some(window)
+    }
+
+    /// How many unit boxes a row holds (Up and Down go a row).
+    pub fn boxes_a_row(&self) -> usize {
+        self.view.per_row
     }
 
     /// True if it is built into the production panel.
