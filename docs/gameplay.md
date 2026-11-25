@@ -1019,8 +1019,9 @@ thing to happen. Ideas to try, as the rules grow:
   waiting in orange, the chosen one in gold, with a line to where it
   sends its units (it had a map of its own before: "Use the game minimap
   ... and remove the seperate minimap"). Its header counts the cities,
-  and a line warns when the gold will not pay the upkeep, from which
-  round (its gold block went: "the econ stuff is busy"). On the left
+  and a line warns when the gold will not pay the upkeep within 5
+  rounds, from which round (its gold block went: "the econ stuff is
+  busy"; warned of further off it was "agressive"). On the left
   every city with what it builds and where its units go (idle and
   waiting first; filters All, idle, waiting, building, keys A, I, W, B
   while it is open: "The filter row is a good idea"), and what each of

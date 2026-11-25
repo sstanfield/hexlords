@@ -353,7 +353,7 @@ fn cities(game: &Game) -> Vec<HelpSection> {
                     "E (or O on one of your cities): all your cities over the map, what each builds and \
                      where its units go (those idle or waiting first; All, idle, waiting, building to \
                      see some only), what the next 5 rounds bring, and a warning when the gold will \
-                     not pay the upkeep. The city chosen (a row, or Up and Down) is in full beside \
+                     not pay the upkeep within 5 rounds. The city chosen (a row, or Up and Down) is in full beside \
                      them: what it builds, its queue, where its units go, its walls. Stop all \
                      production stops every city; your stacks are there too, the dearest first, to \
                      send home what you can do without."

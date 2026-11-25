@@ -49,9 +49,13 @@ pub const PROD_IDLE_ID: &str = "prod_filter_idle";
 pub const PROD_WAITING_ID: &str = "prod_filter_waiting";
 pub const PROD_BUILDING_ID: &str = "prod_filter_building";
 
-/// How many rounds it lists; how far it looks for the gold.
+/// How many rounds it lists; how far it looks for the gold; how near the
+/// round the gold runs short must be for the header to warn (the owner's
+/// word, 2026-11-24: "The upkeep not getting paid is agressive, maybe only
+/// display it if it is within 5 turns or so").
 pub const SHOWN_ROUNDS: usize = 5;
 pub const LOOKED_ROUNDS: usize = 20;
+pub const WARN_ROUNDS: u32 = 5;
 
 /// The left column's width, the spacing, a scroll bar's room, in dp.
 const LEFT_DP: i32 = 300;
@@ -203,6 +207,7 @@ pub struct ProductionWindow {
     filters: Vec<(Filter, WidgetId)>,
     city_scroll: WidgetId,
     city_list: WidgetId,
+    coming_heading: WidgetId,
     coming_scroll: WidgetId,
     coming_list: WidgetId,
     /// The right column: the city (the session builds its view into
@@ -309,7 +314,7 @@ impl ProductionWindow {
             .collect();
         let city_scroll = ui.add(left, ScrollContainer::new(ScrollMode::YAuto).with_adapt_content_size(true));
         let city_list = build::column(ui, city_scroll, 0);
-        build::heading(ui, left, &format!("Coming up, the next {SHOWN_ROUNDS} rounds"));
+        let coming_heading = build::heading(ui, left, &format!("Coming up, the next {SHOWN_ROUNDS} rounds"));
         let coming_scroll = ui.add(left, ScrollContainer::new(ScrollMode::YAuto).with_adapt_content_size(true));
         let coming_list = build::column(ui, coming_scroll, 0);
 
@@ -347,6 +352,7 @@ impl ProductionWindow {
             filters,
             city_scroll,
             city_list,
+            coming_heading,
             coming_scroll,
             coming_list,
             right_scroll,
@@ -499,6 +505,7 @@ impl ProductionWindow {
         self.coming = info::coming_lines(map, &forecast, SHOWN_ROUNDS);
         self.warning_line = forecast
             .short_at
+            .filter(|round| *round <= game.turn() + WARN_ROUNDS)
             .map(|round| format!("From round {round} the gold will not pay the upkeep: units will leave."));
         self.stacks = stack_rows(game, side);
         self.stack_lines = self.stacks.iter().map(|r| stack_line(game, r)).collect();
@@ -601,12 +608,15 @@ impl ProductionWindow {
         let header = ui.preferred_size_free(ui.children(self.parts.content)[0]).pref.h;
         let warning = if self.warning_line.is_some() { ui.preferred_size_free(self.warning).pref.h } else { 0 };
         let bottom = ui.preferred_size_free(self.bottom).pref.h;
-        let body = (inside.h - header - warning - bottom - space * 3).max(dp(ui, 120));
+        // (No more than there is room for: on a small screen the lists are
+        // short and scroll rather than run past its edge; the owner saw its
+        // top row go off the screen.)
+        let body = (inside.h - header - warning - bottom - space * 3).max(dp(ui, 40));
         let left_w = dp(ui, LEFT_DP);
         let filters = ui.preferred_size_free(ui.parent(self.filters[0].1).unwrap_or(self.city_list)).pref.h;
-        let heading = dp(ui, 24);
-        let lists = (body - filters - heading - space).max(dp(ui, 80));
-        let coming_h = (lists * 2 / 5).max(dp(ui, 40));
+        let heading = ui.preferred_size_free(self.coming_heading).pref.h;
+        let lists = (body - filters - heading - space).max(dp(ui, 32));
+        let coming_h = lists * 2 / 5;
         ui.set_layout_params(self.city_scroll, Some(LayoutParams::fixed(left_w, lists - coming_h)));
         ui.set_layout_params(self.coming_scroll, Some(LayoutParams::fixed(left_w, coming_h)));
         let right_w = (inside.w - left_w - space * 2).max(dp(ui, 200));

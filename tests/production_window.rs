@@ -13,7 +13,7 @@ use hexlords::info;
 use hexlords::orders::{Order, RallyPoint};
 use hexlords::production_window::{
     Area, Filter, PROD_DISBAND_ID, PROD_IDLE_ID, PROD_SELECT_ID, PROD_STACKS_ID, PROD_STOP_ALL_ID, PROD_STOP_ALL_NO_ID,
-    PROD_STOP_ALL_YES_ID, PRODUCTION_CLOSE_ID, PRODUCTION_WINDOW_ID, city_row_id, stack_row_id,
+    PROD_STOP_ALL_YES_ID, PRODUCTION_CLOSE_ID, PRODUCTION_WINDOW_ID, WARN_ROUNDS, city_row_id, stack_row_id,
 };
 use hexlords::session::{MENU_CITIES_ID, PRODUCTION_ID, Session};
 use hexlords::setup::Setup;
@@ -176,15 +176,30 @@ fn every_city_is_a_row_the_idle_and_waiting_first_with_what_comes() {
 /// when (the owner's word, 2026-11-24: one warning line, nothing else).
 #[test]
 fn a_line_warns_when_the_gold_will_not_pay_the_upkeep() {
-    let mut s = session();
-    let levy = s.screen.game.map.units().kind_named("knights").unwrap();
-    for _ in 0..4 {
-        let id = s.screen.game.map.new_unit_of(Side::Red, levy).unwrap();
+    // (Gold enough that the first shortfall is a while off.)
+    let mut s = session_at(game(|s| s.gold = 120), 1024, 768, 96);
+    let knights = s.screen.game.map.units().kind_named("knights").unwrap();
+    let short = |s: &Session| s.screen.game.forecast(Side::Red, 20).short_at;
+    let now = s.screen.game.turn();
+    // Knights, one by one, until the gold runs short within 20 rounds.
+    let add = |s: &mut Session| {
+        let id = s.screen.game.map.new_unit_of(Side::Red, knights).unwrap();
         s.screen.game.map.place_unit(id, Hex::new(8, 8)).unwrap();
+    };
+    while short(&s).is_none() {
+        add(&mut s);
     }
     open(&mut s);
+    // Short, but more than 5 rounds off: no warning yet (the owner's word,
+    // 2026-11-24: "maybe only display it if it is within 5 turns or so").
+    assert!(short(&s).unwrap() > now + WARN_ROUNDS, "{:?}", short(&s));
+    assert_eq!(s.production().unwrap().warning(), None, "short in round {:?}", short(&s));
+    while short(&s).unwrap() > now + WARN_ROUNDS {
+        add(&mut s);
+    }
+    s.frame(0);
+    let round = short(&s).unwrap();
     let warning = s.production().unwrap().warning().map(str::to_string);
-    let round = s.screen.game.forecast(Side::Red, 20).short_at.unwrap();
     assert_eq!(warning, Some(format!("From round {round} the gold will not pay the upkeep: units will leave.")));
     assert!(texts(&s).contains(&warning.unwrap()));
 }
@@ -529,4 +544,27 @@ fn the_keyboard_works_the_panel() {
     assert_eq!(queue(&s, BIRCH).items, [item(0, 1, Sends::Stay)]);
     // None of it reached the map: the cursor and the zoom are as they were.
     assert_eq!(s.screen.game.map.cursor, ALDER);
+}
+
+/// On a small screen, or with the interface made big (`--ui-scale`), the
+/// panel's content stays inside it: its lists are short and scroll. (The
+/// owner saw its top row go off the screen; at 1024 x 600 with 150% its
+/// lists' least heights ran past its bottom.)
+#[test]
+fn it_fits_a_small_screen_or_a_big_interface() {
+    for (w, h, dpi) in [(1024, 600, 144), (1024, 768, 192), (900, 560, 120), (1366, 768, 144)] {
+        let mut game = game(|_| {});
+        game.apply(Order::Build { city: city(&game, ALDER), what: Some(0) }).unwrap();
+        let mut s = session_at(game, w, h, dpi);
+        open(&mut s);
+        push_row(&mut s, ALDER);
+        push_widget(&mut s, PROD_STOP_ALL_ID);
+        s.frame(0);
+        let ui = &s.screen.ui;
+        let panel = widget(&s, PRODUCTION_WINDOW_ID);
+        let to_root = |id| Rect::from_origin_size(ui.to_root(id, Point::ZERO), ui.rect(id).size());
+        let (p, c) = (to_root(panel), to_root(ui.children(panel)[0]));
+        assert_eq!(p, s.screen.map_rect(), "{w}x{h} at {dpi}");
+        assert!(c.y >= p.y && c.bottom() <= p.bottom(), "{w}x{h} at {dpi}: {c:?} in {p:?}");
+    }
 }
