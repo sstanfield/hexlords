@@ -68,6 +68,21 @@ pub fn stack_row_id(i: usize) -> String {
     format!("prod_stack_{i}")
 }
 
+/// Which part of the panel the keyboard is in: Tab goes from one to the
+/// next (the owner's word, 2026-11-24: "the user should be able to use the
+/// keyboard to move between units and update the discription area").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Area {
+    /// Up and Down choose a city; Enter goes to its units.
+    Cities,
+    /// Up and Down choose an item of the queue; - and + its count, Delete
+    /// takes it out.
+    Queue,
+    /// The arrows go from unit to unit; Enter adds the one there to the
+    /// queue.
+    Units,
+}
+
 /// Which of the side's cities the list shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Filter {
@@ -217,6 +232,7 @@ pub struct ProductionWindow {
     stack_lines: Vec<String>,
     stacks_shown: bool,
     filter: Filter,
+    focus: Area,
     chosen: Option<Chosen>,
     asking: bool,
     acting: bool,
@@ -355,6 +371,7 @@ impl ProductionWindow {
             stack_lines: Vec::new(),
             stacks_shown: false,
             filter: Filter::All,
+            focus: Area::Cities,
             chosen: None,
             asking: false,
             acting,
@@ -408,6 +425,27 @@ impl ProductionWindow {
         }
         self.key = None;
         before != self.chosen
+    }
+
+    /// The part the keyboard is in.
+    pub fn focus(&self) -> Area {
+        self.focus
+    }
+
+    /// The next part (Tab), or the one before (Shift+Tab); the stacks,
+    /// while shown, have only their list.
+    pub fn next_focus(&mut self, forward: bool) {
+        const ORDER: [Area; 3] = [Area::Cities, Area::Queue, Area::Units];
+        if self.stacks_shown {
+            self.focus = Area::Cities;
+            return;
+        }
+        let i = ORDER.iter().position(|a| *a == self.focus).unwrap_or(0);
+        self.focus = ORDER[if forward { (i + 1) % 3 } else { (i + 2) % 3 }];
+    }
+
+    pub fn set_focus(&mut self, area: Area) {
+        self.focus = area;
     }
 
     /// Show only the cities `filter` lets through.

@@ -94,6 +94,23 @@ fn option_resource(id: &str) -> String {
     )
 }
 
+/// The production panel's unit buttons: a box each, as a stack's under the
+/// map (the owner's word, 2026-11-24: "The unit buttons should be like the
+/// stack buttons at the bottom"): the unit's icon over its price and turns.
+fn box_resource(id: &str) -> String {
+    format!(
+        "TBButton: id: {id}, skin: UnitSlot, is-focusable: 0\n\
+         \tTBLayout: axis: y, spacing: 2\n\
+         \t\tTBImageWidget: id: {id}_icon\n\
+         \t\tTBTextField: id: {id}_text, text-align: center\n"
+    )
+}
+
+/// How many boxes a row holds, a box's width and its icon's, in dp.
+pub const BOXES_A_ROW: usize = 6;
+const BOX_DP: i32 = 70;
+const BOX_ICON_DP: i32 = 34;
+
 /// The list's size and its minimap's, and the space between things, in dp.
 const LIST_DP: (i32, i32) = (200, 240);
 const MINIMAP_DP: (i32, i32) = (220, 170);
@@ -127,6 +144,13 @@ pub enum CityOrder {
     Chose(CityId),
     /// Add one of the `what`th kind it can build to the end of its queue.
     QueueAdd(CityId, usize),
+    /// The production panel's unit buttons: the queue is the one way to
+    /// build (the owner's word, 2026-11-24: "Pressing a unit button puts it
+    /// in the queue. If it was empty the defaults are to repeat and keep
+    /// here simulating the old no queue behaviour"). One of the `what`th
+    /// kind at the end of the queue; a city with none starts one that
+    /// repeats for ever, what it builds now (if anything) its first item.
+    Enqueue(CityId, usize),
     /// The `i`th item: one more of it, or one less (`up`), or out.
     QueueCount(CityId, usize, bool),
     QueueRemove(CityId, usize),
@@ -197,6 +221,12 @@ fn title_case(side: Side) -> String {
 pub struct CityView {
     prefix: &'static str,
     compact: bool,
+    /// The production panel's form: the queue first, then the units it
+    /// can build as boxes (`Enqueue`), then all about the one in focus.
+    stacked: bool,
+    /// The box the keyboard is on (the panel's), and the one shown so.
+    focus: Option<usize>,
+    focus_shown: Option<usize>,
     city: CityId,
     summary: Text,
     income: Text,
@@ -265,23 +295,70 @@ impl CityView {
         build::gap(ui, content, space);
         // In the window two columns: what it can build, and all about the
         // one under the pointer; its queue, and where its units go.
-        let (left, right) = if compact || stacked {
+        let (left, right) = if compact {
             (content, content)
+        } else if stacked {
+            // (Made in this order, so shown so: the queue and where its
+            // units go over the units to add.)
+            let upper = build::column(ui, content, 0);
+            let lower = build::column(ui, content, 0);
+            (lower, upper)
         } else {
             let columns = build::top_row(ui, content, space * 2);
             (build::column(ui, columns, 0), build::column(ui, columns, 0))
         };
         let content = left;
-        let heading = build::heading(ui, content, if compact { "Builds" } else { "What it builds" });
+        let heading = build::heading(
+            ui,
+            content,
+            if compact {
+                "Builds"
+            } else if stacked {
+                "Build (adds to the queue)"
+            } else {
+                "What it builds"
+            },
+        );
         let options = build::column(ui, content, dp(ui, 2));
         let group = TbId::new(&pid("production"));
-        let mut builds = vec![(build::button(ui, options, &pid(BUILD_NOTHING_ID), "Nothing"), None)];
+        // (In the panel, Nothing is the queue's: over it, by the queue.)
+        let nothing_parent = if stacked { right } else { options };
+        let nothing_label = if stacked { "Build nothing" } else { "Nothing" };
+        let mut builds = vec![(build::button(ui, nothing_parent, &pid(BUILD_NOTHING_ID), nothing_label), None)];
+        let mut box_row = None;
         let icon_size = dp(ui, OPTION_ICON_DP);
         let mut adds = Vec::new();
         for (i, prod) in city.units.iter().enumerate() {
+            let id = pid(&build_id(i));
+            if stacked {
+                // A box, as a stack's under the map: the unit's icon, and its
+                // price and turns under it ("9g 2t"); rows of `BOXES_A_ROW`.
+                if i % BOXES_A_ROW == 0 {
+                    box_row = Some(build::row(ui, options, dp(ui, 4)));
+                }
+                let Some(row) = box_row else { continue };
+                if ui.inflate(row, &box_resource(&id)).is_err() {
+                    continue;
+                }
+                let found = |ui: &Ui, name: &str| ui.find(row, TbId::new(name));
+                let (Some(button), Some(icon), Some(text)) =
+                    (found(ui, &id), found(ui, &format!("{id}_icon")), found(ui, &format!("{id}_text")))
+                else {
+                    continue;
+                };
+                let size = dp(ui, BOX_ICON_DP);
+                ui.set_layout_params(icon, Some(LayoutParams::fixed(size, size)));
+                if let Some(handle) = icons.get(i) {
+                    let handle = handle.clone();
+                    ui.with_widget::<ImageWidget, _>(icon, |w, cx| w.set_image(cx, handle));
+                }
+                ui.set_text(text, &format!("{}g {}t", prod.cost, prod.time.max(1)));
+                build::set_width(ui, button, dp(ui, BOX_DP));
+                builds.push((button, Some(i)));
+                continue;
+            }
             // The unit's icon, its name, strength and moves; in the window, a
             // button beside it that adds one to the queue.
-            let id = pid(&build_id(i));
             let line = if compact { options } else { build::row(ui, options, dp(ui, 2)) };
             if ui.inflate(line, &option_resource(&id)).is_err() {
                 continue;
@@ -304,9 +381,12 @@ impl CityView {
             builds.push((button, Some(i)));
         }
         // As wide as the widest, one under the other, and one of them pressed.
+        // (In the panel the boxes are as wide as each other already.)
         let width = builds.iter().map(|(b, _)| ui.preferred_size_free(*b).pref.w).max().unwrap_or(0);
         for (button, _) in &builds {
-            build::set_width(ui, *button, width);
+            if !stacked {
+                build::set_width(ui, *button, width);
+            }
             ui.set_group_id(*button, group);
         }
         // All about one of them: the one under the pointer.
@@ -421,6 +501,9 @@ impl CityView {
         Some(CityView {
             prefix,
             compact,
+            stacked,
+            focus: None,
+            focus_shown: None,
             city: id,
             summary,
             income,
@@ -525,8 +608,20 @@ impl CityView {
                 changed = true;
             }
         }
-        // All about what is under the pointer; else about what it builds.
-        let shown = self.hovered(ui).or(city.building);
+        // The box the keyboard is on looks as a stack's box of units on
+        // their way does (blue).
+        if self.stacked && self.focus_shown != self.focus {
+            for (button, what) in &self.builds {
+                if what.is_some() {
+                    let skin = if *what == self.focus { "UnitComing" } else { "UnitSlot" };
+                    ui.set_skin(*button, TbId::new(skin));
+                }
+            }
+            self.focus_shown = self.focus;
+        }
+        // All about what is under the pointer, or the keyboard's; else about
+        // what it builds.
+        let shown = self.hovered(ui).or(self.focus).or(city.building);
         let details = match shown.and_then(|i| city.units.get(i)) {
             Some(prod) => info::production_details(map, prod, city.trains),
             None if city.units.is_empty() => Vec::new(),
@@ -548,7 +643,12 @@ impl CityView {
         self.about = about;
         if let Some(hint) = &mut self.queue_hint {
             // (Once there is a queue, its items say enough.)
-            let words = if queue.is_empty() { "None: + beside a kind starts one." } else { "" };
+            let words = match (queue.is_empty(), self.stacked, city.production().is_some()) {
+                (false, _, _) => "",
+                (true, false, _) => "None: + beside a kind starts one.",
+                (true, true, false) => "None: a unit below starts one, built over and over.",
+                (true, true, true) => "None: it builds this over and over; a unit below makes a queue of it.",
+            };
             changed |= hint.set(ui, words);
             let visibility = if all && queue.is_empty() { Visibility::Visible } else { Visibility::Gone };
             if ui.node(hint.widget).is_some_and(|n| n.visibility() != visibility) {
@@ -732,6 +832,9 @@ impl CityView {
             return Some(CityOrder::SetProduction(city, None));
         }
         if let Some(what) = (0..self.builds.len()).find(|i| is(&build_id(*i))) {
+            if self.stacked {
+                return Some(CityOrder::Enqueue(city, what));
+            }
             return Some(
                 about.map_or(CityOrder::SetProduction(city, Some(what)), |i| CityOrder::ItemKind(city, i, what)),
             );
@@ -885,6 +988,28 @@ impl CityWindow {
     /// units go are set for it).
     pub fn choose_item(&mut self, i: usize) {
         self.view.chosen = Some(i);
+    }
+
+    /// The unit box the keyboard is on (the production panel's), if any.
+    pub fn focus_unit(&mut self, what: Option<usize>) {
+        self.view.focus = what.filter(|w| *w + 1 < self.view.builds.len());
+    }
+
+    pub fn focused_unit(&self) -> Option<usize> {
+        self.view.focus
+    }
+
+    /// Scroll its box so that the unit in focus and all about it show
+    /// (the panel's right column scrolls).
+    pub fn show_focus(&self, ui: &mut Ui) {
+        if let Some(last) = self.view.details.iter().rev().find(|d| !d.text.is_empty()) {
+            ui.scroll_into_view_recursive(last.widget);
+        }
+    }
+
+    /// How many kinds it can build (its boxes).
+    pub fn kinds(&self) -> usize {
+        self.view.builds.len().saturating_sub(1)
     }
 
     /// The item of the queue its buttons are about, if it has a queue.

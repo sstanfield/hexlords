@@ -24,6 +24,12 @@ pub enum MapKey {
     ZoomOut,
     /// `=`, or `+`
     ZoomIn,
+    /// Tab and Shift+Tab, Delete (or Backspace): the map does nothing with
+    /// them; a panel over it does (the production panel's areas, its
+    /// queue's item out).
+    Tab,
+    BackTab,
+    Delete,
 }
 
 /// Something the player did on the map. Points are in pixels from the top left
@@ -113,6 +119,9 @@ impl Widget for MapWidget {
                     (SpecialKey::Esc, _) => MapKey::Esc,
                     (SpecialKey::None, Some('-')) => MapKey::ZoomOut,
                     (SpecialKey::None, Some('=' | '+')) => MapKey::ZoomIn,
+                    (SpecialKey::Tab, _) if ev.mods.contains(Modifiers::SHIFT) => MapKey::BackTab,
+                    (SpecialKey::Tab, _) => MapKey::Tab,
+                    (SpecialKey::Delete | SpecialKey::Backspace, _) => MapKey::Delete,
                     _ => return false,
                 };
                 self.commands.push(MapCommand::Key(key));
@@ -132,8 +141,9 @@ impl Widget for MapWidget {
     }
 }
 
-/// The special keys the map takes: the arrows, Esc and Enter.
+/// The special keys the map takes: the arrows, Esc and Enter, Tab and
+/// Delete.
 fn is_map_key(key: SpecialKey) -> bool {
     use SpecialKey as S;
-    matches!(key, S::Left | S::Up | S::Right | S::Down | S::Esc | S::Enter)
+    matches!(key, S::Left | S::Up | S::Right | S::Down | S::Esc | S::Enter | S::Tab | S::Delete | S::Backspace)
 }

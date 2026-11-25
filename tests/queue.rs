@@ -11,7 +11,7 @@ use common::{assets, pixel_of, push_widget};
 use hexlords::agents::parse_order;
 use hexlords::city_windows::{
     BUILD_NOTHING_ID, CITY_DEFEND_ID, QUEUE_FEWER_ID, QUEUE_MORE_TIMES_ID, QUEUE_REPEAT_ID, QUEUE_STOP_ID, build_id,
-    point_id, queue_add_id, queue_item_id, queue_less_id, queue_more_id, queue_remove_id,
+    point_id, queue_item_id, queue_less_id, queue_more_id, queue_remove_id,
 };
 use hexlords::game::{CityState, Game, Task};
 use hexlords::headless::order_line;
@@ -249,23 +249,24 @@ fn queue(s: &Session) -> hexlords::state::Queue {
 fn the_city_window_makes_a_queue_item_by_item() {
     let mut s = session();
     open_city(&mut s);
-    // + beside soldiers: a queue of one, chosen; one more of it; they defend.
-    press(&mut s, &queue_add_id(0));
+    // The soldiers' box: a queue of one, chosen, that repeats for ever (as
+    // building with no queue did); one more of it; they defend.
+    press(&mut s, &build_id(0));
+    assert_eq!(queue(&s).end, QueueEnd::Repeat { from: 0, times: None });
     press(&mut s, &queue_more_id(0));
     press(&mut s, &queue_more_id(0));
     press(&mut s, CITY_DEFEND_ID);
     assert_eq!(queue(&s).items, [item(0, 3, Sends::Defend)]);
     // Riders to rally point 0 (the new item is the one chosen), a blessing
-    // on the way; scouts, which go where the riders go; then the scouts are
-    // riders, and one fewer of the soldiers.
-    press(&mut s, &queue_add_id(1));
+    // on the way; scouts, which go where the riders go; and one fewer of
+    // the soldiers.
+    press(&mut s, &build_id(1));
     press(&mut s, &point_id(0));
     press(&mut s, hexlords::city_windows::CITY_BLESS_ID);
-    press(&mut s, &queue_add_id(2));
-    press(&mut s, &build_id(1));
+    press(&mut s, &build_id(2));
     press(&mut s, &queue_less_id(0));
     let point = Sends::Point { n: 0, bless: true };
-    assert_eq!(queue(&s).items, [item(0, 2, Sends::Defend), item(1, 1, point.clone()), item(1, 1, point)]);
+    assert_eq!(queue(&s).items, [item(0, 2, Sends::Defend), item(1, 1, point.clone()), item(2, 1, point)]);
     // Repeat from the second: choose it, then Repeat; twice, then for ever.
     press(&mut s, &queue_item_id(1));
     let says = |s: &Session| -> Vec<String> {
@@ -300,8 +301,8 @@ fn the_city_window_makes_a_queue_item_by_item() {
 fn send_to_for_an_item_makes_way_for_the_map_and_comes_back() {
     let mut s = session();
     open_city(&mut s);
-    press(&mut s, &queue_add_id(0));
-    press(&mut s, &queue_add_id(1));
+    press(&mut s, &build_id(0));
+    press(&mut s, &build_id(1));
     press(&mut s, &queue_item_id(0));
     press(&mut s, hexlords::city_windows::CITY_RALLY_ID);
     assert!(s.city_window().is_none(), "out of the way");

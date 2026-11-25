@@ -12,7 +12,7 @@ use hexlords::game::{CityState, Game};
 use hexlords::info;
 use hexlords::orders::{Order, RallyPoint};
 use hexlords::production_window::{
-    Filter, PROD_DISBAND_ID, PROD_IDLE_ID, PROD_SELECT_ID, PROD_STACKS_ID, PROD_STOP_ALL_ID, PROD_STOP_ALL_NO_ID,
+    Area, Filter, PROD_DISBAND_ID, PROD_IDLE_ID, PROD_SELECT_ID, PROD_STACKS_ID, PROD_STOP_ALL_ID, PROD_STOP_ALL_NO_ID,
     PROD_STOP_ALL_YES_ID, PRODUCTION_CLOSE_ID, PRODUCTION_WINDOW_ID, city_row_id, stack_row_id,
 };
 use hexlords::session::{MENU_CITIES_ID, PRODUCTION_ID, Session};
@@ -429,4 +429,104 @@ fn nothing_keep_defend_and_a_rally_point_in_the_city_beside() {
     let window = s.production().unwrap();
     assert_eq!(window.city_lines().last().map(String::as_str), Some("Alder: stopped"));
     assert_eq!(window.chosen_city(), Some(alder), "still chosen");
+}
+
+fn queue(s: &Session, hex: Hex) -> hexlords::state::Queue {
+    s.screen.game.map.city_at(hex).unwrap().queue.clone()
+}
+
+fn item(what: usize, count: u32, sends: Sends) -> hexlords::state::QueueItem {
+    hexlords::state::QueueItem { what, count, sends }
+}
+
+/// The owner's word, 2026-11-24: "In the city section the queue will handle
+/// production. Pressing a unit button puts it in the queue. If it was empty
+/// the defaults are to repeat and keep here simulating the old no queue
+/// behaviour." And "The unit buttons should be like the stack buttons".
+#[test]
+fn a_unit_box_puts_one_in_the_queue_which_repeats_and_keeps_them_at_first() {
+    use hexlords::state::QueueEnd;
+    let mut s = session();
+    open(&mut s);
+    // Birch builds nothing: its box makes a queue of one that repeats for
+    // ever, its units kept in the city.
+    push_row(&mut s, BIRCH);
+    let levy = city_windows::build_id(0);
+    assert_eq!(s.screen.ui.skin(widget(&s, &levy)), turbo_ferret::TbId::new("UnitSlot"));
+    assert_eq!(s.screen.ui.text(widget(&s, &format!("{levy}_text"))), Some("3g 1t"), "its price and turns");
+    push_widget(&mut s, &levy);
+    assert_eq!(queue(&s, BIRCH).items, [item(0, 1, Sends::Stay)]);
+    assert_eq!(queue(&s, BIRCH).end, QueueEnd::Repeat { from: 0, times: None });
+    assert_eq!(state(&s, BIRCH), CityState::Building);
+    // Alder builds soldiers with no queue: they are its first item, and
+    // levies come after them, going where the soldiers go.
+    push_row(&mut s, ALDER);
+    push_widget(&mut s, CITY_DEFEND_ID);
+    push_widget(&mut s, &city_windows::build_id(1));
+    assert_eq!(queue(&s, ALDER).items, [item(0, 1, Sends::Defend), item(1, 1, Sends::Defend)]);
+    assert_eq!(queue(&s, ALDER).end, QueueEnd::Repeat { from: 0, times: None });
+    // The last item out: it builds nothing, and rests.
+    push_row(&mut s, BIRCH);
+    push_widget(&mut s, &city_windows::queue_remove_id(0));
+    assert!(queue(&s, BIRCH).is_empty());
+    assert_eq!(state(&s, BIRCH), CityState::Resting);
+}
+
+/// The owner's word, 2026-11-24: "the user should be able to use the
+/// keyboard to move between units and update the discription area". Tab
+/// goes from the cities to the queue to the units; the arrows move there;
+/// Enter adds; - and + change the chosen item, Delete takes it out; a
+/// digit sends it to that rally point, K keeps it, F defends.
+#[test]
+fn the_keyboard_works_the_panel() {
+    let mut s = session();
+    let point = RallyPoint { at: Hex::new(10, 10), defend: false };
+    s.screen.game.apply(Order::RallyPoint { n: 3, point: Some(point) }).unwrap();
+    open(&mut s);
+    push_row(&mut s, BIRCH);
+    let focus = |s: &Session| s.production().unwrap().focus();
+    assert_eq!(focus(&s), Area::Cities);
+    // Tab twice: the units, the first in focus (it looks so, and all about
+    // it shows).
+    common::press(&mut s, SpecialKey::Tab);
+    assert_eq!(focus(&s), Area::Queue);
+    common::press(&mut s, SpecialKey::Tab);
+    assert_eq!(focus(&s), Area::Units);
+    assert_eq!(s.city_window().unwrap().focused_unit(), Some(0));
+    s.frame(0);
+    let levy = widget(&s, &city_windows::build_id(0));
+    assert_eq!(s.screen.ui.skin(levy), turbo_ferret::TbId::new("UnitComing"));
+    assert!(
+        s.city_window().unwrap().details()[0].starts_with("Levy: strength 1"),
+        "{:?}",
+        s.city_window().unwrap().details()
+    );
+    // Enter twice: two levies.
+    common::press(&mut s, SpecialKey::Enter);
+    common::press(&mut s, SpecialKey::Enter);
+    assert_eq!(queue(&s, BIRCH).items, [item(0, 1, Sends::Stay), item(0, 1, Sends::Stay)]);
+    // Shift+Tab: the queue; Up to the first item; + twice, - once.
+    s.screen.ui.key(None, SpecialKey::Tab, turbo_ferret::Modifiers::SHIFT, true);
+    s.screen.ui.key(None, SpecialKey::Tab, turbo_ferret::Modifiers::SHIFT, false);
+    s.pump();
+    assert_eq!(focus(&s), Area::Queue);
+    common::press(&mut s, SpecialKey::Up);
+    type_char(&mut s, '+');
+    type_char(&mut s, '+');
+    type_char(&mut s, '-');
+    assert_eq!(queue(&s, BIRCH).items[0].count, 2);
+    // 3: to rally point 3; F: defend; K: keep; 5, not set: says so.
+    type_char(&mut s, '3');
+    assert_eq!(queue(&s, BIRCH).items[0].sends, Sends::Point { n: 3, bless: false });
+    type_char(&mut s, 'f');
+    assert_eq!(queue(&s, BIRCH).items[0].sends, Sends::Defend);
+    type_char(&mut s, 'k');
+    assert_eq!(queue(&s, BIRCH).items[0].sends, Sends::Stay);
+    type_char(&mut s, '5');
+    assert_eq!(queue(&s, BIRCH).items[0].sends, Sends::Stay);
+    // Delete: out.
+    common::press(&mut s, SpecialKey::Delete);
+    assert_eq!(queue(&s, BIRCH).items, [item(0, 1, Sends::Stay)]);
+    // None of it reached the map: the cursor and the zoom are as they were.
+    assert_eq!(s.screen.game.map.cursor, ALDER);
 }

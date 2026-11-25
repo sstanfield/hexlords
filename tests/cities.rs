@@ -199,7 +199,8 @@ fn the_player_sets_what_a_city_builds_and_the_turns_build_it() {
     assert_eq!(s.screen.game.map.city_at(WRENFOLD).unwrap().building, Some(0));
     // A round: the turn ends, the others play theirs, the next starts.
     assert!(s.next_turn());
-    assert!(says(&s).iter().any(|t| t == "Building Riders, 1 of 2 turns done"), "{:?}", says(&s));
+    // (A queue of one, repeating: the line says which item.)
+    assert!(says(&s).iter().any(|t| t.starts_with("Building Riders, 1 of 2 turns done")), "{:?}", says(&s));
     assert!(s.next_turn());
     assert_eq!(s.screen.game.map.units_at(WRENFOLD).len(), 4, "the rider is done");
     assert!(says(&s).iter().any(|t| t == "Garrison: 2 Militia, 2 Riders"), "{:?}", says(&s));
@@ -347,8 +348,9 @@ fn what_a_city_can_build_shows_its_icon_and_numbers_and_all_about_it_under_the_p
     push(&mut s, PANEL_OPEN_ID);
     // A button each: the unit's icon, its name, strength and moves.
     let text = |s: &Session, name: &str| s.screen.ui.text(widget(s, name)).unwrap_or("").to_string();
-    assert_eq!(text(&s, &format!("{}_text", build_id(0))), "Riders  4 \u{b7} 10");
-    assert_eq!(text(&s, &format!("{}_text", build_id(1))), "Militia  2 \u{b7} 8");
+    // (In the production panel, a box as a stack's: its price and turns.)
+    assert_eq!(text(&s, &format!("{}_text", build_id(0))), "9g 2t");
+    assert_eq!(text(&s, &format!("{}_text", build_id(1))), "0g 1t");
     let icon = widget(&s, &format!("{}_icon", build_id(0)));
     assert!(s.screen.area(icon).w > 0, "the icon has room");
     // Nothing under the pointer, nothing built: a hint.

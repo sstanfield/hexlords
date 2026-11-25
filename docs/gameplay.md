@@ -1024,6 +1024,25 @@ thing to happen. Ideas to try, as the rules grow:
   until asked for, the side's stacks, the dearest first (a hex with
   defenders and others is two: "if a stack has defend and other units
   then best to treat them as two stacks"), in place of the city.
+  In the panel the queue is the one way to build ("In the city section
+  the queue will handle production. Pressing a unit button puts it in
+  the queue. If it was empty the defaults are to repeat and keep here
+  simulating the old no queue behaviour"): the city's queue and where
+  its units go come first, then a box for each kind it can build, as the
+  stack's boxes under the map ("The unit buttons should be like the
+  stack buttons"): its picture, its price and turns; a box puts one at
+  the end of the queue (`CityOrder::Enqueue`; a city with none starts a
+  queue that repeats for ever, what it builds now its first item, its
+  units kept in the city); Build nothing, or the last item out, and it
+  rests. The rules are as they were: these are `Order::Queue` and
+  `Order::Build` as before (the agents build with no queue). The panel
+  has the keyboard while it is open ("the user should be able to use the
+  keyboard to move between units and update the discription area"): Tab
+  and Shift+Tab go from the cities to the queue to the units; Up and
+  Down choose a city or an item; the arrows go from box to box (the one
+  in focus blue, all about it under them), Enter adds it; - and + one
+  fewer or more of the chosen item, Delete takes it out; 0 to 9 send its
+  units to that rally point, K keeps them, F has them defend.
   queue. Stop all production stops every city, after asking ("having a
   single button to just stop and then finish with your current armies
   will be helpful"): an `Order::Build` with nothing for each, so Undo

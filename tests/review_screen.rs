@@ -8,9 +8,7 @@
 mod common;
 
 use common::{assets, click, pixel_of, press, push_widget, shift_click, type_char};
-use hexlords::city_windows::{
-    CITY_RALLY_ID, PANEL_PREFIX, build_id, point_id, queue_add_id, queue_item_id, queue_remove_id,
-};
+use hexlords::city_windows::{CITY_RALLY_ID, PANEL_PREFIX, build_id, point_id, queue_item_id, queue_remove_id};
 use hexlords::game::Game;
 use hexlords::options_window::Options;
 use hexlords::orders::{Order, RallyPoint};
@@ -198,9 +196,9 @@ fn the_item_chosen_stays_chosen_when_one_before_it_goes() {
     click_hex(&mut s, REDHOLD);
     type_char(&mut s, 'o');
     s.frame(0);
-    press_widget(&mut s, &queue_add_id(0));
-    press_widget(&mut s, &queue_add_id(1));
-    press_widget(&mut s, &queue_add_id(0));
+    press_widget(&mut s, &build_id(0));
+    press_widget(&mut s, &build_id(1));
+    press_widget(&mut s, &build_id(0));
     press_widget(&mut s, &queue_item_id(1));
     press_widget(&mut s, &queue_remove_id(0));
     let city = s.screen.game.map.city_at(REDHOLD).unwrap();

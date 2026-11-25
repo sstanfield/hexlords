@@ -1,8 +1,8 @@
 //! Scripted input, for screenshots after some play (`--script`) and for tests.
 //! A script is a list of steps separated by commas:
 //!
-//! - `left`, `right`, `up`, `down`, `enter`, `esc`, `space`: press and release
-//!   that key;
+//! - `left`, `right`, `up`, `down`, `enter`, `esc`, `space`, `tab`,
+//!   `delete`: press and release that key; `backtab`: Shift+Tab;
 //! - `minus`, `plus`: zoom out, zoom in (`-` and `=`); `0` to `9`: type that
 //!   digit (in the game, go to that rally point);
 //! - `key:X`: type the character X; with modifiers, `key:ctrl+s`,
@@ -67,6 +67,8 @@ pub fn run<S: Scene>(scene: &mut S, script: &str) -> Result<(), String> {
 
 enum Step {
     Key(SpecialKey),
+    /// A special key with modifiers held (Shift+Tab).
+    KeyWith(SpecialKey, Modifiers),
     Char(char, Modifiers),
     /// A click on a hex, with Shift held or not.
     Click(Hex, Modifiers),
@@ -157,6 +159,9 @@ fn parse_step(action: &str) -> Result<Step, String> {
         "down" => Step::Key(SpecialKey::Down),
         "enter" => Step::Key(SpecialKey::Enter),
         "esc" => Step::Key(SpecialKey::Esc),
+        "tab" => Step::Key(SpecialKey::Tab),
+        "backtab" => Step::KeyWith(SpecialKey::Tab, Modifiers::SHIFT),
+        "delete" => Step::Key(SpecialKey::Delete),
         "turn" => Step::Turn,
         "wait" => {
             let ms = parts.next().ok_or("needs a number of ms")?;
@@ -228,6 +233,10 @@ fn run_step<S: Scene>(scene: &mut S, action: &str, clock: &mut u64) -> Result<()
         Step::Key(key) => {
             screen.ui.key(None, key, Modifiers::NONE, true);
             screen.ui.key(None, key, Modifiers::NONE, false);
+        }
+        Step::KeyWith(key, mods) => {
+            screen.ui.key(None, key, mods, true);
+            screen.ui.key(None, key, mods, false);
         }
         Step::Char(ch, mods) => {
             screen.ui.key(Some(ch), SpecialKey::None, mods, true);

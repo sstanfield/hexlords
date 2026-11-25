@@ -395,9 +395,12 @@ fn help_section() -> Vec<HelpSection> {
                 ("Your city, in the sidebar", "Set what it builds (point at one: all about it), where its units go"),
                 ("O,  or  Open the city's window", "Your selected city, in Production (another side's: the sidebar)"),
                 (
-                    "+ beside a kind, in Production",
-                    "Its queue: kinds in turn, how many of each, where they go; then it stops, or repeats",
+                    "A unit's box, in Production",
+                    "One more in the city's queue (the first starts one that repeats; its units stay)",
                 ),
+                ("Tab, in Production", "The cities, the queue, the units (Shift+Tab: back); the arrows move in them"),
+                ("Enter,  -  +,  Delete", "In Production: add the unit; one fewer or more of the item; take it out"),
+                ("0 to 9,  K,  F", "In Production: the item's units to that rally point; keep them; defend"),
                 ("Raise the walls, in Production", "A level, paid at once: once a turn"),
                 ("M,  A", "Your cities, all cities: see where one is, go to it, open it"),
                 ("E", "Production, over the map: your cities, what the next 5 rounds bring, your stacks"),
@@ -2713,6 +2716,29 @@ impl Session {
                     }
                 }
             }
+            CityOrder::Enqueue(id, what) => {
+                let Some(c) = self.screen.game.map.cities().get(id) else { return };
+                let (fresh, building, sends) = (c.queue.is_empty(), c.building, c.sends.clone());
+                let at = if fresh { usize::from(building.is_some()) } else { c.queue.items.len() };
+                if at >= MAX_QUEUE {
+                    self.refuse("The queue is full", &format!("a queue holds {MAX_QUEUE} items at most"));
+                    return;
+                }
+                self.edit_queue(id, |items, end| {
+                    if fresh {
+                        // What it builds now is the first item, going where
+                        // its units go; the queue repeats, as building with
+                        // no queue did.
+                        items.extend(building.map(|what| QueueItem { what, count: 1, sends: sends.clone() }));
+                        *end = QueueEnd::Repeat { from: 0, times: None };
+                    }
+                    let sends = items.last().map_or(sends, |item| item.sends.clone());
+                    items.push(QueueItem { what, count: 1, sends });
+                });
+                if let Some(window) = &mut self.city_window {
+                    window.choose_item(at);
+                }
+            }
             CityOrder::QueueCount(id, i, up) => self.edit_queue(id, |items, _| {
                 if let Some(item) = items.get_mut(i) {
                     item.count = if up { item.count + 1 } else { item.count.saturating_sub(1).max(1) };
@@ -3210,6 +3236,12 @@ impl Session {
         let Some(c) = self.screen.game.map.cities().get(city) else { return };
         let (mut items, mut end) = (c.queue.items.clone(), c.queue.end);
         edit(&mut items, &mut end);
+        // The queue emptied: the city builds nothing (the queue is the one
+        // way to build, `CityOrder::Enqueue`).
+        if items.is_empty() {
+            self.city_order(Order::Build { city, what: None });
+            return;
+        }
         if let QueueEnd::Repeat { from, times } = end {
             end = match items.len() {
                 0 => QueueEnd::Stop,
@@ -4489,6 +4521,86 @@ impl Session {
         self.screen.settle();
     }
 
+    /// A key of the map's while the production panel is open, which has
+    /// them (the owner's word, 2026-11-24: "we want to start making sure the
+    /// game works well with the keyboard as well as mouse"). Tab goes from
+    /// part to part (the cities, the queue, the units); Up and Down choose
+    /// a city or an item; the arrows go from unit to unit, Enter adds the
+    /// one there to the queue; - and + one fewer or one more of the chosen
+    /// item, Delete takes it out.
+    fn production_key(&mut self, key: MapKey) {
+        use production_window::Area;
+        let Some(window) = self.production.as_mut() else { return };
+        let focus = window.focus();
+        let city = self.city_window.as_ref().filter(|w| w.embedded()).map(|w| (w.city(), w.item(), w.kinds()));
+        let items =
+            city.and_then(|(id, _, _)| self.screen.game.map.cities().get(id)).map_or(0, |c| c.queue.items.len());
+        match key {
+            MapKey::Tab | MapKey::BackTab => {
+                window.next_focus(key == MapKey::Tab);
+                let units = window.focus() == Area::Units;
+                if let Some(city) = self.city_window.as_mut() {
+                    let at = city.focused_unit().or(Some(0));
+                    city.focus_unit(if units { at } else { None });
+                }
+            }
+            MapKey::Up | MapKey::Down if focus == Area::Cities => {
+                window.step(key == MapKey::Down);
+            }
+            MapKey::Up | MapKey::Down if focus == Area::Queue => {
+                if let Some((_, item, _)) = city.filter(|_| items > 0) {
+                    let at = item.unwrap_or(0);
+                    let next = if key == MapKey::Down { (at + 1).min(items - 1) } else { at.saturating_sub(1) };
+                    if let Some(w) = self.city_window.as_mut() {
+                        w.choose_item(next);
+                    }
+                }
+            }
+            MapKey::Up | MapKey::Down | MapKey::Left | MapKey::Right if focus == Area::Units => {
+                if let Some((_, _, kinds)) = city.filter(|c| c.2 > 0) {
+                    let at = self.city_window.as_ref().and_then(|w| w.focused_unit()).unwrap_or(0);
+                    let row = city_windows::BOXES_A_ROW;
+                    let next = match key {
+                        MapKey::Left => at.saturating_sub(1),
+                        MapKey::Right => (at + 1).min(kinds - 1),
+                        MapKey::Up => at.saturating_sub(row),
+                        _ => (at + row).min(kinds - 1),
+                    };
+                    let actor = self.actor();
+                    if let Some(w) = self.city_window.as_mut() {
+                        w.focus_unit(Some(next));
+                        // (Laid out first, so that its details say the unit.)
+                        w.refresh(&mut self.screen.ui, &self.screen.game.map, (actor, info::Known::All));
+                        w.show_focus(&mut self.screen.ui);
+                    }
+                }
+            }
+            MapKey::Enter if focus == Area::Cities => {
+                window.set_focus(Area::Units);
+                if let Some(w) = self.city_window.as_mut() {
+                    w.focus_unit(Some(0));
+                }
+            }
+            MapKey::Enter | MapKey::ShiftEnter if focus == Area::Units => {
+                let unit = self.city_window.as_ref().and_then(|w| w.focused_unit());
+                if let (Some((id, _, _)), Some(what)) = (city, unit) {
+                    self.obey(CityOrder::Enqueue(id, what));
+                }
+            }
+            MapKey::ZoomIn | MapKey::ZoomOut => {
+                if let Some((id, Some(item), _)) = city {
+                    self.obey(CityOrder::QueueCount(id, item, key == MapKey::ZoomIn));
+                }
+            }
+            MapKey::Delete => {
+                if let Some((id, Some(item), _)) = city {
+                    self.obey(CityOrder::QueueRemove(id, item));
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Close the production panel, and the city in it.
     fn close_production(&mut self) {
         if let Some(window) = self.city_window.take_if(|w| w.embedded()) {
@@ -4887,19 +4999,11 @@ impl Session {
             // the other arrows and Enter are its, not the hidden map's.
             let producing = self.production.as_ref().is_some_and(|w| w.is_open(&self.screen.ui));
             if producing && !self.screen.help_open() {
-                if let MapCommand::Key(
-                    key @ (MapKey::Up
-                    | MapKey::Down
-                    | MapKey::Left
-                    | MapKey::Right
-                    | MapKey::Enter
-                    | MapKey::ShiftEnter),
-                ) = command
-                {
-                    if let (Some(window), true) = (&mut self.production, matches!(key, MapKey::Up | MapKey::Down)) {
-                        window.step(key == MapKey::Down);
+                if let MapCommand::Key(key) = command {
+                    if key != MapKey::Esc {
+                        self.production_key(key);
+                        continue;
                     }
-                    continue;
                 }
             }
             // Esc closes the help if it is open, else the window on top, and
@@ -5130,6 +5234,27 @@ impl Session {
                 RootCommand::Click(id) if id == TbId::new(log_window::LOG_CLOSE_ID) => {
                     if let Some(log) = self.log.take() {
                         log.close(&mut self.screen.ui);
+                    }
+                }
+                // While production is open: where the chosen item's units go
+                // (a rally point's digit; K keep here, F defend here).
+                RootCommand::Key(ch, mods)
+                    if !mods.intersects(Modifiers::CTRL | Modifiers::SUPER | Modifiers::ALT)
+                        && self.production().is_some()
+                        && (ch.is_ascii_digit() || matches!(ch.to_ascii_lowercase(), 'k' | 'f')) =>
+                {
+                    let id = match ch.to_ascii_lowercase() {
+                        'k' => city_windows::CITY_NO_RALLY_ID.to_string(),
+                        'f' => city_windows::CITY_DEFEND_ID.to_string(),
+                        digit => city_windows::point_id(digit as usize - '0' as usize),
+                    };
+                    let points = self.screen.game.rally_points(self.viewer());
+                    let unset = ch.is_ascii_digit() && points[ch as usize - '0' as usize].is_none();
+                    let city = self.city_window.as_mut().filter(|w| w.embedded());
+                    if unset {
+                        self.notice = Some(format!("Rally point {ch} is not set: R to place it."));
+                    } else if let Some(order) = city.and_then(|w| w.click(TbId::new(&id))) {
+                        self.obey(order);
                     }
                 }
                 // While production is open: its filters (All, Idle, Waiting,

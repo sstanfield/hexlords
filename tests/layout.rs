@@ -299,7 +299,7 @@ fn clicks_on_buttons_and_unused_keys_reach_the_host() {
     // Keys the map does not use, and one it does (which never gets this far).
     s.screen.ui.key(Some('g'), SpecialKey::None, Modifiers::NONE, true);
     s.screen.ui.key(Some('s'), SpecialKey::None, Modifiers::CTRL, true);
-    s.screen.ui.key(None, SpecialKey::Tab, Modifiers::SHIFT, true);
+    s.screen.ui.key(None, SpecialKey::F5, Modifiers::SHIFT, true);
     s.screen.ui.key(None, SpecialKey::Left, Modifiers::NONE, true);
     s.screen.ui.key(Some('q'), SpecialKey::None, Modifiers::CTRL, true);
     // A click on the map is the map's, not a button's.
@@ -312,7 +312,7 @@ fn clicks_on_buttons_and_unused_keys_reach_the_host() {
             RootCommand::Click(tbid!("end_turn")),
             RootCommand::Key('g', Modifiers::NONE),
             RootCommand::Key('s', Modifiers::CTRL),
-            RootCommand::Special(SpecialKey::Tab, Modifiers::SHIFT),
+            RootCommand::Special(SpecialKey::F5, Modifiers::SHIFT),
         ]
     );
     assert!(s.screen.quit_requested(), "quitting is the screen's own business");

@@ -508,7 +508,7 @@ impl MapScreen {
                         self.view.center_on(self.game.map.cursor);
                     }
                 }
-                MapKey::Enter | MapKey::ShiftEnter => {}
+                MapKey::Enter | MapKey::ShiftEnter | MapKey::Tab | MapKey::BackTab | MapKey::Delete => {}
                 MapKey::Esc => self.close_help(),
             },
             MapCommand::Pan(dx, dy) => {
