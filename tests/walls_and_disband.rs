@@ -201,12 +201,13 @@ fn the_city_window_raises_the_walls() {
     s.frame(0);
     assert_eq!(walls(&s.screen.game, REDHOLD), 3);
     assert_eq!(s.city_window().unwrap().walls(), Some(("The walls were raised this turn", false)));
-    // Another side's city: no button (the window shut first: it is wide).
+    // Another side's city: nothing opens, no walls to raise (the panel
+    // shut first: it covers the map).
     common::press(&mut s, turbo_ferret::SpecialKey::Esc);
     click_hex(&mut s, BLUEMOOR);
     type_char(&mut s, 'o');
     s.frame(0);
-    assert_eq!(s.city_window().unwrap().walls(), None);
+    assert!(s.city_window().is_none());
 }
 
 /// Late in a game (two stacks' worth of soldiers), the planner sends home
@@ -384,7 +385,8 @@ fn area_of(s: &Session, id: turbo_ferret::WidgetId) -> turbo_ferret::Rect {
 }
 
 /// A city with nine kinds to build, its walls' button and all, fits a
-/// window of 1024 x 768 (its Close button was cut off).
+/// window of 1024 x 768 (its Close button was cut off): in the production
+/// panel, which covers the map, the city scrolls to its walls' button.
 #[test]
 fn a_city_window_with_nine_kinds_fits_the_screen() {
     let mut units = String::new();
@@ -405,11 +407,14 @@ fn a_city_window_with_nine_kinds_fits_the_screen() {
     click_hex(&mut s, REDHOLD);
     type_char(&mut s, 'o');
     s.frame(0);
-    let window = s.city_window().expect("its window").window();
-    let r = area_of(&s, window);
-    assert!(r.y >= 0 && r.bottom() <= 768, "{r:?}");
-    let close = area_of(&s, widget(&s, hexlords::city_windows::CITY_CLOSE_ID));
-    assert!(close.bottom() <= r.bottom() && close.h > 0, "{close:?} in {r:?}");
+    assert!(s.city_window().is_some_and(|w| w.embedded()), "in the panel");
+    let panel = area_of(&s, widget(&s, hexlords::production_window::PRODUCTION_WINDOW_ID));
+    assert!(panel.y >= 0 && panel.bottom() <= 768, "{panel:?}");
+    let walls = widget(&s, CITY_WALLS_ID);
+    s.screen.ui.scroll_into_view_recursive(walls);
+    s.screen.settle();
+    let button = area_of(&s, walls);
+    assert!(button.h > 0 && button.y >= panel.y && button.bottom() <= panel.bottom(), "{button:?} in {panel:?}");
 }
 
 /// The disband window asks about this turn's units: a turn passing closes

@@ -1,18 +1,19 @@
-//! The production window (E, or the Cities menu's Production...): a side's
-//! cities, what they build and where it goes, what the next rounds bring,
-//! the gold, and its stacks, in one place, with what can be done from there.
+//! The production panel (E, the Cities menu's Production..., O on one's own
+//! city): over the map, a side's cities, what they build and where it goes,
+//! what the next rounds bring, and its stacks, in one place; the city
+//! chosen in full beside them.
 
 mod common;
 
 use common::{assets, choose, push_widget, type_char, widget};
+use hexlords::city_windows::{self, BUILD_NOTHING_ID, CITY_DEFEND_ID, CITY_NO_RALLY_ID};
 use hexlords::disband_window::DISBAND_YES_ID;
 use hexlords::game::{CityState, Game};
 use hexlords::info;
 use hexlords::orders::{Order, RallyPoint};
 use hexlords::production_window::{
-    PROD_DEFEND_ID, PROD_DISBAND_ID, PROD_OPEN_ID, PROD_SELECT_ID, PROD_STACKS_ID, PROD_STAY_ID, PROD_STOP_ALL_ID,
-    PROD_STOP_ALL_NO_ID, PROD_STOP_ALL_YES_ID, PROD_STOP_ID, PROD_TO_CITY_ID, PRODUCTION_WINDOW_ID, city_row_id,
-    point_id, stack_row_id,
+    Filter, PROD_DISBAND_ID, PROD_IDLE_ID, PROD_SELECT_ID, PROD_STACKS_ID, PROD_STOP_ALL_ID, PROD_STOP_ALL_NO_ID,
+    PROD_STOP_ALL_YES_ID, PRODUCTION_CLOSE_ID, PRODUCTION_WINDOW_ID, city_row_id, stack_row_id,
 };
 use hexlords::session::{MENU_CITIES_ID, PRODUCTION_ID, Session};
 use hexlords::setup::Setup;
@@ -108,6 +109,15 @@ fn sends(s: &Session, hex: Hex) -> Sends {
     s.screen.game.map.city_at(hex).unwrap().sends.clone()
 }
 
+/// Every text in the panel.
+fn texts(s: &Session) -> Vec<String> {
+    common::descendants(s, PRODUCTION_WINDOW_ID)
+        .iter()
+        .filter_map(|id| s.screen.ui.text(*id))
+        .map(str::to_string)
+        .collect()
+}
+
 fn state(s: &Session, hex: Hex) -> CityState {
     CityState::of(s.screen.game.map.city_at(hex).unwrap())
 }
@@ -130,7 +140,7 @@ fn e_or_the_cities_menu_opens_it_and_esc_closes_it() {
 }
 
 #[test]
-fn every_city_is_a_row_the_idle_and_waiting_first_with_the_gold_and_what_comes() {
+fn every_city_is_a_row_the_idle_and_waiting_first_with_what_comes() {
     let mut s = session();
     open(&mut s);
     let window = s.production().unwrap();
@@ -142,10 +152,13 @@ fn every_city_is_a_row_the_idle_and_waiting_first_with_the_gold_and_what_comes()
     assert_eq!(rows[0], "Birch: IDLE, building nothing");
     assert!(rows[1].starts_with("Cobb: Knights done, they wait for 99 gold"), "{}", rows[1]);
     assert!(rows[2].starts_with("Alder: Soldiers 0/1; stay"), "{}", rows[2]);
-    let gold = s.screen.game.gold(Side::Red);
-    let money = window.economy_lines();
-    assert_eq!(money[0], format!("Gold {gold}"));
-    assert!(money.iter().any(|l| l == "Cities: 1 idle, 1 waiting"), "{money:?}");
+    // No gold block (the owner's word, 2026-11-24: "Remove the Gold info,
+    // the econ stuff is busy"): the header counts the cities, and warns
+    // only when the upkeep will not be paid (it will be, here).
+    let says = |s: &Session, name: &str| s.screen.ui.text(widget(s, name)).map(str::to_string);
+    assert!(texts(&s).iter().any(|t| t == "3 cities: 1 idle, 1 waiting, 1 building"), "{:?}", texts(&s));
+    assert_eq!(window.warning(), None);
+    assert_eq!(says(&s, PROD_IDLE_ID).as_deref(), Some("1 idle"));
     // What comes: a round's heading, then Alder's soldiers and Cobb waiting.
     let forecast = s.screen.game.forecast(Side::Red, 20);
     assert_eq!(window.coming(), info::coming_lines(map, &forecast, 5));
@@ -159,67 +172,48 @@ fn every_city_is_a_row_the_idle_and_waiting_first_with_the_gold_and_what_comes()
     }
 }
 
+/// The gold will not pay the upkeep: one line under the header says from
+/// when (the owner's word, 2026-11-24: one warning line, nothing else).
 #[test]
-fn a_city_row_chooses_it_and_open_shows_its_window() {
+fn a_line_warns_when_the_gold_will_not_pay_the_upkeep() {
+    let mut s = session();
+    let levy = s.screen.game.map.units().kind_named("knights").unwrap();
+    for _ in 0..4 {
+        let id = s.screen.game.map.new_unit_of(Side::Red, levy).unwrap();
+        s.screen.game.map.place_unit(id, Hex::new(8, 8)).unwrap();
+    }
+    open(&mut s);
+    let warning = s.production().unwrap().warning().map(str::to_string);
+    let round = s.screen.game.forecast(Side::Red, 20).short_at.unwrap();
+    assert_eq!(warning, Some(format!("From round {round} the gold will not pay the upkeep: units will leave.")));
+    assert!(texts(&s).contains(&warning.unwrap()));
+}
+
+/// The owner's word, 2026-11-24: "Merge the production and city
+/// dialogs ... When a city is selected the city section changes to it". A
+/// row, or Up and Down, chooses a city, and the city is in full in the
+/// panel's right column.
+#[test]
+fn a_city_row_or_up_and_down_choose_it_and_it_is_in_full_beside() {
     let mut s = session();
     // The city the map shows (Alder, red's first) is chosen as it opens.
     open(&mut s);
-    assert_eq!(s.production().unwrap().chosen_city(), Some(city(&s.screen.game, ALDER)));
-    let birch = city(&s.screen.game, BIRCH);
+    let (alder, birch, cobb) = (city(&s.screen.game, ALDER), city(&s.screen.game, BIRCH), city(&s.screen.game, COBB));
+    assert_eq!(s.production().unwrap().chosen_city(), Some(alder));
+    assert!(s.city_window().is_some_and(|w| w.embedded() && w.city() == alder));
     push_row(&mut s, BIRCH);
     assert_eq!(s.production().unwrap().chosen_city(), Some(birch));
-    assert!(shown(&s, PROD_OPEN_ID) && shown(&s, PROD_STOP_ID));
-    push_widget(&mut s, PROD_OPEN_ID);
-    assert_eq!(s.city_window().map(|w| w.city()), Some(birch), "its window, for what it builds and its queue");
-    assert!(s.production().is_some(), "under it, still");
-}
-
-#[test]
-fn stop_keep_defend_and_a_rally_point_from_the_chosen_city() {
-    let mut s = session();
-    let point = RallyPoint { at: Hex::new(10, 10), defend: false };
-    s.screen.game.apply(Order::RallyPoint { n: 2, point: Some(point) }).unwrap();
-    open(&mut s);
-    push_row(&mut s, ALDER);
-    push_widget(&mut s, PROD_DEFEND_ID);
-    assert_eq!(sends(&s, ALDER), Sends::Defend);
-    push_widget(&mut s, PROD_STAY_ID);
-    assert_eq!(sends(&s, ALDER), Sends::Stay);
-    // A button for each rally point that is set, and none for the others.
-    assert!(shown(&s, &point_id(2)) && !shown(&s, &point_id(0)));
-    push_widget(&mut s, &point_id(2));
-    assert_eq!(sends(&s, ALDER), Sends::Point { n: 2, bless: false });
-    let line = &s.production().unwrap().city_lines()[2];
-    assert!(line.ends_with("; to rally point 2"), "{line}");
-    // Stop: it builds nothing, on purpose; its row says so, and goes last.
-    push_widget(&mut s, PROD_STOP_ID);
-    assert_eq!(state(&s, ALDER), CityState::Resting);
-    let window = s.production().unwrap();
-    assert_eq!(window.city_lines().last().map(String::as_str), Some("Alder: stopped"));
-    assert_eq!(window.chosen_city(), Some(city(&s.screen.game, ALDER)), "still chosen");
-}
-
-#[test]
-fn to_a_city_then_its_row_sends_the_new_units_there() {
-    let mut s = session();
-    open(&mut s);
-    let alder = city(&s.screen.game, ALDER);
-    push_row(&mut s, ALDER);
-    push_widget(&mut s, PROD_TO_CITY_ID);
-    assert_eq!(s.production().unwrap().sending(), Some(alder));
-    assert!(shown(&s, PROD_TO_CITY_ID));
-    // The button again: never mind.
-    push_widget(&mut s, PROD_TO_CITY_ID);
-    assert_eq!(s.production().unwrap().sending(), None);
-    assert_eq!(sends(&s, ALDER), Sends::Stay);
-    // Again, and Cobb's row: there.
-    push_widget(&mut s, PROD_TO_CITY_ID);
-    push_row(&mut s, COBB);
-    assert_eq!(sends(&s, ALDER), Sends::Route(vec![COBB]));
-    let window = s.production().unwrap();
-    assert_eq!((window.sending(), window.chosen_city()), (None, Some(alder)), "Alder stays chosen");
-    let line = &window.city_lines()[window.cities().iter().position(|c| *c == alder).unwrap()];
-    assert!(line.ends_with("; to Cobb"), "{line}");
+    assert_eq!(s.city_window().map(|w| w.city()), Some(birch), "its view, in the panel");
+    // Down: the next row (Cobb); Up: back. The cursor does not move.
+    let cursor = s.screen.game.map.cursor;
+    common::press(&mut s, SpecialKey::Down);
+    assert_eq!(s.city_window().map(|w| w.city()), Some(cobb));
+    common::press(&mut s, SpecialKey::Up);
+    assert_eq!(s.city_window().map(|w| w.city()), Some(birch));
+    assert_eq!(s.screen.game.map.cursor, cursor, "the arrows are the panel's while it is open");
+    // Closed, the city's view goes with it.
+    type_char(&mut s, 'e');
+    assert!(s.production().is_none() && s.city_window().is_none());
 }
 
 #[test]
@@ -236,7 +230,7 @@ fn stop_all_asks_first_then_stops_every_city_at_work() {
     push_widget(&mut s, PROD_STOP_ALL_YES_ID);
     assert_eq!((state(&s, ALDER), state(&s, COBB)), (CityState::Resting, CityState::Resting));
     assert_eq!(state(&s, BIRCH), CityState::Idle, "it had nothing to stop");
-    assert!(s.production().unwrap().economy_lines().iter().any(|l| l.contains("nothing built")));
+    assert!(s.production().unwrap().coming().iter().all(|(_, l)| !l.contains("Soldiers")), "nothing comes");
 }
 
 #[test]
@@ -246,16 +240,14 @@ fn out_of_its_turn_it_shows_and_changes_nothing() {
     assert_eq!(s.screen.game.player(), Side::Blue, "blue plays (it is the computer's turn)");
     open(&mut s);
     push_row(&mut s, ALDER);
-    for button in [PROD_STOP_ID, PROD_DEFEND_ID, PROD_TO_CITY_ID, PROD_STOP_ALL_ID] {
+    for button in [BUILD_NOTHING_ID, CITY_DEFEND_ID, PROD_STOP_ALL_ID] {
         assert!(disabled(&s, button), "{button}");
     }
-    assert!(!disabled(&s, PROD_OPEN_ID), "looking is all right");
     // A click on a greyed button does nothing.
     let before = s.screen.game.map.city_at(ALDER).unwrap().clone();
-    push_widget(&mut s, PROD_STOP_ID);
+    push_widget(&mut s, BUILD_NOTHING_ID);
     assert_eq!(s.screen.game.map.city_at(ALDER).unwrap(), &before);
 }
-
 #[test]
 fn the_stacks_dearest_first_defenders_apart_to_select_or_disband() {
     let mut s = session();
@@ -290,32 +282,35 @@ fn the_stacks_dearest_first_defenders_apart_to_select_or_disband() {
     assert_eq!(s.production().unwrap().stacks().len(), 1, "its rows follow");
 }
 
+/// It covers the map's rectangle, at 1x and at 2x, and after the window
+/// changes size; its parts are inside it.
 #[test]
-fn it_fits_the_map_on_a_small_screen_and_a_large_one() {
+fn it_covers_the_map_on_a_small_screen_and_a_large_one() {
     for (w, h, dpi) in [(1024, 768, 96), (2048, 1536, 192)] {
         let mut game = game(|_| {});
         game.apply(Order::Build { city: city(&game, ALDER), what: Some(0) }).unwrap();
         let mut s = session_at(game, w, h, dpi);
         open(&mut s);
-        push_widget(&mut s, PROD_STACKS_ID);
         push_row(&mut s, ALDER);
-        // (The tallest it gets: the stacks shown, Stop all asking.)
         push_widget(&mut s, PROD_STOP_ALL_ID);
         s.frame(0);
         let id = widget(&s, PRODUCTION_WINDOW_ID);
         let r = Rect::from_origin_size(s.screen.ui.to_root(id, Point::ZERO), s.screen.ui.rect(id).size());
-        let map = s.screen.map_rect();
-        assert!(
-            r.x >= map.x && r.y >= map.y && r.right() <= map.right() && r.bottom() <= map.bottom(),
-            "{r:?} {map:?}"
-        );
-        for name in [PROD_OPEN_ID, PROD_TO_CITY_ID, PROD_STOP_ALL_ID, PROD_STOP_ALL_YES_ID] {
+        assert_eq!(r, s.screen.map_rect(), "at {w}");
+        for name in [PROD_STACKS_ID, PROD_STOP_ALL_YES_ID, PRODUCTION_CLOSE_ID, &city_row_id(2), BUILD_NOTHING_ID] {
             let b = s.screen.area(widget(&s, name));
-            assert!(b.w > 0 && r.x <= b.x && b.right() <= r.right(), "{name} at {w}: {b:?} in {r:?}");
+            assert!(
+                b.w > 0 && r.x <= b.x && b.right() <= r.right() && b.bottom() <= r.bottom(),
+                "{name} at {w}: {b:?} in {r:?}"
+            );
         }
+        // The window changes size: it follows the map.
+        s.resize(Size::new(w * 5 / 4, h));
+        s.frame(0);
+        let r = Rect::from_origin_size(s.screen.ui.to_root(id, Point::ZERO), s.screen.ui.rect(id).size());
+        assert_eq!(r, s.screen.map_rect(), "after a resize, at {w}");
     }
 }
-
 #[test]
 fn in_hotseat_the_next_persons_cover_closes_it() {
     let mut s = session_at(game(|s| s.set_players("blue=person").unwrap()), 1024, 768, 96);
@@ -361,4 +356,77 @@ fn the_game_minimap_marks_what_production_marked() {
     push_row(&mut s, ALDER);
     let shell = hexlords::shell::Shell::playing(&assets(), s);
     assert_eq!(shell.minimap_marks(), marks);
+}
+
+/// The cities' filters (the owner's word, 2026-11-24, "The filter row is a
+/// good idea"): All, idle, waiting, building, by a click or a key.
+#[test]
+fn the_filters_show_the_cities_idle_waiting_or_building() {
+    let mut s = session();
+    open(&mut s);
+    let ids = |hexes: &[Hex], s: &Session| hexes.iter().map(|h| city(&s.screen.game, *h)).collect::<Vec<_>>();
+    push_widget(&mut s, PROD_IDLE_ID);
+    assert_eq!(s.production().unwrap().cities(), ids(&[BIRCH], &s));
+    assert_eq!(s.production().unwrap().chosen_city(), Some(city(&s.screen.game, BIRCH)), "the first, chosen");
+    type_char(&mut s, 'w');
+    assert_eq!(s.production().unwrap().cities(), ids(&[COBB], &s));
+    type_char(&mut s, 'b');
+    assert_eq!(s.production().unwrap().cities(), ids(&[ALDER], &s));
+    type_char(&mut s, 'a');
+    assert_eq!(s.production().unwrap().cities(), ids(&[BIRCH, COBB, ALDER], &s));
+    assert_eq!(s.production().unwrap().filter(), Filter::All);
+    assert!(s.city_list().is_none(), "A is the filter's while it is open, not All cities");
+}
+
+/// O (or the lists' Open) on one's own city opens the panel on it; on
+/// another side's it does nothing (the sidebar says what is seen of it).
+#[test]
+fn o_opens_the_panel_on_ones_own_city_and_not_on_anothers() {
+    let mut s = session();
+    let cobb = city(&s.screen.game, COBB);
+    let look = |s: &mut Session, hex: Hex| {
+        s.screen.view.center_on(hex);
+        let p = common::pixel_of(s, hex);
+        common::click(s, p);
+        assert_eq!(s.shown(), hex);
+    };
+    look(&mut s, COBB);
+    type_char(&mut s, 'o');
+    assert_eq!(s.production().and_then(|w| w.chosen_city()), Some(cobb));
+    assert_eq!(s.city_window().map(|w| (w.city(), w.embedded())), Some((cobb, true)));
+    type_char(&mut s, 'e');
+    look(&mut s, Hex::new(15, 15));
+    type_char(&mut s, 'o');
+    assert!(s.production().is_none() && s.city_window().is_none(), "Bluemoor is blue's");
+}
+
+/// What the city builds and where its units go are set in the city beside
+/// the list (its window's own buttons: the owner's word, 2026-11-24, the
+/// panel's Stop, Keep, Defend, To a city and second row of rally points
+/// went as "redundant").
+#[test]
+fn nothing_keep_defend_and_a_rally_point_in_the_city_beside() {
+    let mut s = session();
+    let point = RallyPoint { at: Hex::new(10, 10), defend: false };
+    s.screen.game.apply(Order::RallyPoint { n: 2, point: Some(point) }).unwrap();
+    open(&mut s);
+    push_row(&mut s, ALDER);
+    push_widget(&mut s, CITY_DEFEND_ID);
+    assert_eq!(sends(&s, ALDER), Sends::Defend);
+    push_widget(&mut s, CITY_NO_RALLY_ID);
+    assert_eq!(sends(&s, ALDER), Sends::Stay);
+    // A button for each rally point that is set, and none for the others.
+    assert!(shown(&s, &city_windows::point_id(2)) && !shown(&s, &city_windows::point_id(0)));
+    push_widget(&mut s, &city_windows::point_id(2));
+    assert_eq!(sends(&s, ALDER), Sends::Point { n: 2, bless: false });
+    let alder = city(&s.screen.game, ALDER);
+    let window = s.production().unwrap();
+    let line = &window.city_lines()[window.cities().iter().position(|c| *c == alder).unwrap()];
+    assert!(line.ends_with("; to rally point 2"), "{line}");
+    // Nothing: it builds nothing, on purpose; its row says so, and goes last.
+    push_widget(&mut s, BUILD_NOTHING_ID);
+    assert_eq!(state(&s, ALDER), CityState::Resting);
+    let window = s.production().unwrap();
+    assert_eq!(window.city_lines().last().map(String::as_str), Some("Alder: stopped"));
+    assert_eq!(window.chosen_city(), Some(alder), "still chosen");
 }

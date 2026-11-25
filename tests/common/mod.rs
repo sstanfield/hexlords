@@ -73,7 +73,11 @@ pub fn widget(s: &Session, name: &str) -> WidgetId {
 
 /// Click the middle of the widget with this id (a button).
 pub fn push_widget(s: &mut Session, name: &str) {
-    let r = s.screen.area(widget(s, name));
+    // (In a box that scrolls, a person scrolls to it first.)
+    let id = widget(s, name);
+    s.screen.ui.scroll_into_view_recursive(id);
+    s.screen.settle();
+    let r = s.screen.area(id);
     click(s, Point::new(r.x + r.w / 2, r.y + r.h / 2));
 }
 

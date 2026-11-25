@@ -180,10 +180,7 @@ pub const GAME_OVER_CLOSE_ID: &str = "game_over_close";
 /// Where the windows go on the map: the list in its left part, a city in its
 /// right, a third of the way down (see `gui::build::place`).
 const LIST_ALIGN: (f32, f32) = (0.0, 0.33);
-const CITY_ALIGN: (f32, f32) = (1.0, 0.33);
 const TASKS_ALIGN: (f32, f32) = (1.0, 0.0);
-/// The production window: at the top, in the middle.
-const PRODUCTION_ALIGN: (f32, f32) = (0.5, 0.0);
 
 /// What a click on the map picks, when it does not choose (`Session::picking`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -396,18 +393,19 @@ fn help_section() -> Vec<HelpSection> {
             &[
                 ("C", "Go to your next city (Shift+C: the one before)"),
                 ("Your city, in the sidebar", "Set what it builds (point at one: all about it), where its units go"),
-                ("O,  or  Open the city's window", "The selected city, with more room (another side's: City details)"),
+                ("O,  or  Open the city's window", "Your selected city, in Production (another side's: the sidebar)"),
                 (
-                    "+ beside a kind, in the window",
+                    "+ beside a kind, in Production",
                     "Its queue: kinds in turn, how many of each, where they go; then it stops, or repeats",
                 ),
-                ("Raise the walls, in the window", "A level, paid at once: once a turn"),
+                ("Raise the walls, in Production", "A level, paid at once: once a turn"),
                 ("M,  A", "Your cities, all cities: see where one is, go to it, open it"),
-                ("E", "Production: every city's work and where it goes, the next 5 rounds, the gold; your stacks"),
+                ("E", "Production, over the map: your cities, what the next 5 rounds bring, your stacks"),
                 (
-                    "A city's row, in Production",
-                    "Choose it: Open its window, Stop, Keep, Defend, a rally point; To a city..., then that row",
+                    "A city's row, or Up and Down",
+                    "In Production: choose it; it is in full beside, to set what it builds and where its units go",
                 ),
+                ("A,  I,  W,  B, in Production", "The cities: all, idle, waiting, building"),
                 ("Stop all production...", "In Production: every city stops building (it asks first)"),
             ],
         ),
@@ -2319,8 +2317,9 @@ impl Session {
             if own { (Visibility::Gone, Visibility::Visible) } else { (Visibility::Visible, Visibility::Gone) };
         set_visibility(&mut self.screen, self.city_text, text);
         set_visibility(&mut self.screen, self.city_scroll, panel);
-        let details = if city.is_empty() { Visibility::Gone } else { Visibility::Visible };
-        set_visibility(&mut self.screen, self.city_details, details);
+        // (Another side's city is all here: O opens one's own only, in the
+        // production panel.)
+        set_visibility(&mut self.screen, self.city_details, Visibility::Gone);
         // The button says whose turn it ends (on a map without sides,
         // nobody's), or, between turns, that the next can start; while the
         // computer plays, whose turn it waits for.
@@ -2440,11 +2439,14 @@ impl Session {
             self.production = None;
         }
         let acting = self.can_act();
+        let area = self.screen.map_rect();
         if let Some(window) = &mut self.production {
+            window.place(&mut self.screen.ui, area);
             if window.refresh(&mut self.screen.ui, &self.screen.game, (viewer, acting)) {
                 self.screen.settle();
             }
         }
+        self.show_chosen_city();
         // The disband window asks about units that are all there still, and
         // the player's (one fell in a battle: the question is over).
         let gone = self.disband.as_ref().is_some_and(|w| {
@@ -2493,19 +2495,14 @@ impl Session {
         }
     }
 
-    /// The window of a city: its own, replacing another city's.
+    /// A city in full: the person's own in the production panel, chosen
+    /// there (the owner's word, 2026-11-24: "The O button will open the
+    /// merged prod dialog on the selected city"); another side's (or
+    /// nobody's) shows only in the sidebar, as it is seen from outside.
     fn open_city(&mut self, id: CityId) {
-        if let Some(window) = self.city_window.take() {
-            window.close(&mut self.screen.ui);
-        }
-        let (root, area) = (self.screen.root_window(), self.window_area());
-        let icons = self.production_icons(id);
-        let (seer, actor) = (self.seer(), self.actor());
-        let (ui, game) = (&mut self.screen.ui, &self.screen.game);
-        let known = game.map.cities().get(id).map_or(info::Known::All, |c| info::Known::of(c, seer, &self.sight));
-        self.city_window = CityWindow::open(ui, root, &game.map, id, (actor, known), &icons, (area, CITY_ALIGN));
-        if let Some(window) = &mut self.city_window {
-            window.set_walls(ui, &game.map, actor, walls_price(game, actor, id));
+        let viewer = self.viewer();
+        if self.screen.game.map.cities().get(id).is_some_and(|c| c.side == viewer && viewer != Side::Grey) {
+            self.open_production(Some(id));
         }
     }
 
@@ -2652,7 +2649,10 @@ impl Session {
             }
             Some(12) => self.mission_ask.take().map(|(w, _, _)| build::close(ui, w.window)).is_some(),
             Some(13) => self.refusal.take().map(|w| build::close(ui, w.window)).is_some(),
-            Some(14) => self.production.take().map(|w| w.close(ui)).is_some(),
+            Some(14) => {
+                self.close_production();
+                true
+            }
             _ => false,
         }
     }
@@ -3185,7 +3185,12 @@ impl Session {
     fn make_way(&mut self, city: CityId) {
         if let Some(window) = self.city_window.take_if(|w| w.city() == city) {
             self.reopen = Some((city, window.item()));
+            let embedded = window.embedded();
             window.close(&mut self.screen.ui);
+            // In the production panel: the panel makes way, all of it.
+            if embedded {
+                self.close_production();
+            }
         }
     }
 
@@ -3240,13 +3245,11 @@ impl Session {
             return true;
         }
         if id == TbId::new(production_window::PRODUCTION_CLOSE_ID) {
-            if let Some(window) = self.production.take() {
-                window.close(&mut self.screen.ui);
-            }
+            self.close_production();
             return true;
         }
         if self.production.as_ref().is_some_and(|w| w.owns(id)) {
-            let click = self.production.as_mut().and_then(|w| w.click(&self.screen.game, id));
+            let click = self.production.as_mut().and_then(|w| w.click(id));
             if let Some(click) = click {
                 self.production_click(click);
             }
@@ -4453,25 +4456,83 @@ impl Session {
     /// Open the production window (E, or the Cities menu's Production...),
     /// or close it.
     pub fn toggle_production(&mut self) {
-        if let Some(window) = self.production.take() {
-            if window.is_open(&self.screen.ui) {
-                window.close(&mut self.screen.ui);
-                return;
-            }
+        if self.production.as_ref().is_some_and(|w| w.is_open(&self.screen.ui)) {
+            self.close_production();
+            return;
         }
+        let shown = self.screen.game.map.city_at(self.shown).map(|c| c.id);
+        self.open_production(shown);
+    }
+
+    /// Open the production panel over the map (if it is not open), on
+    /// `city` if that is the person's.
+    fn open_production(&mut self, city: Option<CityId>) {
         if self.covered() || !self.people_in_play() {
             return;
         }
-        let (root, area) = (self.screen.root_window(), self.window_area());
         let (side, acting) = (self.viewer(), self.can_act());
-        let shown = self.screen.game.map.city_at(self.shown).filter(|c| c.side == side).map(|c| c.id);
-        let ui = &mut self.screen.ui;
-        let mut window = ProductionWindow::open(ui, root, &self.screen.game, (side, acting), (area, PRODUCTION_ALIGN));
-        if let Some(city) = shown {
-            window.choose_city(city);
+        // (Its own list of the cities stands for the list of cities, which
+        // would be under it.)
+        if let Some(list) = self.city_list.take() {
+            list.close(&mut self.screen.ui);
+        }
+        if !self.production.as_ref().is_some_and(|w| w.is_open(&self.screen.ui)) {
+            let (root, area) = (self.screen.root_window(), self.screen.map_rect());
+            let window = ProductionWindow::open(&mut self.screen.ui, root, &self.screen.game, (side, acting), area);
+            self.production = Some(window);
+        }
+        if let (Some(window), Some(city)) = (&mut self.production, city) {
+            window.choose_city(&self.screen.game, city);
             window.refresh(&mut self.screen.ui, &self.screen.game, (side, acting));
         }
-        self.production = Some(window);
+        self.show_chosen_city();
+        self.screen.settle();
+    }
+
+    /// Close the production panel, and the city in it.
+    fn close_production(&mut self) {
+        if let Some(window) = self.city_window.take_if(|w| w.embedded()) {
+            window.close(&mut self.screen.ui);
+        }
+        if let Some(window) = self.production.take() {
+            window.close(&mut self.screen.ui);
+        }
+    }
+
+    /// The city chosen in the production panel is the one in its right
+    /// column: built there when the choice changed (the city window's view,
+    /// `CityWindow::embed`; the owner's word, 2026-11-24: "Merge the
+    /// production and city dialogs").
+    fn show_chosen_city(&mut self) {
+        let Some(window) = self.production.as_ref().filter(|w| w.is_open(&self.screen.ui)) else {
+            if let Some(city) = self.city_window.take_if(|w| w.embedded()) {
+                city.close(&mut self.screen.ui);
+            }
+            return;
+        };
+        let (chosen, host) = (window.chosen_city(), window.city_host());
+        let shown = self.city_window.as_ref().filter(|w| w.embedded()).map(|w| w.city());
+        if shown == chosen {
+            return;
+        }
+        if let Some(city) = self.city_window.take() {
+            city.close(&mut self.screen.ui);
+        }
+        let Some(id) = chosen else {
+            self.screen.settle();
+            return;
+        };
+        let icons = self.production_icons(id);
+        let (seer, actor) = (self.seer(), self.actor());
+        let (ui, game) = (&mut self.screen.ui, &self.screen.game);
+        let known = game.map.cities().get(id).map_or(info::Known::All, |c| info::Known::of(c, seer, &self.sight));
+        self.city_window = CityWindow::embed(ui, host, &game.map, id, (actor, known), &icons);
+        if let Some(window) = &mut self.city_window {
+            window.set_walls(ui, &game.map, actor, walls_price(game, actor, id));
+        }
+        if let Some(window) = &mut self.production {
+            window.relayout(&mut self.screen.ui);
+        }
         self.screen.settle();
     }
 
@@ -4479,16 +4540,8 @@ impl Session {
     /// orders only when the person may give them.
     fn production_click(&mut self, click: ProductionClick) {
         match click {
-            ProductionClick::City(order) => self.obey(order),
             ProductionClick::Select { at, units } => self.select_these(at, &units),
             ProductionClick::Disband(units) => self.ask_disband_of(units),
-            ProductionClick::SendTo { city, to } => {
-                if !self.can_act() {
-                    return;
-                }
-                self.order_given();
-                self.city_order(Order::Rally { city, to: Sends::Route(vec![to]) });
-            }
             ProductionClick::StopAll => {
                 if !self.can_act() {
                     return;
@@ -4688,7 +4741,10 @@ impl Session {
         let units = game.selected().and_then(|id| game.map.units().get(id));
         let own = turn && units.is_some_and(|u| u.side() == game.player());
         let temple = own && units.is_some_and(|u| temple_window::seekers(&game.map, game.player(), u.pos()).is_some());
-        let city = game.map.city_at(self.shown).is_some_and(|c| self.sight.knows(c.pos));
+        // (O: one's own city, in the production panel.)
+        let viewer = self.viewer();
+        let city = self.people_in_play()
+            && game.map.city_at(self.shown).is_some_and(|c| c.side == viewer && viewer != Side::Grey);
         let people = self.people_in_play();
         let orders_shown =
             if self.options.own_orders_only { "Outline all orders" } else { "Outline this stack's orders only" };
@@ -4728,7 +4784,7 @@ impl Session {
             Menu::new(MENU_CITIES_ID)
                 .item(NEXT_CITY_ID, "Next city", "C", people)
                 .item(PREV_CITY_ID, "Previous city", "Shift+C", people)
-                .item(CITY_DETAILS_ID, "This city's window", "O", city)
+                .item(CITY_DETAILS_ID, "This city's production", "O", city)
                 .separator()
                 .item(MY_CITIES_ID, "My cities", "M", people)
                 .item(ALL_CITIES_ID, "All cities", "A", true)
@@ -4824,6 +4880,27 @@ impl Session {
                     continue;
                 }
                 _ => {}
+            }
+            // The production panel has the keys while it is open (the
+            // owner's word, 2026-11-24: "the game works well with the
+            // keyboard as well as mouse"): Up and Down go from city to city;
+            // the other arrows and Enter are its, not the hidden map's.
+            let producing = self.production.as_ref().is_some_and(|w| w.is_open(&self.screen.ui));
+            if producing && !self.screen.help_open() {
+                if let MapCommand::Key(
+                    key @ (MapKey::Up
+                    | MapKey::Down
+                    | MapKey::Left
+                    | MapKey::Right
+                    | MapKey::Enter
+                    | MapKey::ShiftEnter),
+                ) = command
+                {
+                    if let (Some(window), true) = (&mut self.production, matches!(key, MapKey::Up | MapKey::Down)) {
+                        window.step(key == MapKey::Down);
+                    }
+                    continue;
+                }
             }
             // Esc closes the help if it is open, else the window on top, and
             // with none open it drops the selection.
@@ -5053,6 +5130,23 @@ impl Session {
                 RootCommand::Click(id) if id == TbId::new(log_window::LOG_CLOSE_ID) => {
                     if let Some(log) = self.log.take() {
                         log.close(&mut self.screen.ui);
+                    }
+                }
+                // While production is open: its filters (All, Idle, Waiting,
+                // Building).
+                RootCommand::Key(ch, mods)
+                    if !mods.intersects(Modifiers::CTRL | Modifiers::SUPER | Modifiers::ALT)
+                        && self.production().is_some()
+                        && matches!(ch.to_ascii_lowercase(), 'a' | 'i' | 'w' | 'b') =>
+                {
+                    let filter = match ch.to_ascii_lowercase() {
+                        'i' => production_window::Filter::Idle,
+                        'w' => production_window::Filter::Waiting,
+                        'b' => production_window::Filter::Building,
+                        _ => production_window::Filter::All,
+                    };
+                    if let Some(window) = &mut self.production {
+                        window.set_filter(filter);
                     }
                 }
                 RootCommand::Key(ch, mods) if !mods.intersects(Modifiers::CTRL | Modifiers::SUPER | Modifiers::ALT) => {

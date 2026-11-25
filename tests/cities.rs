@@ -5,11 +5,11 @@
 
 mod common;
 
-use common::{assets, choose, click, descendants, pixel_of, press, widget};
+use common::{assets, choose, click, descendants, pixel_of, press, type_char, widget};
 use hexlords::city_windows::CityList;
 use hexlords::city_windows::{
-    BUILD_NOTHING_ID, CITY_CLOSE_ID, CITY_RALLY_ID, CITY_WINDOW_ID, LIST_CLOSE_ID, LIST_DETAILS_ID, LIST_GOTO_ID,
-    LIST_WINDOW_ID, PANEL_OPEN_ID, PANEL_PREFIX, build_id, row_id,
+    BUILD_NOTHING_ID, CITY_RALLY_ID, CITY_WINDOW_ID, LIST_CLOSE_ID, LIST_DETAILS_ID, LIST_GOTO_ID, LIST_WINDOW_ID,
+    PANEL_OPEN_ID, PANEL_PREFIX, build_id, row_id,
 };
 use hexlords::game::{Game, Sight};
 use hexlords::session::{ALL_CITIES_ID, CITY_DETAILS_ID, MENU_CITIES_ID, MY_CITIES_ID, Session};
@@ -149,21 +149,26 @@ fn my_cities_lists_the_players_with_what_they_build() {
 }
 
 #[test]
-fn details_open_the_city_and_go_to_shows_it_on_the_map() {
+fn details_open_ones_own_city_in_production_and_go_to_shows_it_on_the_map() {
     let mut s = session();
     choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
+    // Low Tarn, nobody's: Details opens nothing (the sidebar says what is
+    // seen of it).
     push(&mut s, &row_id(1));
     push(&mut s, LIST_DETAILS_ID);
-    let window = s.city_window().expect("Low Tarn's window");
-    assert_eq!(window.city(), city_id(&s, LOW_TARN));
-    assert_eq!(s.screen.ui.text(widget(&s, CITY_WINDOW_ID)), Some("Low Tarn"));
-    // Both windows are open, over the map, side by side.
-    let (list, city, map) = (frame(&s, LIST_WINDOW_ID), frame(&s, CITY_WINDOW_ID), s.screen.map_rect());
-    assert!(list.right() <= city.x, "{list:?} {city:?}");
-    for r in [list, city] {
-        assert!(r.x >= map.x && r.right() <= map.right() && r.y >= map.y && r.bottom() <= map.bottom(), "{r:?}");
-    }
+    assert!(s.city_window().is_none() && s.production().is_none());
+    // Wrenfold, the player's: in the production panel, chosen there.
+    let own = s.city_list().unwrap().cities().iter().position(|c| *c == city_id(&s, WRENFOLD)).unwrap();
+    push(&mut s, &row_id(own));
+    push(&mut s, LIST_DETAILS_ID);
+    let window = s.city_window().expect("Wrenfold in production");
+    assert_eq!((window.city(), window.embedded()), (city_id(&s, WRENFOLD), true));
+    assert_eq!(s.production().and_then(|p| p.chosen_city()), Some(city_id(&s, WRENFOLD)));
+    assert!(s.city_list().is_none(), "the panel's own list stands for it");
     // Go to: the cursor and the view go there, and the panels are about it.
+    type_char(&mut s, 'e');
+    choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
+    push(&mut s, &row_id(1));
     push(&mut s, LIST_GOTO_ID);
     assert_eq!(s.screen.game.map.cursor, LOW_TARN);
     assert!(s.screen.view.shows(LOW_TARN));
@@ -211,28 +216,18 @@ fn only_the_holder_sets_what_a_city_builds() {
     choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     push(&mut s, &row_id(2));
     push(&mut s, LIST_DETAILS_ID);
-    assert_eq!(s.city_window().unwrap().city(), city_id(&s, HIGHCLIFF));
-    assert!(disabled(&s, &build_id(0)) && disabled(&s, BUILD_NOTHING_ID));
-    let says: Vec<String> =
-        descendants(&s, CITY_WINDOW_ID).into_iter().filter_map(|id| s.screen.ui.text(id).map(str::to_string)).collect();
-    // Another side's city: what it builds is its holder's to know; its
-    // buttons are not shown.
-    assert!(says.iter().any(|t| t == "Only blue knows what it builds."), "{says:?}");
-    // Shown: it and everything it is in.
-    let shown = |s: &Session, id: &str| {
-        let ui = &s.screen.ui;
-        std::iter::successors(Some(widget(s, id)), |w| ui.parent(*w))
-            .all(|w| ui.node(w).is_some_and(|n| n.visibility() == Visibility::Visible))
-    };
-    assert!(!shown(&s, BUILD_NOTHING_ID) && !shown(&s, CITY_RALLY_ID));
-    push(&mut s, &build_id(0));
-    assert_eq!(s.screen.game.map.city_at(HIGHCLIFF).unwrap().building, None);
+    // Another side's city: no city in full; what shows of it from outside
+    // is the sidebar's.
+    assert!(s.city_window().is_none(), "blue's Highcliff");
+    push(&mut s, LIST_GOTO_ID);
+    assert_eq!(s.city()[..2], ["Highcliff", "Held by blue"]);
     // When a person plays blue, on blue's turn, they can.
     let mut s = session_as(Side::Blue);
     assert_eq!(s.screen.game.player(), Side::Blue, "green, the computer, has passed");
     choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     push(&mut s, &row_id(2));
     push(&mut s, LIST_DETAILS_ID);
+    assert_eq!(s.city_window().map(|w| w.city()), Some(city_id(&s, HIGHCLIFF)));
     assert!(!disabled(&s, &build_id(0)));
     push(&mut s, &build_id(0));
     assert_eq!(s.screen.game.map.city_at(HIGHCLIFF).unwrap().building, Some(0));
@@ -241,31 +236,31 @@ fn only_the_holder_sets_what_a_city_builds() {
 #[test]
 fn esc_and_the_close_buttons_shut_the_windows_one_at_a_time() {
     let mut s = session();
+    push(&mut s, PANEL_OPEN_ID);
     choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
-    push(&mut s, LIST_DETAILS_ID);
-    assert!(s.city_window().is_some() && s.city_list().is_some());
-    // Esc: the city's, on top, then the list.
+    assert!(s.production().is_some() && s.city_list().is_some());
+    // Esc: the list, on top, then production (and the city in it).
     press(&mut s, SpecialKey::Esc);
-    assert!(s.city_window().is_none() && s.city_list().is_some());
+    assert!(s.city_list().is_none() && s.production().is_some());
     press(&mut s, SpecialKey::Esc);
-    assert!(s.city_list().is_none());
+    assert!(s.production().is_none() && s.city_window().is_none());
     // The help, if it is open, goes first.
     choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     press(&mut s, SpecialKey::F1);
     press(&mut s, SpecialKey::Esc);
     assert!(!s.screen.help_open() && s.city_list().is_some());
-    // The close buttons, and the title bars' ones.
+    // The close buttons, and the list's title bar's.
     push(&mut s, LIST_CLOSE_ID);
     assert!(s.city_list().is_none());
     push(&mut s, PANEL_OPEN_ID);
-    push(&mut s, CITY_CLOSE_ID);
-    assert!(s.city_window().is_none());
-    push(&mut s, PANEL_OPEN_ID);
-    let x = s.screen.ui.get::<Window>(widget(&s, CITY_WINDOW_ID)).and_then(|w| w.close_button()).unwrap();
+    push(&mut s, hexlords::production_window::PRODUCTION_CLOSE_ID);
+    assert!(s.production().is_none() && s.city_window().is_none() && !exists(&s, CITY_WINDOW_ID));
+    choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
+    let x = s.screen.ui.get::<Window>(widget(&s, LIST_WINDOW_ID)).and_then(|w| w.close_button()).unwrap();
     let r = s.screen.area(x);
     click(&mut s, Point::new(r.x + r.w / 2, r.y + r.h / 2));
     s.frame(16);
-    assert!(s.city_window().is_none() && !exists(&s, CITY_WINDOW_ID));
+    assert!(s.city_list().is_none());
 }
 
 #[test]
@@ -284,7 +279,7 @@ fn the_sidebar_has_ones_own_city_in_full_and_anothers_from_outside() {
     click(&mut s, p);
     assert!(s.city_panel().is_none());
     assert_eq!(s.city()[0], "Low Tarn");
-    assert_eq!(visible(&s), Some(Visibility::Visible));
+    assert_eq!(visible(&s), Some(Visibility::Gone), "nothing more to open: what shows is all");
     // No city: neither.
     let p = pixel_of(&s, Hex::new(15, 5));
     click(&mut s, p);
@@ -323,18 +318,25 @@ fn the_windows_fit_the_map_and_take_the_wheel_from_it() {
     for (w, h, dpi) in [(1024, 768, 96), (2048, 1536, 192)] {
         let mut s = session_at(w, h, dpi);
         choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
-        push(&mut s, LIST_DETAILS_ID);
-        let (list, city, map) = (frame(&s, LIST_WINDOW_ID), frame(&s, CITY_WINDOW_ID), s.screen.map_rect());
-        // (The city's window, with its queue, is too wide to stand beside
-        // the list in a 1024 wide window: it is on the right, over it.)
-        assert!(list.x < city.x && list.right() < city.right(), "{w}x{h}: {list:?} {city:?}");
-        assert!(list.x >= map.x && city.right() <= map.right(), "{w}x{h}: {list:?} {city:?} {map:?}");
+        let (list, map) = (frame(&s, LIST_WINDOW_ID), s.screen.map_rect());
+        assert!(list.x >= map.x && list.right() <= map.right(), "{w}x{h}: {list:?} {map:?}");
         // The wheel over a window is the window's, not the map's.
-        let over = Point::new(list.x + list.w / 2, list.y + list.h / 2);
         let middle = s.screen.view.middle();
+        let over = Point::new(list.x + list.w / 2, list.y + list.h / 2);
         assert!(!s.screen.scroll(over, 0.0, 300.0), "{w}x{h}");
         assert_eq!(s.screen.view.middle(), middle);
-        // And the keyboard is still the map's.
+        // So over the production panel, which covers the map, the city in
+        // it: the wheel scrolls them, the map stays.
+        type_char(&mut s, 'e');
+        let panel = frame(&s, hexlords::production_window::PRODUCTION_WINDOW_ID);
+        assert_eq!(panel, map, "{w}x{h}");
+        let city = frame(&s, CITY_WINDOW_ID);
+        assert!(city.x > map.x && city.right() <= map.right(), "{w}x{h}: {city:?}");
+        let over = Point::new(city.x + city.w / 2, city.y + city.h / 4);
+        assert!(!s.screen.scroll(over, 0.0, 300.0), "{w}x{h}");
+        assert_eq!(s.screen.view.middle(), middle);
+        // And the keyboard is still the map's (the session hands the
+        // panel its keys).
         assert_eq!(s.screen.ui.focused(), Some(s.screen.map_widget()));
     }
 }

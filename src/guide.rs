@@ -343,19 +343,20 @@ fn cities(game: &Game) -> Vec<HelpSection> {
                     "Walls",
                     format!(
                         "Walls make those who defend the city stronger (see Battles). Its holder raises them \
-                         a level a turn, up to {WALLS_CAP}, from the city's window: {WALL_PRICE} gold for each \
+                         a level a turn, up to {WALLS_CAP}, from Production: {WALL_PRICE} gold for each \
                          level they rise to. A city that is taken loses a level."
                     ),
                 ),
                 ("Training", "Some cities train their units: they come out veterans, or elite.".to_string()),
                 (
                     "Production",
-                    "E: all your cities in one window: what each builds and where its units go (those \
-                     idle or waiting first), what the next 5 rounds bring, and your gold: whether it \
-                     will go on paying the upkeep, and if not from which round. From there you stop \
-                     a city, or all of them, send a city's new units to a rally point or to another \
-                     of your cities, and open a city's window for what it builds. Your stacks are \
-                     there too, the dearest first, to send home what you can do without."
+                    "E (or O on one of your cities): all your cities over the map, what each builds and \
+                     where its units go (those idle or waiting first; All, idle, waiting, building to \
+                     see some only), what the next 5 rounds bring, and a warning when the gold will \
+                     not pay the upkeep. The city chosen (a row, or Up and Down) is in full beside \
+                     them: what it builds, its queue, where its units go, its walls. Stop all \
+                     production stops every city; your stacks are there too, the dearest first, to \
+                     send home what you can do without."
                         .to_string(),
                 ),
                 (

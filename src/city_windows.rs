@@ -242,7 +242,8 @@ pub struct CityView {
 
 impl CityView {
     /// Build the city's view into `content`, a column. `icons` are the
-    /// pictures of what it can build, in its order; `compact` is the
+    /// pictures of what it can build, in its order; `stacked`: one column
+    /// (in the production panel), not two side by side; `compact` is the
     /// sidebar's form. `None` if there is no such city.
     #[allow(clippy::too_many_arguments)]
     fn build(
@@ -252,7 +253,7 @@ impl CityView {
         id: CityId,
         known: info::Known,
         icons: &[ImageHandle],
-        (prefix, compact): (&'static str, bool),
+        (prefix, compact, stacked): (&'static str, bool, bool),
     ) -> Option<CityView> {
         let city = map.cities().get(id)?;
         let pid = |name: &str| format!("{prefix}{name}");
@@ -264,7 +265,7 @@ impl CityView {
         build::gap(ui, content, space);
         // In the window two columns: what it can build, and all about the
         // one under the pointer; its queue, and where its units go.
-        let (left, right) = if compact {
+        let (left, right) = if compact || stacked {
             (content, content)
         } else {
             let columns = build::top_row(ui, content, space * 2);
@@ -769,13 +770,17 @@ impl CityView {
 }
 
 /// A city's window: its view, a button that raises its walls (its
-/// holder's, if that is the player), and one that closes it.
+/// holder's, if that is the player), and one that closes it. Or the same
+/// built into the production panel (`embed`: the owner's word, 2026-11-24,
+/// "Merge the production and city dialogs"), with no window of its own and
+/// no Close: the panel lays it out.
 pub struct CityWindow {
     parts: WindowParts,
     view: CityView,
     walls: WidgetId,
     /// What the walls' button says, and whether it is pressable.
     walls_state: (String, bool, bool),
+    embedded: bool,
 }
 
 impl CityWindow {
@@ -798,7 +803,7 @@ impl CityWindow {
     ) -> Option<Self> {
         let city = map.cities().get(id)?;
         let parts = build::window(ui, parent, CITY_WINDOW_ID, &city.name);
-        let Some(view) = CityView::build(ui, parts.content, map, id, known, icons, ("", false)) else {
+        let Some(view) = CityView::build(ui, parts.content, map, id, known, icons, ("", false, false)) else {
             build::close(ui, parts.window);
             return None;
         };
@@ -810,10 +815,43 @@ impl CityWindow {
         build::button(ui, row, CITY_CLOSE_ID, "Close");
         let walls = build::button(ui, row, CITY_WALLS_ID, "");
         ui.set_visibility(walls, Visibility::Gone);
-        let mut window = CityWindow { parts, view, walls, walls_state: (String::new(), false, false) };
+        let mut window = CityWindow { parts, view, walls, walls_state: (String::new(), false, false), embedded: false };
         window.view.fill(ui, map, player);
         build::place(ui, parts, area, align);
         Some(window)
+    }
+
+    /// The city's view built into `host` (a column of the production
+    /// panel), with its walls' button over it and no Close. `None` if there
+    /// is no such city.
+    pub fn embed(
+        ui: &mut Ui,
+        host: WidgetId,
+        map: &Map,
+        id: CityId,
+        (player, known): (Side, info::Known),
+        icons: &[ImageHandle],
+    ) -> Option<Self> {
+        let column = build::column(ui, host, 0);
+        // (The city's view has the window's id wherever it is.)
+        ui.set_id(column, TbId::new(CITY_WINDOW_ID));
+        let parts = WindowParts { window: column, content: column };
+        let Some(view) = CityView::build(ui, column, map, id, known, icons, ("", false, true)) else {
+            build::close(ui, column);
+            return None;
+        };
+        let space = dp(ui, SPACING_DP);
+        build::gap(ui, column, space);
+        let walls = build::button(ui, column, CITY_WALLS_ID, "");
+        ui.set_visibility(walls, Visibility::Gone);
+        let mut window = CityWindow { parts, view, walls, walls_state: (String::new(), false, false), embedded: true };
+        window.view.fill(ui, map, player);
+        Some(window)
+    }
+
+    /// True if it is built into the production panel.
+    pub fn embedded(&self) -> bool {
+        self.embedded
     }
 
     /// Say what raising the walls costs, if the player holds the city:
@@ -838,7 +876,9 @@ impl CityWindow {
         ui.set_visibility(self.walls, if state.1 { Visibility::Visible } else { Visibility::Gone });
         ui.set_disabled(self.walls, !state.2);
         self.walls_state = state;
-        build::refit(ui, self.parts);
+        if !self.embedded {
+            build::refit(ui, self.parts);
+        }
     }
 
     /// Choose the `i`th item of the queue (what it builds and where its
@@ -893,7 +933,7 @@ impl CityWindow {
             return false;
         }
         self.view.known = known;
-        if self.view.fill(ui, map, player) {
+        if self.view.fill(ui, map, player) && !self.embedded {
             build::refit(ui, self.parts);
         }
         true
@@ -933,7 +973,7 @@ impl CityPanel {
         icons: &[ImageHandle],
     ) -> Option<CityPanel> {
         let root = build::column(ui, parent, 0);
-        let Some(view) = CityView::build(ui, root, map, id, known, icons, (PANEL_PREFIX, true)) else {
+        let Some(view) = CityView::build(ui, root, map, id, known, icons, (PANEL_PREFIX, true, false)) else {
             ui.remove(root);
             return None;
         };

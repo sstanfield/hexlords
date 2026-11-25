@@ -168,6 +168,38 @@ pub fn refit(ui: &mut Ui, parts: WindowParts) {
     ui.set_rect(parts.content, inside);
 }
 
+/// A panel on `parent` (the root window), with the id `id`: the windows'
+/// look with no title bar, its content a column inside its padding. Put it
+/// over a rectangle with [`place_panel`] (the production panel covers the
+/// map's: the owner's word, 2026-11-24).
+pub fn panel(ui: &mut Ui, parent: WidgetId, id: &str) -> WindowParts {
+    let mut layout = Layout::new(Axis::Y);
+    layout.position = LayoutPosition::LeftTop;
+    layout.distribution_position = LayoutDistributionPosition::LeftTop;
+    let panel = ui.add(parent, layout);
+    ui.set_id(panel, TbId::new(id));
+    ui.set_skin(panel, TbId::new("TBWindow"));
+    let content = column(ui, panel, 0);
+    WindowParts { window: panel, content }
+}
+
+/// Put a panel over `area` (a rectangle of its parent), its content inside
+/// its padding.
+pub fn place_panel(ui: &mut Ui, parts: WindowParts, area: Rect) {
+    ui.set_rect(parts.window, area);
+    let inside = ui.padding_rect(parts.window);
+    ui.set_rect(parts.content, inside);
+}
+
+/// Put a panel over `area` and lay out what is in it again, now (its
+/// parts' sizes changed). The root window places its children by hand, so
+/// the layout pass does not reach them: a change of size arranges a widget
+/// at once, and so it is given one.
+pub fn arrange_panel(ui: &mut Ui, parts: WindowParts, area: Rect) {
+    ui.set_rect(parts.window, Rect::new(area.x, area.y, area.w, area.h + 1));
+    place_panel(ui, parts, area);
+}
+
 /// A screen over the whole of `parent` (the root window: the map and the
 /// panels), opaque, with the id `id` and its content in its middle: what
 /// hotseat play shows between two people's turns. Fill its `content`.

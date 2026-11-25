@@ -1,28 +1,31 @@
-//! The production window (E, or the Cities menu's Production...): a side's
-//! production in one place, so that its cities need not be visited one by
-//! one (the owner's word, 2026-11-23: "a central production hub ... a
-//! birds eye view of current production as well as make changes"). A map
-//! of where its cities and rally points are; its gold, and whether it will
-//! go on paying the upkeep (`Game::forecast`); every city, what it builds
-//! and where the units go, those at no work first; what the next rounds
-//! bring; and, when asked for, the side's stacks, dearest first, to cut
-//! the upkeep.
+//! The production panel (E, the Cities menu's Production..., O on one's own
+//! city): a side's production in one place, over the map (the owner's word,
+//! 2026-11-23: "a central production hub ... a birds eye view of current
+//! production as well as make changes"; 2026-11-24: "Merge the production
+//! and city dialogs ... The goal is to have a single consice area to view
+//! and manage all of a side production with a minimum of hassle").
 //!
-//! A city row chooses the city: open its window (what it builds, its
-//! queue), stop it, keep its new units in it or have them defend it, send
-//! them to a rally point or to another of the side's cities (To a city...,
-//! then that city's row). Stop all production stops every city, after
-//! asking. A stack row chooses the stack: Select puts it under the map (to
-//! disband some of it with X), Disband... all of it. It gives no order
-//! itself: what a click asks for goes back to the session
-//! ([`ProductionClick`]), as the other windows' clicks do.
+//! It covers the map's rectangle; the stack's boxes under the map, the
+//! sidebar and the minimap stay (the minimap marks the cities idle or
+//! waiting and the chosen one: `minimap_marks`). Its header says the side's
+//! cities at a glance, and warns when the gold will not pay the upkeep
+//! (`Game::forecast`). On the left the cities, a row each (those at no work
+//! first), with a row of filters over them, and what the next rounds bring;
+//! on the right the city chosen in full (the city window's view, built into
+//! `city_host` by the session: what it builds, its queue, where its units
+//! go, its walls), or, when asked for, the side's stacks, dearest first, to
+//! cut the upkeep. Along the bottom: Your stacks, and Stop all production
+//! (after asking).
+//!
+//! It gives no order itself: what a click asks for goes back to the session
+//! ([`ProductionClick`]), as the other windows' clicks do; the city's own
+//! clicks are the city window's (`CityOrder`).
 //!
 //! Not a port: the C++ had no windows.
 
 use turbo_ferret::widgets::{ScrollContainer, ScrollMode};
 use turbo_ferret::{LayoutParams, Rect, TbId, Ui, Visibility, WidgetId};
 
-use crate::city_windows::CityOrder;
 use crate::game::{CityState, Game};
 use crate::gui::build::{self, WindowParts};
 use crate::info;
@@ -34,27 +37,28 @@ use crate::state::{CityId, Hex, Sends, Side, UnitId};
 pub const PRODUCTION_WINDOW_ID: &str = "production_window";
 pub const PRODUCTION_CLOSE_ID: &str = "production_close";
 pub const PROD_STACKS_ID: &str = "prod_stacks";
-pub const PROD_OPEN_ID: &str = "prod_open";
-pub const PROD_STOP_ID: &str = "prod_stop";
-pub const PROD_STAY_ID: &str = "prod_stay";
-pub const PROD_DEFEND_ID: &str = "prod_defend";
-pub const PROD_TO_CITY_ID: &str = "prod_to_city";
 pub const PROD_SELECT_ID: &str = "prod_select";
 pub const PROD_DISBAND_ID: &str = "prod_disband";
 pub const PROD_STOP_ALL_ID: &str = "prod_stop_all";
 pub const PROD_STOP_ALL_YES_ID: &str = "prod_stop_all_yes";
 pub const PROD_STOP_ALL_NO_ID: &str = "prod_stop_all_no";
+/// The filters over the cities: all of them, those at no work, those
+/// waiting, those building.
+pub const PROD_ALL_ID: &str = "prod_filter_all";
+pub const PROD_IDLE_ID: &str = "prod_filter_idle";
+pub const PROD_WAITING_ID: &str = "prod_filter_waiting";
+pub const PROD_BUILDING_ID: &str = "prod_filter_building";
 
 /// How many rounds it lists; how far it looks for the gold.
 pub const SHOWN_ROUNDS: usize = 5;
 pub const LOOKED_ROUNDS: usize = 20;
 
-/// The list, in dp.
-const LIST_DP: (i32, i32) = (460, 330);
+/// The left column's width, the spacing, a scroll bar's room, in dp.
+const LEFT_DP: i32 = 300;
 const SPACING_DP: i32 = 8;
 const SCROLL_BAR_DP: i32 = 16;
 
-/// The id of the `i`th city's row.
+/// The id of the `i`th city's row (of those the filter shows).
 pub fn city_row_id(i: usize) -> String {
     format!("prod_city_{i}")
 }
@@ -64,9 +68,33 @@ pub fn stack_row_id(i: usize) -> String {
     format!("prod_stack_{i}")
 }
 
-/// The id of rally point `n`'s button.
-pub fn point_id(n: usize) -> String {
-    format!("prod_point_{n}")
+/// Which of the side's cities the list shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Filter {
+    All,
+    Idle,
+    Waiting,
+    Building,
+}
+
+impl Filter {
+    /// Its button, and the word for its cities ("2 idle").
+    const ALL: [(Filter, &'static str, &'static str); 4] = [
+        (Filter::All, PROD_ALL_ID, "All"),
+        (Filter::Idle, PROD_IDLE_ID, "idle"),
+        (Filter::Waiting, PROD_WAITING_ID, "waiting"),
+        (Filter::Building, PROD_BUILDING_ID, "building"),
+    ];
+
+    /// True if a city that stands so is one it shows.
+    pub fn shows(self, state: CityState) -> bool {
+        match self {
+            Filter::All => true,
+            Filter::Idle => state == CityState::Idle,
+            Filter::Waiting => state == CityState::Waiting,
+            Filter::Building => state == CityState::Building,
+        }
+    }
 }
 
 /// Some of a side's units on one hex, as one row of the stacks: those
@@ -119,14 +147,9 @@ pub fn stack_line(game: &Game, row: &StackRow) -> String {
     format!("{}: {count}, upkeep {}, {doing}", info::place(map, row.at), row.upkeep)
 }
 
-/// What a click in the window asks of the session.
+/// What a click in the panel asks of the session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProductionClick {
-    /// What the city windows ask for: its window (`Details`), to build
-    /// nothing (`SetProduction(_, None)`), where its units go.
-    City(CityOrder),
-    /// The city's new units go to another city of the side.
-    SendTo { city: CityId, to: Hex },
     /// Every city of the side builds nothing (asked first).
     StopAll,
     /// The stack's units, selected (under the map).
@@ -143,7 +166,7 @@ enum Chosen {
     Stack(Hex, bool),
 }
 
-/// What the window shows was worked out from: when none of it changed,
+/// What the panel shows was worked out from: when none of it changed,
 /// nothing need be worked out again.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Key {
@@ -160,39 +183,41 @@ struct Key {
 pub struct ProductionWindow {
     parts: WindowParts,
     side: Side,
-    economy: WidgetId,
+    summary: WidgetId,
+    warning: WidgetId,
+    filters: Vec<(Filter, WidgetId)>,
+    city_scroll: WidgetId,
+    city_list: WidgetId,
+    coming_scroll: WidgetId,
+    coming_list: WidgetId,
+    /// The right column: the city (the session builds its view into
+    /// `city_host`), or the stacks.
+    right_scroll: WidgetId,
+    city_host: WidgetId,
+    stack_box: WidgetId,
+    stack_list: WidgetId,
+    stack_actions: WidgetId,
+    stack_buttons: Vec<WidgetId>,
+    bottom: WidgetId,
+    stacks_toggle: WidgetId,
     stop_all: WidgetId,
     confirm: WidgetId,
     confirm_text: WidgetId,
-    scroll: WidgetId,
-    list: WidgetId,
-    list_size: (i32, i32),
-    /// The stacks' button, and their list under it (in a box of its own
-    /// that scrolls, shown when asked for).
-    stacks_toggle: WidgetId,
-    stack_scroll: WidgetId,
-    stack_list: WidgetId,
+    /// The rectangle it covers (the map's).
+    area: Rect,
     row_w: i32,
-    prompt: WidgetId,
-    city_actions: WidgetId,
-    city_buttons: Vec<WidgetId>,
-    to_city: WidgetId,
-    points_row: WidgetId,
-    point_buttons: Vec<WidgetId>,
-    stack_actions: WidgetId,
-    stack_buttons: Vec<WidgetId>,
-    /// Its cities, in the order of their rows, and what the rows say.
+    /// The side's cities (the filter's), in the order of their rows, and
+    /// what the rows say; how many stand each way, for the filters.
     cities: Vec<CityId>,
     city_lines: Vec<String>,
+    counts: [usize; 4],
     coming: Vec<(bool, String)>,
-    economy_lines: Vec<String>,
+    warning_line: Option<String>,
     stacks: Vec<StackRow>,
     stack_lines: Vec<String>,
     stacks_shown: bool,
+    filter: Filter,
     chosen: Option<Chosen>,
-    /// To a city... was pressed for this city: the next city row is where
-    /// its units go.
-    sending: Option<CityId>,
     asking: bool,
     acting: bool,
     key: Option<Key>,
@@ -223,134 +248,178 @@ fn enable(ui: &mut Ui, button: WidgetId, enabled: bool) {
 }
 
 impl ProductionWindow {
-    /// Its window (the session closes the one on top first).
+    /// The panel (the session closes the one on top first).
     pub fn window(&self) -> WidgetId {
         self.parts.window
     }
 
-    /// Open `side`'s production on `parent` (the root window), in `area` at
-    /// `align`; `acting`: the person may give orders now.
+    /// Open `side`'s production on `parent` (the root window), over `area`
+    /// (the map's rectangle); `acting`: the person may give orders now.
     pub fn open(
         ui: &mut Ui,
         parent: WidgetId,
         game: &Game,
         (side, acting): (Side, bool),
-        (area, align): (Rect, (f32, f32)),
+        area: Rect,
     ) -> ProductionWindow {
+        let parts = build::panel(ui, parent, PRODUCTION_WINDOW_ID);
+        let space = dp(ui, SPACING_DP);
+        let content = parts.content;
+
+        // The header: whose, the cities at a glance, Close; a warning
+        // under it when the gold will not pay the upkeep.
+        let header = build::row(ui, content, space * 2);
         let mut name = side_name(side).chars();
         let title = name.next().map_or(String::new(), |c| c.to_uppercase().chain(name).collect::<String>());
-        let parts = build::window(ui, parent, PRODUCTION_WINDOW_ID, &format!("{title}'s production"));
-        let space = dp(ui, SPACING_DP);
-        let columns = build::top_row(ui, parts.content, space * 2);
+        build::heading(ui, header, &format!("{title}'s production"));
+        let summary = build::text(ui, header, "");
+        build::button(ui, header, PRODUCTION_CLOSE_ID, "Close (E)");
+        let warning = build::text(ui, content, "");
+        ui.set_skin(warning, TbId::new("Warning"));
+        ui.set_visibility(warning, Visibility::Gone);
+        build::gap(ui, content, space / 2);
 
-        // The left: the money, Stop all. (The minimap marks the cities:
-        // `minimap_marks`.)
+        let columns = build::top_row(ui, content, space * 2);
+        // The left: the filters, the cities, what comes.
         let left = build::column(ui, columns, space / 2);
-        build::heading(ui, left, "Gold");
-        let economy = build::column(ui, left, 0);
-        build::gap(ui, left, space);
-        let stop_all = build::button(ui, left, PROD_STOP_ALL_ID, "Stop all production...");
-        let confirm = build::column(ui, left, space / 2);
-        let confirm_text = build::text(ui, confirm, "");
-        build::text(ui, confirm, "Work and queues are lost.");
-        let yes_no = build::row(ui, confirm, space);
-        build::primary_button(ui, yes_no, PROD_STOP_ALL_YES_ID, "Stop them all");
-        build::button(ui, yes_no, PROD_STOP_ALL_NO_ID, "Keep building");
-        ui.set_visibility(confirm, Visibility::Gone);
-
-        // The right: the list, and what can be done with the one chosen.
-        let right = build::column(ui, columns, space / 2);
-        let room = (area.h - dp(ui, 230)).max(dp(ui, 100));
-        let (list_w, list_h) = (dp(ui, LIST_DP.0), dp(ui, LIST_DP.1).min(room));
-        let scroll = ui.add(right, ScrollContainer::new(ScrollMode::YAuto).with_adapt_content_size(true));
-        ui.set_layout_params(scroll, Some(LayoutParams::fixed(list_w, list_h)));
-        let list = build::column(ui, scroll, 0);
-        let stacks_toggle = build::button(ui, right, PROD_STACKS_ID, "");
-        let stack_scroll = ui.add(right, ScrollContainer::new(ScrollMode::YAuto).with_adapt_content_size(true));
-        ui.set_layout_params(stack_scroll, Some(LayoutParams::fixed(list_w, list_h / 2)));
-        let stack_list = build::column(ui, stack_scroll, 0);
-        ui.set_visibility(stack_scroll, Visibility::Gone);
-        let prompt = build::text(ui, right, "");
-        ui.set_visibility(prompt, Visibility::Gone);
-        let city_actions = build::column(ui, right, space / 2);
-        let row = build::row(ui, city_actions, space / 2);
-        let city_buttons = vec![
-            build::button(ui, row, PROD_OPEN_ID, "Open its window"),
-            build::button(ui, row, PROD_STOP_ID, "Stop"),
-            build::button(ui, row, PROD_STAY_ID, "Keep"),
-            build::button(ui, row, PROD_DEFEND_ID, "Defend"),
-        ];
-        let to_city = build::button(ui, row, PROD_TO_CITY_ID, "To a city...");
-        let points_row = build::row(ui, city_actions, dp(ui, 2));
-        build::text(ui, points_row, "To rally point:");
-        let point_buttons: Vec<WidgetId> = (0..RALLY_POINTS)
-            .map(|n| {
-                let button = build::button(ui, points_row, &point_id(n), &n.to_string());
-                ui.set_visibility(button, Visibility::Gone);
-                button
+        let filter_row = build::row(ui, left, dp(ui, 2));
+        let filters = Filter::ALL
+            .iter()
+            .map(|(filter, id, _)| {
+                let button = build::button(ui, filter_row, id, "");
+                ui.set_group_id(button, TbId::new("prod_filter"));
+                (*filter, button)
             })
             .collect();
-        ui.set_visibility(city_actions, Visibility::Gone);
-        let stack_actions = build::row(ui, right, space / 2);
+        let city_scroll = ui.add(left, ScrollContainer::new(ScrollMode::YAuto).with_adapt_content_size(true));
+        let city_list = build::column(ui, city_scroll, 0);
+        build::heading(ui, left, &format!("Coming up, the next {SHOWN_ROUNDS} rounds"));
+        let coming_scroll = ui.add(left, ScrollContainer::new(ScrollMode::YAuto).with_adapt_content_size(true));
+        let coming_list = build::column(ui, coming_scroll, 0);
+
+        // The right: the city, or the stacks.
+        let right_scroll = ui.add(columns, ScrollContainer::new(ScrollMode::YAuto).with_adapt_content_size(true));
+        let right = build::column(ui, right_scroll, space / 2);
+        let city_host = build::column(ui, right, 0);
+        let stack_box = build::column(ui, right, space / 2);
+        build::heading(ui, stack_box, "Your stacks, the dearest first");
+        build::text(ui, stack_box, "Select one to send some of it home (X), or disband it all.");
+        let stack_list = build::column(ui, stack_box, 0);
+        let stack_actions = build::row(ui, stack_box, space / 2);
         let stack_buttons = vec![
             build::button(ui, stack_actions, PROD_SELECT_ID, "Select (under the map)"),
             build::button(ui, stack_actions, PROD_DISBAND_ID, "Disband..."),
         ];
-        ui.set_visibility(stack_actions, Visibility::Gone);
-        build::gap(ui, parts.content, space);
-        build::button(ui, parts.content, PRODUCTION_CLOSE_ID, "Close");
+        ui.set_visibility(stack_box, Visibility::Gone);
+
+        // The bottom: the stacks, and Stop all (asking in place).
+        build::gap(ui, content, space / 2);
+        let bottom = build::row(ui, content, space * 2);
+        let stacks_toggle = build::button(ui, bottom, PROD_STACKS_ID, "");
+        let stop_all = build::button(ui, bottom, PROD_STOP_ALL_ID, "Stop all production...");
+        let confirm = build::row(ui, bottom, space);
+        let confirm_text = build::text(ui, confirm, "");
+        build::primary_button(ui, confirm, PROD_STOP_ALL_YES_ID, "Stop them all");
+        build::button(ui, confirm, PROD_STOP_ALL_NO_ID, "Keep building");
+        ui.set_visibility(confirm, Visibility::Gone);
 
         let mut window = ProductionWindow {
             parts,
             side,
-            economy,
+            summary,
+            warning,
+            filters,
+            city_scroll,
+            city_list,
+            coming_scroll,
+            coming_list,
+            right_scroll,
+            city_host,
+            stack_box,
+            stack_list,
+            stack_actions,
+            stack_buttons,
+            bottom,
+            stacks_toggle,
             stop_all,
             confirm,
             confirm_text,
-            scroll,
-            list,
-            list_size: (list_w, list_h),
-            stacks_toggle,
-            stack_scroll,
-            stack_list,
-            row_w: list_w - dp(ui, SCROLL_BAR_DP),
-            prompt,
-            city_actions,
-            city_buttons,
-            to_city,
-            points_row,
-            point_buttons,
-            stack_actions,
-            stack_buttons,
+            area,
+            row_w: dp(ui, LEFT_DP - SCROLL_BAR_DP),
             cities: Vec::new(),
             city_lines: Vec::new(),
+            counts: [0; 4],
             coming: Vec::new(),
-            economy_lines: Vec::new(),
+            warning_line: None,
             stacks: Vec::new(),
             stack_lines: Vec::new(),
             stacks_shown: false,
+            filter: Filter::All,
             chosen: None,
-            sending: None,
             asking: false,
             acting,
             key: None,
         };
         window.refresh(ui, game, (side, acting));
-        build::place(ui, parts, area, align);
         window
     }
 
-    /// Choose `city` (the city shown when it opens), if it is in the list.
-    pub fn choose_city(&mut self, city: CityId) {
-        if self.cities.contains(&city) {
-            self.chosen = Some(Chosen::City(city));
-            self.key = None;
+    /// Cover `area` (the map's rectangle, after a resize).
+    pub fn place(&mut self, ui: &mut Ui, area: Rect) {
+        if self.area != area {
+            self.area = area;
+            self.layout(ui);
         }
+    }
+
+    /// Choose `city` (when it opens, or O on it), if it is the side's:
+    /// with the filter that shows it.
+    pub fn choose_city(&mut self, game: &Game, city: CityId) {
+        let Some(c) = game.map.cities().get(city).filter(|c| c.side == self.side) else { return };
+        if !self.filter.shows(CityState::of(c)) {
+            self.filter = Filter::All;
+        }
+        (self.chosen, self.stacks_shown) = (Some(Chosen::City(city)), false);
+        self.key = None;
+    }
+
+    /// The next city of the list (`down`) or the one before (Up, Down), or
+    /// the next stack while they show. True if the choice moved.
+    pub fn step(&mut self, down: bool) -> bool {
+        let at = |n: usize, i: Option<usize>| match (i, down) {
+            (None, _) => 0,
+            (Some(i), true) => (i + 1).min(n - 1),
+            (Some(i), false) => i.saturating_sub(1),
+        };
+        let before = self.chosen;
+        if self.stacks_shown {
+            if self.stacks.is_empty() {
+                return false;
+            }
+            let i = self.stacks.iter().position(|r| Some(Chosen::Stack(r.at, r.defending)) == self.chosen);
+            let row = &self.stacks[at(self.stacks.len(), i)];
+            self.chosen = Some(Chosen::Stack(row.at, row.defending));
+        } else {
+            if self.cities.is_empty() {
+                return false;
+            }
+            let i = self.cities.iter().position(|id| Some(Chosen::City(*id)) == self.chosen);
+            self.chosen = Some(Chosen::City(self.cities[at(self.cities.len(), i)]));
+        }
+        self.key = None;
+        before != self.chosen
+    }
+
+    /// Show only the cities `filter` lets through.
+    pub fn set_filter(&mut self, filter: Filter) {
+        self.filter = filter;
+        self.stacks_shown = false;
+        self.key = None;
     }
 
     /// Bring it up to date with the game, for `side` (whose it is; `acting`:
     /// whether the person may give orders now). True if it was laid out
-    /// anew (the caller lays the screen out again).
+    /// anew.
     pub fn refresh(&mut self, ui: &mut Ui, game: &Game, (side, acting): (Side, bool)) -> bool {
         let key = Key {
             revision: game.map.revision(),
@@ -366,16 +435,16 @@ impl ProductionWindow {
             return false;
         }
         if self.side != side {
-            (self.chosen, self.sending, self.asking) = (None, None, false);
+            (self.chosen, self.asking) = (None, false);
         }
         (self.side, self.acting) = (side, acting);
         if !acting {
-            (self.sending, self.asking) = (None, false);
+            self.asking = false;
         }
         let map = &game.map;
         let forecast = game.forecast(side, LOOKED_ROUNDS);
         // The cities: those at no work first, then those waiting, then the
-        // rest; by place within each.
+        // rest; by place within each; those the filter lets through.
         let mut cities: Vec<_> = map.cities().iter().filter(|c| c.side == side && side != Side::Grey).collect();
         let rank = |state: CityState| match state {
             CityState::Idle => 0,
@@ -384,50 +453,45 @@ impl ProductionWindow {
             CityState::Resting => 3,
         };
         cities.sort_by_key(|c| (rank(CityState::of(c)), c.pos.row, c.pos.col));
+        self.counts =
+            std::array::from_fn(|i| cities.iter().filter(|c| Filter::ALL[i].0.shows(CityState::of(c))).count());
+        cities.retain(|c| self.filter.shows(CityState::of(c)));
         self.cities = cities.iter().map(|c| c.id).collect();
         self.city_lines = cities.iter().map(|c| info::production_row(map, c)).collect();
         self.coming = info::coming_lines(map, &forecast, SHOWN_ROUNDS);
-        self.economy_lines = info::economy_lines(game, side, &forecast, SHOWN_ROUNDS);
+        self.warning_line = forecast
+            .short_at
+            .map(|round| format!("From round {round} the gold will not pay the upkeep: units will leave."));
         self.stacks = stack_rows(game, side);
         self.stack_lines = self.stacks.iter().map(|r| stack_line(game, r)).collect();
-        // What was chosen may be gone.
+        // What was chosen may be gone (or filtered out: the first instead).
         self.chosen = match self.chosen {
             Some(Chosen::City(id)) if self.cities.contains(&id) => Some(Chosen::City(id)),
             Some(Chosen::Stack(at, d)) if self.stacks.iter().any(|r| r.at == at && r.defending == d) => {
                 Some(Chosen::Stack(at, d))
             }
-            _ => None,
+            _ if self.stacks_shown => self.stacks.first().map(|r| Chosen::Stack(r.at, r.defending)),
+            _ => self.cities.first().map(|id| Chosen::City(*id)),
         };
-        if self.sending.is_some_and(|id| !self.cities.contains(&id)) {
-            self.sending = None;
-        }
         self.fill(ui, game);
-        // The lists as tall as their rows, up to their room; the stacks,
-        // when shown, take up to half of it.
-        let (w, most) = self.list_size;
-        let stacks_h =
-            if self.stacks_shown { ui.preferred_size_free(self.stack_list).pref.h.clamp(1, most / 2) } else { 0 };
-        let h = ui.preferred_size_free(self.list).pref.h.clamp(1, most - stacks_h);
-        ui.set_layout_params(self.scroll, Some(LayoutParams::fixed(w, h)));
-        ui.set_layout_params(self.stack_scroll, Some(LayoutParams::fixed(w, stacks_h.max(1))));
-        show(ui, self.stack_scroll, self.stacks_shown);
-        build::refit(ui, self.parts);
+        self.layout(ui);
         self.key = Some(key);
         true
     }
 
     /// Write its lines and rows, and set its buttons, as things are.
     fn fill(&mut self, ui: &mut Ui, game: &Game) {
-        for child in ui.children(self.economy).to_vec() {
-            ui.remove(child);
+        let [all, idle, waiting, building] = self.counts;
+        let cities = if all == 1 { "1 city".to_string() } else { format!("{all} cities") };
+        ui.set_text(self.summary, &format!("{cities}: {idle} idle, {waiting} waiting, {building} building"));
+        ui.set_text(self.warning, self.warning_line.as_deref().unwrap_or(""));
+        show(ui, self.warning, self.warning_line.is_some());
+        for ((filter, button), (_, _, word)) in self.filters.iter().zip(Filter::ALL) {
+            let n = self.counts[Filter::ALL.iter().position(|(f, _, _)| f == filter).unwrap_or(0)];
+            let text = if *filter == Filter::All { format!("All {n}") } else { format!("{n} {word}") };
+            ui.set_text(*button, &text);
+            set_pressed(ui, *button, self.filter == *filter);
         }
-        for line in &self.economy_lines {
-            build::text(ui, self.economy, line);
-        }
-        for child in ui.children(self.list).to_vec() {
-            ui.remove(child);
-        }
-        let space = dp(ui, SPACING_DP);
         let row = |ui: &mut Ui, list: WidgetId, id: &str, text: &str, w: i32| {
             let button = build::button(ui, list, id, text);
             ui.set_skin(button, TbId::new("ListRow"));
@@ -435,96 +499,104 @@ impl ProductionWindow {
             build::text_from_left(ui, button);
             button
         };
-        // The cities.
-        let states: Vec<CityState> =
-            self.cities.iter().filter_map(|id| game.map.cities().get(*id)).map(CityState::of).collect();
-        let at_work = states.iter().filter(|s| **s == CityState::Building).count();
-        build::heading(ui, self.list, &format!("Cities ({}): {at_work} at work", self.cities.len()));
+        for child in ui.children(self.city_list).to_vec() {
+            ui.remove(child);
+        }
         if self.cities.is_empty() {
-            build::text(ui, self.list, "You hold no city.");
+            let none = if self.counts[0] == 0 { "You hold no city." } else { "None." };
+            build::text(ui, self.city_list, none);
         }
         for (i, (id, line)) in self.cities.iter().zip(&self.city_lines).enumerate() {
-            let button = row(ui, self.list, &city_row_id(i), line, self.row_w);
+            let button = row(ui, self.city_list, &city_row_id(i), line, self.row_w);
             set_pressed(ui, button, self.chosen == Some(Chosen::City(*id)));
         }
-        // What comes.
-        build::gap(ui, self.list, space);
-        build::heading(ui, self.list, &format!("Coming up, the next {SHOWN_ROUNDS} rounds"));
+        for child in ui.children(self.coming_list).to_vec() {
+            ui.remove(child);
+        }
         if self.coming.is_empty() {
-            build::text(ui, self.list, "Nothing.");
+            build::text(ui, self.coming_list, "Nothing.");
         }
         for (heading, line) in &self.coming {
-            let text = build::text(ui, self.list, if *heading { line.clone() } else { format!("    {line}") }.as_str());
+            let text = if *heading { line.clone() } else { format!("    {line}") };
+            let text = build::text(ui, self.coming_list, &text);
             if *heading {
                 ui.set_skin(text, TbId::new("Heading"));
             }
         }
-        // The stacks, when shown, in their own list.
-        let what = if self.stacks_shown { "hide them" } else { "show them, to cut the upkeep" };
-        ui.set_text(self.stacks_toggle, &format!("Your stacks ({}): {what}", self.stacks.len()));
-        set_pressed(ui, self.stacks_toggle, self.stacks_shown);
+        // The right column: the city, or the stacks.
+        show(ui, self.city_host, !self.stacks_shown);
+        show(ui, self.stack_box, self.stacks_shown);
         for child in ui.children(self.stack_list).to_vec() {
             ui.remove(child);
         }
         if self.stacks_shown {
-            build::text(ui, self.stack_list, "The dearest first. Select one to send some of it home (X).");
+            let w = (self.area.w - dp(ui, LEFT_DP + 4 * SPACING_DP + 2 * SCROLL_BAR_DP)).max(dp(ui, 200));
             for (i, (stack, line)) in self.stacks.iter().zip(&self.stack_lines).enumerate() {
-                let button = row(ui, self.stack_list, &stack_row_id(i), line, self.row_w);
+                let button = row(ui, self.stack_list, &stack_row_id(i), line, w);
                 set_pressed(ui, button, self.chosen == Some(Chosen::Stack(stack.at, stack.defending)));
             }
         }
-        // What can be done with what is chosen.
-        let city = match self.chosen {
-            Some(Chosen::City(id)) => game.map.cities().get(id),
-            _ => None,
-        };
-        show(ui, self.city_actions, city.is_some());
         show(ui, self.stack_actions, matches!(self.chosen, Some(Chosen::Stack(..))));
-        if let Some(city) = city {
-            let points = game.rally_points(self.side);
-            for (n, button) in self.point_buttons.iter().enumerate() {
-                show(ui, *button, points[n].is_some());
-                set_pressed(ui, *button, matches!(city.sends, Sends::Point { n: p, .. } if usize::from(p) == n));
-                enable(ui, *button, self.acting);
-            }
-            show(ui, self.points_row, points.iter().any(Option::is_some));
-            set_pressed(ui, self.city_buttons[1], city.resting);
-            set_pressed(ui, self.city_buttons[2], city.sends == Sends::Stay);
-            set_pressed(ui, self.city_buttons[3], city.sends == Sends::Defend);
-            set_pressed(ui, self.to_city, self.sending == Some(city.id));
-            for button in self.city_buttons[1..].iter().chain([&self.to_city]) {
-                enable(ui, *button, self.acting);
-            }
-        }
-        for button in &self.stack_buttons[1..] {
-            enable(ui, *button, self.acting);
-        }
-        let prompt = match self.sending.and_then(|id| game.map.cities().get(id)) {
-            Some(city) => {
-                format!("Where do {}'s new units go? Click that city's row (or To a city... again).", city.name)
-            }
-            None => String::new(),
-        };
-        ui.set_text(self.prompt, &prompt);
-        show(ui, self.prompt, !prompt.is_empty());
-        enable(ui, self.stop_all, self.acting && !self.cities.is_empty());
+        enable(ui, self.stack_buttons[1], self.acting);
+        let what = if self.stacks_shown { "back to the cities" } else { "to cut the upkeep" };
+        ui.set_text(self.stacks_toggle, &format!("Your stacks ({}): {what}", self.stacks.len()));
+        set_pressed(ui, self.stacks_toggle, self.stacks_shown);
+        enable(ui, self.stop_all, self.acting && self.stoppable(game) > 0);
         let stopping = self.stoppable(game);
         let question = if stopping == 1 {
             "Stop your 1 city at work?".to_string()
         } else {
-            format!("Stop all {stopping} cities at work?")
+            format!("Stop all {stopping} at work?")
         };
         ui.set_text(self.confirm_text, &question);
         show(ui, self.confirm, self.asking);
+        show(ui, self.stop_all, !self.asking);
+    }
+
+    /// Size its parts to the rectangle it covers: the lists as tall as
+    /// what the header and the bottom leave.
+    fn layout(&mut self, ui: &mut Ui) {
+        let space = dp(ui, SPACING_DP);
+        build::place_panel(ui, self.parts, self.area);
+        // (Its own padding's rectangle: the content's is its preferred size.)
+        let inside = ui.padding_rect(self.parts.window);
+        let header = ui.preferred_size_free(ui.children(self.parts.content)[0]).pref.h;
+        let warning = if self.warning_line.is_some() { ui.preferred_size_free(self.warning).pref.h } else { 0 };
+        let bottom = ui.preferred_size_free(self.bottom).pref.h;
+        let body = (inside.h - header - warning - bottom - space * 3).max(dp(ui, 120));
+        let left_w = dp(ui, LEFT_DP);
+        let filters = ui.preferred_size_free(ui.parent(self.filters[0].1).unwrap_or(self.city_list)).pref.h;
+        let heading = dp(ui, 24);
+        let lists = (body - filters - heading - space).max(dp(ui, 80));
+        let coming_h = (lists * 2 / 5).max(dp(ui, 40));
+        ui.set_layout_params(self.city_scroll, Some(LayoutParams::fixed(left_w, lists - coming_h)));
+        ui.set_layout_params(self.coming_scroll, Some(LayoutParams::fixed(left_w, coming_h)));
+        let right_w = (inside.w - left_w - space * 2).max(dp(ui, 200));
+        ui.set_layout_params(self.right_scroll, Some(LayoutParams::fixed(right_w, body)));
+        // (A scroll container is a layout boundary: what holds it hears of
+        // its new size only if told.)
+        for scroll in [self.city_scroll, self.coming_scroll, self.right_scroll] {
+            if let Some(parent) = ui.parent(scroll) {
+                ui.invalidate_layout(parent);
+            }
+        }
+        build::arrange_panel(ui, self.parts, self.area);
+    }
+
+    /// The width the city's view has in the right column.
+    pub fn city_width(&self, ui: &Ui) -> i32 {
+        (self.area.w - dp(ui, LEFT_DP + 4 * SPACING_DP + SCROLL_BAR_DP)).max(dp(ui, 200))
+    }
+
+    /// Lay it out again (the city's view in it changed size).
+    pub fn relayout(&mut self, ui: &mut Ui) {
+        self.layout(ui);
     }
 
     /// How many of the side's cities Stop all would stop.
     fn stoppable(&self, game: &Game) -> usize {
-        self.cities
-            .iter()
-            .filter_map(|id| game.map.cities().get(*id))
-            .filter(|c| c.production().is_some() || !c.queue.is_empty())
-            .count()
+        let side = self.side;
+        game.map.cities().iter().filter(|c| c.side == side && (c.production().is_some() || !c.queue.is_empty())).count()
     }
 
     /// What the game's minimap marks while it is open (the owner's word,
@@ -533,11 +605,11 @@ impl ProductionWindow {
     /// gold, and a line from it to where it sends its units.
     pub fn minimap_marks(&self, game: &Game) -> MiniMarks {
         let map = &game.map;
-        let mut rings: Vec<(Hex, [f32; 3])> = self
-            .cities
+        let side = self.side;
+        let mut rings: Vec<(Hex, [f32; 3])> = map
+            .cities()
             .iter()
-            .filter_map(|id| map.cities().get(*id))
-            .filter(|c| matches!(CityState::of(c), CityState::Idle | CityState::Waiting))
+            .filter(|c| c.side == side && matches!(CityState::of(c), CityState::Idle | CityState::Waiting))
             .map(|c| (c.pos, BATTLE_BORDER))
             .collect();
         let chosen = match self.chosen {
@@ -545,7 +617,12 @@ impl ProductionWindow {
             _ => None,
         };
         match self.chosen {
-            Some(Chosen::City(_)) => rings.extend(chosen.map(|c| (c.pos, CHOSEN_COLOR))),
+            Some(Chosen::City(_)) => {
+                if let Some(c) = chosen {
+                    rings.retain(|(at, _)| *at != c.pos);
+                    rings.push((c.pos, CHOSEN_COLOR));
+                }
+            }
             Some(Chosen::Stack(at, _)) => rings.push((at, CHOSEN_COLOR)),
             None => {}
         }
@@ -564,55 +641,44 @@ impl ProductionWindow {
     pub fn owns(&self, id: TbId) -> bool {
         let fixed = [
             PROD_STACKS_ID,
-            PROD_OPEN_ID,
-            PROD_STOP_ID,
-            PROD_STAY_ID,
-            PROD_DEFEND_ID,
-            PROD_TO_CITY_ID,
             PROD_SELECT_ID,
             PROD_DISBAND_ID,
             PROD_STOP_ALL_ID,
             PROD_STOP_ALL_YES_ID,
             PROD_STOP_ALL_NO_ID,
+            PROD_ALL_ID,
+            PROD_IDLE_ID,
+            PROD_WAITING_ID,
+            PROD_BUILDING_ID,
         ];
         fixed.iter().any(|f| id == TbId::new(f))
             || (0..self.cities.len()).any(|i| id == TbId::new(&city_row_id(i)))
             || (0..self.stacks.len()).any(|i| id == TbId::new(&stack_row_id(i)))
-            || (0..RALLY_POINTS).any(|n| id == TbId::new(&point_id(n)))
     }
 
     /// A click on one of its buttons: what is chosen, shown and asked it
     /// keeps itself (and is laid out anew); what it asks of the game it
     /// returns.
-    pub fn click(&mut self, game: &Game, id: TbId) -> Option<ProductionClick> {
+    pub fn click(&mut self, id: TbId) -> Option<ProductionClick> {
         let is = |name: &str| id == TbId::new(name);
-        // Anything the window does itself is shown at the next refresh.
+        // Anything the panel does itself is shown at the next refresh.
         self.key = None;
         if let Some(i) = (0..self.cities.len()).find(|i| id == TbId::new(&city_row_id(*i))) {
-            let city = self.cities[i];
-            if let Some(from) = self.sending {
-                self.sending = None;
-                if from != city {
-                    let to = game.map.cities().get(city)?.pos;
-                    self.chosen = Some(Chosen::City(from));
-                    return Some(ProductionClick::SendTo { city: from, to });
-                }
-                return None;
-            }
-            self.chosen = Some(Chosen::City(city));
+            self.chosen = Some(Chosen::City(self.cities[i]));
             return None;
         }
         if let Some(i) = (0..self.stacks.len()).find(|i| id == TbId::new(&stack_row_id(*i))) {
             let stack = &self.stacks[i];
             self.chosen = Some(Chosen::Stack(stack.at, stack.defending));
-            self.sending = None;
+            return None;
+        }
+        if let Some((filter, _, _)) = Filter::ALL.iter().find(|(_, button, _)| is(button)) {
+            self.set_filter(*filter);
             return None;
         }
         if is(PROD_STACKS_ID) {
             self.stacks_shown = !self.stacks_shown;
-            if !self.stacks_shown && matches!(self.chosen, Some(Chosen::Stack(..))) {
-                self.chosen = None;
-            }
+            self.chosen = None;
             return None;
         }
         if is(PROD_STOP_ALL_ID) {
@@ -635,29 +701,8 @@ impl ProductionWindow {
             if is(PROD_DISBAND_ID) {
                 return Some(ProductionClick::Disband(units));
             }
-            return None;
         }
-        let Some(Chosen::City(city)) = self.chosen else { return None };
-        if is(PROD_TO_CITY_ID) {
-            self.sending = if self.sending == Some(city) || !self.acting { None } else { Some(city) };
-            return None;
-        }
-        self.sending = None;
-        if let Some(n) = (0..RALLY_POINTS).find(|n| id == TbId::new(&point_id(*n))) {
-            return Some(ProductionClick::City(CityOrder::ToPoint(city, n as u8)));
-        }
-        let order = if is(PROD_OPEN_ID) {
-            CityOrder::Details(city)
-        } else if is(PROD_STOP_ID) {
-            CityOrder::SetProduction(city, None)
-        } else if is(PROD_STAY_ID) {
-            CityOrder::NoRally(city)
-        } else if is(PROD_DEFEND_ID) {
-            CityOrder::DefendNew(city)
-        } else {
-            return None;
-        };
-        Some(ProductionClick::City(order))
+        None
     }
 
     /// The side whose production it shows.
@@ -665,7 +710,8 @@ impl ProductionWindow {
         self.side
     }
 
-    /// Its cities, in the order of their rows, and what the rows say.
+    /// Its cities (the filter's), in the order of their rows, and what the
+    /// rows say.
     pub fn cities(&self) -> &[CityId] {
         &self.cities
     }
@@ -674,9 +720,14 @@ impl ProductionWindow {
         &self.city_lines
     }
 
-    /// What it says of the gold.
-    pub fn economy_lines(&self) -> &[String] {
-        &self.economy_lines
+    /// The filter, and how many cities each lets through.
+    pub fn filter(&self) -> Filter {
+        self.filter
+    }
+
+    /// The warning under the header, if the gold will not pay the upkeep.
+    pub fn warning(&self) -> Option<&str> {
+        self.warning_line.as_deref()
     }
 
     /// What it says comes in the next rounds (true: a round's heading).
@@ -698,23 +749,27 @@ impl ProductionWindow {
         self.stacks_shown
     }
 
-    /// The city chosen, if a city is.
+    /// The city chosen, if a city is (its view is in the right column).
     pub fn chosen_city(&self) -> Option<CityId> {
         match self.chosen {
-            Some(Chosen::City(id)) => Some(id),
+            Some(Chosen::City(id)) if !self.stacks_shown => Some(id),
             _ => None,
         }
     }
 
-    /// The city whose units To a city... is sending, while it waits for
-    /// the city they go to.
-    pub fn sending(&self) -> Option<CityId> {
-        self.sending
+    /// Where the session builds the chosen city's view.
+    pub fn city_host(&self) -> WidgetId {
+        self.city_host
     }
 
     /// True while Stop all asks.
     pub fn asking(&self) -> bool {
         self.asking
+    }
+
+    /// The rectangle it covers.
+    pub fn area(&self) -> Rect {
+        self.area
     }
 
     pub fn is_open(&self, ui: &Ui) -> bool {

@@ -998,21 +998,32 @@ thing to happen. Ideas to try, as the rules grow:
   production in one place vs visiting a bunch of cities", "a birds eye
   view of current production as well as make changes (for instance late
   game we may need to start shutting down production to save money)"):
-  E, or the Cities menu, opens `production_window`. While it is open the
-  game's minimap rings the side's cities idle or waiting in orange, the
-  chosen one in gold, with a line to where it sends its units (it had a
-  map of its own before; the owner's word, 2026-11-24: "Use the game
-  minimap ... and remove the seperate minimap"); its gold, taxes and upkeep, what the
-  next 5 rounds build and the upkeep after, and whether the gold pays
-  the upkeep for 20 rounds or from which round it will not; every city
-  with what it builds and where its units go (idle and waiting first);
-  what each of the next 5 rounds finishes, and where it goes; and,
-  folded until asked for, the side's stacks, the dearest first (a hex
-  with defenders and others is two: "if a stack has defend and other
-  units then best to treat them as two stacks"). A city is stopped, kept,
-  set to defend, sent to a rally point or to another of the side's cities
-  (not a hex: "it is ok to use rally points and maybe other cities not
-  random hexes"), and its window opened for what it builds and its
+  E, the Cities menu, or O on one of the side's cities opens it: a panel
+  over the map (`production_window`; the owner's word, 2026-11-24:
+  "Merge the production and city dialogs ... The goal is to have a single
+  consice area to view and manage all of a side production with a
+  minimum of hassle", and it may "slide out and cover the main map";
+  the stack's boxes under the map, the sidebar and the minimap stay).
+  While it is open the game's minimap rings the side's cities idle or
+  waiting in orange, the chosen one in gold, with a line to where it
+  sends its units (it had a map of its own before: "Use the game minimap
+  ... and remove the seperate minimap"). Its header counts the cities,
+  and a line warns when the gold will not pay the upkeep, from which
+  round (its gold block went: "the econ stuff is busy"). On the left
+  every city with what it builds and where its units go (idle and
+  waiting first; filters All, idle, waiting, building, keys A, I, W, B
+  while it is open: "The filter row is a good idea"), and what each of
+  the next 5 rounds finishes, and where it goes. A row (or Up and Down)
+  chooses a city, and the city is in full on the right: the city
+  window's view, built there (`CityWindow::embed`): what it builds, its
+  queue, where its units go, its walls ("When a city is selected the
+  city section changes to it"; the panel's own Stop, Keep, Defend, To a
+  city and rally point buttons went as redundant). Another side's city
+  opens nothing: the sidebar says what is seen of it. Picking a hex for
+  where its units go closes the panel, and it is back after. Folded
+  until asked for, the side's stacks, the dearest first (a hex with
+  defenders and others is two: "if a stack has defend and other units
+  then best to treat them as two stacks"), in place of the city.
   queue. Stop all production stops every city, after asking ("having a
   single button to just stop and then finish with your current armies
   will be helpful"): an `Order::Build` with nothing for each, so Undo
