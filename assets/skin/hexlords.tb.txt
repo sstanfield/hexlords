@@ -1,5 +1,6 @@
 # Hexlords's changes to the default skin. This file is loaded on top of
-# skin.tb.txt, which stays as Turbo Badger made it; what an element sets here
+# skin.tb.txt, which stays as Turbo Badger made it (but for the DPIs its
+# description lists, which this file cannot change); what an element sets here
 # replaces what it sets there. The hg_*.png pictures are drawn by
 # `cargo run -p assetgen --release` (tools/assetgen/src/skin.rs), at the
 # skin's four sizes.

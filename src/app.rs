@@ -36,10 +36,42 @@ pub struct Options {
     /// `--screenshot <file>`: draw a frame into this PNG file and quit. It is the
     /// last frame of `--frames`, or the second without it.
     pub screenshot: Option<PathBuf>,
+    /// `--ui-scale <percent>`: the interface this much bigger than the
+    /// system says (`ui_dpi`); without it, `UI_SCALE_VAR`'s, else 100.
+    pub ui_scale: Option<u32>,
 }
 
 /// The usage text of the options [`Options::take`] reads.
-pub const OPTIONS_USAGE: &str = "[--assets <dir>] [--frames <n>] [--screenshot <file.png>]";
+pub const OPTIONS_USAGE: &str = "[--assets <dir>] [--frames <n>] [--screenshot <file.png>] [--ui-scale <percent>]";
+
+/// The environment variable that sets the interface's size when the
+/// command line does not (`--ui-scale`): a percent, as `150`.
+pub const UI_SCALE_VAR: &str = "HEXLORDS_UI_SCALE";
+
+/// The interface's size, in percent of what the system says: at least
+/// this ...
+pub const UI_SCALE_MIN: u32 = 50;
+/// ... and at most this.
+pub const UI_SCALE_MAX: u32 = 400;
+
+/// A size for the interface, in percent ("150", or "150%"), from
+/// [`UI_SCALE_MIN`] to [`UI_SCALE_MAX`].
+pub fn parse_ui_scale(text: &str) -> Result<u32, String> {
+    let n = text.trim().trim_end_matches('%');
+    n.parse::<u32>()
+        .ok()
+        .filter(|n| (UI_SCALE_MIN..=UI_SCALE_MAX).contains(n))
+        .ok_or(format!("\"{text}\" is not a percent from {UI_SCALE_MIN} to {UI_SCALE_MAX}"))
+}
+
+/// The DPI the interface is built at: the system's (`system`, 96 a point)
+/// times `percent` (the owner's word, 2026-11-24: on a small high
+/// resolution screen under Linux the text was tiny; miniquad takes X11's
+/// `Xft.dpi`, which many desktops leave at 96).
+pub fn ui_dpi(system: i32, percent: Option<u32>) -> i32 {
+    let percent = percent.map_or(100, |p| p.clamp(UI_SCALE_MIN, UI_SCALE_MAX));
+    ((i64::from(system.max(1)) * i64::from(percent) + 50) / 100).max(1) as i32
+}
 
 impl Options {
     /// Read `arg` if it is one of these options, taking its value from `rest`.
@@ -57,9 +89,22 @@ impl Options {
                 self.frames = Some(frames);
             }
             "--screenshot" => self.screenshot = Some(PathBuf::from(value("a file")?)),
+            "--ui-scale" => {
+                let n = value("a percent")?;
+                self.ui_scale = Some(parse_ui_scale(&n).map_err(|e| format!("--ui-scale: {e}"))?);
+            }
             _ => return Ok(false),
         }
         Ok(true)
+    }
+    /// The interface's size, in percent: `--ui-scale`'s, else the
+    /// environment's ([`UI_SCALE_VAR`]; one that is no percent is said and
+    /// passed over), else none (100).
+    pub fn scale(&self) -> Option<u32> {
+        self.ui_scale.or_else(|| {
+            let text = std::env::var(UI_SCALE_VAR).ok()?;
+            parse_ui_scale(&text).map_err(|e| platform::complain(&format!("{UI_SCALE_VAR}: {e}"))).ok()
+        })
     }
 }
 
@@ -198,6 +243,8 @@ pub struct App<S: Scene> {
     fullscreen: bool,
     program: &'static str,
     options: Options,
+    /// The DPI the interface was built at (`ui_dpi`).
+    dpi: i32,
 }
 
 impl<S: Scene> App<S> {
@@ -214,7 +261,8 @@ impl<S: Scene> App<S> {
         }
         let (w, h) = window::screen_size();
         let assets = asset_root(options.assets.as_deref());
-        let mut scene = build(&assets, Size::new(w as i32, h as i32), window_dpi())?;
+        let dpi = ui_dpi(window_dpi(), options.scale());
+        let mut scene = build(&assets, Size::new(w as i32, h as i32), dpi)?;
         // Copy and paste with the rest of the system.
         let ui = &mut scene.screen_mut().ui;
         ui.services_mut().clipboard = Box::new(MiniquadClipboard::new());
@@ -240,6 +288,7 @@ impl<S: Scene> App<S> {
             fullscreen: false,
             program,
             options,
+            dpi,
         })
     }
 
@@ -409,7 +458,7 @@ impl<S: Scene> EventHandler for App<S> {
         self.renderer.context_mut().commit_frame();
         if done {
             let vp = self.scene.screen().ui.viewport();
-            println!("{} frames drawn at {}x{}, {} dpi; quitting", self.frames, vp.w, vp.h, window_dpi());
+            println!("{} frames drawn at {}x{}, {} dpi; quitting", self.frames, vp.w, vp.h, self.dpi);
             window::order_quit();
         }
     }
@@ -525,6 +574,30 @@ impl<S: Scene> EventHandler for App<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The owner's word, 2026-11-24: tiny text on a small high resolution
+    /// screen under Linux. The interface can be made bigger than the system
+    /// says.
+    #[test]
+    fn the_interface_can_be_made_bigger_than_the_system_says() {
+        assert_eq!(ui_dpi(96, None), 96);
+        assert_eq!(ui_dpi(96, Some(150)), 144);
+        assert_eq!(ui_dpi(192, Some(125)), 240, "on top of a Retina screen's 2");
+        assert_eq!(ui_dpi(96, Some(1000)), 384, "no more than 400%");
+        assert_eq!(ui_dpi(96, Some(1)), 48, "no less than 50%");
+        assert_eq!(ui_dpi(0, Some(100)), 1, "never 0");
+        assert_eq!(parse_ui_scale("150"), Ok(150));
+        assert_eq!(parse_ui_scale(" 175% "), Ok(175));
+        assert!(parse_ui_scale("1.5").is_err() && parse_ui_scale("20").is_err() && parse_ui_scale("500").is_err());
+        let mut options = Options::default();
+        let mut rest = ["125".to_string()].into_iter();
+        assert_eq!(options.take("--ui-scale", &mut rest), Ok(true));
+        assert_eq!((options.ui_scale, options.scale()), (Some(125), Some(125)), "the command line first");
+        let mut rest = ["big".to_string()].into_iter();
+        let refused = options.take("--ui-scale", &mut rest).unwrap_err();
+        assert_eq!(refused, "--ui-scale: \"big\" is not a percent from 50 to 400");
+        assert!(OPTIONS_USAGE.contains("--ui-scale <percent>"));
+    }
 
     #[test]
     fn a_trackpad_moves_the_map_as_far_as_the_fingers() {

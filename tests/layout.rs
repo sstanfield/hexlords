@@ -112,6 +112,30 @@ fn the_layout_in_framebuffer_pixels_on_a_hidpi_screen() {
     assert!(button.right() <= 2048 && button.h > 40, "{button:?}");
 }
 
+/// The interface made half again as big (`--ui-scale 150`, the owner's
+/// small high resolution screen under Linux): at 144 DPI in a window of
+/// 1536 x 1152 pixels, everything is where it is at 1x, half again as big,
+/// and nothing reaches outside the window. (The skin lists 144 among its
+/// DPIs, `assets/skin/skin.tb.txt`; before, Turbo Ferret took the nearest it
+/// listed, 96, and nothing grew.)
+#[test]
+fn the_layout_at_half_again_the_size() {
+    let s = session_at(1536, 1152, hexlords::app::ui_dpi(96, Some(150)));
+    let map = s.screen.map_rect();
+    assert!((1225..=1230).contains(&map.w) && map.x == 0, "{map:?}");
+    let mini = s.screen.minimap_rect();
+    assert!(mini.x > map.right() && mini.right() == 1536, "{mini:?}");
+    let button = window_rect(&s, "end_turn");
+    assert!(button.right() <= 1536 && button.h >= 40, "{button:?}");
+    for name in ["menu_bar", "map_column", "main_sidebar", "mini_map", "end_turn", "main_map", "status", "hex_panel"] {
+        let r = window_rect(&s, name);
+        assert!(r.x >= 0 && r.y >= 0 && r.right() <= 1536 && r.bottom() <= 1152, "{name}: {r:?}");
+    }
+    // The text is half again as tall as at 1x.
+    let (big, small) = (window_rect(&s, "status").h, window_rect(&session(), "status").h);
+    assert!(big * 2 >= small * 3 - 2 && big * 2 <= small * 3 + 4, "{big} against {small}");
+}
+
 #[test]
 fn the_layout_follows_the_window() {
     let mut s = session();

@@ -8,7 +8,10 @@ description
 	# Dimensions in dp (the default unit for padding and such) and bitmaps are specified for this DPI.
 	base-dpi 96
 	# The skin also has graphics available in these DPI modes
-	supported-dpi 96 192 288 384
+	# (Hexlords: 120, 144, 168 and 240 added, 2026-11-24, for an interface
+	# made bigger than the system says, `--ui-scale`. Their pictures are the
+	# 96 dpi ones where there are none at that DPI.)
+	supported-dpi 96 120 144 168 192 240 288 384
 defaults
 	spacing 5
 	text-color #fefefe

@@ -97,6 +97,14 @@ by Cargo from its repository).
 - **macOS:** nothing else is needed.
 - **Linux:** miniquad needs
   `sudo apt-get install libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev`.
+  If the text is tiny on a small high resolution screen: the game takes the
+  screen's scale from X11's `Xft.dpi` (under Wayland, the output's whole
+  scale), which many desktops leave at 96. Either set it
+  (`echo "Xft.dpi: 144" | xrdb -merge`, 144 for half again as big, 192 for
+  twice) or make the game's interface bigger itself: `--ui-scale 150`, or
+  `HEXLORDS_UI_SCALE=150` in the environment. (The game draws at 100%,
+  120%, 150%, 175%, 200%, 250%, 300% and 400%; another percent is drawn at
+  the nearest of these.)
 - **Windows:** should build and run the same way; nobody has tried it by hand.
 
 The game uses OpenGL (miniquad's default backend on every desktop platform).
@@ -306,7 +314,7 @@ hexlords [--map <file.map or map directory>] [--players <side>=<who>,...] [--mod
         [--chance <0-10>] [--battles lines|strength] [--wounds] [--blows-back]
         [--cap <n>] [--gold <n>] [--fog | --total-fog] [--headless [--rounds <n>] [--log]]
         [--saves <dir>] [--script <steps>]
-        [--assets <dir>] [--frames <n>] [--screenshot <file.png>]
+        [--assets <dir>] [--frames <n>] [--screenshot <file.png>] [--ui-scale <percent>]
 hexlords --version
 ```
 
@@ -359,6 +367,10 @@ with `--map`, and without it are not used.
 - `--screenshot <file.png>`: draw a frame into a PNG file and quit (the last
   frame of `--frames`, or the second). The exit status is 1 if the file could
   not be written.
+- `--ui-scale <percent>`: the interface (the text, the windows, the map's
+  hexes) that much bigger than the system says, from 50 to 400; 150 is half
+  again as big. Without it, the environment's `HEXLORDS_UI_SCALE` (a percent
+  too), else 100. The map editor takes it as well.
 - `--script <steps>`: play some input before the first frame. Steps are
   separated by commas: `left`, `right`, `up`, `down`, `enter`, `esc`, `space`,
   `1`, `2`, `key:X` (any character; `key:ctrl+s` with modifiers),
