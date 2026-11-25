@@ -11,8 +11,7 @@ use hexlords::city_windows::CITY_RALLY_ID;
 use hexlords::game::{Game, StackState, Task};
 use hexlords::orders::{Event, Order};
 use hexlords::screen::Scene;
-use hexlords::session::CITY_DETAILS_ID as PANEL_OPEN_ID;
-use hexlords::session::{Pick, Session};
+use hexlords::session::{CITY_DETAILS_ID, Pick, Session};
 use hexlords::setup::Setup;
 use hexlords::shell::Shell;
 use hexlords::state::scenario::{self, Scenario};
@@ -229,7 +228,7 @@ fn shift_click_makes_a_stop_for_a_citys_new_units() {
     let mut s = session(game(""));
     click_hex(&mut s, REDHOLD);
     press(&mut s, SpecialKey::Esc);
-    push_widget(&mut s, PANEL_OPEN_ID);
+    push_widget(&mut s, CITY_DETAILS_ID);
     push_widget(&mut s, CITY_RALLY_ID);
     assert!(matches!(s.picking(), Some(Pick::Rally(_))));
     shift_click_hex(&mut s, LAKE);

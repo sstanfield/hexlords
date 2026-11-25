@@ -260,6 +260,20 @@ struct Past {
     playing: bool,
 }
 
+/// What a screen built again needs of the session before it
+/// (`Session::take_parts`).
+pub struct SessionParts {
+    /// The game as it is.
+    pub game: Game,
+    /// What was done to it before it was loaded, and how much of its
+    /// history each person here has seen (`Session::restore`).
+    pub journal: Vec<Step>,
+    pub seen: Vec<(Side, usize)>,
+    /// The file it is kept in, if it is.
+    pub kept: Option<PathBuf>,
+    pub options: Options,
+}
+
 /// A unit's place in the stack: a button with the unit's icon and its numbers.
 struct Slot {
     button: WidgetId,
@@ -362,7 +376,10 @@ fn help_section() -> Vec<HelpSection> {
                 ),
                 (&new_game, "A new game (once this one is over at once; before, it asks)"),
                 ("Leaving a game", "It is kept as it goes: the new game screen plays it on (not in a browser)"),
-                (&options, "Options: what the game does for you as a turn goes (selects, asks, tells)"),
+                (
+                    &options,
+                    "Options: what the game does for you as a turn goes (selects, asks, tells); the interface size",
+                ),
             ],
         ),
         HelpSection::new(
@@ -582,6 +599,9 @@ pub struct Session {
     game_over: Option<WindowParts>,
     /// A new game was asked for (the game over window's button, the menu).
     wants_new_game: bool,
+    /// The interface's size changed (Options): the shell builds the screen
+    /// again at it, around the same game (`take_parts`).
+    wants_rebuild: bool,
     /// All that was done to the game from its start (`Game::record`): what
     /// a saved game is made of (`save`). The file the game is kept in, if
     /// it is; and the turn it was last written in.
@@ -822,6 +842,7 @@ impl Session {
             last_person: None,
             game_over: None,
             wants_new_game: false,
+            wants_rebuild: false,
             journal: Vec::new(),
             save_to: None,
             saved_in: None,
@@ -1423,6 +1444,29 @@ impl Session {
     /// screen).
     pub fn wants_new_game(&self) -> bool {
         self.wants_new_game
+    }
+
+    /// True if the screen is to be built again (the interface's size
+    /// changed).
+    pub fn wants_rebuild(&self) -> bool {
+        self.wants_rebuild
+    }
+
+    /// What a screen built again needs of this one: the game as it is (not
+    /// as it was, if the past is looked at), what was done to it before it
+    /// was loaded and how much each person has seen (`restore`), the file
+    /// it is kept in, and the person's options. The windows that were open
+    /// are not.
+    pub fn take_parts(&mut self) -> SessionParts {
+        // (In its place, a map of water: the session is gone with it.)
+        let blank = crate::state::Map::new(20, 20, crate::state::TileType::Water).map(Game::new);
+        let blank = blank.expect("a 20 x 20 map of water is a map");
+        let shown = std::mem::replace(&mut self.screen.game, blank);
+        let game = self.past.take().map_or(shown, |past| past.present);
+        let journal = std::mem::take(&mut self.journal);
+        let seen = std::mem::take(&mut self.seen);
+        self.wants_rebuild = false;
+        SessionParts { game, journal, seen, kept: self.save_to.take(), options: self.options }
     }
 
     /// The game is over: a window says who won.
@@ -2243,9 +2287,12 @@ impl Session {
             }
             lines
         });
-        let (mut tip, tip_at) = match unit_tip {
-            Some(lines) => (lines, tipped.map(|i| (self.slot(i).button, false))),
-            None => (Vec::new(), None),
+        // (Over an icon of what comes, in production: its words.)
+        let coming_tip = self.production.as_ref().and_then(|w| w.hovered_coming(&self.screen.ui));
+        let (mut tip, tip_at) = match (unit_tip, coming_tip) {
+            (Some(lines), _) => (lines, tipped.map(|i| (self.slot(i).button, false))),
+            (None, Some((icon, words))) => (vec![words], Some((icon, true))),
+            (None, None) => (Vec::new(), None),
         };
         tip.truncate(TIP_LINES);
         // (A city on land never seen is not known to be there.)
@@ -2422,7 +2469,9 @@ impl Session {
         }
         let acting = self.can_act();
         let area = self.screen.map_rect();
+        let icons = if self.production.is_some() { self.coming_icons(viewer) } else { HashMap::new() };
         if let Some(window) = &mut self.production {
+            window.set_icons(icons);
             window.place(&mut self.screen.ui, area);
             if window.refresh(&mut self.screen.ui, &self.screen.game, (viewer, acting)) {
                 self.screen.settle();
@@ -2488,6 +2537,24 @@ impl Session {
         }
     }
 
+    /// The icons of what `side`'s cities build, by city and kind's name
+    /// (the production panel's strip of what comes).
+    fn coming_icons(&mut self, side: Side) -> HashMap<(CityId, String), ImageHandle> {
+        let map = &self.screen.game.map;
+        let keys: Vec<((CityId, String), IconKey)> = map
+            .cities()
+            .iter()
+            .filter(|c| c.side == side && side != Side::Grey)
+            .flat_map(|city| {
+                city.units.iter().filter_map(move |prod| {
+                    let kind = map.units().kind_named(&prod.basename).and_then(|k| map.units().kind(k))?;
+                    Some(((city.id, kind.name.clone()), (kind.image.clone(), city.side, city.trains, false)))
+                })
+            })
+            .collect();
+        keys.into_iter().map(|(at, key)| (at, self.icon(&key))).collect()
+    }
+
     /// The icons of what a city can build, in its holder's colors.
     fn production_icons(&mut self, id: CityId) -> Vec<ImageHandle> {
         let keys: Vec<IconKey> = self.screen.game.map.cities().get(id).map_or(Vec::new(), |city| {
@@ -2527,19 +2594,50 @@ impl Session {
         if self.orders.show(&mut self.screen.ui, rows, &icons, width) {
             self.orders_h = -1;
         }
-        // Its box: what the minimap, the buttons and the city leave.
-        let ui = &self.screen.ui;
-        let sidebar = ui.rect(self.sidebar);
-        let top = ui.rect(self.orders_scroll).y;
-        let h = (sidebar.h - top).max(ui.dimension_converter().dp_to_px(40));
-        if h != self.orders_h && top > 0 {
-            let w = self.screen.minimap_rect().w;
-            self.screen.ui.set_layout_params(self.orders_scroll, Some(LayoutParams::fixed(w, h)));
-            if let Some(parent) = self.screen.ui.parent(self.orders_scroll) {
-                self.screen.ui.invalidate_layout(parent);
+        // Its box: what the minimap, the buttons and the city leave of the
+        // window, down to its bottom. (Not the sidebar's height, which is
+        // the box's too: as the city's lines grew the box kept its height,
+        // the sidebar ran past the window's bottom, and the window's whole
+        // layout moved up, the menu bar off the top; the owner saw it.) From
+        // the sizes of what is over it, not where it is now: before the
+        // first layout that is nowhere yet.
+        let ui = &mut self.screen.ui;
+        let spacing = ui.dimension_converter().dp_to_px(SPACING_DP);
+        let mut top = ui.to_root(self.sidebar, turbo_ferret::Point::ZERO).y;
+        for child in ui.children(self.sidebar).to_vec() {
+            if child == self.orders_scroll {
+                break;
             }
-            self.orders_h = h;
+            if ui.node(child).is_some_and(|n| n.visibility() != Visibility::Gone) {
+                top += ui.preferred_size_free(child).pref.h + spacing;
+            }
         }
+        let least = ui.dimension_converter().dp_to_px(40);
+        let h = (ui.viewport().h - top).max(least);
+        if h != self.orders_h {
+            self.set_orders_height(h);
+            // Laid out, the box is where it is: from there to the window's
+            // bottom, if the sizes said otherwise (its place does not
+            // depend on its height).
+            self.screen.settle();
+            let ui = &self.screen.ui;
+            let at = ui.to_root(self.orders_scroll, turbo_ferret::Point::ZERO).y;
+            let h = (ui.viewport().h - at).max(least);
+            if h != self.orders_h {
+                self.set_orders_height(h);
+                self.screen.settle();
+            }
+        }
+    }
+
+    /// The sidebar list's box, `h` tall.
+    fn set_orders_height(&mut self, h: i32) {
+        let w = self.screen.minimap_rect().w;
+        self.screen.ui.set_layout_params(self.orders_scroll, Some(LayoutParams::fixed(w, h)));
+        if let Some(parent) = self.screen.ui.parent(self.orders_scroll) {
+            self.screen.ui.invalidate_layout(parent);
+        }
+        self.orders_h = h;
     }
 
     /// The rows of the sidebar's list.
@@ -3273,12 +3371,6 @@ impl Session {
         }
         if id == TbId::new(CITY_DETAILS_ID) {
             self.open_shown_city();
-            return true;
-        }
-        if id == TbId::new(city_windows::CITY_CLOSE_ID) {
-            if let Some(window) = self.city_window.take() {
-                window.close(&mut self.screen.ui);
-            }
             return true;
         }
         if id == TbId::new(city_windows::LIST_CLOSE_ID) {
@@ -5194,6 +5286,7 @@ impl Session {
                     if let Some(options) =
                         self.options_window.as_ref().and_then(|w| w.click(&self.screen.ui, id, self.options))
                     {
+                        self.wants_rebuild |= options.ui_scale != self.options.ui_scale;
                         self.options = options;
                     }
                 }

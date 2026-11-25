@@ -124,3 +124,34 @@ fn a_row_selects_its_stack_and_t_steps_through_what_needs_orders() {
     assert_eq!(s.production().and_then(|p| p.chosen_city()), Some(redhold));
     assert!(s.screen.ui.find(s.screen.ui.root(), TbId::new("tasks_window")).is_none(), "no Tasks window");
 }
+
+/// The owner saw the menu bar go off the top of the window (and the
+/// production panel with it): the list's box kept its height as the city's
+/// lines above it grew, the sidebar ran past the window's bottom, and the
+/// whole layout moved. The list has what the window leaves, whatever the
+/// sidebar shows.
+#[test]
+fn the_sidebar_stays_in_the_window_as_the_citys_lines_come_and_go() {
+    let (game, _) = Game::load(std::path::Path::new("assets/maps/continent")).unwrap();
+    let mut s = common::with_game(&assets(), Size::new(1024, 768), 96, game).unwrap();
+    let rect = |s: &Session, name: &str| {
+        let id = common::widget(s, name);
+        turbo_ferret::Rect::from_origin_size(
+            s.screen.ui.to_root(id, turbo_ferret::Point::ZERO),
+            s.screen.ui.rect(id).size(),
+        )
+    };
+    // Land, a city (its lines), land again, and the city again.
+    for hex in [Hex::new(14, 9), Hex::new(13, 7), Hex::new(14, 9), Hex::new(13, 7)] {
+        s.screen.view.center_on(hex);
+        let p = common::pixel_of(&s, hex);
+        common::click(&mut s, p);
+        for t in 0..3 {
+            s.frame(16 * t);
+        }
+        let (menu, sidebar) = (rect(&s, "menu_bar"), rect(&s, "main_sidebar"));
+        assert_eq!(menu.y, 0, "at {hex}");
+        assert!(sidebar.bottom() <= 768, "at {hex}: {sidebar:?}");
+        assert!(rect(&s, "orders_scroll").bottom() <= 768, "at {hex}");
+    }
+}

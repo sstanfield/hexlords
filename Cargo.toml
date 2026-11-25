@@ -1,7 +1,7 @@
 [package]
 name = "hexlords"
 description = "A hex map strategy game of cities and stacks, played in turns or in rounds, on Turbo Ferret and miniquad."
-version = "0.1.8"
+version = "0.1.10"
 edition = "2024"
 rust-version = "1.86"
 license = "Zlib"

@@ -268,6 +268,13 @@ fn main() {
     // nothing unless told where.
     let played = script.is_none() && window.screenshot.is_none() && window.frames.is_none();
     let saves = saves.or_else(|| hexlords::platform::saves_dir().filter(|_| played));
+    // The interface's size: --ui-scale's, the environment's, else the one
+    // kept in the settings (the Options window's), else 100.
+    let mut window = window;
+    if window.scale().is_none() {
+        window.ui_scale = saves.as_deref().and_then(hexlords::settings::ui_scale);
+    }
+    let percent = window.scale().unwrap_or(100);
     let spec = WindowSpec { program: "hexlords", title: WINDOW_TITLE, size: WINDOW_SIZE };
     app::run(spec, window, move |assets, viewport, dpi| {
         let mut shell = match game {
@@ -277,6 +284,7 @@ fn main() {
         if let Some(dir) = &saves {
             shell.keep_games_in(dir.clone());
         }
+        shell.set_ui_scale(percent, dpi);
         if let Some(steps) = &script {
             script::run(&mut shell, steps).map_err(|e| format!("--script: {e}"))?;
         }

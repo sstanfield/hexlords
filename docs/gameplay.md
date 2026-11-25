@@ -958,7 +958,13 @@ thing to happen. Ideas to try, as the rules grow:
 - **Options** (built, the owner's word 2026-11-21: the turn should not be
   burdensome, nor leave out details): the Game menu's Options (Cmd+, or
   Ctrl+,) are the person's, not rules: they change what the screen does
-  for them, never what an order does (`options_window::Options`). One
+  for them, never what an order does (`options_window::Options`). The
+  interface's size is one (100% to 200%; the owner's word, 2026-11-24, a
+  small high resolution screen under Linux): changed, the screen is
+  built again at it around the same game (`Shell::rebuild`, the windows
+  that were open close), and it is kept in the settings (`settings`, a
+  file beside the saved games) for the next start; `--ui-scale` and
+  `HEXLORDS_UI_SCALE` go before it. One
   selects the next stack that waits by itself: when a turn starts
   (the nearest to the cursor), and once the stack the person moved can go
   no further this turn, as Done and Defend do (off at first: the owner's
@@ -1025,7 +1031,10 @@ thing to happen. Ideas to try, as the rules grow:
   every city with what it builds and where its units go (idle and
   waiting first; filters All, idle, waiting, building, keys A, I, W, B
   while it is open: "The filter row is a good idea"), and what each of
-  the next 5 rounds finishes, and where it goes. A row (or Up and Down)
+  the next 5 rounds finishes, as a strip a round: an icon for each unit
+  (its city, price and where it goes said over it on hover), how many
+  wait, the gold left ("I like the idea of a strip per round, in general
+  our UI needs get more gamey with icons more and text less"). A row (or Up and Down)
   chooses a city, and the city is in full on the right: the city
   window's view, built there (`CityWindow::embed`): what it builds, its
   queue, where its units go, its walls ("When a city is selected the

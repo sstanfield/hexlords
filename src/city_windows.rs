@@ -22,7 +22,6 @@ use crate::state::{CityId, MAX_QUEUE, Map, QueueEnd, Sends, Side};
 /// nothing), and its close button.
 pub const CITY_WINDOW_ID: &str = "city_window";
 pub const BUILD_NOTHING_ID: &str = "build_none";
-pub const CITY_CLOSE_ID: &str = "city_close";
 /// Where its new units go: a hex to pick on the map, nowhere (they stay),
 /// nowhere (they defend it), one of the rally points (`point_id`); and
 /// whether they seek a blessing on the way to the point.
@@ -215,9 +214,10 @@ fn title_case(side: Side) -> String {
 /// A city in full: its name, holder, walls and place, its garrison, what it
 /// can build (a button each, and one for nothing: the one it builds is
 /// pressed), how far it has got, and where its new units go. Only the city's
-/// holder, if that is the player, can press them. Built into a window
-/// ([`CityWindow`]) or, smaller, into the sidebar ([`CityPanel`]); the ids
-/// of its buttons start with its prefix, so that both can be there at once.
+/// holder, if that is the player, can press them. Built into the
+/// production panel ([`CityWindow::embed`]); the ids of its buttons start
+/// with its prefix. (Its compact form was the sidebar's, which no longer
+/// has a city's production: the owner's word, 2026-11-24.)
 pub struct CityView {
     prefix: &'static str,
     compact: bool,
@@ -536,16 +536,6 @@ impl CityView {
     fn hovered(&self, ui: &Ui) -> Option<usize> {
         let over = ui.hovered()?;
         self.builds.iter().find(|(button, _)| ui.is_ancestor_of(*button, over)).and_then(|(_, what)| *what)
-    }
-
-    /// The button of what it can build that the pointer is on, and which it
-    /// is.
-    fn hovered_button(&self, ui: &Ui) -> Option<(WidgetId, usize)> {
-        let over = ui.hovered()?;
-        self.builds
-            .iter()
-            .find(|(button, _)| ui.is_ancestor_of(*button, over))
-            .and_then(|(b, what)| Some((*b, (*what)?)))
     }
 
     /// Write what it says; true if a line changed.
@@ -892,38 +882,6 @@ impl CityWindow {
         self.parts.window
     }
 
-    /// Open a city's window on `parent` (the root window), placed in `area`
-    /// at `align` (see `build::place`). `icons` are the pictures of what it
-    /// can build, in its order. `None` if there is no such city.
-    pub fn open(
-        ui: &mut Ui,
-        parent: WidgetId,
-        map: &Map,
-        id: CityId,
-        (player, known): (Side, info::Known),
-        icons: &[ImageHandle],
-        (area, align): (Rect, (f32, f32)),
-    ) -> Option<Self> {
-        let city = map.cities().get(id)?;
-        let parts = build::window(ui, parent, CITY_WINDOW_ID, &city.name);
-        let Some(view) = CityView::build(ui, parts.content, map, id, known, icons, ("", false, false)) else {
-            build::close(ui, parts.window);
-            return None;
-        };
-        let space = dp(ui, SPACING_DP);
-        build::gap(ui, parts.content, space);
-        // Close, and beside it (its holder's) the walls: a row, no taller
-        // than the button (a city with nine kinds to build fits 768 high).
-        let row = build::row(ui, parts.content, space * 2);
-        build::button(ui, row, CITY_CLOSE_ID, "Close");
-        let walls = build::button(ui, row, CITY_WALLS_ID, "");
-        ui.set_visibility(walls, Visibility::Gone);
-        let mut window = CityWindow { parts, view, walls, walls_state: (String::new(), false, false), embedded: false };
-        window.view.fill(ui, map, player);
-        build::place(ui, parts, area, align);
-        Some(window)
-    }
-
     /// The city's view built into `host` (a column of the production
     /// panel), with its walls' button over it and no Close. `None` if there
     /// is no such city.
@@ -1069,82 +1027,6 @@ impl CityWindow {
     pub fn click(&mut self, id: TbId) -> Option<CityOrder> {
         if id == TbId::new(CITY_WALLS_ID) {
             return Some(CityOrder::RaiseWalls(self.view.city));
-        }
-        self.view.click(id)
-    }
-}
-
-/// The ids of the sidebar's city: its buttons' start with this, and the one
-/// that opens its window.
-pub const PANEL_PREFIX: &str = "panel_";
-pub const PANEL_OPEN_ID: &str = "panel_city_open";
-
-/// One of the player's cities in the sidebar: its view, smaller, and a
-/// button that opens its window (where there is more room, and all about
-/// what it can build).
-pub struct CityPanel {
-    root: WidgetId,
-    view: CityView,
-}
-
-impl CityPanel {
-    /// Build the city's panel into `parent` (a column of the sidebar).
-    pub fn open(
-        ui: &mut Ui,
-        parent: WidgetId,
-        map: &Map,
-        id: CityId,
-        (player, known): (Side, info::Known),
-        icons: &[ImageHandle],
-    ) -> Option<CityPanel> {
-        let root = build::column(ui, parent, 0);
-        let Some(view) = CityView::build(ui, root, map, id, known, icons, (PANEL_PREFIX, true, false)) else {
-            ui.remove(root);
-            return None;
-        };
-        build::gap(ui, root, dp(ui, SPACING_DP));
-        build::button(ui, root, PANEL_OPEN_ID, "Open the city's window");
-        let mut panel = CityPanel { root, view };
-        panel.view.fill(ui, map, player);
-        Some(panel)
-    }
-
-    /// The city it is about.
-    pub fn city(&self) -> CityId {
-        self.view.city
-    }
-
-    /// Take it out of the sidebar.
-    pub fn close(self, ui: &mut Ui) {
-        ui.remove(self.root);
-    }
-
-    /// Which of the player's rally points are set (a button each, to send
-    /// the city's new units there); the next `refresh` shows them.
-    pub fn set_points(&mut self, points: [bool; RALLY_POINTS]) {
-        self.view.points = points;
-    }
-
-    /// Bring it up to date with the city. False if the city is gone.
-    pub fn refresh(&mut self, ui: &mut Ui, map: &Map, (player, known): (Side, info::Known)) -> bool {
-        if map.cities().get(self.view.city).is_none() {
-            return false;
-        }
-        self.view.known = known;
-        self.view.fill(ui, map, player);
-        true
-    }
-
-    /// The button of what the city can build that the pointer is on, and
-    /// which it is (the session says all about it in its box).
-    pub fn hovered(&self, ui: &Ui) -> Option<(WidgetId, usize)> {
-        self.view.hovered_button(ui)
-    }
-
-    /// What a click on one of its buttons asks for.
-    pub fn click(&mut self, id: TbId) -> Option<CityOrder> {
-        if id == TbId::new(PANEL_OPEN_ID) {
-            return Some(CityOrder::Details(self.view.city));
         }
         self.view.click(id)
     }

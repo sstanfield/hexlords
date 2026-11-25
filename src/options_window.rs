@@ -20,6 +20,14 @@ pub const ALWAYS_BLESS_ID: &str = "option_always_bless";
 pub const ASK_END_TURN_ID: &str = "option_ask_end_turn";
 pub const OWN_ORDERS_ID: &str = "option_own_orders";
 
+/// The sizes the interface can be made, in percent of what the system
+/// says (the owner's word, 2026-11-24: small high resolution screens under
+/// Linux; `app::ui_dpi`), and the button of each.
+pub const UI_SCALES: [u32; 5] = [100, 125, 150, 175, 200];
+pub fn ui_scale_id(percent: u32) -> String {
+    format!("option_ui_scale_{percent}")
+}
+
 /// The space between things, in dp.
 const SPACING_DP: i32 = 8;
 
@@ -56,6 +64,10 @@ pub struct Options {
     /// not those of all the person's stacks (the owner's word, 2026-11-22:
     /// "The screen gets very busy so this should help focus"; V switches).
     pub own_orders_only: bool,
+    /// How big the interface is, in percent of what the system says (the
+    /// screen is built again at its size when it changes; kept in the
+    /// settings file, `settings`).
+    pub ui_scale: u32,
 }
 
 impl Default for Options {
@@ -68,6 +80,7 @@ impl Default for Options {
             always_bless: false,
             ask_end_turn: true,
             own_orders_only: false,
+            ui_scale: 100,
         }
     }
 }
@@ -84,6 +97,7 @@ impl Options {
             always_bless: false,
             ask_end_turn: false,
             own_orders_only: false,
+            ui_scale: 100,
         }
     }
 
@@ -138,6 +152,15 @@ impl OptionsWindow {
             ui.set_value(check, i32::from(*option(&mut options)));
             boxes.push(check);
         }
+        // The interface's size: a button each, the one in use pressed.
+        build::gap(ui, parts.content, space);
+        let row = build::row(ui, parts.content, space / 2);
+        build::text(ui, row, "Interface size");
+        for percent in UI_SCALES {
+            let button = build::button(ui, row, &ui_scale_id(percent), &format!("{percent}%"));
+            ui.set_group_id(button, TbId::new("option_ui_scale"));
+            ui.set_value(button, i32::from(options.ui_scale == percent));
+        }
         build::gap(ui, parts.content, space);
         build::button(ui, parts.content, OPTIONS_CLOSE_ID, "Close");
         build::place(ui, parts, area, align);
@@ -161,6 +184,9 @@ impl OptionsWindow {
     /// A click on one of its boxes (the box has turned itself on or off):
     /// the options as its boxes say now. `None` if it was none of them.
     pub fn click(&self, ui: &Ui, id: TbId, options: Options) -> Option<Options> {
+        if let Some(percent) = UI_SCALES.into_iter().find(|p| id == TbId::new(&ui_scale_id(*p))) {
+            return Some(Options { ui_scale: percent, ..options });
+        }
         let i = Options::boxes().iter().position(|(box_id, _, _)| id == TbId::new(box_id))?;
         let check = *self.boxes.get(i)?;
         let mut options = options;

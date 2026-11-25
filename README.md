@@ -101,8 +101,10 @@ by Cargo from its repository).
   screen's scale from X11's `Xft.dpi` (under Wayland, the output's whole
   scale), which many desktops leave at 96. Either set it
   (`echo "Xft.dpi: 144" | xrdb -merge`, 144 for half again as big, 192 for
-  twice) or make the game's interface bigger itself: `--ui-scale 150`, or
-  `HEXLORDS_UI_SCALE=150` in the environment. (The game draws at 100%,
+  twice) or make the game's interface bigger itself: Options (Ctrl+,),
+  Interface size, kept in `settings.txt` beside the saved games for the
+  next start; or `--ui-scale 150`, or `HEXLORDS_UI_SCALE=150` in the
+  environment, which go before it. (The game draws at 100%,
   120%, 150%, 175%, 200%, 250%, 300% and 400%; another percent is drawn at
   the nearest of these.)
 - **Windows:** should build and run the same way; nobody has tried it by hand.
@@ -176,7 +178,7 @@ it was built from. The most used:
 | H | Look at your capital (in hotseat, each person's turn starts there) |
 | O, or Open the city's window | Your city on the selected hex, in the production panel (below), chosen there: a button for each thing it can build (pointing at one shows all about it), a queue (+ beside a kind: kinds in turn, how many of each, where they go, and whether it then stops or starts over), where its new units go (Send to..., then a hex; a rally point; Keep here; Defend here), and Raise the walls. The sidebar has the same in less room (Send..., Keep, Defend). Another side's city: what is seen of it is in the sidebar |
 | M, A | A list of your cities, or of all of them, with a minimap that rings the one you choose; open it in full, or go to it |
-| E, or Cities > Production... | Your production in a panel over the map (E or Esc closes it). The queue is the way to build there: a unit's box adds one (on an empty queue, one that repeats, its units kept in the city). Its keys: Tab and Shift+Tab go from the cities to the queue to the units; Up and Down choose a city or an item; the arrows go from unit to unit, Enter adds it; - and + change the item's count, Delete takes it out; 0 to 9 send the item's units to that rally point, K keeps them, F defends. Every city with what it builds and where its units go, the idle and waiting first (All, idle, waiting, building: A, I, W, B show some only); what the next 5 rounds finish; a warning when the gold will not pay the upkeep within 5 rounds. A city's row (or Up and Down) chooses it, and the city is in full beside the list, as O shows it. While it is open the minimap rings your cities idle or waiting in orange, and the chosen one in gold with a line to where its units go. Your stacks, when shown, the dearest first: a stack's row, then Select puts it under the map (to send some of it home with X), Disband... all of it. Stop all production... stops every city, after asking |
+| E, or Cities > Production... | Your production in a panel over the map (E or Esc closes it). The queue is the way to build there: a unit's box adds one (on an empty queue, one that repeats, its units kept in the city). Its keys: Tab and Shift+Tab go from the cities to the queue to the units; Up and Down choose a city or an item; the arrows go from unit to unit, Enter adds it; - and + change the item's count, Delete takes it out; 0 to 9 send the item's units to that rally point, K keeps them, F defends. Every city with what it builds and where its units go, the idle and waiting first (All, idle, waiting, building: A, I, W, B show some only); what the next 5 rounds finish (a strip a round: an icon for each unit, its words when the pointer is on it, the gold left); a warning when the gold will not pay the upkeep within 5 rounds. A city's row (or Up and Down) chooses it, and the city is in full beside the list, as O shows it. While it is open the minimap rings your cities idle or waiting in orange, and the chosen one in gold with a line to where its units go. Your stacks, when shown, the dearest first: a stack's row, then Select puts it under the map (to send some of it home with X), Disband... all of it. Stop all production... stops every city, after asking |
 | T (Shift+T: back), or the list in the sidebar | The sidebar lists what needs orders first, in gold (stacks with no orders, cities that build nothing), then your army (garrisons blue-grey, stacks done with for the turn dimmed). A row selects its stack, or opens its city in production; T goes to the next that needs orders |
 | Log, or L | Your log: every battle you fought, attacking or attacked, with who won and who died on each side (Watch plays it again); the cities you took and lost; who is out. The latest round first |
 | Replay, or W | What happened since your last turn, again (in rounds: the round that played out). W again stops it; the slider beside the button goes back to any moment of it, where the map can be looked over but no orders given; Esc, or the turn's button, comes back to now |
@@ -193,7 +195,7 @@ it was built from. The most used:
 | `-` / `=` (or `+`) | Zoom out / in, centered on the cursor |
 | `0` to `9` | Go to that rally point: the view and the cursor go to its flag (rally points also show on the minimap). R places them |
 | F1, or `?` | The help: every key and what the mouse does (Esc closes it). The Help menu also has the rules of the game in play: battles (the system and chance it was set up with), movement (what each of the map's kinds of unit pays), cities and gold, units and captains, orders and turns, what you see |
-| Ctrl+, (Cmd+,) | Options: what the screen does for you as a turn goes (selects the next stack, asks before a turn ends, plays battles out or tells them in a line, shows moves as they happen). They are yours, not rules |
+| Ctrl+, (Cmd+,) | Options: what the screen does for you as a turn goes (selects the next stack, asks before a turn ends, plays battles out or tells them in a line, shows moves as they happen). They are yours, not rules. And the interface's size (100% to 200%): the screen is built again at it, the game as it was, and the size is kept for the next start |
 | Ctrl+Cmd+F, or F11 | Fullscreen on and off (macOS keeps F11 for itself) |
 | Ctrl+N (or Cmd+N), or Game > New game... | Back to the new game screen: at once if the game is over, else after asking (a game that is not over is kept, and can be played on from there) |
 | Ctrl+Q (or Cmd+Q) | Quit |
@@ -227,7 +229,7 @@ panel leaves. **Under the minimap** is the selected hex's city: its name,
 its walls and taxes, its garrison, what it is building and what it can
 build.
 
-![A city in full: what it can build, its queue, where its new units go](docs/screenshots/cities.png)
+![A city in full in the production panel: its queue, where its new units go, the units to add (the keyboard on Archers, all about them under the boxes)](docs/screenshots/cities.png)
 
 ![The production panel over the map: the cities with their filters, what each round finishes and where it goes, and the chosen city in full beside them](docs/screenshots/production.png)
 

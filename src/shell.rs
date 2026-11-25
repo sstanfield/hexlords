@@ -27,8 +27,14 @@ pub struct Shell {
     now: Now,
     /// The person's options, from one game to the next.
     options: Options,
-    /// Where the games in progress are kept, if anywhere.
+    /// Where the games in progress are kept, if anywhere (and the
+    /// settings, `settings`).
     saves: Option<PathBuf>,
+    /// The interface's size the screen is built at, in percent of what the
+    /// system says (`app::ui_dpi`), and the system's DPI (the screen's is
+    /// the skin's nearest, which does not say it back).
+    ui_scale: u32,
+    system_dpi: Option<i32>,
 }
 
 impl Shell {
@@ -36,13 +42,55 @@ impl Shell {
     pub fn new_game(assets: &Path, viewport: Size, dpi: i32, chosen: Option<&Path>) -> Result<Shell, String> {
         let screen = NewGame::new(assets, viewport, dpi, chosen)?;
         let now = Now::NewGame(Box::new(screen));
-        Ok(Shell { assets: assets.to_path_buf(), now, options: Options::default(), saves: None })
+        let (options, ui_scale, system_dpi) = (Options::default(), 100, None);
+        Ok(Shell { assets: assets.to_path_buf(), now, options, saves: None, ui_scale, system_dpi })
     }
 
     /// Begin with a game.
     pub fn playing(assets: &Path, session: Session) -> Shell {
         let options = session.options();
-        Shell { assets: assets.to_path_buf(), now: Now::Playing(Box::new(session)), options, saves: None }
+        let now = Now::Playing(Box::new(session));
+        Shell { assets: assets.to_path_buf(), now, options, saves: None, ui_scale: 100, system_dpi: None }
+    }
+
+    /// The interface's size the screen was built at (`--ui-scale`, the
+    /// environment's, the settings'), and the DPI that made (`app::ui_dpi`
+    /// of the system's): for the Options window to show, and to change from.
+    pub fn set_ui_scale(&mut self, percent: u32, dpi: i32) {
+        self.ui_scale = percent;
+        self.system_dpi = Some((dpi * 100 + percent as i32 / 2) / percent.max(1) as i32);
+        self.options.ui_scale = percent;
+        if let Now::Playing(session) = &mut self.now {
+            let options = Options { ui_scale: percent, ..session.options() };
+            session.set_options(options);
+        }
+    }
+
+    /// The screen built again at the size the Options window chose, around
+    /// the same game (its windows close); the size kept in the settings.
+    fn rebuild(&mut self, viewport: Size, dpi: i32) {
+        let Now::Playing(session) = &mut self.now else { return };
+        let parts = session.take_parts();
+        let options = parts.options;
+        // The system's DPI (or, not told, from the one it was built at).
+        let system = self.system_dpi.unwrap_or((dpi * 100 + self.ui_scale as i32 / 2) / self.ui_scale.max(1) as i32);
+        let dpi = crate::app::ui_dpi(system, Some(options.ui_scale));
+        match Session::with_options(&self.assets, viewport, dpi, parts.game, options) {
+            Ok(mut fresh) => {
+                fresh.restore(parts.journal, parts.seen);
+                if let Some(path) = parts.kept {
+                    fresh.keep_in(path);
+                }
+                self.now = Now::Playing(Box::new(fresh));
+                (self.ui_scale, self.options) = (options.ui_scale, options);
+                if let Some(dir) = &self.saves {
+                    if let Err(e) = crate::settings::set_ui_scale(dir, options.ui_scale) {
+                        crate::platform::complain(&format!("hexlords: {e}"));
+                    }
+                }
+            }
+            Err(e) => crate::platform::complain(&format!("hexlords: the screen was not built again: {e}")),
+        }
     }
 
     /// Keep the games that are not over in files in `dir` (`save`), from
@@ -90,6 +138,10 @@ impl Shell {
     fn switch(&mut self) {
         let ui = &self.scene().screen().ui;
         let (viewport, dpi) = (ui.viewport(), ui.dimension_converter().dp_to_px(96));
+        if matches!(&self.now, Now::Playing(session) if session.wants_rebuild()) {
+            self.rebuild(viewport, dpi);
+            return;
+        }
         match &mut self.now {
             Now::NewGame(screen) if screen.wants_to_start() => {
                 let game = screen.take_game();

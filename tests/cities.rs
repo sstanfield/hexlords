@@ -11,7 +11,6 @@ use hexlords::city_windows::{
     BUILD_NOTHING_ID, CITY_WINDOW_ID, LIST_CLOSE_ID, LIST_DETAILS_ID, LIST_GOTO_ID, LIST_WINDOW_ID, build_id, row_id,
 };
 use hexlords::game::{Game, Sight};
-use hexlords::session::CITY_DETAILS_ID as PANEL_OPEN_ID;
 use hexlords::session::{ALL_CITIES_ID, CITY_DETAILS_ID, MENU_CITIES_ID, MY_CITIES_ID, Session};
 use hexlords::setup::Setup;
 use hexlords::state::scenario::{self, Scenario};
@@ -183,7 +182,7 @@ fn details_open_ones_own_city_in_production_and_go_to_shows_it_on_the_map() {
 #[test]
 fn the_player_sets_what_a_city_builds_and_the_turns_build_it() {
     let mut s = session();
-    push(&mut s, PANEL_OPEN_ID);
+    push(&mut s, CITY_DETAILS_ID);
     assert_eq!(s.city_window().unwrap().city(), city_id(&s, WRENFOLD));
     let says = |s: &Session| -> Vec<String> {
         descendants(s, CITY_WINDOW_ID).into_iter().filter_map(|id| s.screen.ui.text(id).map(str::to_string)).collect()
@@ -237,7 +236,7 @@ fn only_the_holder_sets_what_a_city_builds() {
 #[test]
 fn esc_and_the_close_buttons_shut_the_windows_one_at_a_time() {
     let mut s = session();
-    push(&mut s, PANEL_OPEN_ID);
+    push(&mut s, CITY_DETAILS_ID);
     choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
     assert!(s.production().is_some() && s.city_list().is_some());
     // Esc: the list, on top, then production (and the city in it).
@@ -253,7 +252,7 @@ fn esc_and_the_close_buttons_shut_the_windows_one_at_a_time() {
     // The close buttons, and the list's title bar's.
     push(&mut s, LIST_CLOSE_ID);
     assert!(s.city_list().is_none());
-    push(&mut s, PANEL_OPEN_ID);
+    push(&mut s, CITY_DETAILS_ID);
     push(&mut s, hexlords::production_window::PRODUCTION_CLOSE_ID);
     assert!(s.production().is_none() && s.city_window().is_none() && !exists(&s, CITY_WINDOW_ID));
     choose(&mut s, MENU_CITIES_ID, ALL_CITIES_ID);
@@ -341,7 +340,7 @@ fn the_windows_fit_the_map_and_take_the_wheel_from_it() {
 #[test]
 fn what_a_city_can_build_shows_its_icon_and_numbers_and_all_about_it_under_the_pointer() {
     let mut s = session();
-    push(&mut s, PANEL_OPEN_ID);
+    push(&mut s, CITY_DETAILS_ID);
     // A button each: the unit's icon, its name, strength and moves.
     let text = |s: &Session, name: &str| s.screen.ui.text(widget(s, name)).unwrap_or("").to_string();
     // (In the production panel, a box as a stack's: its price and turns.)

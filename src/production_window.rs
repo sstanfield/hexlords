@@ -23,10 +23,12 @@
 //!
 //! Not a port: the C++ had no windows.
 
-use turbo_ferret::widgets::{ScrollContainer, ScrollMode};
-use turbo_ferret::{LayoutParams, Rect, TbId, Ui, Visibility, WidgetId};
+use std::collections::HashMap;
 
-use crate::game::{CityState, Game};
+use turbo_ferret::widgets::{ImageWidget, ScrollContainer, ScrollMode};
+use turbo_ferret::{ImageHandle, LayoutParams, Rect, TbId, Ui, Visibility, WidgetId};
+
+use crate::game::{CityState, Game, PayDay, Wait};
 use crate::gui::build::{self, WindowParts};
 use crate::info;
 use crate::orders::{RALLY_POINTS, RallyPoint};
@@ -57,6 +59,9 @@ pub const SHOWN_ROUNDS: usize = 5;
 pub const LOOKED_ROUNDS: usize = 20;
 pub const WARN_ROUNDS: u32 = 5;
 
+/// The size of an icon of what comes, in dp.
+const COMING_ICON_DP: i32 = 22;
+
 /// The left column's width, the spacing, a scroll bar's room, in dp.
 const LEFT_DP: i32 = 300;
 const SPACING_DP: i32 = 8;
@@ -65,6 +70,11 @@ const SCROLL_BAR_DP: i32 = 16;
 /// The id of the `i`th city's row (of those the filter shows).
 pub fn city_row_id(i: usize) -> String {
     format!("prod_city_{i}")
+}
+
+/// The id of the icon of the `i`th unit the `d`th round shown finishes.
+pub fn coming_id(d: usize, i: usize) -> String {
+    format!("prod_coming_{d}_{i}")
 }
 
 /// The id of the `i`th stack's row.
@@ -232,6 +242,12 @@ pub struct ProductionWindow {
     city_lines: Vec<String>,
     counts: [usize; 4],
     coming: Vec<(bool, String)>,
+    /// The next rounds as the forecast has them (the strip of icons), the
+    /// icons of what the side's cities build (`set_icons`), and the words
+    /// of each icon shown (the session's tip box says them on hover).
+    days: Vec<PayDay>,
+    icons: HashMap<(CityId, String), ImageHandle>,
+    coming_tips: Vec<(WidgetId, String)>,
     warning_line: Option<String>,
     stacks: Vec<StackRow>,
     stack_lines: Vec<String>,
@@ -372,6 +388,9 @@ impl ProductionWindow {
             city_lines: Vec::new(),
             counts: [0; 4],
             coming: Vec::new(),
+            days: Vec::new(),
+            icons: HashMap::new(),
+            coming_tips: Vec::new(),
             warning_line: None,
             stacks: Vec::new(),
             stack_lines: Vec::new(),
@@ -503,6 +522,7 @@ impl ProductionWindow {
         self.cities = cities.iter().map(|c| c.id).collect();
         self.city_lines = cities.iter().map(|c| info::production_row(map, c)).collect();
         self.coming = info::coming_lines(map, &forecast, SHOWN_ROUNDS);
+        self.days = forecast.days.iter().take(SHOWN_ROUNDS).cloned().collect();
         self.warning_line = forecast
             .short_at
             .filter(|round| *round <= game.turn() + WARN_ROUNDS)
@@ -555,19 +575,7 @@ impl ProductionWindow {
             let button = row(ui, self.city_list, &city_row_id(i), line, self.row_w);
             set_pressed(ui, button, self.chosen == Some(Chosen::City(*id)));
         }
-        for child in ui.children(self.coming_list).to_vec() {
-            ui.remove(child);
-        }
-        if self.coming.is_empty() {
-            build::text(ui, self.coming_list, "Nothing.");
-        }
-        for (heading, line) in &self.coming {
-            let text = if *heading { line.clone() } else { format!("    {line}") };
-            let text = build::text(ui, self.coming_list, &text);
-            if *heading {
-                ui.set_skin(text, TbId::new("Heading"));
-            }
-        }
+        self.fill_coming(ui, game);
         // The right column: the city, or the stacks.
         show(ui, self.city_host, !self.stacks_shown);
         show(ui, self.stack_box, self.stacks_shown);
@@ -596,6 +604,76 @@ impl ProductionWindow {
         ui.set_text(self.confirm_text, &question);
         show(ui, self.confirm, self.asking);
         show(ui, self.stop_all, !self.asking);
+    }
+
+    /// What comes, as a strip a round (the owner's word, 2026-11-24: "I like
+    /// the idea of a strip per round, in general our UI needs get more
+    /// gamey with icons more and text less"): the round, an icon for each
+    /// unit its cities finish, how many wait (for gold or room), and the
+    /// gold left; a round the upkeep is not paid says so. The words of each
+    /// icon show over it on hover (`hovered_coming`).
+    fn fill_coming(&mut self, ui: &mut Ui, game: &Game) {
+        for child in ui.children(self.coming_list).to_vec() {
+            ui.remove(child);
+        }
+        self.coming_tips.clear();
+        if self.days.is_empty() {
+            build::text(ui, self.coming_list, "Nothing.");
+        }
+        let map = &game.map;
+        let name = |id: CityId| map.cities().get(id).map_or("?".to_string(), |c| c.name.clone());
+        let icon_px = dp(ui, COMING_ICON_DP);
+        for (d, day) in self.days.iter().enumerate() {
+            let row = build::row(ui, self.coming_list, dp(ui, 2));
+            let round = build::text(ui, row, &format!("R{}", day.round));
+            ui.set_skin(round, TbId::new("Heading"));
+            build::set_width(ui, round, dp(ui, 30));
+            if day.short {
+                let text = build::text(ui, row, &format!("upkeep {}: units leave", day.upkeep));
+                ui.set_skin(text, TbId::new("Warning"));
+                break;
+            }
+            for (i, built) in day.built.iter().enumerate() {
+                let icon = ui.add(row, ImageWidget::new());
+                ui.set_id(icon, TbId::new(&coming_id(d, i)));
+                ui.set_layout_params(icon, Some(LayoutParams::fixed(icon_px, icon_px)));
+                if let Some(handle) = self.icons.get(&(built.city, built.kind.clone())).cloned() {
+                    ui.with_widget::<ImageWidget, _>(icon, |w, cx| w.set_image(cx, handle));
+                }
+                let to = info::sends_short(map, &built.sends);
+                let words = format!("{}: {}, {} gold; {to}", name(built.city), built.kind, built.price);
+                self.coming_tips.push((icon, words));
+            }
+            if !day.waiting.is_empty() {
+                let gold = day.waiting.iter().filter(|(_, w)| *w == Wait::Gold).count();
+                let words = match (gold, day.waiting.len() - gold) {
+                    (g, 0) => format!("+{g} wait for gold"),
+                    (0, r) => format!("+{r} wait for room"),
+                    (g, r) => format!("+{} wait (gold {g}, room {r})", g + r),
+                };
+                let text = build::text(ui, row, &words);
+                ui.set_skin(text, TbId::new("Warning"));
+            }
+            if day.built.is_empty() && day.waiting.is_empty() {
+                build::text(ui, row, "nothing");
+            }
+            build::text(ui, row, &format!("  {}g", day.gold_after));
+        }
+    }
+
+    /// Give it the icons of what the side's cities build, by city and kind
+    /// (the session draws them); shown at the next refresh if they changed.
+    pub fn set_icons(&mut self, icons: HashMap<(CityId, String), ImageHandle>) {
+        if icons != self.icons {
+            self.icons = icons;
+            self.key = None;
+        }
+    }
+
+    /// The icon of what comes the pointer is on, and its words.
+    pub fn hovered_coming(&self, ui: &Ui) -> Option<(WidgetId, String)> {
+        let over = ui.hovered()?;
+        self.coming_tips.iter().find(|(icon, _)| *icon == over || ui.is_ancestor_of(*icon, over)).cloned()
     }
 
     /// Size its parts to the rectangle it covers: the lists as tall as

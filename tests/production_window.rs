@@ -568,3 +568,21 @@ fn it_fits_a_small_screen_or_a_big_interface() {
         assert!(c.y >= p.y && c.bottom() <= p.bottom(), "{w}x{h} at {dpi}: {c:?} in {p:?}");
     }
 }
+
+/// What comes, as a strip a round (the owner's word, 2026-11-24: "I like
+/// the idea of a strip per round ... icons more and text less"): an icon
+/// for each unit finished; the pointer on one, its words.
+#[test]
+fn what_comes_is_a_strip_of_icons_a_round_with_words_on_hover() {
+    let mut s = session();
+    open(&mut s);
+    // Alder's soldiers in its first round shown; Cobb waits for gold.
+    let first = widget(&s, &hexlords::production_window::coming_id(0, 0));
+    let r = s.screen.area(first);
+    assert!(r.w > 0 && r.h > 0, "an icon: {r:?}");
+    common::hover(&mut s, Point::new(r.x + r.w / 2, r.y + r.h / 2));
+    s.frame(0);
+    assert_eq!(s.tip(), ["Alder: Soldiers, 10 gold; stay"]);
+    assert!(texts(&s).iter().any(|t| t == "+1 wait for gold"), "{:?}", texts(&s));
+    assert!(texts(&s).iter().any(|t| t.starts_with("R") && t[1..].parse::<u32>().is_ok()));
+}

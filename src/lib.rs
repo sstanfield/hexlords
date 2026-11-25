@@ -65,6 +65,7 @@ pub mod save;
 pub mod screen;
 pub mod script;
 pub mod session;
+pub mod settings;
 pub mod setup;
 pub mod shell;
 pub mod showing;

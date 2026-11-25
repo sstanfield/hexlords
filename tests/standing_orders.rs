@@ -10,8 +10,7 @@ use common::{assets, choose, click, pixel_of, press, type_char, widget};
 use hexlords::city_windows::{CITY_NO_RALLY_ID, CITY_RALLY_ID};
 use hexlords::game::{CityState, Game, StackState, Task};
 use hexlords::orders::{Event, Order};
-use hexlords::session::CITY_DETAILS_ID as PANEL_OPEN_ID;
-use hexlords::session::{DONE_ID, GO_TO_ID, MENU_VIEW_ID, Pick, Session, TASKS_ID};
+use hexlords::session::{CITY_DETAILS_ID, DONE_ID, GO_TO_ID, MENU_VIEW_ID, Pick, Session, TASKS_ID};
 use hexlords::setup::Setup;
 use hexlords::state::scenario::{self, Scenario};
 use hexlords::state::{Hex, Sends, Side, TileType, UnitId};
@@ -452,7 +451,7 @@ fn a_city_window_sends_new_units_to_a_picked_hex() {
     let mut s = session(game("garrison soldiers\n"));
     click_hex(&mut s, REDHOLD);
     press(&mut s, SpecialKey::Esc);
-    push(&mut s, PANEL_OPEN_ID);
+    push(&mut s, CITY_DETAILS_ID);
     let says = |s: &Session| -> Vec<String> {
         common::descendants(s, hexlords::city_windows::CITY_WINDOW_ID)
             .into_iter()
